@@ -295,7 +295,9 @@ Project
   id, name, created, schema_version
   boat: { name, notes }                        // free text
   grid: { twa: [deg], tws: [kn] }               // output grid, §12.2
-  blend: BlendSettings                          // §12: min_samples, n_full,
+  blend: BlendSettings                          // §12 (sample counts clamped
+                                                //  to 1..=1,000,000 on load):
+                                                //  min_samples, n_full,
                                                 //  smoothing, use_corrected,
                                                 //  include_stokes_drift, colour,
                                                 //  visible, default_statistic
@@ -990,7 +992,10 @@ The right panel lists every source (ORC, file, track) in one list:
   after it means the source holds edits), Compare (§11), Remove.
 - Drag to reorder (display order only).
 - A **Blend** entry at the top represents the current blend: its colour
-  (the same picker as a source's), show or hide (the plots only; export
+  (the same picker as a source's; a new project's is `#e0457b`, seen on
+  every bundled theme; a colour too close to the theme's background — a
+  white blend saved before M14, on Paper — is drawn with a contrasting
+  outline in the swatch, the 2D plot and the 3D grid lines), show or hide (the plots only; export
   always writes the blend), its coverage ("N direct, M filled"; the tooltip
   adds the empty cells, §12.3), a **Blend settings** button (§12.2) and
   **Export…** (§12.4). Each change is one undo entry ("Show blend", "Hide
@@ -1252,7 +1257,9 @@ that have a value in that cell:
 
 - `wᵢ = source weight × confidence`. Confidence is 1 for polar sources and
   `min(1, n / n_full)` for track segments, with n the cell's sample count and
-  `n_full` default 30.
+  `n_full` default 30. **An overridden cell counts with confidence 1**: a
+  track cell the person edited (§10.4) is vouched for, whatever its sample
+  count, 0 included (D23).
 - Cell overrides apply before blending; exclusions remove the cell.
 - A polar source is read onto the output grid bilinearly (§12.2), its edits
   written in; **every output cell read from an excluded node is empty** for
@@ -1269,8 +1276,9 @@ that have a value in that cell:
   binomial kernel over neighbours with a value (as the edit tool's, D22);
   the 0° row stays 0 kn and takes no part; empty cells stay empty.
 - The blend shows its own coverage: cells with direct evidence (at least one
-  source with a positive weight had a value) versus filled (interpolated, or
-  the 0° row without direct evidence), and the empty rest.
+  source with a positive weight had a value) versus filled (interpolated),
+  and the empty rest. The 0° row is 0 kn by definition, not evidence, and
+  counts in none of them; a blend with no value off the 0° row is empty.
 - Sources are summed in id order, never list order (display only, §8), and
   every value is rounded to the canonical knot precision (1e-6 kn), so the
   same project gives the same bits on every platform (invariant 5). A cell
@@ -1284,7 +1292,9 @@ that have a value in that cell:
 - **Export…** on the Blend entry opens a dialog: the format (Expedition
   `.txt`, Adrena `.pol` or CSV `.csv`, §6), the grid (the project's output
   grid, or custom axes typed as in §12.2 — the blend read onto them
-  bilinearly, never extrapolated; tracks are binned on the project grid, so
+  bilinearly, never extrapolated, and with the 0° row no anchor, as in the
+  fill: an output 0° row is 0 kn, and an angle between 0° and the blend's
+  first other angle is empty; tracks are binned on the project grid, so
   that is where the blend is made), and a preview of the grid as it would be
   written (filled cells muted, empty ones blank). **Save…** opens the native
   save dialog with the format's extension; the file is written atomically.
@@ -1294,9 +1304,12 @@ that have a value in that cell:
   be written the same with two decimals (the reader would refuse the file:
   "TWA values 42.001 and 42.004 would both be written as 42"), an axis
   value a polar file cannot hold, a boat speed over 60 kn, or a blend with
-  no value at all. Every file export writes reads back as the grid written
-  (a property test), and a fixed project's three files are pinned by
-  SHA-256 in `pe-app/tests/export.rs`, which every CI target runs.
+  no value off the 0° row (no visible source, say). Every file export writes
+  reads back as the grid written (a property test), and a fixed project's
+  three files are pinned by SHA-256 in `pe-app/tests/export.rs`. The four CI
+  targets that run tests (macOS Intel and Apple silicon, Windows x64,
+  Linux) run it; Windows ARM64 only builds the tests, as the hosted runner
+  cannot run them.
 
 ---
 

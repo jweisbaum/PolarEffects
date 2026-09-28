@@ -57,12 +57,16 @@ fn fixed_blend() -> Blend {
         .map(|k| (90.0, 10.0, 7.0 + f64::from(k) / 100.0))
         .chain((0..10).map(|k| (240.0, 16.2, 8.0 + f64::from(k) / 10.0)));
     let segment = bin(points, &grid.twa, &grid.tws, SegmentStatistic::P90, 5);
+    let no_overrides = vec![vec![false; grid.tws.len()]; grid.twa.len()];
     let sources = [
         BlendSource {
             id: 3,
             grid: &segment.polar,
             weight: 1.0,
-            confidence: Confidence::Samples(&segment.count),
+            confidence: Confidence::Samples {
+                count: &segment.count,
+                overridden: &no_overrides,
+            },
         },
         BlendSource {
             id: 1,

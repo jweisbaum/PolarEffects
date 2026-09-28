@@ -39,7 +39,7 @@ impl Axis {
 /// Why a polar cannot be exported.
 #[derive(Debug, Clone, PartialEq, Error)]
 pub enum ExportProblem {
-    /// No cell holds a value.
+    /// No cell holds a value off the 0° row (which is 0 kn by definition).
     #[error("the polar has no boat speeds to export")]
     Empty,
     /// Two axis values are written the same with two decimals.
@@ -123,13 +123,11 @@ fn check_axis(values: &[f64], axis: Axis, max: f64) -> Result<(), ExportProblem>
 pub fn check(polar: &PolarGrid) -> Result<(), ExportProblem> {
     check_axis(&polar.twa, Axis::Twa, 180.0)?;
     check_axis(&polar.tws, Axis::Tws, MAX_TWS_KN)?;
-    let mut any = false;
     for (i, twa) in polar.twa.iter().enumerate() {
         for (j, tws) in polar.tws.iter().enumerate() {
             let Some(bsp) = polar.get(i, j) else {
                 continue;
             };
-            any = true;
             // Rounded as written: 60.004 is written 60.00, which reads.
             if !bsp.is_finite() || bsp < 0.0 || (bsp * 100.0).round() / 100.0 > MAX_SPEED_KN {
                 return Err(ExportProblem::TooFast {
@@ -140,7 +138,9 @@ pub fn check(polar: &PolarGrid) -> Result<(), ExportProblem> {
             }
         }
     }
-    if any {
+    // The 0° row is 0 kn by definition (spec.md 12.3): a polar with nothing
+    // else has nothing to say.
+    if crate::blend::has_value_off_zero_row(polar) {
         Ok(())
     } else {
         Err(ExportProblem::Empty)
@@ -201,6 +201,10 @@ mod tests {
             check(&PolarGrid::empty(vec![90.0], vec![10.0])),
             Err(ExportProblem::Empty)
         );
+        // A 0° row of zeros alone is still nothing.
+        let mut zeros = PolarGrid::empty(vec![0.0, 90.0], vec![10.0]);
+        zeros.bsp[0][0] = Some(0.0);
+        assert_eq!(check(&zeros), Err(ExportProblem::Empty));
         let mut fast = polar(vec![90.0], vec![10.0]);
         fast.bsp[0][0] = Some(61.0);
         assert_eq!(check(&fast).unwrap_err().code(), "too-fast");

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 
+import { needsOutline, themeColour } from "../colourContrast";
 import { reportFailure } from "../errors";
 import type { ProjectSummary } from "../generated/ProjectSummary";
 import type { SourceSummary } from "../generated/SourceSummary";
@@ -7,6 +8,7 @@ import { onReveal } from "../help/highlight";
 import { msg, useT } from "../i18n";
 import { api } from "../ipc";
 import { editSource } from "../polar/editFocus";
+import { onThemeChange } from "../settings/themes";
 import BlendSettingsDialog from "./BlendSettingsDialog";
 import ExportDialog from "./ExportDialog";
 import PALETTE from "./palette.json";
@@ -38,6 +40,14 @@ export default function SourceList({ project, onProject }: {
   const [picking, setPicking] = useState<number | null>(null);
   const [pickingBlend, setPickingBlend] = useState(false);
   const [dialog, setDialog] = useState<"settings" | "export" | null>(null);
+  // The blend swatch's outline depends on the theme's background.
+  const [, setThemeTick] = useState(0);
+  useEffect(() => {
+    const redraw = () => setThemeTick((tick) => tick + 1);
+    // Once now too: the theme may have changed between render and here.
+    redraw();
+    return onThemeChange(redraw);
+  }, []);
   const [renaming, setRenaming] = useState<{ id: number; text: string } | null>(null);
   const [dragging, setDragging] = useState<number | null>(null);
   const [weights, setWeights] = useState<Record<number, number>>({});
@@ -90,7 +100,9 @@ export default function SourceList({ project, onProject }: {
       {/* The blend (spec.md 8, 12). */}
       <li className={["source-row", "blend-row", blend.visible ? "" : "hidden-source"].join(" ").trim()}>
         <div className="source-line">
-          <button className="swatch-button" data-feature="sources:blend-colour"
+          <button data-feature="sources:blend-colour"
+            // A colour too close to the background gets a contrasting outline.
+            className={needsOutline(blend.colour, themeColour("--surface", "#253447")) ? "swatch-button outlined" : "swatch-button"}
             style={{ backgroundColor: blend.colour }} aria-expanded={pickingBlend}
             title={t("Change the blend's colour")} aria-label={t("Blend colour")}
             onClick={() => setPickingBlend(!pickingBlend)} />

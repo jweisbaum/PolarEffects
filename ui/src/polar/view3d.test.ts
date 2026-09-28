@@ -101,6 +101,9 @@ describe("surfaces", () => {
     p.surfaces.push({ source: BLEND_SOURCE, twa: Float32Array.from([45]), tws: Float32Array.from([10]), bsp: Float32Array.from([5]) });
     const surfaces = buildSurfaces(p, "#ffffff");
     expect(surfaces.map((s) => [s.color, s.opaque])).toEqual([["#ff0000", false], ["#ffffff", true]]);
+    // A blend lost on the background keeps its grid lines as an outline.
+    const outlined = buildSurfaces(p, "#ffffff", null, "#1f2c3c");
+    expect(outlined.map((s) => s.lineColor)).toEqual([undefined, "#1f2c3c"]);
   });
 });
 

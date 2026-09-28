@@ -318,6 +318,10 @@ fn the_preview_offers_the_project_grid_or_a_custom_one() {
     // 90° at 12 kn is a node of both grids: the same value.
     assert_eq!(custom.bsp[2][1], project.bsp[10][4]);
     assert!(custom.text.starts_with("TWA\\TWS;8;12;16\n"));
+    // The 0° row is 0 kn and no anchor: 45° is read between the project
+    // grid's 40° and 45° rows, never from 0°.
+    assert_eq!(custom.bsp[0], vec![Some(0.0); 3]);
+    assert_eq!(custom.bsp[1][1], project.bsp[4][4]);
 
     let colliding = ExportAxes {
         twa: vec![40.0, 40.004],
@@ -386,7 +390,8 @@ fn blend_settings_are_undoable_and_validated() {
     assert_eq!(after.blend.default_statistic, "median");
     assert_eq!(
         after.blend.direct + after.blend.filled + after.blend.empty,
-        19 * 4
+        18 * 4,
+        "the 0° row counts in no coverage"
     );
     let undone = edit::undo_last(&app).unwrap();
     assert_eq!(undone.blend, before.blend);
@@ -419,6 +424,73 @@ fn blend_settings_are_undoable_and_validated() {
     // Applying what is already there records nothing.
     let same = blend::blend_settings_set(&app, input(&before.blend)).unwrap();
     assert_eq!(same.revision, revision);
+}
+
+/// With no visible source the blend is its 0° row alone: no coverage, and
+/// export refuses it as empty rather than writing a file of zeros (review
+/// round 1).
+#[test]
+fn a_blend_of_no_visible_source_is_refused_as_empty() {
+    let mut project = fixed_project();
+    for source in &mut project.sources {
+        source.visible = false;
+    }
+    let preview = blend::preview_of(&project, "adrena", None).unwrap();
+    assert_eq!(preview.problem.unwrap().code, "empty");
+    let refused = blend::export_bytes(&project, "expedition", None).unwrap_err();
+    assert_eq!(refused.kind(), "export-refused");
+    let coverage = blend::fresh(&project).coverage();
+    assert_eq!((coverage.direct, coverage.filled), (0, 0));
+
+    let root = TempRoot::new("export-empty");
+    let app = root.state();
+    projects::create(&app, "Empty".to_owned(), None, false).unwrap();
+    let summary = projects::summary(&app).unwrap().unwrap().blend;
+    assert_eq!((summary.direct, summary.filled, summary.empty), (0, 0, 180));
+    assert!(blend::export_to(&app, &root.file("x.txt"), "expedition", None).is_err());
+}
+
+/// A track cell the person overrode counts with confidence 1, whatever its
+/// sample count (D23 ruling): an override on a cell with no samples moves
+/// the blend there.
+#[test]
+fn an_overridden_track_cell_counts_fully() {
+    let mut project = fixed_project();
+    project
+        .sources
+        .retain(|s| s.label == "Track" || s.label == "ORC");
+    let (i, j) = (10, 4); // 90°, 12 kn
+    assert_eq!((project.grid.twa[i], project.grid.tws[j]), (90.0, 12.0));
+    // Every sample out: the track has no count anywhere.
+    let track = project
+        .sources
+        .iter_mut()
+        .find(|s| s.label == "Track")
+        .unwrap();
+    let ids: Vec<SampleId> = track
+        .track()
+        .unwrap()
+        .samples
+        .iter()
+        .map(|s| s.id)
+        .collect();
+    track.overlay.excluded_samples = ids;
+    let orc_only = blend::fresh(&project).polar.bsp[i][j].unwrap();
+    let track = project
+        .sources
+        .iter_mut()
+        .find(|s| s.label == "Track")
+        .unwrap();
+    track.overlay.cell_overrides = vec![CellOverride {
+        twa: 90.0,
+        tws: 12.0,
+        bsp: 20.0,
+    }];
+    let vouched = blend::fresh(&project).polar.bsp[i][j].unwrap();
+    assert!(
+        (vouched - (orc_only + 20.0) / 2.0).abs() < 1e-6,
+        "{vouched} vs {orc_only}"
+    );
 }
 
 /// A track imported after the default statistic changed starts with it.

@@ -368,6 +368,10 @@ impl Derivations {
                 })
                 .collect(),
         };
+        // By id: the list order is display only (spec.md 8), and the blend
+        // sums in id order, so reordering must not recompute it.
+        let mut key = key;
+        key.sources.sort_by_key(|(id, ..)| *id);
         if let Some((held, value)) = &self.blend
             && *held == key
         {
@@ -628,6 +632,10 @@ mod tests {
         project.sources[0].colour = Colour::parse("#000000").unwrap();
         derivations.blend(&project);
         assert_eq!(derivations.blends, 1, "a colour is not blended");
+        project.sources.reverse();
+        derivations.blend(&project);
+        assert_eq!(derivations.blends, 1, "the list order is display only");
+        project.sources.reverse();
         project.sources[0].weight = 0.5;
         derivations.blend(&project);
         assert_eq!(derivations.blends, 2);

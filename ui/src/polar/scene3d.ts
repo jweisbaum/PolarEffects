@@ -37,6 +37,8 @@ export interface SurfaceInput {
   opaque?: boolean;
   /** A translucent surface's opacity: 0.18 unless faded behind the source being edited (spec.md 10.4). */
   opacity?: number;
+  /** Its grid lines' colour instead of one derived from `color`: the outline of a blend lost on the background. */
+  lineColor?: string;
 }
 
 /** What the scene draws. */
@@ -211,7 +213,8 @@ export class PolarScene {
       })));
       this.surfaces.add(new THREE.LineSegments(lines, new THREE.LineBasicMaterial({
         // On an opaque surface the grid lines are lightened, or they vanish into it.
-        color: opaque ? color.clone().lerp(new THREE.Color(0xffffff), 0.6) : color, transparent: true,
+        color: surface.lineColor !== undefined ? new THREE.Color(surface.lineColor)
+          : opaque ? color.clone().lerp(new THREE.Color(0xffffff), 0.6) : color, transparent: true,
         opacity: opaque ? 0.9 : Math.min(0.55, opacity * 3), depthWrite: false,
       })));
     }

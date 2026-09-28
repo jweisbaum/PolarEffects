@@ -5,10 +5,10 @@
 import type { BlendSummary } from "./generated/BlendSummary";
 
 export const TEST_BLEND: BlendSummary = {
-  colour: "#ffffff",
+  colour: "#e0457b",
   visible: true,
   direct: 0,
-  filled: 10,
+  filled: 0,
   empty: 180,
   twa: [0, 30, 35, 40, 45, 52, 60, 70, 75, 80, 90, 100, 110, 120, 135, 150, 160, 170, 180],
   tws: [4, 6, 8, 10, 12, 14, 16, 20, 25, 30],

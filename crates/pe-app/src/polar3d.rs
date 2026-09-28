@@ -309,7 +309,7 @@ pub fn scene_with(
             sample.time = (t - scene.time_origin) as f32;
         }
     }
-    if let Some(grid) = blend.filter(|grid| pe_polar::cell_count(grid) > 0) {
+    if let Some(grid) = blend.filter(|grid| pe_polar::blend::has_value_off_zero_row(grid)) {
         let nj = grid.tws.len();
         let mut bsp = vec![f32::NAN; grid.twa.len() * nj];
         for (i, row) in grid.bsp.iter().enumerate() {

@@ -114,8 +114,12 @@ impl Default for OutputGrid {
 #[serde(default)]
 pub struct BlendSettings {
     /// Samples a track cell needs before it has a value (spec.md 12.1).
+    /// Clamped into range on load, so a hand-edited file still opens.
+    #[serde(deserialize_with = "clamped_samples")]
     pub min_samples: u32,
     /// Samples at which a track cell reaches full confidence (spec.md 12.3).
+    /// Clamped into range on load.
+    #[serde(deserialize_with = "clamped_samples")]
     pub n_full: u32,
     /// Smooth the filled grid (off by default).
     pub smoothing: bool,
@@ -136,6 +140,21 @@ pub struct BlendSettings {
 /// The most samples a cell may be asked to need, or to reach full
 /// confidence at: far beyond any real track, small enough to stay sane.
 pub const MAX_SAMPLE_SETTING: u32 = 1_000_000;
+
+/// The blend's colour in a new project: a rose that stands out on every
+/// bundled theme, light and dark (contrast 2.7–4.7 against their
+/// backgrounds), and is not the feature-search flash colour. Older projects
+/// keep the white they were saved with; the interface outlines a blend
+/// colour too close to the background (plan.md M14 review).
+pub const DEFAULT_BLEND_COLOUR: &str = "#e0457b";
+
+/// A sample count read from a file, clamped into 1..=[`MAX_SAMPLE_SETTING`]:
+/// a hand-edited 0 opens as 1 rather than refusing the whole project.
+/// Saving still validates.
+fn clamped_samples<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<u32, D::Error> {
+    let value = u64::deserialize(d)?;
+    Ok(u32::try_from(value.clamp(1, u64::from(MAX_SAMPLE_SETTING))).unwrap_or(MAX_SAMPLE_SETTING))
+}
 
 impl BlendSettings {
     /// Checks the sample counts: at least one, at most
@@ -163,7 +182,7 @@ impl Default for BlendSettings {
             smoothing: false,
             use_corrected: true,
             include_stokes_drift: false,
-            colour: Colour::trusted("#ffffff"),
+            colour: Colour::trusted(DEFAULT_BLEND_COLOUR),
             visible: true,
             default_statistic: SegmentStatistic::default(),
         }
@@ -413,6 +432,18 @@ mod tests {
         assert!(validate_grid_axis(&[71.0], "TWS", MAX_GRID_TWS_KN).is_err());
         let long: Vec<f64> = (0..=MAX_GRID_VALUES).map(|k| k as f64 / 100.0).collect();
         assert!(validate_grid_axis(&long, "TWA", 180.0).is_err());
+    }
+
+    /// A hand-edited file with out-of-range sample counts opens, clamped.
+    #[test]
+    fn out_of_range_sample_counts_are_clamped_on_load() {
+        let blend: BlendSettings =
+            serde_json::from_str(r#"{"min_samples": 0, "n_full": 99999999999}"#).unwrap();
+        assert_eq!((blend.min_samples, blend.n_full), (1, MAX_SAMPLE_SETTING));
+        blend.validate().unwrap();
+        let blend: BlendSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(blend, BlendSettings::default());
+        assert_eq!(blend.colour.as_str(), DEFAULT_BLEND_COLOUR);
     }
 
     #[test]

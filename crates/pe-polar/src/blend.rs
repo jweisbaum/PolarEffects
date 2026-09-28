@@ -10,13 +10,16 @@
 //! ```
 //!
 //! Confidence is 1 for a polar source and `min(1, n / n_full)` for a track
-//! segment, `n` being the cell's sample count (plan.md §6 Q4). Cells no
+//! segment, `n` being the cell's sample count (plan.md §6 Q4); a track cell
+//! the person overrode counts with confidence 1, whatever its count — they
+//! vouched for it (D23, controller ruling). Cells no
 //! source reaches are then filled, in order: along TWA within the same TWS,
 //! then along TWS, each only **between** two known values (nothing is
 //! extrapolated, spec.md 12.2); the 0° row is 0 kn by definition and takes
 //! no part in either (as in binning, D22). Optional smoothing runs over the
 //! filled grid. Every cell remembers whether it had direct evidence or was
-//! filled, which the source list shows as the blend's coverage.
+//! filled, which the source list shows as the blend's coverage; the 0° row,
+//! 0 kn by definition, is no evidence and counts in neither.
 //!
 //! **Derived, never stored** (invariant 2). **Deterministic** (invariant 5):
 //! sources are summed in id order — never list order, which the person
@@ -38,9 +41,13 @@ const ON_AXIS: f64 = 1e-9;
 pub enum Confidence<'a> {
     /// A polar source (ORC, file): 1 everywhere.
     Full,
-    /// A track segment: its per-cell sample counts, `[twa][tws]` on the
-    /// output grid.
-    Samples(&'a [Vec<u32>]),
+    /// A track segment on the output grid, `[twa][tws]`.
+    Samples {
+        /// Each cell's sample count.
+        count: &'a [Vec<u32>],
+        /// Whether the person overrode the cell: then it counts fully.
+        overridden: &'a [Vec<bool>],
+    },
 }
 
 /// One visible source, read onto the output grid.
@@ -96,11 +103,51 @@ pub struct Blend {
     pub origin: Vec<Vec<CellOrigin>>,
 }
 
+/// Whether an angle is the 0° row: 0 kn by definition, no evidence.
+fn is_zero_row(twa: f64) -> bool {
+    twa.abs() <= ON_AXIS
+}
+
+/// Whether `polar` holds a value anywhere off the 0° row: a blend that does
+/// not has nothing to say (its 0° zeros are definition, not evidence).
+pub fn has_value_off_zero_row(polar: &Polar) -> bool {
+    polar
+        .twa
+        .iter()
+        .zip(&polar.bsp)
+        .any(|(twa, row)| !is_zero_row(*twa) && row.iter().any(Option::is_some))
+}
+
+/// The blend read onto other axes (a custom export grid, spec.md 12.4):
+/// bilinear, never extrapolated, and — as in the fill (D23) — the 0° row is
+/// no anchor: it is left out of the reading, and an output 0° row is 0 kn.
+pub fn resample_blend(blend: &Polar, twa: &[f64], tws: &[f64]) -> Polar {
+    let keep: Vec<usize> = (0..blend.twa.len())
+        .filter(|&i| !is_zero_row(blend.twa[i]))
+        .collect();
+    let without_zero = Polar {
+        twa: keep.iter().map(|&i| blend.twa[i]).collect(),
+        tws: blend.tws.clone(),
+        bsp: keep.iter().map(|&i| blend.bsp[i].clone()).collect(),
+    };
+    let mut out = crate::grid::resample(&without_zero, twa, tws);
+    for (angle, row) in out.twa.iter().zip(out.bsp.iter_mut()) {
+        if is_zero_row(*angle) {
+            row.iter_mut().for_each(|cell| *cell = Some(0.0));
+        }
+    }
+    out
+}
+
 impl Blend {
-    /// Counts the cells by origin.
+    /// Counts the cells by origin, off the 0° row.
     pub fn coverage(&self) -> Coverage {
         let mut out = Coverage::default();
-        for origin in self.origin.iter().flatten() {
+        let rows = self.polar.twa.iter().zip(&self.origin);
+        for origin in rows
+            .filter(|(twa, _)| !is_zero_row(**twa))
+            .flat_map(|(_, row)| row)
+        {
             match origin {
                 CellOrigin::Direct => out.direct += 1,
                 CellOrigin::Filled => out.filled += 1,
@@ -144,7 +191,15 @@ pub fn on_grid(edited: &Polar, overlay: &Overlay, twa: &[f64], tws: &[f64]) -> P
 fn weight_at(source: &BlendSource<'_>, i: usize, j: usize, n_full: u32) -> f64 {
     let confidence = match source.confidence {
         Confidence::Full => 1.0,
-        Confidence::Samples(count) => {
+        Confidence::Samples { count, overridden } => {
+            if overridden
+                .get(i)
+                .and_then(|row| row.get(j))
+                .copied()
+                .unwrap_or(false)
+            {
+                return source.weight;
+            }
             let n = count
                 .get(i)
                 .and_then(|row| row.get(j))
@@ -171,7 +226,7 @@ pub fn blend(
         .filter(|s| s.grid.twa.len() == ni && s.grid.tws.len() == nj)
         .collect();
     ordered.sort_by_key(|s| s.id);
-    let zero_row: Vec<bool> = twa.iter().map(|a| a.abs() <= ON_AXIS).collect();
+    let zero_row: Vec<bool> = twa.iter().map(|a| is_zero_row(*a)).collect();
 
     // Direct evidence: the weighted mean of every source with a value.
     let mut value: Vec<Vec<Option<f64>>> = vec![vec![None; nj]; ni];
@@ -352,7 +407,7 @@ mod tests {
             out.coverage(),
             Coverage {
                 direct: 12,
-                filled: 3,
+                filled: 0,
                 empty: 0
             }
         );
@@ -397,18 +452,23 @@ mod tests {
         let t = grid(&[(2, 1, 9.0)]);
         let mut count = vec![vec![0u32; 3]; 5];
         count[2][1] = 15;
-        fn track<'a>(grid: &'a Polar, count: &'a [Vec<u32>]) -> BlendSource<'a> {
+        let none = vec![vec![false; 3]; 5];
+        fn track<'a>(
+            grid: &'a Polar,
+            count: &'a [Vec<u32>],
+            overridden: &'a [Vec<bool>],
+        ) -> BlendSource<'a> {
             BlendSource {
                 id: 2,
                 grid,
                 weight: 1.0,
-                confidence: Confidence::Samples(count),
+                confidence: Confidence::Samples { count, overridden },
             }
         }
         let out = blend(
             &TWA,
             &TWS,
-            &[polar(1, &p, 1.0), track(&t, &count)],
+            &[polar(1, &p, 1.0), track(&t, &count, &none)],
             &options(),
         );
         assert_eq!(out.polar.bsp[2][1], Some(7.0));
@@ -416,17 +476,64 @@ mod tests {
         let out = blend(
             &TWA,
             &TWS,
-            &[polar(1, &p, 1.0), track(&t, &count)],
+            &[polar(1, &p, 1.0), track(&t, &count, &none)],
             &options(),
         );
         assert_eq!(out.polar.bsp[2][1], Some(7.5));
         let out = blend(
             &TWA,
             &TWS,
-            &[polar(1, &p, 0.0), track(&t, &count)],
+            &[polar(1, &p, 0.0), track(&t, &count, &none)],
             &options(),
         );
         assert_eq!(out.polar.bsp[2][1], Some(9.0));
+
+        // An overridden track cell counts fully (D23 ruling), even with no
+        // samples at all: (6 + 9) / 2 = 7.5.
+        count[2][1] = 0;
+        let mut vouched = none.clone();
+        vouched[2][1] = true;
+        let both = [polar(1, &p, 1.0), track(&t, &count, &vouched)];
+        assert_eq!(
+            blend(&TWA, &TWS, &both, &options()).polar.bsp[2][1],
+            Some(7.5)
+        );
+        let plain = [polar(1, &p, 1.0), track(&t, &count, &none)];
+        assert_eq!(
+            blend(&TWA, &TWS, &plain, &options()).polar.bsp[2][1],
+            Some(6.0),
+            "not overridden: no samples, no weight"
+        );
+    }
+
+    /// Nothing off the 0° row is nothing: the 0° zeros are definition.
+    #[test]
+    fn a_blend_of_nothing_has_no_value_and_no_coverage() {
+        let out = blend(&TWA, &TWS, &[], &options());
+        assert!(!has_value_off_zero_row(&out.polar));
+        assert_eq!(
+            out.coverage(),
+            Coverage {
+                direct: 0,
+                filled: 0,
+                empty: 12
+            }
+        );
+        assert_eq!(out.polar.bsp[0], vec![Some(0.0); 3]);
+    }
+
+    /// Custom axes read the blend without the 0° row as an anchor: 20° lies
+    /// between 0° and 45°, so it is empty; the output 0° row is 0 kn; 67.5°
+    /// between 45° (5) and 90° (7) is 6.
+    #[test]
+    fn a_custom_grid_does_not_anchor_on_the_zero_row() {
+        let g = grid(&[(1, 0, 5.0), (2, 0, 7.0)]);
+        let out = blend(&TWA, &TWS, &[polar(1, &g, 1.0)], &options());
+        let custom = resample_blend(&out.polar, &[0.0, 20.0, 67.5], &[6.0]);
+        assert_eq!(
+            custom.bsp,
+            vec![vec![Some(0.0)], vec![None], vec![Some(6.0)]]
+        );
     }
 
     /// Filled along TWA first, then along TWS, never beyond known values:

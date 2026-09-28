@@ -698,10 +698,25 @@ describe("polar files and the source list (plan.md M4)", () => {
     expect(rows[1]!.textContent).toContain("71 cells");
     expect(rows[2]!.textContent).toContain("100/120 samples");
     expect(rows[2]!.classList.contains("hidden-source")).toBe(true);
-    expect(rows[0]!.textContent).toContain("0 direct, 10 filled");
+    expect(rows[0]!.textContent).toContain("0 direct, 0 filled");
     expect((feature("sources:blend-settings") as HTMLButtonElement).disabled).toBe(false);
     expect((feature("sources:edit") as HTMLButtonElement).disabled).toBe(false);
     expect((feature("sources:compare") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("outlines a blend colour lost on the theme's background (M14 review)", async () => {
+    // The light Paper theme, whose background a white blend is lost on.
+    settings = { ...settings, theme: "paper" };
+    {
+      project = { ...summary(false, "/p.wpsproj", [POLAR]), blend: { ...TEST_BLEND, colour: "#ffffff" } };
+      await mount();
+      expect(feature("sources:blend-colour")!.classList.contains("outlined")).toBe(true);
+      await act(async () => root.unmount());
+      host.remove();
+      project = { ...summary(false, "/p.wpsproj", [POLAR]), blend: TEST_BLEND };
+      await mount();
+      expect(feature("sources:blend-colour")!.classList.contains("outlined")).toBe(false);
+    }
   });
 
   it("shows and hides the blend, and applies Blend settings as one change (spec.md 8, 12)", async () => {

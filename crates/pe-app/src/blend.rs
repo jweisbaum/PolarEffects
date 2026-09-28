@@ -36,7 +36,9 @@ use crate::projects::ProjectSummary;
 /// The blend of `project` from each visible source's derived data.
 pub fn assemble(project: &Project, derived: &BTreeMap<u64, Arc<Derived>>) -> Blend {
     let grid = &project.grid;
-    let read: Vec<(u64, f64, Polar, Option<&Derived>)> = project
+    // A track cell the person overrode counts fully (D23 ruling).
+    type Read<'a> = (u64, f64, Polar, Option<(&'a Derived, Vec<Vec<bool>>)>);
+    let read: Vec<Read<'_>> = project
         .sources
         .iter()
         .filter(|source| source.visible)
@@ -45,7 +47,15 @@ pub fn assemble(project: &Project, derived: &BTreeMap<u64, Arc<Derived>>) -> Ble
             let (polar, track) = if data.track.is_some() {
                 // A segment is already on the output grid, its overrides in
                 // and its excluded nodes empty.
-                (data.blend.clone(), Some(&**data))
+                let segment = &data.blend;
+                let overridden = (0..segment.twa.len())
+                    .map(|i| {
+                        (0..segment.tws.len())
+                            .map(|j| pe_polar::edit::is_overridden(segment, &source.overlay, i, j))
+                            .collect()
+                    })
+                    .collect();
+                (data.blend.clone(), Some((&**data, overridden)))
             } else {
                 (
                     on_grid(&data.edited, &source.overlay, &grid.twa, &grid.tws),
@@ -61,8 +71,14 @@ pub fn assemble(project: &Project, derived: &BTreeMap<u64, Arc<Derived>>) -> Ble
             id: *id,
             grid: polar,
             weight: *weight,
-            confidence: match track.and_then(|d| d.track.as_ref()) {
-                Some(placed) => Confidence::Samples(&placed.segment.count),
+            confidence: match track {
+                Some((data, overridden)) => match data.track.as_ref() {
+                    Some(placed) => Confidence::Samples {
+                        count: &placed.segment.count,
+                        overridden,
+                    },
+                    None => Confidence::Full,
+                },
                 None => Confidence::Full,
             },
         })
@@ -387,7 +403,7 @@ pub fn export_grid(project: &Project, axes: Option<&ExportAxes>) -> Result<(Blen
     };
     validate_grid_axis(&axes.twa, "TWA", 180.0)?;
     validate_grid_axis(&axes.tws, "TWS", MAX_GRID_TWS_KN)?;
-    let polar = pe_polar::resample(&blend.polar, &axes.twa, &axes.tws);
+    let polar = pe_polar::blend::resample_blend(&blend.polar, &axes.twa, &axes.tws);
     Ok((blend, Some(polar)))
 }
 

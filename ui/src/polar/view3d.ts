@@ -246,7 +246,8 @@ export const FADED_OPACITY = 0.05;
  * edit mode the source being edited is opaque and the others fade, or are
  * left out.
  */
-export function buildSurfaces(packet: ScenePacket, blendColour: string, focus: Focus | null = null): SurfaceInput[] {
+export function buildSurfaces(packet: ScenePacket, blendColour: string, focus: Focus | null = null,
+  blendLine?: string): SurfaceInput[] {
   const focused = focus !== null && focus.index >= 0;
   return packet.surfaces.flatMap((surface): SurfaceInput[] => {
     const blend = surface.source === BLEND_SOURCE;
@@ -256,6 +257,7 @@ export function buildSurfaces(packet: ScenePacket, blendColour: string, focus: F
       grid: surfaceGrid(surface.twa, surface.tws, surface.bsp),
       color: blend ? blendColour : packet.sources[surface.source]?.colour ?? "#888888",
       opaque: blend || mine,
+      ...(blend && blendLine !== undefined ? { lineColor: blendLine } : {}),
       ...(focused && !mine ? { opacity: FADED_OPACITY } : {}),
     }];
   });

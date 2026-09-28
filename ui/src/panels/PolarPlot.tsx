@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 
+import { needsOutline } from "../colourContrast";
 import { reportFailure } from "../errors";
 import type { PolarCurve } from "../generated/PolarCurve";
 import type { PolarPlotResult } from "../generated/PolarPlotResult";
@@ -102,8 +103,14 @@ function draw(canvas: HTMLCanvasElement, result: PolarPlotResult | null, dots: D
   }
 
   for (const curve of curves) strokeCurve(ctx, curve, layout, 1.5);
-  // The blend is drawn thicker (spec.md 9.2), in the Blend entry's colour.
-  for (const curve of blend) strokeCurve(ctx, curve, layout, 3);
+  // The blend is drawn thicker (spec.md 9.2), in the Blend entry's colour,
+  // over a contrasting outline when that colour is lost on the background.
+  const background = style.getPropertyValue("--surface").trim() || "#253447";
+  const text = style.getPropertyValue("--text").trim() || "#d6e6f5";
+  for (const curve of blend) {
+    if (needsOutline(curve.colour, background)) strokeCurve(ctx, { ...curve, colour: text }, layout, 5);
+    strokeCurve(ctx, curve, layout, 3);
+  }
 
   const many = dots.count > MANY_DOTS;
   const dotColours = dots.sources.map((id) => colours.get(id)?.colour ?? line);

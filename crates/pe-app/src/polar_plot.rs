@@ -675,7 +675,7 @@ mod tests {
         assert_eq!(slice.blend.len(), 1);
         let curve = &slice.blend[0];
         assert_eq!((curve.source_id, curve.label.as_str()), (None, BLEND_LABEL));
-        assert_eq!(curve.colour, "#ffffff");
+        assert_eq!(curve.colour, pe_core::project::DEFAULT_BLEND_COLOUR);
         assert!(!curve.points.is_empty());
         // A (6–12 kn) and B (10 kn) reach the grid's 6, 8, 10 and 12 kn.
         let all = plot(&app, None).unwrap();

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 
+import { needsOutline } from "../colourContrast";
 import { reportFailure } from "../errors";
 import type { AppSettings } from "../generated/AppSettings";
 import type { ProjectSummary } from "../generated/ProjectSummary";
@@ -240,6 +241,9 @@ export default function PolarView({ project, settings, onProject }: {
   // The blend surface is drawn in the Blend entry's colour (spec.md 8; M7
   // carry), opaque (spec.md 10.1).
   const blendColour = project.blend.colour;
+  // A blend colour lost on the background (a white blend on Paper) keeps
+  // its grid lines in the theme's text colour, as an outline.
+  const blendLine = needsOutline(blendColour, cssColour("--inset", "#1f2c3c")) ? cssColour("--text", "#d6e6f5") : undefined;
   const focusStyle: Focus | null = useMemo(
     () => (focus === null ? null : { index: focused, hideOthers }),
     [focus, focused, hideOthers],
@@ -268,7 +272,7 @@ export default function PolarView({ project, settings, onProject }: {
     if (!current) return;
     current.setData({
       samples: dots.points, colors: dots.colors, shapes: dots.shapes, layout,
-      surfaces: toggles.surfaces ? buildSurfaces(packet, blendColour, focusStyle) : [],
+      surfaces: toggles.surfaces ? buildSurfaces(packet, blendColour, focusStyle, blendLine) : [],
     });
     const guides = buildGuides(bounds, layout, unit);
     current.setGuides(guides.segments, cssColour("--muted", "#b3c9de"));
@@ -286,7 +290,7 @@ export default function PolarView({ project, settings, onProject }: {
       fitted.current = true;
     }
     draw();
-  }, [dots, packet, layout, toggles.surfaces, bounds, unit, draw, focusStyle, blendColour]);
+  }, [dots, packet, layout, toggles.surfaces, bounds, unit, draw, focusStyle, blendColour, blendLine]);
 
   // Selection is by global index; the scene highlights by drawn index.
   useEffect(() => {
