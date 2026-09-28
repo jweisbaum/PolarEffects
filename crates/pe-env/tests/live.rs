@@ -365,3 +365,74 @@ fn cmems_current_cost() {
     );
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// The provider over the real archives, one position per path through the
+/// tiers: NW Shelf with ARCO-ERA5 wind (2025), NW Shelf with WeatherBench2
+/// wind (2020), IBI off Portugal, the global merged current in the
+/// mid-Atlantic after 2020-11, and GlobCurrent before it.
+#[test]
+#[ignore = "network; run with PE_TEST_LIVE=1"]
+fn provider_end_to_end() {
+    use pe_env::{Access, Interval, Options, Point, Provider, Reanalysis};
+    if !live() {
+        return;
+    }
+    let dir = std::env::var("PE_TEST_CACHE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            std::env::temp_dir().join(format!("pe-live-provider-{}", std::process::id()))
+        });
+    let cache = ChunkCache::open(&dir, 20 << 30).unwrap();
+    let p = Reanalysis::new(
+        Access::Http {
+            timeout: TIMEOUT,
+            cache,
+        },
+        8,
+    );
+    let at = |t: &str, lat: f64, lon: f64| Point {
+        t: parse_utc(t).unwrap(),
+        lat,
+        lon,
+    };
+    let points = [
+        at("2025-08-03T00:30Z", 49.86, -5.13),
+        at("2020-07-27T12:00Z", 50.0, -5.0),
+        at("2019-06-01T06:00Z", 36.0, -9.5),
+        at("2023-06-01T06:00Z", 30.0, -40.0),
+        at("2019-06-01T06:00Z", 30.0, -40.0),
+    ];
+    let start = Instant::now();
+    let got = p
+        .sample(
+            &points,
+            &Options {
+                interval: Interval::Hourly,
+                stokes_drift: false,
+            },
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .unwrap();
+    println!("provider: {:.1} s", start.elapsed().as_secs_f64());
+    for (point, env) in points.iter().zip(&got) {
+        println!("{} {:?}", to_iso(point.t), env);
+    }
+    let wind = |i: usize| got[i].wind.unwrap().dataset;
+    let current = |i: usize| got[i].current.map(|c| c.dataset);
+    assert_eq!(wind(0), Dataset::ArcoEra5);
+    assert_eq!(wind(1), Dataset::Wb2Era5Hourly);
+    assert!((got[1].wind.unwrap().u - 9.382_978_439_331_055).abs() < 1e-5);
+    assert_eq!(current(0), Some(Dataset::CmemsNwsMy));
+    assert!((got[0].current.unwrap().u - 0.003_570_6).abs() < 1e-4);
+    assert_eq!(current(1), Some(Dataset::CmemsNwsMy));
+    assert_eq!(current(2), Some(Dataset::CmemsIbiMy));
+    assert_eq!(current(3), Some(Dataset::CmemsGlobalMerged));
+    assert_eq!(current(4), Some(Dataset::GlobCurrentMy));
+    for env in &got {
+        let waves = env.waves.unwrap();
+        assert!((0.0..15.0).contains(&waves.hs.unwrap()));
+    }
+    if std::env::var("PE_TEST_CACHE").is_err() {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
