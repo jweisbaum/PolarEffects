@@ -132,9 +132,9 @@ pub fn filtered_out(track: &Track, filters: &SampleFilters, use_corrected: bool)
                 && filters
                     .max_bsp_kn
                     .is_none_or(|max| bsp.is_some_and(|b| b <= max))
-                && filters
-                    .max_heading_change_deg
-                    .is_none_or(|limit| heading_change(samples, k, use_corrected) <= limit)
+                && filters.max_heading_change_deg.is_none_or(|limit| {
+                    heading_change(samples, k, use_corrected, track.derivation.max_gap_s) <= limit
+                })
                 && origin_passes(filters.heading_origin, sample.heading_origin)
                 && origin_passes(filters.speed_origin, sample.speed_origin)
                 && !(filters.exclude_no_tide && no_tide(sample.current_dataset));
@@ -145,15 +145,19 @@ pub fn filtered_out(track: &Track, filters: &SampleFilters, use_corrected: bool)
 
 /// The largest heading change between a sample and either neighbour,
 /// degrees; 0 where a neighbour or the sample has no heading (a change
-/// that cannot be seen is not a manoeuvre).
-fn heading_change(samples: &[Sample], k: usize, use_corrected: bool) -> f64 {
+/// that cannot be seen is not a manoeuvre), and a neighbour further away in
+/// time than the track's maximum gap is not compared: across a gap the
+/// heading change says nothing about a manoeuvre.
+fn heading_change(samples: &[Sample], k: usize, use_corrected: bool, max_gap_s: i64) -> f64 {
     let Some(here) = heading(&samples[k], use_corrected) else {
         return 0.0;
     };
+    let t = samples[k].t;
     [k.checked_sub(1), Some(k + 1)]
         .into_iter()
         .flatten()
         .filter_map(|j| samples.get(j))
+        .filter(|s| (s.t - t).abs() <= max_gap_s)
         .filter_map(|s| heading(s, use_corrected))
         .map(|h| angle_between(here, h))
         .fold(0.0, f64::max)
@@ -218,6 +222,28 @@ mod tests {
         // show it passes a minimum.
         assert_eq!(out, [false, true, true, true, true]);
         assert_eq!(filtered_out(&t, &none(), true), [false; 5]);
+    }
+
+    /// A turn across a gap longer than the maximum gap (3 h by default) is
+    /// not a manoeuvre: the boat was not seen turning.
+    #[test]
+    fn no_manoeuvre_across_a_gap() {
+        let t = track(&[
+            (0, Some(40.0), Some(6.0)),
+            (60, Some(40.0), Some(6.0)),
+            (60 + 4 * 3600, Some(200.0), Some(6.0)),
+            (120 + 4 * 3600, Some(200.0), Some(6.0)),
+        ]);
+        assert_eq!(
+            filtered_out(&t, &SampleFilters::default(), true),
+            [false; 4]
+        );
+        let mut close = t.clone();
+        close.derivation.max_gap_s = 5 * 3600;
+        assert_eq!(
+            filtered_out(&close, &SampleFilters::default(), true),
+            [false, true, true, false]
+        );
     }
 
     #[test]

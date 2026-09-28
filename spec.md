@@ -590,7 +590,9 @@ All three trackers share one dialog flow (D4):
   the header, quoted fields follow RFC 4180, and a decimal comma is read when
   the separator is not a comma. The file is re-read as the mapping changes,
   so the dialog shows the boats (or the error) the mapping gives.
-- Times without a zone are UTC. Longitudes written 0–360 are accepted and
+- Times without a zone are UTC. A zone offset must be within ±14:00;
+  24:00:00 is read as the next day's midnight, and no later time of day is.
+  Longitudes written 0–360 are accepted and
   folded to [−180, 180); in-range values are stored bit for bit as read.
   GeoJSON MultiLineString features with one list of times per line (as GPX
   converters write) are read too. A file that is not UTF-8 is read as
@@ -609,10 +611,14 @@ All three trackers share one dialog flow (D4):
 Every track is reduced to timestamped fixes. Then, per fix:
 
 - **Heading.** If the track supplies heading or COG, use it. Otherwise use
-  the initial great-circle bearing from the previous fix to the next fix
-  (central difference). The first and last fixes use the one neighbour they
-  have. Where the two positions used are the same place (a stationary boat)
-  there is no heading.
+  the heading *at* the fix (central difference): the circular mean of the
+  great-circle bearing arriving from the previous fix (its final bearing)
+  and the one leaving for the next (its initial bearing). The first fix
+  uses the initial bearing to its one neighbour, the last the final bearing
+  from it, so on a long leg each end has its own heading (along 60°N from
+  0° to 10°E: 85.7° leaving, 94.3° arriving). Where the positions used are
+  the same place (a stationary boat), or the two bearings point opposite
+  ways, there is no heading.
 - **Speed.** If the track supplies SOG or boat speed, use it. Otherwise
   (distance(prev, this) + distance(this, next)) / (t_next − t_prev).
 - Duplicate timestamps are merged, and out-of-order fixes are sorted, before
@@ -717,7 +723,8 @@ Filtered-out samples stay in the project and appear dimmed in the plots when
   range, no speed under the minimum BSP) is filtered out: nothing shows it
   passes. With no filter on a quantity, a missing value does not matter.
 - The manoeuvre filter compares a sample's heading with each neighbour's and
-  takes the larger change; a neighbour without a heading is ignored.
+  takes the larger change; a neighbour without a heading, or further away
+  in time than the track's maximum gap, is ignored.
 - Wave sectors, off the bow (0° head seas): head below 30°, bow 30–60°, beam
   60–120°, quarter 120–150°, following from 150°.
 - BSP, TWS and TWA are the water-relative (current-corrected) values where

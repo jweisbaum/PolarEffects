@@ -151,3 +151,21 @@ it("maps a CSV, picks boats and imports them as one request", async () => {
   expect(onProject).toHaveBeenCalled();
   expect(q("[role=dialog]")).toBeNull();
 });
+
+it("commits a time-window edit once, on leaving the field, not on every keystroke", async () => {
+  await act(async () => root.render(<Tracks project={project([SOURCE])} onProject={() => undefined} />));
+  await click(q('[data-feature="tracks:filters"]'));
+  const start = q('[data-feature="tracks:time-start"]') as HTMLInputElement;
+  const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+  for (const partial of ["2025-07-26T1", "2025-07-26T12:0", "2025-07-26T12:00"]) {
+    await act(async () => {
+      set.call(start, partial);
+      start.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+  expect(calls.filter(([n]) => n === "setTrackFilters")).toEqual([]);
+  await act(async () => { start.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); });
+  const sent = calls.filter(([n]) => n === "setTrackFilters");
+  expect(sent).toHaveLength(1);
+  expect(sent[0]![1]).toEqual([5, { ...TRACK.filters, time_start: 1_753_531_200 }]);
+});

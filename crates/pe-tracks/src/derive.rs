@@ -3,16 +3,19 @@
 //! A track is first reduced to fixes in time order with one fix per
 //! timestamp ([`normalise`]). Then each fix gets a heading and a speed: the
 //! track's own where it gave one, and otherwise one derived from its
-//! neighbours by a central difference — the initial great-circle bearing
-//! from the previous fix to the next, and the distance through this fix over
-//! the time between them. A neighbour further away in time than the
+//! neighbours by a central difference — the heading *at* the fix, the
+//! circular mean of the great-circle bearing arriving from the previous fix
+//! (final bearing) and the one leaving for the next (initial bearing), and
+//! the distance through this fix over the time between them. A neighbour further away in time than the
 //! track's maximum gap is not used; a fix with one usable neighbour (the
 //! first and last fixes, or either side of a gap) uses that one, and a fix
 //! with none gets no derived values.
 
 use pe_core::track::{DerivationSettings, Fix, Motion, PreferValues, ValueOrigin};
 
-use crate::geo::{KNOT_M_S, distance_m, initial_bearing_deg, wrap_360};
+use crate::geo::{
+    KNOT_M_S, distance_m, final_bearing_deg, initial_bearing_deg, mean_direction, wrap_360,
+};
 
 /// What [`normalise`] had to do, for the import summary (spec.md 7.4).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -63,15 +66,23 @@ fn derived_at(fixes: &[Fix], i: usize, max_gap_s: i64) -> (Option<f64>, Option<f
     let prev = i.checked_sub(1).map(|k| &fixes[k]).filter(|f| usable(f));
     let next = fixes.get(i + 1).filter(|f| usable(f));
     let leg = |a: &Fix, b: &Fix| distance_m(a.lat, a.lon, b.lat, b.lon);
-    let (from, to, metres) = match (prev, next) {
-        (Some(p), Some(n)) => (p, n, leg(p, this) + leg(this, n)),
-        (Some(p), None) => (p, this, leg(p, this)),
-        (None, Some(n)) => (this, n, leg(this, n)),
+    // Headings at this fix: arriving from the previous, leaving for the next.
+    let arriving = |p: &Fix| final_bearing_deg(p.lat, p.lon, this.lat, this.lon);
+    let leaving = |n: &Fix| initial_bearing_deg(this.lat, this.lon, n.lat, n.lon);
+    let (from, to, metres, heading) = match (prev, next) {
+        (Some(p), Some(n)) => {
+            let heading = match (arriving(p), leaving(n)) {
+                (Some(a), Some(b)) => mean_direction(a, b),
+                (a, b) => a.or(b),
+            };
+            (p, n, leg(p, this) + leg(this, n), heading)
+        }
+        (Some(p), None) => (p, this, leg(p, this), arriving(p)),
+        (None, Some(n)) => (this, n, leg(this, n), leaving(n)),
         (None, None) => return (None, None),
     };
     let seconds = (to.t - from.t) as f64;
     let speed = (seconds > 0.0).then(|| metres / seconds / KNOT_M_S);
-    let heading = initial_bearing_deg(from.lat, from.lon, to.lat, to.lon);
     (heading, speed)
 }
 
@@ -151,14 +162,15 @@ mod tests {
         }
     }
 
-    /// Central difference: the middle fix's heading is the bearing from the
-    /// previous fix to the next, whatever the middle fix does; its speed is
-    /// the distance through it. (0,0) → (0.01,0.01) → (0,0.02): heading
-    /// 90°, and 2 × 1,572.5 m in 1,200 s = 5.0947848 kn. The first fix uses
-    /// its one neighbour: bearing 44.9999° (tan⁻¹ of sin 0.01°·cos 0.01° /
-    /// sin 0.01°), same speed.
+    /// Central difference: the middle fix's heading is the mean of the
+    /// heading arriving (final bearing from the previous fix, 45.0000004°)
+    /// and leaving (initial bearing to the next, 134.9999996°), and its
+    /// speed is the distance through it. (0,0) → (0.01,0.01) → (0,0.02):
+    /// heading 90°, and 2 × 1,572.5 m in 1,200 s = 5.0947848 kn. The first
+    /// fix uses its one neighbour: bearing 44.9999° (tan⁻¹ of sin 0.01°·cos
+    /// 0.01° / sin 0.01°), same speed.
     #[test]
-    fn a_central_difference_skips_over_the_middle_fix() {
+    fn a_central_difference_is_the_heading_at_the_middle_fix() {
         let fixes = [fix(0, 0.0, 0.0), fix(600, 0.01, 0.01), fix(1200, 0.0, 0.02)];
         let motion = derive(&fixes, &default());
         assert!(close(motion[1].heading, 90.0, 1e-9));
@@ -168,8 +180,8 @@ mod tests {
         assert!(close(motion[0].heading, first, 1e-9));
         assert!(close(motion[0].heading, 44.999_9, 1e-4));
         assert!(close(motion[0].speed, 5.094_784_8, 1e-6));
-        // The last fix: from (0.01, 0.01) down to (0, 0.02), south-east:
-        // 134.9999996°.
+        // The last fix: arriving at (0, 0.02) from (0.01, 0.01), south-east:
+        // the final bearing, 135.0000004°.
         assert!(close(motion[2].heading, 135.0, 1e-5));
     }
 
@@ -207,16 +219,50 @@ mod tests {
     }
 
     /// Over the North Pole: from 89.99°N 0° to 89.99°N 180° is 0.02° of arc
-    /// (2,223.98 m) in 600 s = 7.2051138 kn, and the way there is due north.
+    /// (2,223.98 m) in 600 s = 7.2051138 kn. The boat leaves heading due
+    /// north and, having crossed the pole, arrives heading due south.
     #[test]
     fn a_boat_crossing_the_pole() {
         let fixes = [fix(0, 89.99, 0.0), fix(600, 89.99, 180.0)];
         let motion = derive(&fixes, &default());
-        let north = |h: Option<f64>| h.is_some_and(|h| crate::geo::angle_between(h, 0.0) < 1e-6);
-        assert!(north(motion[0].heading), "{:?}", motion[0]);
+        let towards =
+            |h: Option<f64>, d: f64| h.is_some_and(|h| crate::geo::angle_between(h, d) < 1e-6);
+        assert!(towards(motion[0].heading, 0.0), "{:?}", motion[0]);
         assert!(close(motion[0].speed, 7.205_113_8, 1e-6));
-        // Seen from the far side, the pole is north too.
-        assert!(north(motion[1].heading), "{:?}", motion[1]);
+        assert!(towards(motion[1].heading, 180.0), "{:?}", motion[1]);
+        assert!(close(motion[1].speed, 7.205_113_8, 1e-6));
+    }
+
+    /// A long leg at 60°N, 0° to 10°E in 20 hours (within a 24 h maximum
+    /// gap): the great circle leaves at 85.667126° and arrives at
+    /// 94.332874°, so the two fixes have different headings — the heading
+    /// at each fix, not one bearing for the whole leg. With a middle fix at
+    /// 5°E, the central difference is the mean of the arriving and leaving
+    /// headings there, due east.
+    #[test]
+    fn a_long_high_latitude_leg_has_the_heading_at_each_end() {
+        let wide = DerivationSettings {
+            max_gap_s: 24 * 3600,
+            ..default()
+        };
+        let fixes = [fix(0, 60.0, 0.0), fix(20 * 3600, 60.0, 10.0)];
+        let motion = derive(&fixes, &wide);
+        assert!(
+            close(motion[0].heading, 85.667_126, 1e-6),
+            "{:?}",
+            motion[0]
+        );
+        assert!(
+            close(motion[1].heading, 94.332_874, 1e-6),
+            "{:?}",
+            motion[1]
+        );
+        let three = [
+            fix(0, 60.0, 0.0),
+            fix(36_000, 60.0, 5.0),
+            fix(72_000, 60.0, 10.0),
+        ];
+        assert!(close(derive(&three, &wide)[1].heading, 90.0, 1e-9));
     }
 
     #[test]

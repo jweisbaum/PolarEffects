@@ -178,6 +178,35 @@ function NumberField({ feature, label, title, value, min, max, step, onCommit }:
   );
 }
 
+/**
+ * A UTC date and time that commits on Enter or leaving the field, so one
+ * edit is one undo entry and a half-typed time is never sent (and never
+ * refused) while typing. An unreadable entry goes back to the stored value.
+ */
+function TimeField({ feature, label, title, value, onCommit }: {
+  feature: string; label: string; title: string; value: number | null; onCommit: (value: number | null) => void;
+}) {
+  const [text, setText] = useState(toLocalInput(value));
+  const [shown, setShown] = useState(value);
+  if (shown !== value) {
+    setShown(value);
+    setText(toLocalInput(value));
+  }
+  const commit = () => {
+    const next = fromLocalInput(text);
+    if (next === null && text.trim() !== "") { setText(toLocalInput(value)); return; }
+    if (next !== value) onCommit(next);
+  };
+  return (
+    <label className="track-field">
+      {label}
+      <input type="datetime-local" data-feature={feature} value={text} title={title}
+        onChange={(e) => setText(e.target.value)} onBlur={commit}
+        onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }} />
+    </label>
+  );
+}
+
 function TrackFiltersEditor({ id, track, onProject }: {
   id: number; track: TrackSummary; onProject: (project: ProjectSummary) => void;
 }) {
@@ -198,18 +227,12 @@ function TrackFiltersEditor({ id, track, onProject }: {
       <p className="muted">
         {t("{filtered} of {count} samples filtered out; they stay in the project and show dimmed.", { filtered: track.filtered, count: track.samples })}
       </p>
-      <label className="track-field">
-        {t("From (UTC)")}
-        <input type="datetime-local" data-feature="tracks:time-start" value={toLocalInput(f.time_start)}
-          title={t("Leave out samples before this time, such as before the start")}
-          onChange={(e) => set({ time_start: fromLocalInput(e.target.value) })} />
-      </label>
-      <label className="track-field">
-        {t("To (UTC)")}
-        <input type="datetime-local" data-feature="tracks:time-end" value={toLocalInput(f.time_end)}
-          title={t("Leave out samples after this time, such as after the finish")}
-          onChange={(e) => set({ time_end: fromLocalInput(e.target.value) })} />
-      </label>
+      <TimeField feature="tracks:time-start" label={t("From (UTC)")} value={f.time_start}
+        title={t("Leave out samples before this time, such as before the start")}
+        onCommit={(v) => set({ time_start: v })} />
+      <TimeField feature="tracks:time-end" label={t("To (UTC)")} value={f.time_end}
+        title={t("Leave out samples after this time, such as after the finish")}
+        onCommit={(v) => set({ time_end: v })} />
       <NumberField feature="tracks:min-bsp" label={t("Minimum BSP (kn)")} value={f.min_bsp} min={0} max={100} step={0.5}
         title={t("Leave out samples slower than this; empty for no minimum")} onCommit={(v) => set({ min_bsp: v })} />
       <NumberField feature="tracks:max-bsp" label={t("Maximum BSP (kn)")} value={f.max_bsp} min={0} max={100} step={0.5}

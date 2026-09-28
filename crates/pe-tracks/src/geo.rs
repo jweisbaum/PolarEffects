@@ -35,6 +35,21 @@ pub fn initial_bearing_deg(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> Option
     Some(wrap_360(y.atan2(x).to_degrees()))
 }
 
+/// Final great-circle bearing on arriving at the second position from the
+/// first, degrees in [0, 360): the direction of travel *at* the second
+/// position. `None` when they are the same place.
+pub fn final_bearing_deg(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> Option<f64> {
+    initial_bearing_deg(lat2, lon2, lat1, lon1).map(|b| wrap_360(b + 180.0))
+}
+
+/// The circular mean of two directions, degrees in [0, 360); `None` when
+/// they point opposite ways and have no mean.
+pub fn mean_direction(a: f64, b: f64) -> Option<f64> {
+    let (a, b) = (a.to_radians(), b.to_radians());
+    let (y, x) = (a.sin() + b.sin(), a.cos() + b.cos());
+    (y.hypot(x) > 1e-9).then(|| wrap_360(y.atan2(x).to_degrees()))
+}
+
 /// An angle folded into [0, 360). One already there is returned
 /// unchanged, bit for bit: imported values are kept exactly (invariant 1).
 pub fn wrap_360(degrees: f64) -> f64 {
@@ -141,6 +156,35 @@ mod tests {
         assert!(close(bearing, expected, 1e-12));
         assert!(close(bearing, 44.9956, 1e-4));
         assert!(close(distance_m(0.0, 0.0, 1.0, 1.0), 157_255.03, 0.01));
+    }
+
+    /// Along the 60°N parallel from 0° to 10°E the great circle leaves at
+    /// 85.667° and arrives at 94.333° (atan2 by hand: tan⁻¹(sin10°·cos60° /
+    /// (cos60°·sin60° − sin60°·cos60°·cos10°))).
+    #[test]
+    fn final_bearings_and_mean_directions() {
+        assert!(close(
+            initial_bearing_deg(60.0, 0.0, 60.0, 10.0).unwrap(),
+            85.667_126,
+            1e-6
+        ));
+        assert!(close(
+            final_bearing_deg(60.0, 0.0, 60.0, 10.0).unwrap(),
+            94.332_874,
+            1e-6
+        ));
+        assert!(close(
+            final_bearing_deg(0.0, 0.0, 0.0, 1.0).unwrap(),
+            90.0,
+            1e-9
+        ));
+        assert_eq!(final_bearing_deg(1.0, 1.0, 1.0, 1.0), None);
+        assert!(
+            close(mean_direction(350.0, 10.0).unwrap(), 0.0, 1e-9)
+                || close(mean_direction(350.0, 10.0).unwrap(), 360.0, 1e-9)
+        );
+        assert!(close(mean_direction(80.0, 100.0).unwrap(), 90.0, 1e-9));
+        assert_eq!(mean_direction(0.0, 180.0), None);
     }
 
     #[test]

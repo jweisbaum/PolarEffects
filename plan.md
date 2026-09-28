@@ -337,9 +337,11 @@ keying and re-finding all 200k samples selected measured 48 ms in Node
 against 188 ms for the string keys it replaces, camera refit on project change, `buildDots` uses the
 shown mode, "?" translated); the ±1 kn dot band is a Settings preference.
 The wind, wave and current filters are modelled and evaluated but offered
-disabled until M9. The CSV mapping dialog's controls carry no `data-feature`
-(like the other transient dialogs); the search finds File… and the help page
-documents each step.
+disabled until M9. The import dialog's configuration controls (column roles,
+time format and pattern, speed unit, boat picker) are tagged and registered;
+since the dialog exists only once files are chosen, their search entries
+land on File… (`Feature.landing`) and say a file must be chosen first. Only
+its Cancel and Import answer buttons are untagged (spec.md 3.6).
 
 *Measured 2026-09-28* on the development machine, debug build (`pe-app` at
 opt-level 0), 50 tracks × 10,000 fixes: project summary 49 ms, map packet

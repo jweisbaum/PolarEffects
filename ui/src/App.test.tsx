@@ -512,7 +512,11 @@ describe("finding every control (plan.md M2 acceptance)", () => {
     const flashed = q(".feature-flash");
     expect(flashed, `${id} is flashed`).not.toBeNull();
     expect(flashed!.style.borderColor).toBe("var(--flash)");
-    expect(feature(id), `${id} is on screen`).not.toBeNull();
+    // A control inside a dialog that needs a choice first (the track
+    // import dialog) lands on the control that opens it, as registered.
+    const landing = entry.landing ?? id;
+    expect(feature(landing), `${landing} is on screen`).not.toBeNull();
+    expect(flashed!.style.left, `${id} flashes where ${landing} is`).not.toBe("");
   }
 
   for (const { id: lang } of LANGUAGES) {

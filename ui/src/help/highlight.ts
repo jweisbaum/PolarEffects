@@ -57,8 +57,11 @@ export async function locateFeature(feature: Feature): Promise<boolean> {
     await handlerFor(step)?.(step);
     await frame();
   }
+  // A control inside a dialog that needs a choice first lands on the
+  // control that opens it.
+  const target = feature.landing ?? feature.id;
   for (let attempt = 0; attempt < 20; attempt += 1) {
-    const element = elementFor(feature.id);
+    const element = elementFor(target);
     if (element) {
       element.scrollIntoView({ block: "nearest", inline: "nearest" });
       flash(element);

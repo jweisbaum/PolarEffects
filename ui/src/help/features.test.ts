@@ -64,6 +64,14 @@ describe("feature registry", () => {
     const steps = FEATURES.flatMap(f => f.reveal ?? []);
     expect(steps.filter(step => !reveals.some(r => r === step || (r.endsWith(":") && step.startsWith(r))))).toEqual([]);
   });
+  it("lands dialog-only controls on a registered, tagged control that opens the dialog", () => {
+    const ids = new Set(FEATURES.map(f => f.id));
+    const landed = FEATURES.filter(f => f.landing !== undefined);
+    expect(landed.length).toBeGreaterThan(0);
+    expect(landed.filter(f => !ids.has(f.landing!) || !tagged.has(f.landing!)).map(f => f.id)).toEqual([]);
+    // Each is still a real, tagged control of its own.
+    expect(withoutElement(landed.map(f => f.id))).toEqual([]);
+  });
   it("describes every feature", () => {
     expect(FEATURES.filter(f => !f.description || !f.keywords?.length).map(f => f.id)).toEqual([]);
   });

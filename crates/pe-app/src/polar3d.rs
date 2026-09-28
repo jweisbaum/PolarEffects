@@ -257,7 +257,7 @@ pub fn scene_of(project: &Project) -> Scene {
         });
     }
     // Sample times travel as f32 seconds from the earliest, which keeps
-    // them to the second over any race.
+    // them to the second over about six months (2^24 s).
     scene.time_origin = times.iter().copied().min().unwrap_or(0);
     for (sample, t) in scene.samples.iter_mut().zip(&times) {
         sample.time = (t - scene.time_origin) as f32;

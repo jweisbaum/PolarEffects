@@ -4,8 +4,9 @@ import type { Feature } from "../features";
 /**
  * The Tracks section of the left navigation (spec.md 7.1, 7.4, 7.6). A
  * track's filters and derivation show once the track is unfolded, which the
- * `track:details` step does for the first track. The import dialog's steps
- * are found through File… (see `TrackImportDialog`).
+ * `track:details` step does for the first track. The import dialog's
+ * controls exist only once files are chosen, so they land on File…
+ * (`landing`), and each description says so.
  */
 const section = ["section:tracks"];
 const details = ["section:tracks", "track:details"];
@@ -52,6 +53,26 @@ const features: Feature[] = [
     keywords: [msg("derivation"), msg("gap"), msg("heading"), msg("speed")], topic, reveal: details },
   { id: "tracks:prefer", label: msg("Prefer given or derived"), description: msg("Use the heading and speed a track gives, or always derive them from the positions."),
     keywords: [msg("derivation"), "COG", "SOG"], topic, reveal: details },
+  { id: "track-import:time", label: msg("Time column"), description: msg("Inside the track import dialog (choose files with File… first): the CSV column the times are read from."),
+    keywords: ["CSV", msg("column"), msg("mapping")], topic, reveal: section, landing: "tracks:import-file" },
+  { id: "track-import:lat", label: msg("Latitude column"), description: msg("Inside the track import dialog (choose files with File… first): the CSV column the latitudes are read from."),
+    keywords: ["CSV", msg("column"), msg("mapping")], topic, reveal: section, landing: "tracks:import-file" },
+  { id: "track-import:lon", label: msg("Longitude column"), description: msg("Inside the track import dialog (choose files with File… first): the CSV column the longitudes are read from."),
+    keywords: ["CSV", msg("column"), msg("mapping")], topic, reveal: section, landing: "tracks:import-file" },
+  { id: "track-import:heading", label: msg("Heading column"), description: msg("Inside the track import dialog (choose files with File… first): the CSV column with the heading or COG, if any."),
+    keywords: ["CSV", "COG", msg("mapping")], topic, reveal: section, landing: "tracks:import-file" },
+  { id: "track-import:speed", label: msg("Speed column"), description: msg("Inside the track import dialog (choose files with File… first): the CSV column with the SOG or boat speed, if any."),
+    keywords: ["CSV", "SOG", msg("mapping")], topic, reveal: section, landing: "tracks:import-file" },
+  { id: "track-import:boat", label: msg("Boat column"), description: msg("Inside the track import dialog (choose files with File… first): the CSV column naming the boat, for a file with several boats."),
+    keywords: ["CSV", msg("boat"), msg("mapping")], topic, reveal: section, landing: "tracks:import-file" },
+  { id: "track-import:time-format", label: msg("Time format"), description: msg("Inside the track import dialog (choose files with File… first): how the CSV's times are written."),
+    keywords: ["ISO 8601", msg("epoch"), msg("date")], topic, reveal: section, landing: "tracks:import-file" },
+  { id: "track-import:custom-format", label: msg("Custom time format"), description: msg("Inside the track import dialog (choose files with File… first): a pattern such as %d/%m/%Y %H:%M for the times."),
+    keywords: [msg("pattern"), msg("date")], topic, reveal: section, landing: "tracks:import-file" },
+  { id: "track-import:speed-unit", label: msg("Speed unit"), description: msg("Inside the track import dialog (choose files with File… first): the unit of the CSV's speed column."),
+    keywords: [msg("knots"), "km/h", "m/s"], topic, reveal: section, landing: "tracks:import-file" },
+  { id: "track-import:boats", label: msg("Boats in this file"), description: msg("Inside the track import dialog (choose files with File… first): tick the boats to import from a file with several."),
+    keywords: [msg("boat picker"), msg("choose")], topic, reveal: section, landing: "tracks:import-file" },
 ];
 
 export default features;

@@ -37,6 +37,12 @@ export interface Feature {
    * called `onReveal` for it (or for its prefix, `"tool:"`).
    */
   reveal?: string[];
+  /**
+   * For a control that exists only inside a dialog opened by a choice (the
+   * track import dialog needs files first): the feature the search flashes
+   * instead, after the reveal steps. Its description says what to do first.
+   */
+  landing?: string;
 }
 
 const modules = import.meta.glob<{ default: Feature[] }>("./features/*.ts", { eager: true });

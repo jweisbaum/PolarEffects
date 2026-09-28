@@ -88,6 +88,8 @@ impl Parts {
             || self.day < 1
             || self.day > days_in_month(year, self.month)
             || self.hour > 24
+            // 24:00:00 is the end of the day; nothing later is.
+            || (self.hour == 24 && (self.minute, self.second, self.fraction) != (0, 0, 0.0))
             || self.minute > 59
             || self.second > 60
         {
@@ -157,6 +159,7 @@ impl<'a> Cursor<'a> {
         if self.eat_any(&['Z', 'z']) {
             return Some(0);
         }
+        let start = self.at;
         let sign = if self.eat('+') {
             1
         } else if self.eat('-') {
@@ -167,7 +170,15 @@ impl<'a> Cursor<'a> {
         let hours = self.digits(2, 2)? as i64;
         self.eat(':');
         let minutes = self.digits(2, 2).unwrap_or(0) as i64;
-        Some(sign * (hours * 3600 + minutes * 60))
+        // Real offsets run from -12:00 to +14:00; anything past ±14:00 or
+        // with 60 minutes or more is a misread, not a zone.
+        let offset = hours * 3600 + minutes * 60;
+        let valid = minutes < 60 && offset <= 14 * 3600;
+        if !valid {
+            // Put the offset back, so the text does not read as finished.
+            self.at = start;
+        }
+        valid.then_some(sign * offset)
     }
 
     fn done(&self) -> bool {
@@ -445,6 +456,41 @@ mod tests {
             assert!(parse_time(text, &TimeFormat::Auto).is_err(), "{text:?}");
         }
         assert!(parse_time("26/07/2025", &TimeFormat::Custom("%d-%m-%Y".to_owned())).is_err());
+    }
+
+    #[test]
+    fn midnight_as_24_00_and_zone_offsets_within_14_hours() {
+        let auto = TimeFormat::Auto;
+        // 24:00 is the next day's midnight, and only exactly that.
+        assert_eq!(
+            parse_time("2025-07-25T24:00:00Z", &auto),
+            Ok(NOON - 12 * 3600)
+        );
+        assert_eq!(
+            parse_time("2025-07-25T24:00:00.0Z", &auto),
+            Ok(NOON - 12 * 3600)
+        );
+        assert_eq!(parse_time("2025-07-25 24:00", &auto), Ok(NOON - 12 * 3600));
+        for text in [
+            "2025-07-25T24:00:01Z",
+            "2025-07-25T24:01:00Z",
+            "2025-07-25T24:00:00.5Z",
+            "2025-07-25T25:00:00Z",
+        ] {
+            assert!(parse_time(text, &auto).is_err(), "{text}");
+        }
+        assert_eq!(parse_time("2025-07-27T02:00:00+14:00", &auto), Ok(NOON));
+        assert_eq!(parse_time("2025-07-26T00:00:00-12:00", &auto), Ok(NOON));
+        for text in [
+            "2025-07-26T12:00:00+14:01",
+            "2025-07-26T12:00:00+15:00",
+            "2025-07-26T12:00:00-14:30",
+            "2025-07-26T12:00:00+05:60",
+        ] {
+            assert!(parse_time(text, &auto).is_err(), "{text}");
+        }
+        let custom = TimeFormat::Custom("%Y-%m-%d %H:%M %z".to_owned());
+        assert!(parse_time("2025-07-26 12:00 +99", &custom).is_err());
     }
 
     #[test]

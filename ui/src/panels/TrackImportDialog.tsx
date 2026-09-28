@@ -44,9 +44,12 @@ function ready(entry: Entry): boolean {
  * the speed unit, each correctable, the file re-read as they change. Import
  * adds one track per ticked boat as one undoable change.
  *
- * Like the other transient dialogs (unsaved changes, confirmations), its
- * controls carry no `data-feature`: the search finds the File… button that
- * opens it (`tracks:import-file`), whose help page describes every step.
+ * Every configuration control carries a `data-feature` and is registered
+ * (`help/features/tracks.ts`) like any other. The dialog exists only once
+ * files are chosen, so those entries land on File… (`tracks:import-file`),
+ * and their descriptions say a file must be chosen first. Only its answer
+ * buttons (Cancel, Import) go untagged, as in every transient dialog
+ * (spec.md 3.6).
  */
 export default function TrackImportDialog({ inspections, onDone, onCancel }: {
   inspections: TrackFileInspection[];
@@ -156,7 +159,7 @@ function FileCard({ entry, onMapping, onBoats }: {
             {CSV_ROLES.map((role) => (
               <label key={role}>
                 {t(CSV_ROLE_NAMES[role])}
-                <select value={csv.mapping[role] ?? ""}
+                <select data-feature={`track-import:${role}`} value={csv.mapping[role] ?? ""}
                   title={REQUIRED_ROLES.includes(role) ? t("The column this is read from (required)") : t("The column this is read from (optional)")}
                   onChange={(e) => onMapping(assign(csv.mapping, role as CsvRole, e.target.value === "" ? null : Number(e.target.value)))}>
                   <option value="">{t("— none —")}</option>
@@ -166,7 +169,7 @@ function FileCard({ entry, onMapping, onBoats }: {
             ))}
             <label>
               {t("Time format")}
-              <select value={csv.mapping.time_format}
+              <select data-feature="track-import:time-format" value={csv.mapping.time_format}
                 title={t("How the time column is written; times without a zone are UTC")}
                 onChange={(e) => onMapping({ ...csv.mapping, time_format: e.target.value })}>
                 {TIME_FORMATS.map((f) => <option key={f.id} value={f.id}>{t(f.label)}</option>)}
@@ -175,7 +178,7 @@ function FileCard({ entry, onMapping, onBoats }: {
             {csv.mapping.time_format === "custom" && (
               <label>
                 {t("Format")}
-                <input value={csv.mapping.custom_format}
+                <input data-feature="track-import:custom-format" value={csv.mapping.custom_format}
                   placeholder="%d/%m/%Y %H:%M:%S"
                   title={t("%Y year, %m month, %d day, %H hour, %M minute, %S second, %f fraction, %b month name, %z zone")}
                   onChange={(e) => onMapping({ ...csv.mapping, custom_format: e.target.value })} />
@@ -183,7 +186,7 @@ function FileCard({ entry, onMapping, onBoats }: {
             )}
             <label>
               {t("Speed unit")}
-              <select value={csv.mapping.speed_unit}
+              <select data-feature="track-import:speed-unit" value={csv.mapping.speed_unit}
                 title={t("The unit of the speed column; stored in knots")}
                 onChange={(e) => onMapping({ ...csv.mapping, speed_unit: e.target.value })}>
                 {SPEED_UNITS.map((u) => <option key={u.id} value={u.id}>{t(u.label)}</option>)}
@@ -219,7 +222,7 @@ function FileCard({ entry, onMapping, onBoats }: {
         <p className="import-failures" role="alert" title={inspection.failure.message}>{describeTrackFailure(inspection.failure)}</p>
       )}
       {inspection.boats.length > 1 && (
-        <fieldset className="track-import-boats">
+        <fieldset className="track-import-boats" data-feature="track-import:boats">
           <legend>{t("Boats in this file")}</legend>
           {inspection.boats.map((boat) => (
             <label key={boat.name}>
