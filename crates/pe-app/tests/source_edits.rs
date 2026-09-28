@@ -166,3 +166,71 @@ fn edits_need_an_open_project() {
         Err(AppError::NoProjectOpen)
     ));
 }
+
+/// History labels are English keys the frontend translates (spec.md 3.5);
+/// `rust-strings.json` is how the coverage test holds every catalogue to
+/// them, so it must list exactly the labels Rust can produce.
+#[test]
+fn every_history_label_is_listed_for_translation() {
+    let listed: Vec<String> =
+        serde_json::from_str(include_str!("../../../ui/src/i18n/rust-strings.json")).unwrap();
+    let source = || {
+        Box::new(Source::new(
+            pe_core::SourceId(1),
+            "A",
+            Colour::parse("#000000").unwrap(),
+            SourceKind::PolarFile {
+                format: PolarFileFormat::Expedition,
+                file_name: "a.txt".to_owned(),
+                polar: PolarGrid::empty(vec![40.0], vec![10.0]),
+            },
+        ))
+    };
+    let id = pe_core::SourceId(1);
+    let black = Colour::parse("#000000").unwrap();
+    let commands = [
+        Command::RenameProject {
+            before: String::new(),
+            after: String::new(),
+        },
+        Command::AddSource {
+            index: 0,
+            source: source(),
+        },
+        Command::RemoveSource {
+            index: 0,
+            source: source(),
+        },
+        Command::SetSourceColour {
+            source: id,
+            before: black.clone(),
+            after: black,
+        },
+        Command::SetSourceVisible {
+            source: id,
+            before: false,
+            after: true,
+        },
+        Command::SetSourceVisible {
+            source: id,
+            before: true,
+            after: false,
+        },
+        Command::SetSourceWeight {
+            source: id,
+            before: 1.0,
+            after: 1.0,
+        },
+        Command::SetSourceLabel {
+            source: id,
+            before: String::new(),
+            after: String::new(),
+        },
+        Command::MoveSource { from: 0, to: 1 },
+    ];
+    let mut labels: Vec<String> = commands.iter().map(Command::label).collect();
+    labels.sort();
+    let mut listed_sorted = listed.clone();
+    listed_sorted.sort();
+    assert_eq!(labels, listed_sorted);
+}

@@ -96,7 +96,7 @@ undoable, before any of it is visible.
 
 ---
 
-### M2 — Shell: start screen, layout, settings, i18n, help search
+### M2 — Shell: start screen, layout, settings, i18n, help search · **complete**
 
 **Goal:** the app looks and behaves like VectorEffects with the PolarEffects
 palette, in three languages, with a working feature search.

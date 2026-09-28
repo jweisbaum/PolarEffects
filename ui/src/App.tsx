@@ -1,34 +1,435 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { listen } from "@tauri-apps/api/event";
 
+import { ACCEL, isAccel } from "./chords";
 import type { AppInfo } from "./generated/AppInfo";
-import { api } from "./ipc";
+import type { AppSettings } from "./generated/AppSettings";
+import type { ProjectSummary } from "./generated/ProjectSummary";
+import Help from "./help/Help";
+import HelpMenu from "./help/HelpMenu";
+import { onReveal } from "./help/highlight";
+import { reportError, shown, useHint } from "./hint";
+import { isBusy, useBusy } from "./busy";
+import { msg, setLanguage, useT } from "./i18n";
+import { api, IpcError, QUIT_REQUESTED } from "./ipc";
+import MapView from "./map/MapView";
+import LeftNav from "./panels/LeftNav";
+import RightPanel from "./panels/RightPanel";
+import { loadPanels, reveal, savePanels, togglePanel, type PanelState } from "./panels/layout";
+import { pickProjectToOpen, pickProjectToSave } from "./project/dialogs";
+import LoadingScreen from "./project/LoadingScreen";
+import NewProjectDialog from "./project/NewProjectDialog";
+import ProjectMenu from "./project/ProjectMenu";
+import { quitThroughGuard } from "./project/quitGuard";
+import { mayReplaceProject, type UnsavedChoice } from "./project/saveGuard";
+import StartScreen from "./project/StartScreen";
+import UnsavedChangesDialog from "./project/UnsavedChangesDialog";
+import SettingsDialog from "./settings/SettingsDialog";
+import { applyTheme } from "./settings/themes";
+import Placeholder from "./stage/Placeholder";
+import StageSwitcher, { type Stage } from "./stage/StageSwitcher";
 
 /**
- * Placeholder start screen (plan.md M0): the product name and version, read
- * from the Rust side so the IPC round trip is exercised from the first build.
- * The real start screen arrives with M2.
- *
- * No interface text of its own yet: the name and version come from Rust, and
- * an error shows the backend's message. Translated strings arrive with i18n
- * in M2.
+ * Application shell (spec.md 3). The help window wraps everything so F1 and
+ * the native menu's Help reach it from the start screen and the project
+ * window alike; the loading page sits over both.
  */
 export default function App() {
+  return <Help><Shell /><LoadingScreen /></Help>;
+}
+
+/** An error as the status line shows it: the message, with the kind kept for the tooltip. */
+function report(err: unknown) {
+  if (err instanceof IpcError) reportError(err.message, err.kind);
+  else reportError(String(err));
+}
+
+function Shell() {
+  const t = useT();
   const [info, setInfo] = useState<AppInfo | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [project, setProject] = useState<ProjectSummary | null>(null);
+  const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
+  const [stage, setStage] = useState<Stage>("map");
+  const [status, setStatus] = useState<string | null>(null);
+  // Non-null while the New Project dialog is up; the boolean is the answer the
+  // user already gave about unsaved changes, carried through to the command.
+  const [creating, setCreating] = useState<{ discardUnsaved: boolean } | null>(null);
+  // Set while the unsaved-changes prompt is up: holds the resolver the dialog's
+  // buttons complete, which is what lets the guard read as a plain `await`.
+  const [askUnsaved, setAskUnsaved] = useState<{ name: string; resolve: (choice: UnsavedChoice) => void } | null>(null);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  /** Which panels are open: the person's, remembered in `localStorage` (spec.md 3.2). */
+  const [panels, setPanels] = useState<PanelState>(loadPanels);
+
+  useLayoutEffect(() => applyTheme(settings?.theme), [settings?.theme]);
+  // The settings file is the authority on the language (spec.md 3.5).
+  useEffect(() => {
+    if (settings) setLanguage(settings.language);
+  }, [settings?.language]);
 
   useEffect(() => {
-    api.appInfo().then(setInfo, (err: unknown) => setError(err instanceof Error ? err.message : String(err)));
+    // A settings file that will not load costs the preferences, not the
+    // launch: the backend already falls back to defaults.
+    void api.appSettings().then(setSettings).catch(() => undefined);
+    void api.appInfo().then(setInfo).catch(() => undefined);
+    // A project may already be open after a reload of the frontend.
+    void api.projectSummary().then((open) => { if (open) setProject(open); }).catch(() => undefined);
   }, []);
 
-  return (
-    <main className="start">
-      {info !== null && (
-        <>
-          <h1>{info.name}</h1>
-          <p className="version">{info.version}</p>
-        </>
-      )}
-      {error !== null && <p role="alert">{error}</p>}
-    </main>
+  const toggle = useCallback((panel: keyof PanelState) => {
+    setPanels((current) => {
+      const next = togglePanel(current, panel);
+      savePanels(next);
+      return next;
+    });
+  }, []);
+
+  /**
+   * The search's reveal steps for what the shell hides (spec.md 3.6):
+   * `panel:<name>` opens a folded panel, `section:<name>` a folded section
+   * and its panel, `stage:<name>` switches the centre stage, and `settings:`
+   * opens Settings (the dialog itself scrolls to the section).
+   */
+  useEffect(() => {
+    const open = (name: keyof PanelState) => setPanels((current) => {
+      const next = reveal(current, name);
+      if (next !== current) savePanels(next);
+      return next;
+    });
+    const offs = [
+      onReveal("panel:left", () => open("left")),
+      onReveal("panel:right", () => open("right")),
+      onReveal("section:orc", () => open("orc")),
+      onReveal("section:polar-files", () => open("polarFiles")),
+      onReveal("section:tracks", () => open("tracks")),
+      onReveal("section:sources", () => open("sources")),
+      onReveal("section:plot", () => open("plot")),
+      onReveal("stage:map", () => setStage("map")),
+      onReveal("stage:3d", () => setStage("3d")),
+      onReveal("stage:compare", () => setStage("compare")),
+      onReveal("settings:", () => setShowSettings(true)),
+    ];
+    return () => { for (const off of offs) off(); };
+  }, []);
+
+  const flash = useCallback((message: string) => {
+    setStatus(message);
+    reportError(null);
+    window.setTimeout(() => setStatus((current) => (current === message ? null : current)), 2500);
+  }, []);
+
+  /** Puts the application into a project, or back to the start screen. */
+  const enter = useCallback((next: ProjectSummary | null) => {
+    reportError(null);
+    setRenaming(null);
+    setProject(next);
+  }, []);
+
+  // Both report whether the project actually reached disk. A cancelled
+  // destination dialog is not a save, and the guard has to be able to tell.
+  const saveAs = useCallback(async (): Promise<boolean> => {
+    if (!project) return false;
+    try {
+      const path = await pickProjectToSave(project.name);
+      if (path === null) return false;
+      const saved = await api.saveProjectAs(path);
+      setProject(saved);
+      flash(t("Saved to {path}", { path: saved.path ?? path }));
+      return true;
+    } catch (err) {
+      report(err);
+      return false;
+    }
+  }, [project, flash]);
+
+  const save = useCallback(async (): Promise<boolean> => {
+    if (!project) return false;
+    // Never saved: Save As rather than failing (spec.md 3.3).
+    if (project.path === null) return saveAs();
+    try {
+      setProject(await api.saveProject());
+      flash(t("Saved"));
+      return true;
+    } catch (err) {
+      if (err instanceof IpcError && err.kind === "never-saved") return saveAs();
+      report(err);
+      return false;
+    }
+  }, [project, saveAs, flash]);
+
+  const ask = useCallback((name: string) => new Promise<UnsavedChoice>((resolve) => {
+    setAskUnsaved((current) => {
+      // A second prompt would strand the first one's promise unresolved.
+      if (current !== null) {
+        resolve("cancel");
+        return current;
+      }
+      return { name, resolve };
+    });
+  }), []);
+
+  /** Asks about unsaved changes, if any, and says whether the open project may be replaced. */
+  const mayReplace = useCallback(
+    () => mayReplaceProject(project, () => ask(project?.name ?? t("This project")), save),
+    [project, ask, save],
   );
+
+  const answerUnsaved = useCallback((choice: UnsavedChoice) => {
+    askUnsaved?.resolve(choice);
+    setAskUnsaved(null);
+  }, [askUnsaved]);
+
+  const startNewProject = useCallback(async () => {
+    const decision = await mayReplace();
+    if (decision.proceed) setCreating({ discardUnsaved: decision.discardUnsaved });
+  }, [mayReplace]);
+
+  const openPath = useCallback(async (path: string, discardUnsaved: boolean) => {
+    enter(await api.openProject(path, discardUnsaved));
+  }, [enter]);
+
+  const openProject = useCallback(async () => {
+    // Asked before the file dialog: nothing is discarded by asking, since the
+    // answer travels with the open call, so cancelling the dialog costs nothing.
+    const decision = await mayReplace();
+    if (!decision.proceed) return;
+    try {
+      const path = await pickProjectToOpen();
+      if (path !== null) await openPath(path, decision.discardUnsaved);
+    } catch (err) {
+      report(err);
+    }
+  }, [mayReplace, openPath]);
+
+  const openRecent = useCallback(async (path: string) => {
+    const decision = await mayReplace();
+    if (!decision.proceed) return;
+    try {
+      await openPath(path, decision.discardUnsaved);
+    } catch (err) {
+      report(err);
+    }
+  }, [mayReplace, openPath]);
+
+  const closeProject = useCallback(async () => {
+    const decision = await mayReplace();
+    if (!decision.proceed) return;
+    try {
+      await api.closeProject(decision.discardUnsaved);
+      enter(null);
+    } catch (err) {
+      report(err);
+    }
+  }, [mayReplace, enter]);
+
+  /**
+   * Quit and the window's close button (spec.md 3.3). Rust asks only when
+   * there is something to lose; the latest guard is read through a ref, since
+   * the listener is registered once.
+   */
+  const quitDeps = useRef({ ask, save, project });
+  quitDeps.current = { ask, save, project };
+  useEffect(() => {
+    let quitting = false;
+    const pending = listen(QUIT_REQUESTED, () => {
+      if (quitting) return;
+      quitting = true;
+      void quitThroughGuard({
+        current: () => api.projectSummary(),
+        ask: () => quitDeps.current.ask(quitDeps.current.project?.name ?? t("This project")),
+        save: () => quitDeps.current.save(),
+        quit: (discardUnsaved) => api.quitApp(discardUnsaved),
+      }).catch(report).finally(() => { quitting = false; });
+    }).catch(() => null);
+    return () => { void pending.then((off) => off?.()); };
+  }, []);
+
+  // Standard shortcuts (spec.md 3.2).
+  const modal = creating !== null || askUnsaved !== null || showSettings;
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      // A dialog is a decision in progress; saving or undoing behind it would
+      // change the very thing being decided about.
+      if (modal || !isAccel(event)) return;
+      const key = event.key.toLowerCase();
+      const target = event.target as HTMLElement | null;
+      const typing = target !== null && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName);
+      if (key === ",") {
+        event.preventDefault();
+        setShowSettings(true);
+      } else if (key === "n") {
+        event.preventDefault();
+        void startNewProject();
+      } else if (key === "o") {
+        event.preventDefault();
+        void openProject();
+      } else if (!project) {
+        return;
+      } else if (key === "s") {
+        event.preventDefault();
+        void (event.shiftKey ? saveAs() : save());
+      } else if (key === "w") {
+        event.preventDefault();
+        void closeProject();
+      } else if (key === "z" && !typing) {
+        // In a text field, Cmd-Z undoes the typing, not the project.
+        event.preventDefault();
+        void (event.shiftKey ? api.redo() : api.undo()).then((next) => {
+          const label = event.shiftKey ? project.redo_label : project.undo_label;
+          setProject(next);
+          if (label) flash(event.shiftKey ? t("Redone: {action}", { action: t(label) }) : t("Undone: {action}", { action: t(label) }));
+        }).catch(report);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [modal, project, startNewProject, openProject, save, saveAs, closeProject, flash]);
+
+  const settingsDialog = showSettings && settings !== null && (
+    <SettingsDialog settings={settings} onSettings={setSettings} onClose={() => setShowSettings(false)} />
+  );
+  const unsavedDialog = askUnsaved !== null && <UnsavedChangesDialog name={askUnsaved.name} onChoose={answerUnsaved} />;
+
+  if (!project) {
+    return <>
+      <StartScreen onOpened={enter} onSettings={() => setShowSettings(true)} onPreferences={setSettings} />
+      {settingsDialog}
+      {unsavedDialog}
+    </>;
+  }
+
+  return (
+    <div className="app">
+      <div className="titlebar">
+        <ProjectMenu
+          onNew={() => void startNewProject()}
+          onOpen={() => void openProject()}
+          onOpenRecent={(path) => void openRecent(path)}
+          onSave={() => void save()}
+          onSaveAs={() => void saveAs()}
+          onClose={() => void closeProject()}
+        />
+        {/* The name is edited where it is shown: click it, type, Enter. It undoes. */}
+        {renaming !== null ? (
+          <input
+            className="project-name"
+            autoFocus
+            value={renaming}
+            aria-label={t("Project name")}
+            title={t("Type a new name; Enter to keep it, Esc to cancel")}
+            data-feature="shell:rename"
+            onChange={(event) => setRenaming(event.target.value)}
+            onBlur={() => {
+              const name = renaming.trim();
+              setRenaming(null);
+              if (name.length > 0 && name !== project.name) void api.renameProject(name).then(setProject).catch(report);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") event.currentTarget.blur();
+              if (event.key === "Escape") setRenaming(null);
+            }}
+          />
+        ) : (
+          <button className="project-name" onClick={() => setRenaming(project.name)}
+            title={t("Click to rename the project")} data-feature="shell:rename">
+            {project.name}
+            {project.dirty && <span className="dirty" aria-label={t("Unsaved changes")}> •</span>}
+          </button>
+        )}
+        <span className="spacer" />
+        <StageSwitcher stage={stage} onStage={setStage} />
+        <span className="spacer" />
+        <HelpMenu />
+        <button className="settings" onClick={() => setShowSettings(true)} data-feature="shell:settings"
+          title={t("Settings ({chord})", { chord: `${ACCEL}+,` })} aria-label={t("Settings")}>
+          ⚙
+        </button>
+      </div>
+
+      <div className="workspace" style={{
+        "--dock-left": panels.left ? "var(--sidebar-left)" : "0px",
+        "--dock-right": panels.right ? "var(--sidebar-right)" : "0px",
+      } as CSSProperties}>
+        {panels.left && <aside className="sidebar left"><LeftNav panels={panels} onToggle={toggle} /></aside>}
+        <main className="centre-stage" aria-label={t("Stage")}>
+          {stage === "map" && <MapView settings={settings} onSettings={setSettings} />}
+          {stage === "3d" && <Placeholder title={msg("3D polar")}
+            body={msg("The 3D view of a polar and its samples arrives in a later version.")} />}
+          {stage === "compare" && <Placeholder title={msg("Compare")}
+            body={msg("Comparing two polars arrives in a later version.")} />}
+        </main>
+        {panels.right && <aside className="sidebar right"><RightPanel project={project} panels={panels} onToggle={toggle} /></aside>}
+        <DockToggle side="left" open={panels.left}
+          labels={[msg("Show the navigation"), msg("Hide the navigation")]} onToggle={() => toggle("left")} />
+        <DockToggle side="right" open={panels.right}
+          labels={[msg("Show the sources and polar plot"), msg("Hide the sources and polar plot")]} onToggle={() => toggle("right")} />
+      </div>
+
+      <div className="statusbar" data-feature="shell:statusbar" title={t("Hints, errors and work in progress")}>
+        <BusySpinner />
+        <StatusHint status={status} />
+        <span className="spacer" />
+        {project.path !== null && <span className="muted path" title={project.path}>{project.path}</span>}
+        {info && <span className="muted">v{info.version}</span>}
+      </div>
+
+      {settingsDialog}
+      {creating !== null && (
+        <NewProjectDialog discardUnsaved={creating.discardUnsaved}
+          onCreated={(created) => { setCreating(null); enter(created); }}
+          onCancel={() => setCreating(null)} />
+      )}
+      {unsavedDialog}
+    </div>
+  );
+}
+
+const DOCK_GLYPH = {
+  left: { open: "◀", closed: "▶" },
+  right: { open: "▶", closed: "◀" },
+} as const;
+
+/**
+ * A panel's toggle: a tab on the border between the panel and the stage,
+ * which stays put whether the panel is open or closed. Copied from
+ * VectorEffects.
+ */
+function DockToggle({ side, open, labels, onToggle }: {
+  side: "left" | "right";
+  open: boolean;
+  /** What the tab says while the panel is closed, and while it is open. English, via `msg`. */
+  labels: [show: string, hide: string];
+  onToggle: () => void;
+}) {
+  const t = useT();
+  const label = t(open ? labels[1] : labels[0]);
+  return (
+    <button className={`dock-toggle ${side}`} data-feature={`dock:${side}`} onClick={onToggle}
+      title={label} aria-label={label} aria-expanded={open}>
+      {DOCK_GLYPH[side][open ? "open" : "closed"]}
+    </button>
+  );
+}
+
+/** The status bar's spinner: turning while a long command runs. */
+function BusySpinner() {
+  const t = useT();
+  const busy = useBusy();
+  const on = isBusy(busy);
+  return (
+    <span className={on ? "busy-spinner on" : "busy-spinner"} role="status" aria-live="polite"
+      aria-label={on ? busy.labels.map((label) => t(label)).join(", ") : t("Idle")}
+      title={on ? busy.labels.map((label) => t(label)).join(" · ") : undefined} />
+  );
+}
+
+/** The status bar's middle: a flash, the error, or the hint. */
+function StatusHint({ status }: { status: string | null }) {
+  const state = useHint();
+  const line = shown(state);
+  if (status !== null) return <span className="hint accent">{status}</span>;
+  if (line === null) return <span className="hint" />;
+  return <span className={line.kind === "error" ? "hint error" : "hint muted"} role={line.kind === "error" ? "alert" : undefined}
+    title={line.detail ?? undefined}>{line.text}</span>;
 }

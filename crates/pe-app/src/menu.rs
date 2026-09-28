@@ -30,10 +30,8 @@ pub enum Label {
     ShowAll,
     /// "Quit PolarEffects".
     Quit,
-    /// The File menu.
+    /// The File menu (Windows and Linux, where it holds Quit).
     File,
-    /// "Close Window".
-    CloseWindow,
     /// The Edit menu.
     Edit,
     /// "Undo".
@@ -73,7 +71,6 @@ pub const ALL: &[Label] = &[
     Label::ShowAll,
     Label::Quit,
     Label::File,
-    Label::CloseWindow,
     Label::Edit,
     Label::Undo,
     Label::Redo,
@@ -103,7 +100,6 @@ pub fn text(language: &str, label: Label) -> &'static str {
         ("fr", L::ShowAll) => "Tout afficher",
         ("fr", L::Quit) => "Quitter PolarEffects",
         ("fr", L::File) => "Fichier",
-        ("fr", L::CloseWindow) => "Fermer la fenêtre",
         ("fr", L::Edit) => "Édition",
         ("fr", L::Undo) => "Annuler",
         ("fr", L::Redo) => "Rétablir",
@@ -126,7 +122,6 @@ pub fn text(language: &str, label: Label) -> &'static str {
         ("de", L::ShowAll) => "Alle einblenden",
         ("de", L::Quit) => "PolarEffects beenden",
         ("de", L::File) => "Datei",
-        ("de", L::CloseWindow) => "Fenster schließen",
         ("de", L::Edit) => "Bearbeiten",
         ("de", L::Undo) => "Widerrufen",
         ("de", L::Redo) => "Wiederholen",
@@ -149,7 +144,6 @@ pub fn text(language: &str, label: Label) -> &'static str {
         (_, L::ShowAll) => "Show All",
         (_, L::Quit) => "Quit PolarEffects",
         (_, L::File) => "File",
-        (_, L::CloseWindow) => "Close Window",
         (_, L::Edit) => "Edit",
         (_, L::Undo) => "Undo",
         (_, L::Redo) => "Redo",
@@ -212,18 +206,11 @@ pub fn build<R: tauri::Runtime>(
         ],
     )?;
 
-    let file_menu = Submenu::with_items(
-        app,
-        text(language, Label::File),
-        true,
-        &[
-            &PredefinedMenuItem::close_window(app, l(Label::CloseWindow))?,
-            #[cfg(not(target_os = "macos"))]
-            &PredefinedMenuItem::separator(app)?,
-            #[cfg(not(target_os = "macos"))]
-            &quit,
-        ],
-    )?;
+    // No Close Window item: its fixed Cmd/Ctrl-W accelerator would take the
+    // chord spec.md 3.2 gives to closing the project. The window's own close
+    // button still closes it, through the same guard as Quit.
+    #[cfg(not(target_os = "macos"))]
+    let file_menu = Submenu::with_items(app, text(language, Label::File), true, &[&quit])?;
 
     let edit_menu = Submenu::with_items(
         app,
@@ -280,6 +267,7 @@ pub fn build<R: tauri::Runtime>(
         &[
             #[cfg(target_os = "macos")]
             &app_menu,
+            #[cfg(not(target_os = "macos"))]
             &file_menu,
             &edit_menu,
             #[cfg(target_os = "macos")]

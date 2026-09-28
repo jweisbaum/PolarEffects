@@ -164,10 +164,13 @@ deferred (§14).
 ```
 
 - **Title bar**: the project menu, the project name (click to rename), a dirty
-  dot, the stage switcher, the help search and settings.
+  dot, the stage switcher, the help search (a search box and a "?" button
+  that opens the help window) and settings (Cmd/Ctrl-,).
 - **Project menu**: New…, Open…, Open Recent ▸, Save, Save As…, Close, each
   with `data-feature="project:*"`. Standard shortcuts (Cmd/Ctrl-N, O, S,
-  Shift-S, W).
+  Shift-S, W). Cmd/Ctrl-Z and Shift-Z undo and redo outside text fields. The
+  native menu has no Close Window item, so Cmd/Ctrl-W always means Close
+  project.
 - **Left navigation**: collapsible as a whole (◀) and per section. Three
   sections, in this order: ORC polars (§5), Polar files (§6), Tracks (§7).
   Collapse state is remembered per user, not per project.
@@ -190,6 +193,11 @@ The VectorEffects save guard is copied unchanged (D9):
   dialog aborts the whole operation.
 - The back end refuses to drop a dirty project unless the call passes
   `discard_unsaved = true`, so no caller can lose work by forgetting to ask.
+- Quitting (the Quit item, Cmd/Ctrl-Q, the platform's own quit) and the
+  window's close button are stopped in Rust while the project is dirty; Rust
+  emits `app://quit-requested`, the frontend runs the same guard, and exits
+  through `quit_app(discard_unsaved)`, which Rust checks like any other
+  discard. "Don't save" also drops the recovery snapshot.
 - A running job (scrape, reanalysis fetch, GRIB export) belongs to the
   project. Replacing the project asks to cancel the job first.
 
@@ -198,16 +206,23 @@ The VectorEffects save guard is copied unchanged (D9):
 Stored in `settings.json` in the platform config directory
 (`directories::ProjectDirs::from("com", "PolarEffects", "PolarEffects")`),
 beside the recent list. Every field has a default; a file that fails to parse
-falls back to defaults. Settings are not stored in projects.
+falls back to defaults, and it is read field by field, so one unreadable or
+out-of-range value costs only that preference. Settings are not stored in
+projects. Each change is validated and saved by Rust at once; a refused value
+or a failed write leaves the previous setting in place.
 
 - **Language** (§3.5). Also shown on the start screen.
 - **Theme**.
 - **Units**: boat and wind speed (kn default, m/s, km/h), wave height (m,
   ft), distance (nm, km).
 - **Autosave**: recovery (default), save, off.
-- **Chunk cache**: location, size limit (default 20 GB), Clear cache button,
-  current size.
-- **Network**: request concurrency (default 8), timeout.
+- **Chunk cache**: location, size limit (default 20 GB, 1–2000), Clear cache
+  button, current size. The chunks live in a `chunks` folder inside the chosen
+  location (the platform cache directory by default), and Clear removes only
+  that folder, never the rest of a folder the user pointed at.
+- **Network**: request concurrency (default 8, 1–32), timeout (default 60 s,
+  5–600 s).
+- **Map projection** (§9.1), remembered here rather than in the project.
 
 ### 3.5 Language, help and tooltips
 
@@ -218,7 +233,8 @@ The VectorEffects i18n system is copied (D10):
 - Catalogues in `ui/src/i18n/locales/<lang>/<area>.ts`. **v1 ships English,
   French and German.** The language picker is in Settings and on the start
   screen; changing it relabels everything immediately, including the native
-  menu.
+  menu, which Rust rebuilds from a translated table (`menu.rs`) on every
+  language change.
 - `coverage.test.ts` fails on a missing, unused or untranslated key, and on
   JSX text, `title` or `aria-label` that skips `t`.
 - A glossary per language fixes sailing terms (TWA, TWS, BSP, VMG, polar,
@@ -247,7 +263,12 @@ Copied from VectorEffects (spec §5.8 there), with the highlight in orange:
   control for 2.4 s or until the next pointer down. Motion is reduced under
   `prefers-reduced-motion`.
 - `features.test.ts` fails if a tag has no registry entry or an entry has no
-  tag.
+  tag, and if any feature is not found by its own translated label in every
+  language.
+- The start screen has no search box (as in VectorEffects); its Help button
+  opens the help window. The answer buttons of transient dialogs (Save / Don't
+  save / Cancel, confirmations) are not in the registry: nothing can reveal a
+  question that has not been asked.
 
 ---
 
@@ -648,7 +669,11 @@ The right panel lists every source (ORC, file, track) in one list:
 
 The default centre stage. A WebGL2 world map with the VectorEffects basemap
 (Natural Earth land and coastlines, embedded; no tiles). Projections:
-equirectangular and orthographic.
+equirectangular and orthographic, chosen on the map and remembered in the
+settings. Drag pans the flat map or turns the globe; the wheel zooms, about the
+pointer on the flat map and about the centre on the globe; "Fit the world"
+shows everything again. The globe's land is drawn through an equirectangular
+mask texture, so no land triangle folds across the horizon.
 
 - Every visible track is drawn in its source colour. Filtered-out fixes are
   drawn dimmed.

@@ -7,9 +7,18 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 
+import { beginBusy } from "./busy";
+import { msg } from "./i18n/msg";
 import type { AppErrorPayload } from "./generated/AppErrorPayload";
 import type { AppInfo } from "./generated/AppInfo";
+import type { AppSettings } from "./generated/AppSettings";
+import type { AutosaveMode } from "./generated/AutosaveMode";
 import type { BoatInput } from "./generated/BoatInput";
+import type { ChunkCacheSettings } from "./generated/ChunkCacheSettings";
+import type { ChunkCacheStatus } from "./generated/ChunkCacheStatus";
+import type { MapProjection } from "./generated/MapProjection";
+import type { NetworkSettings } from "./generated/NetworkSettings";
+import type { Units } from "./generated/Units";
 import type { ProjectSummary } from "./generated/ProjectSummary";
 import type { RecentProject } from "./generated/RecentProject";
 import type { RecoveredProject } from "./generated/RecoveredProject";
@@ -34,13 +43,30 @@ export function isErrorPayload(value: unknown): value is AppErrorPayload {
   );
 }
 
+/**
+ * The commands that can take long enough to want the status bar's spinner,
+ * with what it says while they run. Callers do nothing; the name is enough.
+ */
+const LONG_RUNNING: Readonly<Record<string, string>> = {
+  open_project: msg("Opening project"),
+  open_recovered: msg("Recovering project"),
+  save_project: msg("Saving"),
+  save_project_as: msg("Saving"),
+  chunk_cache_status: msg("Measuring the cache"),
+  clear_chunk_cache: msg("Clearing the cache"),
+};
+
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  const label = LONG_RUNNING[command];
+  const done = label === undefined ? null : beginBusy(label);
   try {
     return await invoke<T>(command, args);
   } catch (raw) {
     if (isErrorPayload(raw)) throw new IpcError(raw);
     // A command that panicked, or a Tauri-level failure, arrives as a bare string.
     throw new IpcError({ kind: "unknown", message: String(raw) });
+  } finally {
+    done?.();
   }
 }
 
@@ -94,4 +120,69 @@ export const api = {
     call<ProjectSummary>("open_recovered", { id, discardUnsaved }),
   /** Deletes a recovered autosave. */
   discardRecovered: (id: number) => call<RecoveredProject[]>("discard_recovered", { id }),
+
+  // The source list (spec.md 8). Each is one undoable change.
+
+  /** Sets a source's colour, `#rrggbb`. */
+  setSourceColour: (id: number, colour: string) =>
+    call<ProjectSummary>("set_source_colour", { id, colour }),
+  /** Shows or hides a source; hidden sources leave the blend and every plot. */
+  setSourceVisible: (id: number, visible: boolean) =>
+    call<ProjectSummary>("set_source_visible", { id, visible }),
+  /**
+   * Sets a source's blend weight (0–2). Calls sharing a `gesture` name, one
+   * after another, are one undo entry: a slider drag.
+   */
+  setSourceWeight: (id: number, weight: number, gesture: string | null = null) =>
+    call<ProjectSummary>("set_source_weight", { id, weight, gesture }),
+  /** Renames a source. */
+  setSourceLabel: (id: number, label: string) =>
+    call<ProjectSummary>("set_source_label", { id, label }),
+  /** Moves a source to position `to` (display order only). */
+  moveSource: (id: number, to: number) => call<ProjectSummary>("move_source", { id, to }),
+  /** Removes a source; undo puts it back. */
+  removeSource: (id: number) => call<ProjectSummary>("remove_source", { id }),
+
+  // Settings (spec.md 3.4). Each returns the settings as saved.
+
+  /** The settings. */
+  appSettings: () => call<AppSettings>("app_settings"),
+  /** Sets the interface language; the native menu follows. */
+  setLanguage: (language: string) => call<AppSettings>("set_language", { language }),
+  /** Sets the theme. */
+  setTheme: (theme: string) => call<AppSettings>("set_theme", { theme }),
+  /** Sets the display units. */
+  setUnits: (units: Units) => call<AppSettings>("set_units", { units }),
+  /** Sets what autosave does. */
+  setAutosaveMode: (mode: AutosaveMode) => call<AppSettings>("set_autosave_mode", { mode }),
+  /** Sets the chunk cache's folder (empty for the default) and size limit. */
+  setChunkCache: (cache: ChunkCacheSettings) => call<AppSettings>("set_chunk_cache", { cache }),
+  /** Sets the reanalysis fetcher's concurrency and timeout. */
+  setNetwork: (network: NetworkSettings) => call<AppSettings>("set_network", { network }),
+  /** Sets the map projection. */
+  setProjection: (projection: MapProjection) => call<AppSettings>("set_projection", { projection }),
+  /** Where the chunk cache is and how big it is. */
+  chunkCacheStatus: () => call<ChunkCacheStatus>("chunk_cache_status"),
+  /** Empties the chunk cache (lossless: samples live in projects). */
+  clearChunkCache: () => call<ChunkCacheStatus>("clear_chunk_cache"),
+
+  // The map (spec.md 9.1).
+
+  /** The bundled basemap asset, as raw bytes. */
+  basemap: async (): Promise<ArrayBuffer> => {
+    const bytes = await call<ArrayBuffer | number[]>("basemap");
+    // Raw responses arrive as an ArrayBuffer; older shapes as a number array.
+    return bytes instanceof ArrayBuffer ? bytes : new Uint8Array(bytes).buffer;
+  },
+
+  // Quitting (spec.md 3.3).
+
+  /**
+   * Quits, after the unsaved-changes guard. Rust refuses with
+   * "unsaved-changes" unless the project is clean or `discardUnsaved`.
+   */
+  quitApp: (discardUnsaved: boolean) => call<void>("quit_app", { discardUnsaved }),
 };
+
+/** The event Rust sends when the user asks to quit or close the window. */
+export const QUIT_REQUESTED = "app://quit-requested";
