@@ -166,13 +166,27 @@ impl Project {
     /// The first palette colour no source uses, or the palette continued by
     /// count when all sixteen are taken (spec.md 8).
     pub fn next_palette_colour(&self) -> Colour {
-        let used: BTreeSet<&str> = self.sources.iter().map(|s| s.colour.as_str()).collect();
-        let pick = PALETTE
-            .iter()
-            .find(|c| !used.contains(**c))
-            .copied()
-            .unwrap_or(PALETTE[self.sources.len() % PALETTE.len()]);
-        Colour::trusted(pick)
+        let mut colours = self.next_palette_colours(1);
+        colours.pop().unwrap_or_else(|| Colour::trusted(PALETTE[0]))
+    }
+
+    /// The colours `count` sources added one after another would take: each
+    /// the first palette colour neither the project nor an earlier one of
+    /// them uses. A multi-file import colours its files with this before any
+    /// of them is in the list.
+    pub fn next_palette_colours(&self, count: usize) -> Vec<Colour> {
+        let mut used: BTreeSet<&str> = self.sources.iter().map(|s| s.colour.as_str()).collect();
+        (0..count)
+            .map(|k| {
+                let pick = PALETTE
+                    .iter()
+                    .find(|c| !used.contains(**c))
+                    .copied()
+                    .unwrap_or(PALETTE[(self.sources.len() + k) % PALETTE.len()]);
+                used.insert(pick);
+                Colour::trusted(pick)
+            })
+            .collect()
     }
 
     /// Checks every rule the document must hold before it is written.
@@ -280,6 +294,24 @@ mod tests {
         p.sources.push(first);
         let second = polar_source(&mut p);
         assert_eq!(second.colour.as_str(), PALETTE[1]);
+    }
+
+    /// A batch takes the colours the same sources added one by one would:
+    /// skipping any a source already has, and never twice the same.
+    #[test]
+    fn a_batch_of_sources_takes_distinct_unused_colours() {
+        let mut p = Project::new("P", Boat::default(), 0);
+        let mut first = polar_source(&mut p);
+        first.colour = Colour::trusted(PALETTE[1]);
+        p.sources.push(first);
+        let picked: Vec<String> = p
+            .next_palette_colours(3)
+            .into_iter()
+            .map(String::from)
+            .collect();
+        assert_eq!(picked, [PALETTE[0], PALETTE[2], PALETTE[3]]);
+        assert_eq!(p.next_palette_colours(17).len(), 17);
+        assert_eq!(p.next_palette_colour().as_str(), PALETTE[0]);
     }
 
     #[test]

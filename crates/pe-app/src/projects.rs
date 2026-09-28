@@ -8,7 +8,8 @@
 
 use std::path::PathBuf;
 
-use pe_core::{Boat, CoreError, Project, io};
+use pe_core::polar::PolarFileFormat;
+use pe_core::{Boat, CoreError, Project, SourceKind, io};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -32,6 +33,88 @@ pub struct SourceSummary {
     pub visible: bool,
     /// Blend weight, 0–2.
     pub weight: f64,
+    /// What the source holds (spec.md 8): cells with a value for a polar,
+    /// samples for a track.
+    pub count: u32,
+    /// For a track, the samples not excluded by hand; null for a polar. The
+    /// sample filters join this count when they arrive (M8).
+    pub used: Option<u32>,
+    /// For an imported polar file, how it was read (spec.md 6).
+    pub polar_file: Option<PolarFileSummary>,
+}
+
+/// An imported polar file's format and axes, as the Polar files section
+/// lists them (spec.md 6).
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[ts(export_to = "PolarFileSummary.ts")]
+pub struct PolarFileSummary {
+    /// `"expedition"`, `"adrena"` or `"csv"`.
+    pub format: String,
+    /// The file it came from.
+    pub file_name: String,
+    /// Its TWA axis, degrees.
+    pub twa: Vec<f64>,
+    /// Its TWS axis, knots.
+    pub tws: Vec<f64>,
+}
+
+fn count(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+impl SourceSummary {
+    /// The summary of one source.
+    pub fn of(source: &pe_core::Source) -> Self {
+        let (cells, used, polar_file) = match &source.kind {
+            SourceKind::Orc { record } => {
+                let cells = record.vpp.bsp.iter().flatten().flatten().count();
+                (cells, None, None)
+            }
+            SourceKind::PolarFile {
+                format,
+                file_name,
+                polar,
+            } => (
+                pe_polar::cell_count(polar),
+                None,
+                Some(PolarFileSummary {
+                    format: format_name(*format).to_owned(),
+                    file_name: file_name.clone(),
+                    twa: polar.twa.clone(),
+                    tws: polar.tws.clone(),
+                }),
+            ),
+            SourceKind::Track { track } => {
+                let excluded = &source.overlay.excluded_samples;
+                let used = track
+                    .samples
+                    .iter()
+                    .filter(|sample| excluded.binary_search(&sample.id).is_err())
+                    .count();
+                (track.samples.len(), Some(count(used)), None)
+            }
+        };
+        Self {
+            id: source.id.raw(),
+            kind: source.kind.name().to_owned(),
+            label: source.label.clone(),
+            colour: source.colour.to_string(),
+            visible: source.visible,
+            weight: source.weight,
+            count: count(cells),
+            used,
+            polar_file,
+        }
+    }
+}
+
+/// The wire name of a polar file format.
+fn format_name(format: PolarFileFormat) -> &'static str {
+    match format {
+        PolarFileFormat::Expedition => "expedition",
+        PolarFileFormat::Adrena => "adrena",
+        PolarFileFormat::Csv => "csv",
+    }
 }
 
 /// What the frontend needs to know about the open project.
@@ -76,18 +159,7 @@ impl ProjectSummary {
             revision: open.revision,
             boat_name: project.boat.name.clone(),
             boat_notes: project.boat.notes.clone(),
-            sources: project
-                .sources
-                .iter()
-                .map(|s| SourceSummary {
-                    id: s.id.raw(),
-                    kind: s.kind.name().to_owned(),
-                    label: s.label.clone(),
-                    colour: s.colour.to_string(),
-                    visible: s.visible,
-                    weight: s.weight,
-                })
-                .collect(),
+            sources: project.sources.iter().map(SourceSummary::of).collect(),
             can_undo: open.history.can_undo(),
             can_redo: open.history.can_redo(),
             undo_label: open.history.undo_label().map(str::to_owned),

@@ -229,8 +229,25 @@ fn every_history_label_is_listed_for_translation() {
         Command::MoveSource { from: 0, to: 1 },
     ];
     let mut labels: Vec<String> = commands.iter().map(Command::label).collect();
+    // Batches carry their own label; these are every one Rust builds.
+    labels.extend(
+        [
+            pe_app::polar_files::IMPORT_ONE,
+            pe_app::polar_files::IMPORT_MANY,
+        ]
+        .map(str::to_owned),
+    );
     labels.sort();
     let mut listed_sorted = listed.clone();
     listed_sorted.sort();
     assert_eq!(labels, listed_sorted);
+}
+
+/// The source list's colour picker offers the palette new sources take
+/// colours from (spec.md 8); the frontend keeps a copy of it, checked here.
+#[test]
+fn the_frontend_palette_is_the_core_palette() {
+    let listed: Vec<String> =
+        serde_json::from_str(include_str!("../../../ui/src/panels/palette.json")).unwrap();
+    assert_eq!(listed, pe_core::source::PALETTE);
 }
