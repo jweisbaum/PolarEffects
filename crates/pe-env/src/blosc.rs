@@ -76,13 +76,32 @@ fn unshuffle(src: &[u8], typesize: usize) -> Vec<u8> {
     out
 }
 
+/// The largest decoded size accepted when the caller cannot say what to
+/// expect. A global ERA5 field is 4.2 MB and a CMEMS geoChunk 2.2 MB.
+pub const MAX_UNKNOWN_SIZE: usize = 256 << 20;
+
+/// What the caller knows about the decoded size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Expected {
+    /// Exactly this many bytes (a chunk of a known shape and type).
+    Exactly(usize),
+    /// At most this many bytes.
+    AtMost(usize),
+}
+
 /// Decompresses one blosc1 container.
+///
+/// The header's sizes come from the archive (or a cache file on disk) and
+/// are not trusted: they are checked against `expected` before anything is
+/// allocated, so a 30-byte container declaring 4 GB is an error, not an
+/// abort.
 ///
 /// # Errors
 /// Returns [`EnvError::Blosc`] if the container is truncated, uses a
-/// compressor or filter this decoder does not implement, or does not decode to
-/// the size its header declares.
-pub fn decompress(src: &[u8]) -> Result<Vec<u8>> {
+/// compressor or filter this decoder does not implement, declares a size
+/// other than the one expected, or does not decode to the size its header
+/// declares.
+pub fn decompress(src: &[u8], expected: Expected) -> Result<Vec<u8>> {
     if src.len() < HEADER_LEN {
         return Err(EnvError::Blosc(format!(
             "container is {} bytes, shorter than the {HEADER_LEN}-byte header",
@@ -95,6 +114,25 @@ pub fn decompress(src: &[u8]) -> Result<Vec<u8>> {
     let nbytes = u32le(src, 4)? as usize;
     let blocksize = u32le(src, 8)? as usize;
     let cbytes = u32le(src, 12)? as usize;
+
+    match expected {
+        Expected::Exactly(n) if nbytes != n => {
+            return Err(EnvError::Blosc(format!(
+                "header declares {nbytes} decoded bytes but the chunk holds {n}"
+            )));
+        }
+        Expected::AtMost(n) if nbytes > n => {
+            return Err(EnvError::Blosc(format!(
+                "header declares {nbytes} decoded bytes, more than the {n} allowed"
+            )));
+        }
+        _ => {}
+    }
+    if blocksize > nbytes && nbytes > 0 {
+        return Err(EnvError::Blosc(format!(
+            "header declares a {blocksize}-byte block in a {nbytes}-byte chunk"
+        )));
+    }
 
     if flags & FLAG_BITSHUFFLE != 0 {
         return Err(EnvError::Blosc("bit shuffle is not supported".into()));
@@ -244,7 +282,10 @@ mod tests {
         let flags = FLAG_MEMCPYED | (COMPRESSOR_LZ4 << 5);
         let mut c = header(flags, 4, 8, 8, (HEADER_LEN + 8) as u32);
         c.extend_from_slice(&payload);
-        assert_eq!(decompress(&c).expect("decodes"), payload.to_vec());
+        assert_eq!(
+            decompress(&c, Expected::Exactly(8)).expect("decodes"),
+            payload.to_vec()
+        );
     }
 
     /// One block, one stream, stored verbatim because it did not compress.
@@ -257,19 +298,58 @@ mod tests {
         c.extend_from_slice(&(body_at as u32).to_le_bytes()); // bstarts[0]
         c.extend_from_slice(&4u32.to_le_bytes()); // stream length == stream size
         c.extend_from_slice(&payload);
-        assert_eq!(decompress(&c).expect("decodes"), payload.to_vec());
+        assert_eq!(
+            decompress(&c, Expected::Exactly(4)).expect("decodes"),
+            payload.to_vec()
+        );
+    }
+
+    /// Review fix: a tiny container declaring 4 GB must be refused before
+    /// anything is allocated, whether or not the caller knows the size.
+    #[test]
+    fn an_inflated_declared_size_is_refused_before_allocating() {
+        let flags = COMPRESSOR_LZ4 << 5;
+        let mut c = header(flags, 4, u32::MAX, u32::MAX, (HEADER_LEN + 14) as u32);
+        c.extend_from_slice(&[0; 14]);
+        let err = decompress(&c, Expected::Exactly(4 * 721 * 1440)).expect_err("must refuse");
+        assert!(format!("{err}").contains("declares"), "{err}");
+        let err = decompress(&c, Expected::AtMost(MAX_UNKNOWN_SIZE)).expect_err("must refuse");
+        assert!(format!("{err}").contains("allowed"), "{err}");
+        // The memcpyed path takes the same check.
+        let mut m = header(
+            FLAG_MEMCPYED | flags,
+            4,
+            u32::MAX,
+            8,
+            (HEADER_LEN + 8) as u32,
+        );
+        m.extend_from_slice(&[0; 8]);
+        assert!(decompress(&m, Expected::Exactly(8)).is_err());
+    }
+
+    /// A block larger than the whole chunk is refused rather than sized.
+    #[test]
+    fn a_block_larger_than_the_chunk_is_refused() {
+        let flags = COMPRESSOR_LZ4 << 5;
+        let mut c = header(flags, 4, 8, u32::MAX, (HEADER_LEN + 12) as u32);
+        c.extend_from_slice(&[0; 12]);
+        let err = decompress(&c, Expected::Exactly(8)).expect_err("must refuse");
+        assert!(format!("{err}").contains("block"), "{err}");
     }
 
     #[test]
     fn a_short_container_is_rejected() {
-        assert!(matches!(decompress(&[0; 4]), Err(EnvError::Blosc(_))));
+        assert!(matches!(
+            decompress(&[0; 4], Expected::AtMost(MAX_UNKNOWN_SIZE)),
+            Err(EnvError::Blosc(_))
+        ));
     }
 
     #[test]
     fn an_unsupported_compressor_is_rejected() {
         // Compressor 4 is zstd, which this decoder does not implement.
         let c = header(4 << 5, 4, 8, 8, HEADER_LEN as u32);
-        let err = decompress(&c).expect_err("must reject");
+        let err = decompress(&c, Expected::Exactly(8)).expect_err("must reject");
         assert!(format!("{err}").contains("not supported"), "{err}");
     }
 
@@ -277,7 +357,7 @@ mod tests {
     fn bit_shuffle_is_rejected_rather_than_decoded_wrongly() {
         let flags = FLAG_BITSHUFFLE | (COMPRESSOR_LZ4 << 5);
         let c = header(flags, 4, 8, 8, HEADER_LEN as u32);
-        let err = decompress(&c).expect_err("must reject");
+        let err = decompress(&c, Expected::Exactly(8)).expect_err("must reject");
         assert!(format!("{err}").contains("bit shuffle"), "{err}");
     }
 
@@ -285,7 +365,7 @@ mod tests {
     fn a_length_that_disagrees_with_the_header_is_rejected() {
         let flags = COMPRESSOR_LZ4 << 5;
         let c = header(flags, 4, 8, 8, 999);
-        let err = decompress(&c).expect_err("must reject");
+        let err = decompress(&c, Expected::Exactly(8)).expect_err("must reject");
         assert!(format!("{err}").contains("declares"), "{err}");
     }
 }

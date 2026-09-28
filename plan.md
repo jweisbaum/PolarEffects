@@ -41,7 +41,8 @@ as the foundation of `pe-env`, `pe-trackers` and `ui/src/polar/`.
   16.7/16.8/16.8 ms over 600 frames; one start-up hitch of 0.1–0.6 s for
   shader compilation). At 400k dots + 40 surfaces p95 is 33 ms, so the
   headroom is under 2×. Building 200k dots 28 ms in the page (8 ms in Node),
-  20 surface meshes 1 ms; one lasso over 200k dots 8 ms in the page
+  20 surfaces 8 ms in the page including the three.js objects (1 ms for
+  the meshes alone in Node); one lasso over 200k dots 8 ms in the page
   (project 4.5 ms + select 12 ms in Node with a 64-vertex lasso). Chrome is
   not WKWebView or WebView2: the Tauri webviews must be checked in M7.
 - *Budgets* (spec §13): 3D 60 fps — **go** on this machine, reference
@@ -50,7 +51,7 @@ as the foundation of `pe-env`, `pe-trackers` and `ui/src/polar/`.
   each open costs ≈ 1 s of metadata requests). Reanalysis cold — reported
   as above, with per-chunk completions every ≈ 0.1 s, so progress every
   second is easy. Edit to views < 100 ms — **go** for the 3D side (rebuild
-  28 + 1 ms, lasso 8 ms); IPC transfer of 200k samples unmeasured (M7).
+  28 + 8 ms, lasso 8 ms); IPC transfer of 200k samples unmeasured (M7).
   Start screen < 1.5 s, ORC search < 30 ms, blend < 50 ms and opening 50
   tracks < 2 s are not exercised by these spikes: no evidence against,
   measured in M5, M8 and M14.
@@ -474,8 +475,9 @@ The user accepted the proposals below on 2026-09-27 ("all good").
 
 ## Appendix A — Geovoile hwx decoding
 
-Verified on 24hultim 2025, Vendée Globe 2024 and Vendée Globe 2016
-(2026-09-27).
+Verified on 24hultim 2025 and Vendée Globe 2016 (2026-09-27), whose
+resources are committed fixtures. A 2024 site was verified during research
+only; a committed 2024 fixture is pending and must be recorded before M11.
 
 - The seeds are four 24-bit constants in the first base64 `/C/…` segment of a
   `data:image/png` source in the viewer HTML. They differ per site (2022–2025

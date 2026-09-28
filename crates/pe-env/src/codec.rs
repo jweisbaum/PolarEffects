@@ -84,10 +84,17 @@ impl BytesToBytesCodecTraits for BloscDecodeCodec {
     fn decode<'a>(
         &self,
         encoded_value: ArrayBytesRaw<'a>,
-        _decoded_representation: &BytesRepresentation,
+        decoded_representation: &BytesRepresentation,
         _options: &CodecOptions,
     ) -> Result<ArrayBytesRaw<'a>, CodecError> {
-        blosc::decompress(&encoded_value)
+        // The decoded size is known from the array's metadata; the chunk's own
+        // header is checked against it before anything is allocated.
+        let expected = match decoded_representation {
+            BytesRepresentation::FixedSize(n) => blosc::Expected::Exactly(clamp(*n)),
+            BytesRepresentation::BoundedSize(n) => blosc::Expected::AtMost(clamp(*n)),
+            BytesRepresentation::UnboundedSize => blosc::Expected::AtMost(blosc::MAX_UNKNOWN_SIZE),
+        };
+        blosc::decompress(&encoded_value, expected)
             .map(Cow::Owned)
             .map_err(|e| CodecError::Other(e.to_string()))
     }
@@ -98,6 +105,11 @@ impl BytesToBytesCodecTraits for BloscDecodeCodec {
     ) -> BytesRepresentation {
         BytesRepresentation::UnboundedSize
     }
+}
+
+/// A metadata size as `usize`, saturating on a 32-bit target.
+fn clamp(n: u64) -> usize {
+    usize::try_from(n).unwrap_or(usize::MAX)
 }
 
 /// Holds the registration alive for the life of the process.

@@ -532,19 +532,28 @@ pub fn parse_tracks(json: &str) -> Result<Vec<Track>> {
             (t, lat, lon) = if i == 0 {
                 (a, b, c)
             } else {
-                (t + a, lat + b, lon + c)
+                match (t.checked_add(a), lat.checked_add(b), lon.checked_add(c)) {
+                    (Some(t), Some(lat), Some(lon)) => (t, lat, lon),
+                    _ => {
+                        return Err(unsupported(format!(
+                            "boat {}'s entry {i} overflows its running position",
+                            track.id
+                        )));
+                    }
+                }
             };
-            fixes.push(fix(t, lat, lon));
-        }
-        if let Some(first) = fixes.first() {
-            let plausible_time = (946_684_800..4_102_444_800).contains(&first.t);
-            let plausible_place = first.lat.abs() <= 90.0 && first.lon.abs() <= 360.0;
+            // Every fix, not only the first: a changed encoding can start
+            // plausibly and drift off the globe.
+            let fix = fix(t, lat, lon);
+            let plausible_time = (946_684_800..4_102_444_800).contains(&fix.t);
+            let plausible_place = (-90.0..=90.0).contains(&fix.lat) && fix.lon.is_finite();
             if !plausible_time || !plausible_place {
                 return Err(unsupported(format!(
-                    "boat {}'s first fix ({}, {}, {}) is not a plausible time and place",
-                    track.id, first.t, first.lat, first.lon
+                    "boat {}'s fix {i} ({}, {}, {}) is not a plausible time and place",
+                    track.id, fix.t, fix.lat, fix.lon
                 )));
             }
+            fixes.push(fix);
         }
         tracks.push(Track {
             id: track.id,
@@ -684,6 +693,31 @@ mod tests {
         assert_eq!(
             seeds_from_html(&html).expect("parses"),
             Seeds([0x88_FE88, 0xFE_88AA, 0xEE_CC80, 0xA0_A0F0])
+        );
+    }
+
+    #[test]
+    /// Review fix: hostile deltas overflow or leave the globe; both are an
+    /// unsupported-version error, never a panic or an imported fix.
+    fn hostile_deltas_are_refused_not_imported() {
+        for json in [
+            format!(r#"{{"tracks":[{{"id":1,"loc":[[1758966938,4700000,-300000],[{},0,0]]}}]}}"#, i64::MAX),
+            format!(r#"{{"tracks":[{{"id":1,"loc":[[1758966938,4700000,-300000],[60,{},0]]}}]}}"#, i64::MAX),
+            r#"{"tracks":[{"id":1,"loc":[[1758966938,4700000,-300000],[60,5000000,0]]}]}"#.to_owned(),
+            r#"{"tracks":[{"id":1,"loc":[[1758966938,4700000,-300000],[60,0,0],[-900000000,0,0]]}]}"#.to_owned(),
+        ] {
+            let err = parse_tracks(&json).expect_err(&json);
+            assert!(err.to_string().contains("unsupported Geovoile version"), "{err}");
+        }
+        // A huge but finite longitude wraps into [-180, 180).
+        let ok = parse_tracks(
+            r#"{"tracks":[{"id":1,"loc":[[1758966938,4700000,-300000],[60,0,-72000000]]}]}"#,
+        )
+        .expect("wraps");
+        let lon = ok[0].fixes[1].lon;
+        assert!(
+            (-180.0..180.0).contains(&lon) && (lon - -3.0).abs() < 1e-9,
+            "{lon}"
         );
     }
 

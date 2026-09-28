@@ -21,6 +21,16 @@ const HOSTS: [&str; 4] = ["yb.tl", "www.yb.tl", "cf.yb.tl", "app.yb.tl"];
 
 const TRACKER: &str = "YellowBrick";
 
+/// Whether `key` can be a race key: 1–64 of `[A-Za-z0-9_-]`, so it can be
+/// put in a request path as it is.
+fn valid_key(key: &str) -> bool {
+    !key.is_empty()
+        && key.len() <= 64
+        && key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
 /// The race key in a pasted address: `https://yb.tl/<key>`, a `cf.yb.tl`
 /// or `app.yb.tl` link (including the `/JSON/<key>/…` and `/BIN/<key>/…`
 /// forms and a `?race=<key>` query), or a bare key.
@@ -33,13 +43,7 @@ pub fn race_key(input: &str) -> Result<String> {
         input: input.to_owned(),
     };
     let text = input.trim();
-    let valid = |key: &str| {
-        !key.is_empty()
-            && key.len() <= 64
-            && key
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    };
+    let valid = valid_key;
     let rest = text
         .strip_prefix("https://")
         .or_else(|| text.strip_prefix("http://"));
@@ -406,9 +410,16 @@ fn get(client: &reqwest::blocking::Client, url: &str) -> Result<Vec<u8>> {
 /// Downloads and decodes one event: `RaceSetup`, then `AllPositions3`.
 ///
 /// # Errors
+/// [`TrackerError::NotAnEvent`] for a key [`race_key`] would not return,
 /// [`TrackerError::Network`] for a failed request, [`TrackerError::Decode`]
 /// for a response that does not decode.
 pub fn fetch_event(key: &str, timeout: Duration) -> Result<Event> {
+    if !valid_key(key) {
+        return Err(TrackerError::NotAnEvent {
+            tracker: TRACKER,
+            input: key.to_owned(),
+        });
+    }
     let client = crate::net::client(timeout)?;
     let setup = parse_race_setup(&get(&client, &format!("{CDN}/JSON/{key}/RaceSetup"))?)?;
     let positions =
@@ -438,6 +449,19 @@ mod tests {
             "yb.tl/fastnet2025",
         ] {
             assert_eq!(race_key(input).expect(input), "fastnet2025", "{input}");
+        }
+    }
+
+    /// A key goes into the request path as it is, so a key `race_key` would
+    /// not produce is refused before any request.
+    #[test]
+    fn fetch_refuses_a_key_that_is_not_a_race_key() {
+        for key in ["", "../JSON/x", "a b", "x?y=1", &"k".repeat(65)] {
+            let err = fetch_event(key, Duration::from_secs(1)).expect_err(key);
+            assert!(
+                matches!(err, TrackerError::NotAnEvent { .. }),
+                "{key}: {err}"
+            );
         }
     }
 

@@ -20,12 +20,10 @@ pub use error::{Result, TrackerError};
 /// Longitude in [-180, 180) (CLAUDE.md conventions), touching only values
 /// outside it so a recorded value keeps its exact decimal form.
 pub(crate) fn wrap_lon(lon: f64) -> f64 {
-    if lon >= 180.0 {
-        lon - 360.0
-    } else if lon < -180.0 {
-        lon + 360.0
-    } else {
+    if (-180.0..180.0).contains(&lon) {
         lon
+    } else {
+        (lon + 180.0).rem_euclid(360.0) - 180.0
     }
 }
 
@@ -37,5 +35,7 @@ mod tests {
         assert_eq!(super::wrap_lon(180.0), -180.0);
         assert_eq!(super::wrap_lon(359.5), -0.5);
         assert_eq!(super::wrap_lon(-180.5), 179.5);
+        assert_eq!(super::wrap_lon(720.0 + 10.0), 10.0);
+        assert_eq!(super::wrap_lon(-900.0), 180.0 - 360.0);
     }
 }
