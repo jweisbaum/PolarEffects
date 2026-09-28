@@ -8,3 +8,6 @@ crates/pe-env/tests/fixtures/** -text
 # export bytes (invariant 5): both byte for byte.
 crates/pe-polar/tests/fixtures/** -text
 crates/pe-polar/tests/golden/** -text
+# Real-world sample polars (M9b, user request): kept exactly as the boats'
+# owners wrote them, CRLF and all, not normalised to LF.
+polar_examples/** -text

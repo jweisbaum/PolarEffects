@@ -2,7 +2,8 @@
 //! comma-separated, spec.md 6): top-left `TWA\TWS`, `TWA/TWS` or `TWA`,
 //! wind speeds across the first row, angles down the first column, boat
 //! speeds in the cells. An empty cell, or a row shorter than the header, is
-//! an empty cell of the polar.
+//! an empty cell of the polar. The wind speed row may run to 70 kn
+//! ([`crate::MAX_TWS_KN`]); boat speed cells stay capped at 60.
 
 use std::collections::BTreeSet;
 
@@ -11,7 +12,7 @@ use pe_core::polar::PolarGrid;
 use crate::build::Builder;
 use crate::format::{
     Field, PolarError, Reason, Result, angle, axis_text, bsp_text, fields, is_table_header,
-    meaningful, speed, table_separator,
+    meaningful, speed, table_separator, tws_speed,
 };
 use crate::grid::fold_twa;
 
@@ -48,7 +49,7 @@ pub(crate) fn read(text: &str) -> Result<PolarGrid> {
     let mut seen = BTreeSet::new();
     let mut columns = Vec::with_capacity(speeds.len());
     for field in speeds {
-        let tws = speed(header_line, *field, sep)?;
+        let tws = tws_speed(header_line, *field, sep)?;
         if !seen.insert(tws.to_bits()) {
             return Err(PolarError::at(
                 header_line,
@@ -170,6 +171,10 @@ mod tests {
         assert_eq!((e.line, e.reason), (3, Reason::DuplicateTwa(40.0)));
         let e = err("TWA;6\n40;65\n");
         assert_eq!((e.column, e.reason), (4, Reason::TooFast(65.0)));
+        // The TWS header may run to 70 kn; 71 is refused.
+        assert_eq!(read("TWA;70\n40;5\n").unwrap().tws, [70.0]);
+        let e = err("TWA;71\n40;5\n");
+        assert_eq!((e.column, e.reason), (5, Reason::TooFast(71.0)));
         let e = err("TWA;6\n-40;5\n");
         assert_eq!((e.column, e.reason), (1, Reason::Negative(-40.0)));
         assert_eq!(err("TWA;6\n40;\n").reason, Reason::NoSpeeds);

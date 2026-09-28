@@ -27,6 +27,12 @@ pub use orc::vpp_to_polar;
 pub use pe_core::polar::{PolarFileFormat, PolarGrid as Polar};
 pub use source::{blend_input, source_polar};
 
-/// The fastest a boat or the wind may be in an imported polar, knots
-/// (spec.md 6). Anything faster is a format error, not a polar.
+/// The fastest a boat may go in an imported polar, knots (spec.md 6).
+/// Anything faster is a format error, not a polar. The wind speed axis has
+/// its own, higher bound: [`MAX_TWS_KN`].
 pub const MAX_SPEED_KN: f64 = 60.0;
+
+/// The fastest a wind speed axis value may be in an imported polar, knots
+/// (spec.md 6). Real Adrena/ORC-style grids carry a TWS axis out to 70 kn
+/// (a gale, not a boat speed), which [`MAX_SPEED_KN`] alone would refuse.
+pub const MAX_TWS_KN: f64 = 70.0;

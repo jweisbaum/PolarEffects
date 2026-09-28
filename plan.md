@@ -214,6 +214,19 @@ numbers, and a go/no-go on each budget in spec §13.
 - Golden-file round trip for each format.
 - Malformed-input tests never panic.
 
+*M9b, user request, 2026-09-28*: the user's `polar_examples/` (688
+real-world files, committed as test data) exposed two importer gaps, both
+narrow tolerances rather than a loosened check — an Expedition label row
+(`twa0 bsp0 TwaUp bspUp …`, or space-separated `pol Twa0 Bsp0 UpTwa UpBsp
+…`) is now skipped instead of refused, and the TWS axis accepts up to 70 kn
+(`MAX_TWS_KN`) while boat speed stays capped at 60 (`MAX_SPEED_KN`); a TWS 0
+column and TWA 0 row of zeros were already accepted. 687 of 688 files parse;
+`polars/J46 heel.txt` is a heel-angle table, not a boat-speed polar, and is
+excluded by name with its reason recorded in
+`pe-polar/tests/polar_examples.rs`, which walks the whole directory and
+spot-checks four files by hand. `pe-app/tests/polar_import.rs` imports a
+handful of the same files through `import_polar_files`.
+
 ---
 
 ### M5 — ORC catalogue and search · **complete**
@@ -556,7 +569,7 @@ jieter/orc-data MIT), user guide.
 | D17 | Edits stored as overlays (cell overrides, exclusions) | Invariant 1; reversible, auditable |
 | D18 | Track segment cell statistic defaults to the 90th percentile, minimum 5 samples | Polars describe good sailing; the mean undershoots |
 | D19 | Reanalysis sampling hourly by default, 3-hourly option; the pre-flight dialog preselects 3-hourly when the hourly download would exceed half the chunk-cache limit | Confirmed by M3: a 5-day race hourly is ≈ 1.2 GB and ≈ 40 s cold at 8 requests in flight, and a warm chunk is 3 ms. Hourly resolves wind shifts and tidal streams that 3-hourly smooths. A long race is different: the Vendée Globe hourly would be ≈ 19 GB, about the whole default cache, which is when 3-hourly is the better default |
-| D20 | Current tiers: regional tidal reanalysis → global merged (uo + utide, 2020-11+) → GlobCurrent (geostrophic + Ekman + FES2022 tide, 1993+; its 202411 metadata, checked 2026-09-28, Q7) | Only anonymous sources; tides everywhere from 2020-11 and in NW Europe/IBI since 1993 |
+| D20 | Current tiers: regional tidal reanalysis → global merged (uo + utide, 2020-11+) → GlobCurrent (geostrophic + Ekman + FES2022 tide, 1993+; its 202411 metadata, checked 2026-09-28, Q7) | Only anonymous sources; GlobCurrent (FES2022) gives tides globally from 1993, not only NW Europe/IBI |
 | D21 | 2D polar plot (M6): "All" draws one curve per visible source per wind speed that source's grid has; curves are read at each source's own TWA points; the full-size view is a Map-stage overlay toggled by the shell, closed by its own button, Escape or a stage switch | Spec §9.2 named the slider's "all" state and the full-size overlay without saying what either draws or how the overlay opens and closes |
 
 ## 6. Settled before coding started

@@ -2,6 +2,9 @@
 //! wind speed, `TWS` followed by `TWA BSP` pairs, whitespace-separated. Rows
 //! may have different lengths and different angles; the polar keeps each
 //! row's own points on a union TWA axis, leaving the other cells empty.
+//!
+//! A leading label row (`twa0 bsp0 TwaUp bspUp …`, naming the columns
+//! instead of holding a wind speed) is skipped rather than read as data.
 
 use std::collections::BTreeSet;
 
@@ -9,7 +12,8 @@ use pe_core::polar::PolarGrid;
 
 use crate::build::Builder;
 use crate::format::{
-    PolarError, Reason, Result, Separator, angle, axis_text, bsp_text, fields, meaningful, speed,
+    PolarError, Reason, Result, Separator, angle, axis_text, bsp_text, fields,
+    is_expedition_label_row, meaningful, speed, tws_speed,
 };
 use crate::grid::fold_twa;
 
@@ -20,12 +24,19 @@ pub(crate) fn read(text: &str) -> Result<PolarGrid> {
     let sep = Separator::Whitespace;
     let mut builder = Builder::default();
     let mut seen_tws = BTreeSet::new();
-    for (line, content) in meaningful(text) {
+    let mut lines = meaningful(text);
+    let mut first_row = lines.next();
+    if let Some((_, content)) = first_row
+        && is_expedition_label_row(&fields(content, sep))
+    {
+        first_row = lines.next();
+    }
+    for (line, content) in first_row.into_iter().chain(lines) {
         let row = fields(content, sep);
         let Some((first, pairs)) = row.split_first() else {
             continue;
         };
-        let tws = speed(line, *first, sep)?;
+        let tws = tws_speed(line, *first, sep)?;
         if !seen_tws.insert(tws.to_bits()) {
             return Err(PolarError::at(
                 line,
@@ -117,6 +128,21 @@ mod tests {
     }
 
     #[test]
+    fn a_leading_label_row_is_skipped_not_read_as_data() {
+        // Swan 78.txt shaped: a tab-led label row, then data rows.
+        let polar = read("\ttwa0\tbsp0\tTwaUp\tbspUp\n6\t0\t0\t45\t7.04\n").unwrap();
+        assert_eq!(polar.tws, [6.0]);
+        assert_eq!(polar.twa, [0.0, 45.0]);
+        assert_eq!(polar.bsp, [vec![Some(0.0)], vec![Some(7.04)]]);
+
+        // J35.txt shaped: space-separated, starting with a word, not a tab.
+        let polar = read("pol  Twa0  Bsp0  UpTwa  UpBsp\n6.3  30  0  45.1  4.95\n").unwrap();
+        assert_eq!(polar.tws, [6.3]);
+        assert_eq!(polar.twa, [30.0, 45.1]);
+        assert_eq!(polar.bsp, [vec![Some(0.0)], vec![Some(4.95)]]);
+    }
+
+    #[test]
     fn port_angles_fold_and_both_sides_average() {
         let polar = read("6 40 5 320 5.5 200 6\n").unwrap();
         assert_eq!(polar.twa, [40.0, 160.0]);
@@ -136,8 +162,10 @@ mod tests {
         assert_eq!((e.column, e.reason), (6, Reason::TooFast(61.0)));
         let e = err("6 40 -1\n");
         assert_eq!((e.column, e.reason), (6, Reason::Negative(-1.0)));
-        let e = err("70 40 1\n");
-        assert_eq!((e.column, e.reason), (1, Reason::TooFast(70.0)));
+        // TWS may run to 70 kn (a gale, not a boat speed); 71 is refused.
+        assert_eq!(read("70 40 1\n").unwrap().tws, [70.0]);
+        let e = err("71 40 1\n");
+        assert_eq!((e.column, e.reason), (1, Reason::TooFast(71.0)));
         let e = err("6 400 1\n");
         assert_eq!((e.column, e.reason), (3, Reason::AngleOutOfRange(400.0)));
         let e = err("6 40 1\n6 50 2\n");

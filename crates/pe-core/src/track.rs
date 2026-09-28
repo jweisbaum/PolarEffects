@@ -557,8 +557,10 @@ pub struct DatasetRecord {
     /// When it was fetched, UTC epoch seconds.
     pub fetched_at: i64,
     /// Whether this dataset's current includes tides. `None` for datasets
-    /// that are not currents; `Some(false)` marks the GlobCurrent tier
-    /// (spec.md 7.5.1), which can be filtered out.
+    /// that are not currents; every current tier has tide today, GlobCurrent
+    /// included (`Some(true)`, FES2022, spec.md 7.5.1). `Some(false)` is
+    /// kept for a future tier without one, which the "leave out currents
+    /// without tide" filter can still remove.
     #[serde(default)]
     pub has_tide: Option<bool>,
 }

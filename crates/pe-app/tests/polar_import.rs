@@ -22,6 +22,15 @@ fn write(root: &TempRoot, name: &str, bytes: &[u8]) -> String {
     path
 }
 
+/// A sample file checked in under `polar_examples/` (M9b, user request):
+/// real-world files, not written for a test.
+fn sample(relative: &str) -> String {
+    format!(
+        "{}/../../polar_examples/{relative}",
+        env!("CARGO_MANIFEST_DIR")
+    )
+}
+
 #[test]
 fn a_batch_imports_what_it_can_as_one_undo_entry() {
     let root = TempRoot::new("polar-import");
@@ -117,6 +126,47 @@ fn importing_needs_an_open_project() {
         polar_files::import(&app, &paths),
         Err(AppError::NoProjectOpen)
     ));
+}
+
+/// A handful of the real-world sample polars in `polar_examples/` (M9b, user
+/// request) import through the same IPC path as a person's own files: an
+/// Adrena grid with a TWS axis to 70 kn, and two Expedition files whose
+/// first row is a label row instead of data.
+#[test]
+fn sample_polars_import_through_the_same_ipc_path() {
+    let root = TempRoot::new("polar-import-samples");
+    let app = root.state();
+    projects::create(&app, "Samples".to_owned(), None, false).unwrap();
+    let paths = vec![
+        sample("Polaires - Copy/VR_IMOCA.pol"),
+        sample("polars/Swan 78.txt"),
+        sample("polars/J35.txt"),
+        sample("polars/J46 heel.txt"), // not a boat-speed polar: heel angles
+    ];
+
+    let result = polar_files::import(&app, &paths).unwrap();
+    assert_eq!(result.imported, ["VR_IMOCA.pol", "Swan 78.txt", "J35.txt"]);
+    assert_eq!(result.failures.len(), 1);
+    assert_eq!(result.failures[0].file, "J46 heel.txt");
+    assert_eq!(result.failures[0].reason, "negative");
+
+    let project = &result.project;
+    assert_eq!(project.sources.len(), 3);
+    let imoca = &project.sources[0];
+    assert_eq!(imoca.polar_file.as_ref().unwrap().format, "adrena");
+    assert_eq!(imoca.polar_file.as_ref().unwrap().tws.last(), Some(&70.0));
+    assert_eq!(
+        project.sources[1].polar_file.as_ref().unwrap().format,
+        "expedition"
+    );
+    assert_eq!(
+        project.sources[2].polar_file.as_ref().unwrap().format,
+        "expedition"
+    );
+    assert_eq!(
+        project.undo_label.as_deref(),
+        Some(polar_files::IMPORT_MANY)
+    );
 }
 
 /// The interface translates failures by reason code; its list is every code

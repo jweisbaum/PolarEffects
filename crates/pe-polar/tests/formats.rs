@@ -138,7 +138,8 @@ fn malformed_files_are_refused_at_their_line_and_column() {
         ("6 40 5\n6 50 5\n", 2, 1, "duplicate-tws"),
         ("6 40 5 361 5\n", 1, 8, "angle-out-of-range"),
         ("TWA\\TWS\t6\t8\n40\t5\t5.5\t6\n", 2, 10, "too-many-cells"),
-        ("TWA\\TWS\t6\t61\n", 1, 11, "too-fast"),
+        // 61 kn is a valid TWS (up to 70); 71 is refused.
+        ("TWA\\TWS\t6\t71\n", 1, 11, "too-fast"),
         ("TWA/TWS;6\n40;5\n40;5\n", 3, 1, "duplicate-twa"),
         ("TWA;6;8\n\n  90;5;NaN\n", 3, 8, "not-a-number"),
         ("TWA;6\n", 1, 1, "no-speeds"),

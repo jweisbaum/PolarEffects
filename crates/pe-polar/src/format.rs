@@ -26,7 +26,7 @@
 use pe_core::polar::{PolarFileFormat, PolarGrid};
 use thiserror::Error;
 
-use crate::{MAX_SPEED_KN, expedition, table};
+use crate::{MAX_SPEED_KN, MAX_TWS_KN, expedition, table};
 
 /// The largest file read. A polar is a few kilobytes; anything near this is
 /// not one, and refusing it early bounds the work a hostile file can cause.
@@ -59,8 +59,9 @@ pub enum Reason {
     /// A negative speed or angle.
     #[error("{0} is negative")]
     Negative(f64),
-    /// A speed above [`MAX_SPEED_KN`].
-    #[error("{0} kn is faster than a polar holds ({MAX_SPEED_KN} kn at most)")]
+    /// A boat speed above [`MAX_SPEED_KN`], or a wind speed above
+    /// [`MAX_TWS_KN`].
+    #[error("{0} kn is faster than a polar holds")]
     TooFast(f64),
     /// An angle past 360°.
     #[error("{0}° is not a wind angle (0–360)")]
@@ -286,16 +287,62 @@ pub(crate) fn number(line: usize, field: Field<'_>, separator: Separator) -> Res
     }
 }
 
-/// A speed (TWS or BSP), knots: 0 to [`MAX_SPEED_KN`].
-pub(crate) fn speed(line: usize, field: Field<'_>, separator: Separator) -> Result<f64> {
+/// A speed field: non-negative, at most `max` (knots).
+fn bounded_speed(line: usize, field: Field<'_>, separator: Separator, max: f64) -> Result<f64> {
     let value = number(line, field, separator)?;
     if value < 0.0 {
         Err(PolarError::at(line, field.column, Reason::Negative(value)))
-    } else if value > MAX_SPEED_KN {
+    } else if value > max {
         Err(PolarError::at(line, field.column, Reason::TooFast(value)))
     } else {
         Ok(value)
     }
+}
+
+/// A boat speed (BSP), knots: 0 to [`MAX_SPEED_KN`].
+pub(crate) fn speed(line: usize, field: Field<'_>, separator: Separator) -> Result<f64> {
+    bounded_speed(line, field, separator, MAX_SPEED_KN)
+}
+
+/// A wind speed (TWS), knots: 0 to [`MAX_TWS_KN`] — higher than a boat speed,
+/// because real polars carry a TWS axis into gale-force wind (spec.md 6).
+pub(crate) fn tws_speed(line: usize, field: Field<'_>, separator: Separator) -> Result<f64> {
+    bounded_speed(line, field, separator, MAX_TWS_KN)
+}
+
+/// The words an Expedition label/header row is made of — a row naming its
+/// columns instead of holding the first wind speed's data (spec.md 6), e.g.
+/// `twa0 bsp0 TwaUp bspUp` or `pol Twa0 Bsp0 UpTwa UpBsp`. Ordered longest
+/// first so `upwind` is not read as `up` + `wind`.
+const LABEL_WORDS: [&str; 8] = ["downwind", "upwind", "twa", "bsp", "tws", "pol", "up", "dn"];
+
+/// Whether a cell is one of [`LABEL_WORDS`], possibly joined (`TwaUp`,
+/// `UpBsp`) and/or followed by digits (`twa0`, `Bsp1`), case-insensitively.
+/// A cell that is only digits (a real TWS value) is not a label.
+fn is_label_cell(cell: &str) -> bool {
+    let letters: String = cell
+        .chars()
+        .filter(char::is_ascii_alphabetic)
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+    let mut rest = letters.as_str();
+    if rest.is_empty() {
+        return false;
+    }
+    while !rest.is_empty() {
+        match LABEL_WORDS.iter().find_map(|word| rest.strip_prefix(word)) {
+            Some(after) => rest = after,
+            None => return false,
+        }
+    }
+    true
+}
+
+/// Whether a row is a leading Expedition label row: every cell a
+/// [`is_label_cell`] word, and at least one cell. Such a row is skipped, not
+/// read as a wind speed with no points (spec.md 6).
+pub(crate) fn is_expedition_label_row(row: &[Field<'_>]) -> bool {
+    !row.is_empty() && row.iter().all(|f| is_label_cell(f.text))
 }
 
 /// A true wind angle, degrees 0–360, as written (not yet folded).
@@ -342,7 +389,8 @@ pub fn detect(bytes: &[u8]) -> std::result::Result<PolarFileFormat, PolarError> 
 }
 
 fn detect_text(text: &str) -> Result<PolarFileFormat> {
-    let Some((line, first)) = meaningful(text).next() else {
+    let mut lines = meaningful(text);
+    let Some((line, first)) = lines.next() else {
         return Err(PolarError::whole(Reason::Empty));
     };
     let separator = table_separator(first);
@@ -353,15 +401,25 @@ fn detect_text(text: &str) -> Result<PolarFileFormat> {
             Separator::Tab | Separator::Whitespace => PolarFileFormat::Adrena,
         });
     }
-    let leading_number = fields(first, Separator::Whitespace)
-        .first()
-        .is_some_and(|f| number(line, *f, Separator::Whitespace).is_ok());
-    if leading_number {
-        Ok(PolarFileFormat::Expedition)
-    } else {
-        let column = first.chars().take_while(|c| c.is_whitespace()).count() + 1;
-        Err(PolarError::at(line, column, Reason::UnknownFormat))
+    let starts_with_number = |text: &str| {
+        fields(text, Separator::Whitespace)
+            .first()
+            .is_some_and(|f| number(line, *f, Separator::Whitespace).is_ok())
+    };
+    if starts_with_number(first) {
+        return Ok(PolarFileFormat::Expedition);
     }
+    // A leading label row (`twa0 bsp0 TwaUp bspUp …`) is not itself a wind
+    // speed; it is Expedition only if the row after it is one.
+    if is_expedition_label_row(&fields(first, Separator::Whitespace))
+        && lines
+            .next()
+            .is_some_and(|(_, next)| starts_with_number(next))
+    {
+        return Ok(PolarFileFormat::Expedition);
+    }
+    let column = first.chars().take_while(|c| c.is_whitespace()).count() + 1;
+    Err(PolarError::at(line, column, Reason::UnknownFormat))
 }
 
 /// Reads a polar file of any supported format.
@@ -475,6 +533,39 @@ mod tests {
         let unknown = d("\n  hello 6 7\n").unwrap_err();
         assert_eq!((unknown.line, unknown.column), (2, 3));
         assert_eq!(unknown.reason, Reason::UnknownFormat);
+    }
+
+    #[test]
+    fn an_expedition_label_row_is_only_a_label_before_a_wind_speed() {
+        let d = |t: &str| detect(t.as_bytes());
+        // Swan 78.txt and J35.txt shaped label rows, tab- and
+        // space-separated.
+        assert_eq!(
+            d("\ttwa0\tbsp0\tTwaUp\tbspUp\n6\t0\t0\t45\t7.04\n"),
+            Ok(PolarFileFormat::Expedition)
+        );
+        assert_eq!(
+            d("pol  Twa0  Bsp0  UpTwa  UpBsp\n6.3  30  0  45.1  4.95\n"),
+            Ok(PolarFileFormat::Expedition)
+        );
+        // A word row not followed by a numeric row is not Expedition.
+        let unknown = d("twa0 bsp0\nhello world\n").unwrap_err();
+        assert_eq!(unknown.reason, Reason::UnknownFormat);
+        // A lone label row (nothing after it) is not Expedition either.
+        assert_eq!(
+            d("pol twa bsp\n").unwrap_err().reason,
+            Reason::UnknownFormat
+        );
+    }
+
+    #[test]
+    fn label_cells_need_a_word_not_just_digits() {
+        for word in ["twa0", "Bsp0", "TwaUp", "UpBsp", "downwind", "pol", "DnTwa"] {
+            assert!(is_label_cell(word), "{word:?} should be a label cell");
+        }
+        for not_word in ["6", "40.5", "0", "-1", ""] {
+            assert!(!is_label_cell(not_word), "{not_word:?} should not be");
+        }
     }
 
     #[test]

@@ -475,14 +475,21 @@ The ORC catalogue is **embedded in the app** (D3):
   becomes one source, labelled with its file name.
 - Formats, detected from content (not only the extension):
   - **Expedition** (`.txt`): `!` comment lines; each row is `TWS` followed by
-    `TWA BSP` pairs, whitespace-separated; rows may have different lengths.
+    `TWA BSP` pairs, whitespace-separated; rows may have different lengths. A
+    leading row made only of words such as `twa`, `bsp`, `tws`, `pol`, `up`
+    or `dn` — joined (`TwaUp`, `UpBsp`) and/or followed by digits (`twa0`,
+    `Bsp1`), case-insensitively — names the columns instead of holding a wind
+    speed's data, and is skipped.
   - **Adrena / grid** (`.pol` tab-separated, `.csv` semicolon- or
     comma-separated): top-left cell `TWA\TWS`, `TWA/TWS` or `TWA`; first row
     TWS values; first column TWA values; cells BSP in knots.
 - A parse error names the file, line and column and imports nothing from that
   file. Other files in the same batch still import. Everything a batch
   imports is one undo entry.
-- Speeds above 60 kn or negative values are refused as a format error.
+- Boat speeds (BSP) above 60 kn, wind speeds (TWS) above 70 kn, or negative
+  values of either, are refused as a format error. A TWS of 0 (a column of
+  zero boat speed) and a TWA of 0 (a row of zero boat speed) are ordinary
+  zeros, not refused.
 - Reading details:
   - Text is UTF-8 (with or without a BOM), UTF-16 with a BOM, or else
     Latin-1; CRLF, CR and LF line endings are all accepted. Blank lines and
