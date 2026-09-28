@@ -1,0 +1,24 @@
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+
+// Everything must resolve from the bundle: no CDN, no remote fonts, no runtime
+// network access of any kind (invariant 4). `tools/check-offline.sh` enforces it.
+export default defineConfig({
+  plugins: [react()],
+  clearScreen: false,
+  // The port is fixed so the Tauri config's devUrl can name it.
+  server: { port: 5173, strictPort: true },
+  build: {
+    outDir: "dist",
+    target: "es2022",
+    sourcemap: true,
+    // Fail the build rather than silently emitting a remote reference.
+    rollupOptions: { external: [] },
+  },
+  // Node by default: these are pure-logic tests. A component test opts into a
+  // DOM per file with `// @vitest-environment happy-dom`. happy-dom rather
+  // than jsdom: jsdom 27's CSS parser is a CommonJS build that `require()`s an
+  // ES module, which only Node 20.19+ and 22.12+ allow, and the machine this
+  // is developed on runs 21.
+  test: { environment: "node", include: ["src/**/*.test.ts?(x)"] },
+});
