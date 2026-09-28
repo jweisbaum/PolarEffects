@@ -34,7 +34,7 @@ scrapers, and the ERA5 and Copernicus Marine archives. Open questions in §6.
 
 ## 2. Milestones
 
-### M0 — Workspace, CI on five targets, offline check
+### M0 — Workspace, CI on five targets, offline check · **complete**
 
 **Goal:** an empty Tauri app that builds, tests and bundles on every target.
 
