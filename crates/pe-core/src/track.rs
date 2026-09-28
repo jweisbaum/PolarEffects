@@ -113,6 +113,13 @@ pub enum TrackOrigin {
         /// Sail number, if the tracker gives one.
         #[serde(default)]
         sail_no: Option<String>,
+        /// Boat model or class, if the tracker gives one (M10). Left out
+        /// of the file when absent, so earlier projects save unchanged.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
+        /// The division the tracker lists the boat in (M10), e.g. "IRC 2".
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        division: Option<String>,
         /// The race start as the tracker gives it, UTC epoch seconds. The
         /// default start of the time-window filter (spec.md 7.6).
         #[serde(default)]
@@ -692,5 +699,49 @@ mod tests {
         assert_eq!(s.bsp_corrected, None);
         assert!(close(s.tws_corrected, 101f64.sqrt()));
         assert_eq!(s.twa_corrected, None);
+    }
+
+    /// A tracker origin saved before M10 has no model or division; it reads
+    /// with neither and writes back byte for byte. One with them keeps them.
+    #[test]
+    fn a_tracker_origin_without_model_or_division_saves_unchanged() {
+        let old = r#"{"type":"tracker","tracker":"yellow_brick","event_url":"u","event_title":"T","boat_id":"1","boat_name":"B","sail_no":null,"race_start":1,"race_finish":null}"#;
+        let origin: TrackOrigin = serde_json::from_str(old).expect("reads");
+        assert_eq!(serde_json::to_string(&origin).expect("writes"), old);
+        let TrackOrigin::Tracker {
+            tracker,
+            event_url,
+            event_title,
+            boat_id,
+            boat_name,
+            sail_no,
+            race_start,
+            race_finish,
+            ..
+        } = origin
+        else {
+            panic!("a tracker origin");
+        };
+        let new = TrackOrigin::Tracker {
+            tracker,
+            event_url,
+            event_title,
+            boat_id,
+            boat_name,
+            sail_no,
+            model: Some("IMOCA60".to_owned()),
+            division: Some("IRC 2".to_owned()),
+            race_start,
+            race_finish,
+        };
+        let json = serde_json::to_string(&new).expect("writes");
+        assert!(
+            json.contains(r#""model":"IMOCA60","division":"IRC 2""#),
+            "{json}"
+        );
+        assert_eq!(
+            serde_json::from_str::<TrackOrigin>(&json).expect("reads"),
+            new
+        );
     }
 }

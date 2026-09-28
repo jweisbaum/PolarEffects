@@ -6,16 +6,25 @@
 //! boat's fixes, decoding the vendor format in Rust (spec.md 7.2). Requests
 //! are made only when the user asks for an import.
 //!
-//! M3 delivered the two binary decoders (YellowBrick AllPositions3 and the
-//! Geovoile hwx container, plan.md Appendices A and B) with fixture tests;
-//! the dialog flow and Blue Water Tracks follow in M10–M12.
+//! Every tracker implements [`event::TrackerClient`]: resolve a pasted
+//! address to an event (no network), then download the whole event — its
+//! title, dates and every boat's full track — as one [`event::TrackerEvent`],
+//! through one [`http::Fetcher`] that caps bodies, retries transient
+//! failures and stops on cancel. YellowBrick is complete (M10); Geovoile's
+//! hwx decoder is here from M3 and its client follows in M11, Blue Water
+//! Tracks in M12.
 
 pub mod error;
+pub mod event;
 pub mod geovoile;
+pub mod http;
+pub mod kml;
 pub mod net;
 pub mod yellowbrick;
 
 pub use error::{Result, TrackerError};
+pub use event::{EventRef, Progress, TrackerBoat, TrackerClient, TrackerEvent};
+pub use http::Fetcher;
 
 /// Longitude in [-180, 180) (CLAUDE.md conventions), touching only values
 /// outside it so a recorded value keeps its exact decimal form.

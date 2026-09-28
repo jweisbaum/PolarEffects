@@ -9,9 +9,11 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
-use pe_core::track::Fix;
+use pe_core::track::{Fix, Tracker};
 
 use crate::error::{Result, TrackerError};
+use crate::event::{EventRef, PositionsFrom, Progress, TrackerBoat, TrackerClient, TrackerEvent};
+use crate::http::Fetcher;
 
 /// The CDN host the public responses are served from.
 pub const CDN: &str = "https://cf.yb.tl";
@@ -109,6 +111,31 @@ pub struct Team {
     /// `RACING`, `RETIRED`, `FINISHED`… when given.
     #[serde(default)]
     pub status: Option<String>,
+    /// This team's own start (divisions start apart), UTC epoch seconds.
+    #[serde(default)]
+    pub start: Option<i64>,
+    /// When this team finished, UTC epoch seconds.
+    #[serde(default, rename = "finishedAt")]
+    pub finished_at: Option<i64>,
+}
+
+/// A division or leaderboard tag.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Tag {
+    /// The id teams list in their `tags`.
+    pub id: i64,
+    /// Its name, e.g. "IRC 2".
+    #[serde(default)]
+    pub name: String,
+    /// The tag's own start: set for the divisions that start separately.
+    #[serde(default)]
+    pub start: Option<i64>,
+    /// Display order.
+    #[serde(default)]
+    pub sort: Option<i64>,
+    /// 0 for a hidden tag.
+    #[serde(default)]
+    pub show: Option<i64>,
 }
 
 /// The parts of `RaceSetup` an import uses.
@@ -126,6 +153,9 @@ pub struct RaceSetup {
     /// Every team.
     #[serde(default)]
     pub teams: Vec<Team>,
+    /// Divisions and leaderboards.
+    #[serde(default)]
+    pub tags: Vec<Tag>,
 }
 
 /// Parses `RaceSetup`, which is served as ISO-8859-1, not UTF-8
@@ -378,57 +408,250 @@ pub fn decode_all_positions(bytes: &[u8]) -> Result<AllPositions> {
     })
 }
 
-/// The two responses of one event.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Event {
-    /// The race key.
-    pub key: String,
-    /// The setup: title, dates, teams.
-    pub setup: RaceSetup,
-    /// Every team's history.
-    pub positions: AllPositions,
+/// The public site, which serves the KML fallback. Viewer links use it too.
+pub const SITE: &str = "https://yb.tl";
+
+/// How long the KML fallback may take. YellowBrick builds it on request:
+/// 73 s for the Middle Sea Race 2024 (23 MB), over two minutes for the
+/// Fastnet 2025 (99 MB), so the per-request timeout would cut it short.
+pub const KML_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// Whether a body is an HTML page rather than the JSON or binary asked for.
+/// YellowBrick answers an unknown key's `AllPositions3` with its viewer page
+/// and status 200.
+fn is_html(bytes: &[u8]) -> bool {
+    let start = bytes
+        .iter()
+        .position(|b| !b.is_ascii_whitespace())
+        .unwrap_or(bytes.len());
+    bytes[start..].starts_with(b"<")
 }
 
-fn get(client: &reqwest::blocking::Client, url: &str) -> Result<Vec<u8>> {
-    let response = client
-        .get(url)
-        .send()
-        .map_err(|e| TrackerError::Network(format!("YellowBrick could not be reached: {e}")))?;
-    let status = response.status();
-    if !status.is_success() {
-        // Some keys answer 5xx; the dialog offers Retry (spec.md 7.2).
-        return Err(TrackerError::Network(format!(
-            "YellowBrick answered {status} for {url}"
-        )));
+impl RaceSetup {
+    /// A team's division: the names of its tags that have a start of their
+    /// own (the starting divisions, such as "IRC 2"), else of all its shown
+    /// tags, in the setup's tag order.
+    pub fn division(&self, team: &Team) -> Option<String> {
+        let mut tags: Vec<&Tag> = self
+            .tags
+            .iter()
+            .filter(|t| team.tags.contains(&t.id) && t.show != Some(0))
+            .collect();
+        tags.sort_by_key(|t| (t.sort.unwrap_or(i64::MAX), t.id));
+        let starting: Vec<&str> = tags
+            .iter()
+            .filter(|t| t.start.is_some())
+            .map(|t| t.name.as_str())
+            .collect();
+        let names: Vec<&str> = if starting.is_empty() {
+            tags.iter().map(|t| t.name.as_str()).collect()
+        } else {
+            starting
+        };
+        (!names.is_empty()).then(|| names.join(", "))
     }
-    response
-        .bytes()
-        .map(|b| b.to_vec())
-        .map_err(|e| TrackerError::Network(format!("YellowBrick response cut short: {e}")))
 }
 
-/// Downloads and decodes one event: `RaceSetup`, then `AllPositions3`.
-///
-/// # Errors
-/// [`TrackerError::NotAnEvent`] for a key [`race_key`] would not return,
-/// [`TrackerError::Network`] for a failed request, [`TrackerError::Decode`]
-/// for a response that does not decode.
-pub fn fetch_event(key: &str, timeout: Duration) -> Result<Event> {
-    if !valid_key(key) {
-        return Err(TrackerError::NotAnEvent {
+/// Builds the shared event from the setup and each team's fixes, in the
+/// setup's team order. A team with no positions has no fixes; positions for
+/// a team the setup does not list are left out.
+fn event_of(
+    event: &EventRef,
+    setup: &RaceSetup,
+    mut fixes: impl FnMut(&Team) -> Vec<Fix>,
+    positions_from: PositionsFrom,
+) -> TrackerEvent {
+    let non_empty = |v: &Option<String>| {
+        v.as_ref()
+            .map(|s| s.trim().to_owned())
+            .filter(|s| !s.is_empty())
+    };
+    let boats = setup
+        .teams
+        .iter()
+        .map(|team| TrackerBoat {
+            id: team.id.to_string(),
+            name: team.name.trim().to_owned(),
+            sail: non_empty(&team.sail),
+            model: non_empty(&team.model),
+            division: setup.division(team),
+            status: if team.finished_at.is_some() {
+                Some("FINISHED".to_owned())
+            } else {
+                non_empty(&team.status)
+            },
+            start: team.start.or(setup.start),
+            finish: team.finished_at.or(setup.stop),
+            fixes: fixes(team),
+        })
+        .collect();
+    TrackerEvent {
+        event: event.clone(),
+        title: setup.title.trim().to_owned(),
+        start: setup.start,
+        stop: setup.stop,
+        boats,
+        positions_from,
+    }
+}
+
+/// The YellowBrick client (spec.md 7.2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct YellowBrick {
+    cdn: String,
+    site: String,
+}
+
+impl Default for YellowBrick {
+    fn default() -> Self {
+        Self {
+            cdn: CDN.to_owned(),
+            site: SITE.to_owned(),
+        }
+    }
+}
+
+impl YellowBrick {
+    /// A client reading from other hosts: the fixture tests serve recorded
+    /// responses from a local server.
+    pub fn at(cdn: &str, site: &str) -> Self {
+        Self {
+            cdn: cdn.trim_end_matches('/').to_owned(),
+            site: site.trim_end_matches('/').to_owned(),
+        }
+    }
+}
+
+impl TrackerClient for YellowBrick {
+    fn tracker(&self) -> Tracker {
+        Tracker::YellowBrick
+    }
+
+    fn resolve(&self, input: &str) -> Result<EventRef> {
+        let key = race_key(input)?;
+        Ok(EventRef {
+            tracker: Tracker::YellowBrick,
+            url: format!("{SITE}/{key}"),
+            key,
+        })
+    }
+
+    /// `RaceSetup`, then `AllPositions3`; if the binary does not decode (or
+    /// is refused), the KML instead. A cancel, or a tracker that keeps
+    /// failing (5xx), ends the download without the fallback.
+    fn fetch(
+        &self,
+        event: &EventRef,
+        fetcher: &Fetcher,
+        progress: &mut dyn FnMut(Progress),
+    ) -> Result<TrackerEvent> {
+        let key = event.key.as_str();
+        // The key goes into request paths as it is.
+        if !valid_key(key) {
+            return Err(TrackerError::NotAnEvent {
+                tracker: TRACKER,
+                input: key.to_owned(),
+            });
+        }
+        let step = |step: u32, steps: u32| {
+            move |bytes: u64, total: Option<u64>| Progress {
+                step,
+                steps,
+                bytes,
+                total,
+            }
+        };
+        let no_such = || TrackerError::NoSuchEvent {
             tracker: TRACKER,
-            input: key.to_owned(),
-        });
+            key: key.to_owned(),
+        };
+
+        let at = step(0, 2);
+        let bytes = fetcher.get(
+            &format!("{}/JSON/{key}/RaceSetup", self.cdn),
+            &mut |b, t| {
+                progress(at(b, t));
+            },
+        )?;
+        if is_html(&bytes) {
+            return Err(no_such());
+        }
+        let setup = parse_race_setup(&bytes)?;
+
+        let at = step(1, 2);
+        let binary = fetcher
+            .get(
+                &format!("{}/BIN/{key}/AllPositions3", self.cdn),
+                &mut |b, t| {
+                    progress(at(b, t));
+                },
+            )
+            .and_then(|bytes| {
+                if is_html(&bytes) {
+                    Err(decode_error(
+                        0,
+                        "the answer is a web page, not positions".to_owned(),
+                    ))
+                } else {
+                    decode_all_positions(&bytes)
+                }
+            });
+        let failure = match binary {
+            Ok(all) => {
+                let mut by_id: std::collections::BTreeMap<u16, TeamTrack> =
+                    all.teams.into_iter().map(|t| (t.id, t)).collect();
+                return Ok(event_of(
+                    event,
+                    &setup,
+                    |team| {
+                        by_id
+                            .remove(&team.id)
+                            .map(|t| t.fixes())
+                            .unwrap_or_default()
+                    },
+                    PositionsFrom::Primary,
+                ));
+            }
+            Err(e @ (TrackerError::Cancelled | TrackerError::Unavailable { .. })) => return Err(e),
+            Err(e) => e,
+        };
+
+        // The fallback (spec.md 7.2): the same teams as a KML, by name.
+        fetcher.check()?;
+        let at = step(2, 3);
+        let bytes = fetcher
+            .get_with_timeout(
+                &format!("{}/{key}.kml", self.site),
+                KML_TIMEOUT,
+                &mut |b, t| {
+                    progress(at(b, t));
+                },
+            )
+            .map_err(|e| match e {
+                TrackerError::Cancelled => e,
+                other => TrackerError::Network(format!(
+                    "the positions did not load ({failure}) and neither did the KML ({other})"
+                )),
+            })?;
+        let mut tracks = crate::kml::parse_tracks(&bytes).map_err(|e| {
+            TrackerError::Network(format!(
+                "the positions did not load ({failure}) and the KML did not read ({e})"
+            ))
+        })?;
+        Ok(event_of(
+            event,
+            &setup,
+            |team| {
+                // Each placemark serves the first team of its name.
+                tracks
+                    .iter()
+                    .position(|t| t.name.trim() == team.name.trim())
+                    .map(|k| tracks.remove(k).fixes)
+                    .unwrap_or_default()
+            },
+            PositionsFrom::Fallback,
+        ))
     }
-    let client = crate::net::client(timeout)?;
-    let setup = parse_race_setup(&get(&client, &format!("{CDN}/JSON/{key}/RaceSetup"))?)?;
-    let positions =
-        decode_all_positions(&get(&client, &format!("{CDN}/BIN/{key}/AllPositions3"))?)?;
-    Ok(Event {
-        key: key.to_owned(),
-        setup,
-        positions,
-    })
 }
 
 #[cfg(test)]
@@ -456,13 +679,33 @@ mod tests {
     /// not produce is refused before any request.
     #[test]
     fn fetch_refuses_a_key_that_is_not_a_race_key() {
+        let fetcher =
+            Fetcher::new(TRACKER, Duration::from_secs(1), Default::default()).expect("a client");
         for key in ["", "../JSON/x", "a b", "x?y=1", &"k".repeat(65)] {
-            let err = fetch_event(key, Duration::from_secs(1)).expect_err(key);
+            let event = EventRef {
+                tracker: Tracker::YellowBrick,
+                key: key.to_owned(),
+                url: String::new(),
+            };
+            let err = YellowBrick::default()
+                .fetch(&event, &fetcher, &mut |_| {})
+                .expect_err(key);
             assert!(
                 matches!(err, TrackerError::NotAnEvent { .. }),
                 "{key}: {err}"
             );
         }
+    }
+
+    #[test]
+    fn resolve_gives_the_canonical_address() {
+        let event = YellowBrick::default()
+            .resolve("https://cf.yb.tl/BIN/fastnet2025/AllPositions3")
+            .expect("resolves");
+        assert_eq!(event.key, "fastnet2025");
+        assert_eq!(event.url, "https://yb.tl/fastnet2025");
+        assert!(is_html(b"\n\n<!DOCTYPE html>"));
+        assert!(!is_html(&[0x02, 0x66]));
     }
 
     #[test]

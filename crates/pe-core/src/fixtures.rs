@@ -62,6 +62,8 @@ pub fn track(project: &mut Project) -> Track {
             boat_id: "42".to_owned(),
             boat_name: "Boat".to_owned(),
             sail_no: Some("FRA 1".to_owned()),
+            model: None,
+            division: None,
             race_start: Some(1_753_000_000),
             race_finish: None,
         },

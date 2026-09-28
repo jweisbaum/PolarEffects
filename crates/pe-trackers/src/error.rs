@@ -5,9 +5,34 @@ use thiserror::Error;
 /// Errors produced while fetching or decoding a tracker's data.
 #[derive(Debug, Error)]
 pub enum TrackerError {
-    /// The request could not be made or the tracker answered an error.
+    /// The request could not be made, or the tracker refused it in a way
+    /// asking again would not change (a 4xx answer, an oversized body).
     #[error("{0}")]
     Network(String),
+
+    /// The tracker did not answer usefully after the bounded retries: a 5xx
+    /// or 429 answer, a timeout or a dropped connection (spec.md 7.2: "some
+    /// keys return 5xx; the dialog says so and offers Retry").
+    #[error("{tracker} is not answering: {why}")]
+    Unavailable {
+        /// Which tracker.
+        tracker: &'static str,
+        /// The last failure.
+        why: String,
+    },
+
+    /// The tracker has no public event under this key.
+    #[error("{tracker} has no public event {key:?}")]
+    NoSuchEvent {
+        /// Which tracker.
+        tracker: &'static str,
+        /// The key asked for.
+        key: String,
+    },
+
+    /// The user cancelled the download.
+    #[error("the download was cancelled")]
+    Cancelled,
 
     /// The URL or key does not name an event this tracker serves.
     #[error("not a {tracker} event address: {input}")]

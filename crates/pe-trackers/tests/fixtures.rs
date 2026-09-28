@@ -12,6 +12,12 @@
 //!   RaceSetup` as served (ISO-8859-1). `…-AllPositions3-first65.bin`: the
 //!   first 786 KB of `cf.yb.tl/BIN/fastnet2025/AllPositions3` (5.7 MB, 444
 //!   teams), cut at the end of the 65th team so it is itself a valid file.
+//! - `yellowbrick/rmsr2024-RaceSetup.json` (2026-09-28): the Rolex Middle Sea
+//!   Race 2024 setup as served. `…-AllPositions3-first3.bin`: the first
+//!   44,889 bytes of its `AllPositions3` (1.37 MB, 112 teams), cut at the
+//!   end of the third team. `rmsr2024-3teams.kml`: `yb.tl/rmsr2024.kml`
+//!   (23 MB) with the placemarks of the same three teams kept and the rest
+//!   cut out; header and styles untouched.
 //! - `geovoile/24hultim2025/`: the viewer page and the config, tracks and
 //!   reports resources of `24hultim.geovoile.com/2025/tracker/`.
 //! - `geovoile/routedurhum2022/viewer.html`: the viewer page only, for the
@@ -28,10 +34,15 @@
 //! 2025-09-27; the Vendée Globe 2016 started at Les Sables-d'Olonne on
 //! 2016-11-06 at 12:02Z with 29 boats.
 
+use std::io::{Read, Write};
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
 
+use pe_trackers::event::PositionsFrom;
 use pe_trackers::geovoile::{self, Seeds};
-use pe_trackers::yellowbrick;
+use pe_trackers::yellowbrick::{self, YellowBrick};
+use pe_trackers::{Fetcher, TrackerClient, TrackerError};
 
 fn fixture(path: &str) -> Vec<u8> {
     std::fs::read(
@@ -147,6 +158,184 @@ fn the_full_fastnet_file_decodes_and_is_fast() {
         elapsed.as_secs_f64() * 1e3
     );
     assert_eq!(all.teams.len(), 444);
+}
+
+#[test]
+fn divisions_come_from_the_starting_tags() {
+    let setup = yellowbrick::parse_race_setup(&fixture("yellowbrick/fastnet2025-RaceSetup.json"))
+        .expect("parses");
+    let team = |id| setup.teams.iter().find(|t| t.id == id).expect("a team");
+    // Tagged "Line Honours Monohull", "IRC Overall" and "IRC 2"; only
+    // "IRC 2" has a start of its own.
+    assert_eq!(setup.division(team(3)).as_deref(), Some("IRC 2"));
+    assert_eq!(setup.division(team(1)).as_deref(), Some("IMOCA"));
+    assert_eq!(team(3).start, Some(1_753_530_000));
+    assert_eq!(team(3).finished_at, Some(1_753_916_050));
+    assert_eq!(setup.stop, Some(1_754_110_800));
+
+    // No tag of the Middle Sea Race 2024 has its own start: all shown tags
+    // ("Group 6" is hidden, `show: 0`).
+    let setup = yellowbrick::parse_race_setup(&fixture("yellowbrick/rmsr2024-RaceSetup.json"))
+        .expect("parses");
+    assert_eq!(setup.title, "Rolex Middle Sea Race 2024");
+    assert_eq!(setup.teams.len(), 112);
+    let first = &setup.teams[0];
+    assert_eq!(first.name, "12 NACIRA 69");
+    assert_eq!(
+        setup.division(first).as_deref(),
+        Some("Line Honours Monohull, IRC Overall, IRC Class 2")
+    );
+}
+
+/// The KML fallback against the binary of the same race: every KML
+/// position is one the binary has, at the same time, on the same 1e-5
+/// grid. The binary also holds a few reports at a repeated time, which the
+/// KML leaves out (1689 against 1670 for the first team).
+#[test]
+fn rmsr_kml_matches_the_binary() {
+    let kml =
+        pe_trackers::kml::parse_tracks(&fixture("yellowbrick/rmsr2024-3teams.kml")).expect("reads");
+    let names: Vec<&str> = kml.iter().map(|t| t.name.as_str()).collect();
+    assert_eq!(names, ["12 NACIRA 69", "AFAZIK IMPULSE", "ALMAR"]);
+    let counts: Vec<usize> = kml.iter().map(|t| t.fixes.len()).collect();
+    assert_eq!(counts, [1670, 1684, 2216]);
+    let first = &kml[0].fixes[0];
+    // 2024-10-18T06:33:25Z at 35.90196N 14.50192E, in Marsamxett Harbour.
+    assert_eq!(
+        (first.t, first.lat, first.lon),
+        (1_729_233_205, 35.901_96, 14.501_92)
+    );
+    let last = kml[0].fixes.last().expect("fixes");
+    assert_eq!(
+        (last.t, last.lat, last.lon),
+        (1_729_731_600, 35.902, 14.5018)
+    );
+
+    let all = yellowbrick::decode_all_positions(&fixture(
+        "yellowbrick/rmsr2024-AllPositions3-first3.bin",
+    ))
+    .expect("decodes");
+    assert_eq!(all.teams.len(), 3);
+    let counts: Vec<usize> = all.teams.iter().map(|t| t.moments.len()).collect();
+    assert_eq!(counts, [1689, 1692, 2225]);
+    for (k, team) in all.teams.iter().enumerate() {
+        let binary = team.fixes();
+        for fix in &kml[k].fixes {
+            assert!(
+                binary
+                    .iter()
+                    .any(|b| b.t == fix.t && b.lat == fix.lat && b.lon == fix.lon),
+                "{} {fix:?}",
+                kml[k].name
+            );
+        }
+    }
+}
+
+/// A local server answering by path from recorded responses.
+fn serve(routes: Vec<(&'static str, &'static str, Vec<u8>)>) -> String {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("binds");
+    let port = listener.local_addr().expect("an address").port();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { break };
+            let mut buf = vec![0u8; 8192];
+            let n = stream.read(&mut buf).unwrap_or(0);
+            let request = String::from_utf8_lossy(&buf[..n]).into_owned();
+            let path = request.split_whitespace().nth(1).unwrap_or("").to_owned();
+            let (status, body) = routes
+                .iter()
+                .find(|(p, _, _)| *p == path)
+                .map_or(("404 Not Found", Vec::new()), |(_, s, b)| (*s, b.clone()));
+            let head = format!(
+                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(head.as_bytes());
+            let _ = stream.write_all(&body);
+        }
+    });
+    format!("http://127.0.0.1:{port}")
+}
+
+fn fetch_rmsr(
+    positions: (&'static str, Vec<u8>),
+) -> pe_trackers::Result<pe_trackers::TrackerEvent> {
+    let host = serve(vec![
+        (
+            "/JSON/rmsr2024/RaceSetup",
+            "200 OK",
+            fixture("yellowbrick/rmsr2024-RaceSetup.json"),
+        ),
+        ("/BIN/rmsr2024/AllPositions3", positions.0, positions.1),
+        (
+            "/rmsr2024.kml",
+            "200 OK",
+            fixture("yellowbrick/rmsr2024-3teams.kml"),
+        ),
+    ]);
+    let client = YellowBrick::at(&host, &host);
+    let event = client.resolve("https://yb.tl/rmsr2024").expect("resolves");
+    let fetcher = Fetcher::new("YellowBrick", Duration::from_secs(10), Arc::default())
+        .expect("a client")
+        .with_backoff(Duration::from_millis(1));
+    let mut last = 0.0;
+    let out = client.fetch(&event, &fetcher, &mut |p| last = p.fraction());
+    if out.is_ok() {
+        assert!((last - 1.0).abs() < 1e-9, "progress ends at 1, got {last}");
+    }
+    out
+}
+
+/// The whole event through the client, from recorded responses: the
+/// setup's 112 boats with their sail numbers, models and divisions, the
+/// first three with the binary's positions.
+#[test]
+fn an_event_downloads_through_the_client() {
+    let event = fetch_rmsr((
+        "200 OK",
+        fixture("yellowbrick/rmsr2024-AllPositions3-first3.bin"),
+    ))
+    .expect("fetches");
+    assert_eq!(event.title, "Rolex Middle Sea Race 2024");
+    assert_eq!(event.event.url, "https://yb.tl/rmsr2024");
+    assert_eq!(event.positions_from, PositionsFrom::Primary);
+    assert_eq!(event.boats.len(), 112);
+    let boat = event.boat("1").expect("team 1");
+    assert_eq!(boat.name, "12 NACIRA 69");
+    assert_eq!(boat.sail.as_deref(), Some("ITA17498"));
+    assert_eq!(boat.model.as_deref(), Some("NACIRA V69 4.25"));
+    assert_eq!(boat.status.as_deref(), Some("FINISHED"));
+    assert_eq!(
+        (boat.start, boat.finish),
+        (Some(1_729_332_000), Some(1_729_722_454))
+    );
+    assert_eq!(boat.fixes.len(), 1689);
+    assert_eq!(event.fixes("3").map(<[_]>::len), Some(2225));
+    assert_eq!(
+        event.fixes("4").map(<[_]>::len),
+        Some(0),
+        "not in the cropped binary"
+    );
+}
+
+/// An `AllPositions3` that is a web page (what YellowBrick answers for a
+/// key it has no positions for) falls back to the KML, matched by name.
+#[test]
+fn a_binary_that_does_not_decode_falls_back_to_the_kml() {
+    let event =
+        fetch_rmsr(("200 OK", b"\n\n<!DOCTYPE html><html></html>".to_vec())).expect("fetches");
+    assert_eq!(event.positions_from, PositionsFrom::Fallback);
+    let counts: Vec<usize> = event.boats[..4].iter().map(|b| b.fixes.len()).collect();
+    assert_eq!(counts, [1670, 1684, 2216, 0]);
+}
+
+/// A tracker that keeps answering 5xx is reported as not answering, for
+/// the dialog's Retry, and the KML is not tried.
+#[test]
+fn a_failing_tracker_is_unavailable_not_a_fallback() {
+    let err = fetch_rmsr(("503 Service Unavailable", Vec::new())).expect_err("fails");
+    assert!(matches!(err, TrackerError::Unavailable { .. }), "{err:?}");
 }
 
 // --- Geovoile ----------------------------------------------------------------
