@@ -1,0 +1,13 @@
+[package]
+name = "pe-orc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "PolarEffects embedded ORC catalogue and its search index."
+
+[dependencies]
+pe-core = { workspace = true }
+
+[lints]
+workspace = true

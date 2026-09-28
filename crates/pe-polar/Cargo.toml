@@ -1,0 +1,13 @@
+[package]
+name = "pe-polar"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "PolarEffects polar grids, polar file formats, binning and blending."
+
+[dependencies]
+pe-core = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,88 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/pe-core",
+    "crates/pe-polar",
+    "crates/pe-orc",
+    "crates/pe-tracks",
+    "crates/pe-trackers",
+    "crates/pe-env",
+    "crates/pe-grib",
+    "crates/pe-app",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "PolyForm-Noncommercial-1.0.0"
+
+[workspace.dependencies]
+pe-core = { path = "crates/pe-core" }
+pe-polar = { path = "crates/pe-polar" }
+pe-orc = { path = "crates/pe-orc" }
+pe-tracks = { path = "crates/pe-tracks" }
+pe-trackers = { path = "crates/pe-trackers" }
+pe-env = { path = "crates/pe-env" }
+pe-grib = { path = "crates/pe-grib" }
+
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+ts-rs = "12.0.1"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+
+# Release profile favours export and blending, which are CPU-bound and allowed
+# to be slow to compile. See spec.md 13.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+
+# Dev builds still need polar math and sampling to be usable interactively.
+#
+# `profile.dev.package."*"` covers dependencies only -- it does *not* reach the
+# workspace's own crates, which is where the polar math and sampling live.
+# Without the `[profile.dev]` entry below, VectorEffects' equivalent hot path
+# ran about 2.4x slower under `tauri dev` than in release, for no reason anyone
+# would guess from the config.
+#
+# `debug = "line-tables-only"` keeps file and line numbers in backtraces but
+# drops full DWARF: the target directory is several times smaller, which the
+# development machine's disk needs, and a debugger is rarely what finds a bug
+# in this code base.
+[profile.dev]
+opt-level = 1
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 2
+
+# The app crate builds unoptimised, deliberately.
+#
+# At the `opt-level = 1` above, an *incremental* rebuild of the app crate
+# produces an rlib whose codegen units reference each other's internalised
+# `.llvm.*` symbols. The linker pulls archive members on demand under
+# `-dead_strip`, leaves those members out, and every binary in the package then
+# fails with "Undefined symbols for architecture x86_64" -- `tauri dev`
+# included, on every single edit. The only recovery was deleting the rlib by
+# hand. Reproduced in VectorEffects on Rust 1.97.1, x86_64-apple-darwin:
+# `touch` any app source and rebuild.
+#
+# `codegen-units = 1` fixes it too, by leaving no cross-unit references to lose,
+# but costs two minutes for a one-file edit against seconds here.
+#
+# Nothing is given up. This crate is IPC glue: every polar, blending, sampling
+# and geodesy call it makes is in a library crate, which keeps its
+# optimisation, and the budgets in spec.md 13 are measured there.
+# `CARGO_INCREMENTAL=0` is the other workaround, and it is slower.
+[profile.dev.package.pe-app]
+opt-level = 0

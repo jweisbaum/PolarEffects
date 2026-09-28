@@ -1,0 +1,12 @@
+[package]
+name = "pe-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "PolarEffects document model, history, geodesy and project file I/O."
+
+[dependencies]
+
+[lints]
+workspace = true

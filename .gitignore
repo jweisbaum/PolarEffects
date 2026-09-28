@@ -1,5 +1,24 @@
-target/
+# Rust
+/target/
+**/*.rs.bk
+
+# Node
 node_modules/
 ui/dist/
-.superpowers/
+
+# Tauri generated
+crates/pe-app/gen/
+
+# OS
 .DS_Store
+
+# Logs and local scratch
+*.log
+
+# Python bytecode from tools/
+__pycache__/
+*.pyc
+
+# Agent workspaces; never project content.
+.superpowers/
+.claude/worktrees/
