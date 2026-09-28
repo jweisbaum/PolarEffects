@@ -58,6 +58,14 @@ pub enum AppError {
         value: String,
     },
 
+    /// Add was asked for an ORC certificate the project already holds
+    /// (spec.md 5.3). The frontend asks, then repeats the call allowing it.
+    #[error("The project already holds the certificate of {name}.")]
+    DuplicateCertificate {
+        /// The boat, for the message.
+        name: String,
+    },
+
     /// A named step failed, on a named thing.
     ///
     /// The general-purpose contextual error: `doing` is the action in the
@@ -112,6 +120,7 @@ impl AppError {
             Self::ProjectNeverSaved => "never-saved",
             Self::UnsavedChanges { .. } => "unsaved-changes",
             Self::BadOption { .. } => "bad-option",
+            Self::DuplicateCertificate { .. } => "orc-duplicate",
             Self::Doing { .. } => "doing",
             Self::Internal(_) => "internal",
         }

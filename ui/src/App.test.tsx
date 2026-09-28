@@ -11,6 +11,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AppSettings } from "./generated/AppSettings";
+import type { OrcHit } from "./generated/OrcHit";
 import type { ProjectSummary } from "./generated/ProjectSummary";
 import type { SourceSummary } from "./generated/SourceSummary";
 
@@ -43,11 +44,22 @@ HTMLElement.prototype.scrollIntoView = () => undefined;
 /** An imported Adrena polar, as the source list and Polar files section show it. */
 const POLAR: SourceSummary = {
   id: 7, kind: "polar_file", label: "boat.pol", colour: "#4e79a7", visible: true, weight: 1, count: 71, used: null,
-  polar_file: { format: "adrena", file_name: "boat.pol", twa: [0, 42.5, 180], tws: [6, 8, 20] },
+  polar_file: { format: "adrena", file_name: "boat.pol", twa: [0, 42.5, 180], tws: [6, 8, 20] }, orc: null,
 };
 const TRACK: SourceSummary = {
   id: 8, kind: "track", label: "Fastnet 2025", colour: "#f28e2b", visible: false, weight: 0.5, count: 120, used: 100,
-  polar_file: null,
+  polar_file: null, orc: null,
+};
+/** An ORC certificate, as the source list and the ORC polars section show it. */
+const ORC: SourceSummary = {
+  id: 9, kind: "orc", label: "Eratosthenes", colour: "#e15759", visible: true, weight: 1, count: 70, used: null,
+  polar_file: null, orc: { sail_no: "GBR 1124", model: "Swan 112", year: 1999, certificate_year: 2023 },
+};
+/** A search result for it. */
+const HIT: OrcHit = {
+  id: 4242, name: "Eratosthenes", sail_no: "GBR 1124", country: "GBR", model: "Swan 112", builder: "Nautor",
+  year: 1999, certificate_year: 2023, in_project: false,
+  thumb: [{ tws: 6, twa: [52, 90, 150], bsp: [6.87, 7.75, 5.17] }],
 };
 
 function summary(dirty: boolean, path: string | null = null, sources: SourceSummary[] = []): ProjectSummary {
@@ -93,6 +105,23 @@ function backend() {
         };
       case "set_source_label": case "set_source_visible": case "set_source_colour": case "set_source_weight":
       case "move_source": case "remove_source":
+        return project;
+      case "orc_catalogue_info": return {
+        records: 18135, source: "jieter/orc-data", commit: "c2ca870c6b22cc02c25afd5bac0f2d8297bf95de",
+        commit_date: "2026-09-28", build_date: "2026-09-28", countries: ["GBR", "NED"], year_min: 1900, year_max: 2026,
+      };
+      case "orc_search": {
+        const inProject = project?.sources.some((s) => s.kind === "orc") ?? false;
+        return { total: 120, hits: [{ ...HIT, in_project: inProject }] };
+      }
+      case "orc_add":
+        if (!args?.allowDuplicate && project?.sources.some((s) => s.kind === "orc")) {
+          throw { kind: "orc-duplicate", message: "The project already holds the certificate of Eratosthenes." };
+        }
+        project = {
+          ...summary(true, project?.path ?? null, [...(project?.sources ?? []), { ...ORC, id: 9 + (project?.sources.length ?? 0) }]),
+          revision: (project?.revision ?? 0) + 1,
+        };
         return project;
       default: return null;
     }
@@ -356,7 +385,9 @@ describe("switching language (plan.md M2 acceptance)", () => {
   // Data, not interface: the project's name and path, the version, the
   // languages' own names, and symbols.
   const data = new Set(["Fastnet", "/boats/Fastnet.wpsproj", "v0.1.0", "PolarEffects", "English", "Français",
-    "Deutsch", "/cache/chunks", "…", "Old", "/gone/Old.wpsproj", "Lost", "?"]);
+    "Deutsch", "/cache/chunks", "…", "Old", "/gone/Old.wpsproj", "Lost", "?",
+    // Country codes and the catalogue's commit, from the ORC polars section.
+    "GBR", "NED", "c2ca870c6b22cc02c25afd5bac0f2d8297bf95de"]);
   const untranslated = (target: "fr" | "de", before: string[], after: string[]) =>
     before.filter((text, index) =>
       text === after[index] && !data.has(text) && CATALOGUES[target][text] !== text && /\p{L}{2}/u.test(text)
@@ -419,7 +450,9 @@ describe("switching language (plan.md M2 acceptance)", () => {
       // Data, not interface: the project's name and path, the version, the
       // languages' own names, and symbols.
       const data = new Set(["Fastnet", "/boats/Fastnet.wpsproj", "v0.1.0", "PolarEffects", "English", "Français",
-        "Deutsch", "/cache/chunks", "…"]);
+        "Deutsch", "/cache/chunks", "…",
+        // Country codes and the catalogue's commit, from the ORC polars section.
+        "GBR", "NED", "c2ca870c6b22cc02c25afd5bac0f2d8297bf95de"]);
       const untranslated = before.filter((text, index) =>
         text === after[index] && !data.has(text) && catalogue[text] !== text && /\p{L}{2}/u.test(text)
         && !/^(Cmd|Ctrl)\+/.test(text));
@@ -464,8 +497,9 @@ describe("finding every control (plan.md M2 acceptance)", () => {
       setLanguage(lang);
       for (const entry of windowFeatures) {
         foldEverything();
-        // A source, so that the source list's row controls are on screen.
-        project = summary(false, "/p.wpsproj", [POLAR]);
+        // Sources, so that the source list's row controls and each
+        // section's Remove are on screen.
+        project = summary(false, "/p.wpsproj", [POLAR, ORC]);
         await mount();
         // The map stage is hidden behind the 3D stage, to be revealed.
         await click(feature("stage:3d"));
@@ -600,5 +634,81 @@ describe("polar files and the source list (plan.md M4)", () => {
     dialog.open.mockResolvedValue(["/boats/bad.csv"]);
     await click(feature("polar-files:import"));
     expect(q(".import-failures li")!.textContent).toBe("bad.csv, Zeile 2, Spalte 6: dies ist keine Zahl");
+  });
+});
+
+describe("ORC polars (plan.md M5)", () => {
+  const open = async (sources: SourceSummary[]) => {
+    project = summary(false, "/p.wpsproj", sources);
+    await mount();
+  };
+  const commands = (name: string) => calls.filter(([command]) => command === name).map(([, args]) => args);
+  const search = async (text: string) => {
+    await type(feature("orc:search") as HTMLInputElement, text);
+    await settle();
+  };
+
+  it("searches as you type, with filters, and lists results with a thumbnail", async () => {
+    await open([]);
+    expect(commands("orc_search")).toEqual([]);
+    await search("G");
+    await search("GBR 1124");
+    const searches = commands("orc_search") as { query: string; filters: unknown; limit: number }[];
+    expect(searches.map((s) => s.query)).toEqual(["G", "GBR 1124"]);
+    expect(searches[1]!.filters).toEqual({ year_min: null, year_max: null, country: null });
+    const row = q(".orc-results li")!;
+    expect(row.querySelector(".orc-name")!.textContent).toBe("Eratosthenes");
+    expect(row.querySelector(".orc-meta")!.textContent).toBe("GBR 1124 · Swan 112 · 1999 · Nautor");
+    expect(row.querySelector("svg.orc-thumb path")!.getAttribute("d")).toMatch(/^M/);
+    expect(q(".orc-count")!.textContent).toBe("Best 1 of 120 certificates");
+
+    const country = feature("orc:country") as HTMLSelectElement;
+    await act(async () => {
+      country.value = "NED";
+      country.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await type(feature("orc:year-from") as HTMLInputElement, "1990");
+    await settle();
+    const last = (commands("orc_search") as { filters: unknown }[]).at(-1)!;
+    expect(last.filters).toEqual({ year_min: 1990, year_max: null, country: "NED" });
+    expect(q(".orc-provenance")!.textContent).toBe("Catalogue: 18135 certificates from jieter/orc-data of 2026-09-28");
+  });
+
+  it("adds a certificate, and asks before adding it a second time", async () => {
+    await open([]);
+    await search("eratosthenes");
+    await click(feature("orc:add"));
+    expect(commands("orc_add")).toEqual([{ id: 4242, allowDuplicate: false }]);
+    expect(q(".orc-added")!.textContent).toContain("Eratosthenes");
+    expect(q(".orc-added")!.textContent).toContain("GBR 1124 · Swan 112 · 1999 · Certificate 2023");
+
+    // Marked as added now; Add again asks, and Cancel adds nothing.
+    expect(feature("orc:add")!.textContent).toBe("Added");
+    await click(feature("orc:add"));
+    expect(q("[role=dialog]")!.textContent).toContain("Eratosthenes is already in the project.");
+    await click(buttonNamed("Cancel"));
+    expect(commands("orc_add")).toHaveLength(1);
+    await click(feature("orc:add"));
+    await click(buttonNamed("Add again"));
+    expect(commands("orc_add")).toEqual([{ id: 4242, allowDuplicate: false }, { id: 4242, allowDuplicate: true }]);
+  });
+
+  it("asks when Rust finds a duplicate the list did not know about", async () => {
+    await open([]);
+    await search("eratosthenes");
+    expect(feature("orc:add")!.textContent).toBe("Add");
+    // The project gained the certificate behind the list's back.
+    project = summary(false, "/p.wpsproj", [ORC]);
+    await click(feature("orc:add"));
+    expect(q("[role=dialog]")!.textContent).toContain("Eratosthenes is already in the project.");
+    await click(buttonNamed("Add again"));
+    expect(commands("orc_add")).toEqual([{ id: 4242, allowDuplicate: false }, { id: 4242, allowDuplicate: true }]);
+    expect(q(".statusbar .hint.error"), "the duplicate is asked about, not reported").toBeNull();
+  });
+
+  it("removes an ORC polar from its section", async () => {
+    await open([ORC]);
+    await click(feature("orc:remove"));
+    expect(commands("remove_source")).toEqual([{ id: 9 }]);
   });
 });

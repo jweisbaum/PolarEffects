@@ -276,6 +276,24 @@ button.icon-button { padding: 0 5px; line-height: 16px; font-size: 11px; }
 .polar-file-label, .polar-file-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .polar-file-meta { font-size: 11px; }
 
+/* ORC polars (spec.md 5) */
+.orc-search { width: 100%; box-sizing: border-box; padding: 3px 6px; }
+.orc-filters { display: flex; gap: 4px; margin: 4px 0 6px; }
+.orc-filters input { width: 58px; min-width: 0; padding: 1px 4px; }
+.orc-filters select { flex: 1; min-width: 0; }
+.orc-count { margin: 0 0 4px; font-size: 11px; }
+.orc-results { list-style: none; margin: 0 0 8px; padding: 0; max-height: 320px; overflow-y: auto;
+  border-top: 1px solid var(--border-subtle); border-bottom: 1px solid var(--border-subtle); }
+.orc-results li { display: flex; align-items: center; gap: 6px; padding: 3px 0; }
+.orc-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.orc-name, .orc-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.orc-meta { font-size: 11px; }
+.orc-thumb { flex: none; color: var(--accent); }
+.orc-thumb path { fill: none; stroke: currentColor; stroke-width: 1; stroke-linejoin: round; }
+.orc-thumb .orc-thumb-0 { opacity: 0.45; }
+.orc-thumb .orc-thumb-1 { opacity: 0.7; }
+.orc-provenance { margin: 6px 0 0; font-size: 10px; overflow-wrap: anywhere; }
+
 /* The source list (spec.md 8) */
 .source-list { list-style: none; margin: 0; padding: 0; }
 .source-row { position: relative; padding: 4px 0; border-bottom: 1px solid var(--border-subtle); }

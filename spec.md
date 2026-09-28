@@ -378,41 +378,80 @@ The ORC catalogue is **embedded in the app** (D3):
 
 - Built by `tools/orc-catalogue-builder` from jieter/orc-data's per-boat files
   (`site/data/<country>/<sail>.json`, about 18,000 boats across all years,
-  MIT licence). `ALL2025.json` is not used: it is Python `repr`, not JSON, and
-  holds 34 boats.
+  MIT licence). `ALL2025.json` is not used as a source of records: it is
+  Python `repr`, not JSON, and holds 34 boats.
+- The builder reads the files **from the checkout's `HEAD` commit** through
+  `git`, not from the working tree: orc-data has file names that differ only
+  in case (`FIN/FIN71.json`, `FIN/Fin71.json`), which a macOS or Windows
+  checkout collapses into one.
 - The builder keeps: sail number, country, name, type/model, builder,
   designer, year, the certificate year, the size fields (LOA, beam, draft,
   displacement, sail areas, crew), GPH/OSN, and the VPP (`angles`, `speeds`,
   BSP per angle per TWS, beat and run angles and VMGs). Speed axes differ by
-  year (6–24 kn up to 2024, 4–24 kn from 2025); both are kept as given.
-- Output: a compact binary (`catalogue.bin`, bincode + zstd-free lz4) in
-  `crates/pe-orc/data/`, loaded lazily on first use. Its build date and the
-  orc-data commit it came from appear in About.
+  year (6–20 kn up to 2023, 6–24 kn in 2024, 4–24 kn from 2025); all are kept
+  as given. Sizes of 0 (orc-data's "no spinnaker") are kept as absent.
+- The sail number is shown once with its country: orc-data's `GBR/GBR1124`
+  is `GBR 1124`; its stand-in for a missing number (`GBR/_3`) is empty.
+- **Certificate year.** The per-boat files do not state it. The builder reads
+  it from the VPP's wind-speed axis (4–24 kn: the latest yearly list from
+  2025 holding the boat, else the year the checkout's Makefile fetches; 6–24
+  kn: 2024; 6–20 kn: the latest of the yearly lists `ALL2019`–`ALL2023`
+  holding the boat's sail number, of which only the sail numbers are read).
+  When none of this identifies a year it is left empty rather than guessed
+  (about 700 boats, all certificates older than 2019).
+- **Dropped records.** The builder reports every file it leaves out and why
+  (not JSON, VPP shape or axis wrong, a speed that is negative or above
+  60 kn, values finer than 0.01, a file identical to another). At orc-data
+  `c2ca870c` it read 18,141 files, kept 18,135 and dropped 6: four with
+  negative boat speeds and two exact duplicates.
+- Output: a compact binary (`catalogue.bin`, postcard records in one LZ4
+  block, speeds and angles as whole hundredths, which is exact for
+  orc-data's two decimals) in `crates/pe-orc/data/`, about 5.7 MB. It is
+  embedded in the binary and decoded and indexed on first use (about 0.2 s).
+  Its small uncompressed header holds the orc-data commit, the commit's date
+  and the build date; About shows them (the native About panel), and the
+  ORC polars section's footer shows the certificate count and commit date.
 - Refreshing the catalogue is a developer task and a new release, never a
   run-time fetch (invariant 4).
 
 ### 5.2 Search
 
 - One search box that matches **across all fields**: boat name, sail number,
-  country, model/type, builder, designer, year. Tokens are ANDed, so
-  `farr 40 2023` finds Farr 40s from 2023.
+  country, model/type, builder, designer, year built and certificate year.
+  Tokens are ANDed, and each must match the **start of a word** of some field,
+  so `farr 40 2023` finds Farr 40s from 2023 and `arr` finds nothing.
 - Results update **as the user types**, within 30 ms of each keystroke, best
-  first. Ranking: exact sail number, then name prefix, then model prefix, then
-  other token matches, then newer certificates first.
+  first. Ranking: exact sail number (with or without its country), then name
+  prefix, then model prefix, then other token matches; within each, newer
+  certificates first, then by name.
 - Case- and accent-insensitive; accepts `GBR1124`, `GBR 1124`, `GBR/1124`.
-- Each result shows name, sail number, model, year, builder and a small
-  polar thumbnail. Filters: year range, country.
+- Each result shows name, sail number, model, year, builder, the certificate
+  year and a small polar thumbnail (light, medium and strong wind: the
+  certificate's wind speeds nearest 6, 12 and 20 kn). Filters: year built
+  (from, to; a boat without a year is left out while either is set) and
+  country. An empty query with no filter lists nothing; with a filter it
+  lists what the filter admits. At most 50 results are listed, with the
+  total count.
+- Measured in M5 on the development machine (Intel i9, debug build): 188
+  keystrokes over the full catalogue, median 1.2 ms, p99 2.4 ms.
 
 ### 5.3 Adding and removing
 
 - **Add** puts a copy of the record in the project as an ORC source with the
-  next palette colour. Any number can be added; adding the same certificate
-  twice asks first.
+  next palette colour, labelled with the boat's name (else its model, else
+  its sail number); one undo takes it back out. Any number can be added;
+  adding the same certificate twice asks first. orc-data gives no
+  certificate number, so "the same certificate" is the same country, sail
+  number, name, model, year built and certificate year. A result the project
+  already holds is marked **Added**.
 - The added list sits under the search. Each entry has **Remove**
-  (undoable) and shows its colour.
+  (undoable) and shows its colour, sail number, model and certificate year.
 - The ORC VPP converts to a polar on the ORC angles (52°–150°) plus the
-  beat and run angles per TWS. Nothing is invented outside the angles ORC
-  gives; the blend (§12) handles gaps.
+  beat and run angles per TWS, on the certificate's own wind speeds. At a
+  beat or run angle only its own wind speed has a value, the VMG divided by
+  the cosine of the angle (by the cosine of 180° less the angle for a run);
+  where it falls on a table angle, the table's value stays. Nothing is
+  invented outside the angles ORC gives; the blend (§12) handles gaps.
 
 ---
 

@@ -30,6 +30,7 @@ function lineFor(kind: string): string | null {
     case "never-saved": return t("This project has not been saved yet.");
     case "unsaved-changes": return t("The project has unsaved changes.");
     case "bad-option": return t("That value is not accepted.");
+    case "orc-duplicate": return t("The project already holds this certificate.");
     case "doing": return t("The operation could not be completed.");
     case "internal": return t("Something went wrong inside PolarEffects.");
     default: return null;

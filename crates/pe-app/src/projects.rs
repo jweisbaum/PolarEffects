@@ -41,6 +41,22 @@ pub struct SourceSummary {
     pub used: Option<u32>,
     /// For an imported polar file, how it was read (spec.md 6).
     pub polar_file: Option<PolarFileSummary>,
+    /// For an ORC polar, which certificate it is (spec.md 5.3).
+    pub orc: Option<OrcSourceSummary>,
+}
+
+/// An ORC source's certificate, as the ORC polars section lists it.
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[ts(export_to = "OrcSourceSummary.ts")]
+pub struct OrcSourceSummary {
+    /// Sail number as shown; empty when there is none.
+    pub sail_no: String,
+    /// Type or model.
+    pub model: Option<String>,
+    /// Year built.
+    pub year: Option<i32>,
+    /// Year of the certificate, when known.
+    pub certificate_year: Option<i32>,
 }
 
 /// An imported polar file's format and axes, as the Polar files section
@@ -65,11 +81,23 @@ fn count(value: usize) -> u32 {
 impl SourceSummary {
     /// The summary of one source.
     pub fn of(source: &pe_core::Source) -> Self {
+        let orc = match &source.kind {
+            SourceKind::Orc { record } => Some(OrcSourceSummary {
+                sail_no: record.sail_no.clone(),
+                model: record.model.clone(),
+                year: record.year,
+                certificate_year: record.certificate_year,
+            }),
+            _ => None,
+        };
         let (cells, used, polar_file) = match &source.kind {
-            SourceKind::Orc { record } => {
-                let cells = record.vpp.bsp.iter().flatten().flatten().count();
-                (cells, None, None)
-            }
+            // The cells of the polar it gives: the table plus the beat and
+            // run points (spec.md 5.3).
+            SourceKind::Orc { record } => (
+                pe_polar::cell_count(&pe_polar::vpp_to_polar(&record.vpp)),
+                None,
+                None,
+            ),
             SourceKind::PolarFile {
                 format,
                 file_name,
@@ -104,6 +132,7 @@ impl SourceSummary {
             count: count(cells),
             used,
             polar_file,
+            orc,
         }
     }
 }

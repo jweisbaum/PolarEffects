@@ -18,6 +18,9 @@ import type { ChunkCacheSettings } from "./generated/ChunkCacheSettings";
 import type { ChunkCacheStatus } from "./generated/ChunkCacheStatus";
 import type { MapProjection } from "./generated/MapProjection";
 import type { NetworkSettings } from "./generated/NetworkSettings";
+import type { OrcCatalogueInfo } from "./generated/OrcCatalogueInfo";
+import type { OrcFilters } from "./generated/OrcFilters";
+import type { OrcSearchResult } from "./generated/OrcSearchResult";
 import type { PolarImportResult } from "./generated/PolarImportResult";
 import type { Units } from "./generated/Units";
 import type { ProjectSummary } from "./generated/ProjectSummary";
@@ -56,6 +59,7 @@ const LONG_RUNNING: Readonly<Record<string, string>> = {
   chunk_cache_status: msg("Measuring the cache"),
   clear_chunk_cache: msg("Clearing the cache"),
   import_polar_files: msg("Importing polar files"),
+  orc_catalogue_info: msg("Loading the ORC catalogue"),
 };
 
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
@@ -153,6 +157,19 @@ export const api = {
    * code; the others still import.
    */
   importPolarFiles: (paths: string[]) => call<PolarImportResult>("import_polar_files", { paths }),
+
+  // ORC polars (spec.md 5). The catalogue is built into the app.
+
+  /** The catalogue's size, provenance, countries and years; loads it on first call. */
+  orcCatalogueInfo: () => call<OrcCatalogueInfo>("orc_catalogue_info"),
+  /** Searches the catalogue: every word must match; best first, at most `limit`. */
+  orcSearch: (query: string, filters: OrcFilters, limit: number) =>
+    call<OrcSearchResult>("orc_search", { query, filters, limit }),
+  /**
+   * Adds a certificate as an ORC source (undoable). One the project already
+   * holds fails with kind "orc-duplicate" unless `allowDuplicate`.
+   */
+  orcAdd: (id: number, allowDuplicate = false) => call<ProjectSummary>("orc_add", { id, allowDuplicate }),
 
   // Settings (spec.md 3.4). Each returns the settings as saved.
 

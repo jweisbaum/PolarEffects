@@ -2,7 +2,7 @@
 //!
 //! Rust owns the entire domain; the webview is a view layer. Everything the
 //! frontend can reach goes through a Tauri command in [`commands`],
-//! [`projects`], [`edit`], [`polar_files`], [`settings`], [`basemap`], [`quit`] or
+//! [`projects`], [`edit`], [`polar_files`], [`orc`], [`settings`], [`basemap`], [`quit`] or
 //! [`autosave`], and every failure it can see is an [`error::AppError`].
 
 pub mod autosave;
@@ -11,6 +11,7 @@ pub mod commands;
 pub mod edit;
 pub mod error;
 pub mod menu;
+pub mod orc;
 pub mod paths;
 pub mod polar_files;
 pub mod projects;
@@ -76,6 +77,9 @@ pub fn run() -> anyhow::Result<()> {
             edit::move_source,
             edit::remove_source,
             polar_files::import_polar_files,
+            orc::orc_catalogue_info,
+            orc::orc_search,
+            orc::orc_add,
             autosave::recovered_projects,
             autosave::open_recovered,
             autosave::discard_recovered,

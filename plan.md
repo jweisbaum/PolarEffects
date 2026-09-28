@@ -54,7 +54,8 @@ as the foundation of `pe-env`, `pe-trackers` and `ui/src/polar/`.
   28 + 8 ms, lasso 8 ms); IPC transfer of 200k samples unmeasured (M7).
   Start screen < 1.5 s, ORC search < 30 ms, blend < 50 ms and opening 50
   tracks < 2 s are not exercised by these spikes: no evidence against,
-  measured in M5, M8 and M14.
+  measured in M5, M8 and M14. ORC search, measured in M5: p99 2.4 ms per
+  keystroke over the full catalogue (debug build, Intel i9) — **go**.
 - *D19 decided*: hourly stays the default (see §5).
 
 ---
@@ -215,7 +216,7 @@ numbers, and a go/no-go on each budget in spec §13.
 
 ---
 
-### M5 — ORC catalogue and search
+### M5 — ORC catalogue and search · **complete**
 
 **Deliverables**
 

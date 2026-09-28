@@ -60,6 +60,9 @@ pub enum Label {
     Help,
     /// "PolarEffects Help".
     AppHelp,
+    /// The ORC catalogue's provenance in About (spec.md 5.1), a template
+    /// filled by [`about_orc`].
+    OrcCatalogue,
 }
 
 /// Every label, for the test that each has a translation.
@@ -85,6 +88,7 @@ pub const ALL: &[Label] = &[
     Label::Maximize,
     Label::Help,
     Label::AppHelp,
+    Label::OrcCatalogue,
 ];
 
 /// A menu label in `language` (one of `settings::LANGUAGES`), English for
@@ -114,6 +118,9 @@ pub fn text(language: &str, label: Label) -> &'static str {
         ("fr", L::Maximize) => "Agrandir",
         ("fr", L::Help) => "Aide",
         ("fr", L::AppHelp) => "Aide de PolarEffects",
+        ("fr", L::OrcCatalogue) => {
+            "Catalogue ORC : {records} certificats de jieter/orc-data, commit {commit} du {date}, construit le {built}."
+        }
 
         ("de", L::About) => "Über PolarEffects",
         ("de", L::Services) => "Dienste",
@@ -136,6 +143,9 @@ pub fn text(language: &str, label: Label) -> &'static str {
         ("de", L::Maximize) => "Zoomen",
         ("de", L::Help) => "Hilfe",
         ("de", L::AppHelp) => "PolarEffects-Hilfe",
+        ("de", L::OrcCatalogue) => {
+            "ORC-Katalog: {records} Messbriefe aus jieter/orc-data, Commit {commit} vom {date}, erstellt am {built}."
+        }
 
         (_, L::About) => "About PolarEffects",
         (_, L::Services) => "Services",
@@ -158,7 +168,25 @@ pub fn text(language: &str, label: Label) -> &'static str {
         (_, L::Maximize) => "Zoom",
         (_, L::Help) => "Help",
         (_, L::AppHelp) => "PolarEffects Help",
+        (_, L::OrcCatalogue) => {
+            "ORC catalogue: {records} certificates from jieter/orc-data, commit {commit} of {date}, built {built}."
+        }
     }
+}
+
+/// The ORC catalogue's provenance for About, in `language`: how many
+/// certificates, the orc-data commit and its date, and the build date. Reads
+/// only the catalogue's header. `None` if the embedded catalogue is damaged.
+pub fn about_orc(language: &str) -> Option<String> {
+    let provenance = pe_orc::provenance().ok()?;
+    let commit: String = provenance.commit.chars().take(10).collect();
+    Some(
+        text(language, Label::OrcCatalogue)
+            .replace("{records}", &provenance.records.to_string())
+            .replace("{commit}", &commit)
+            .replace("{date}", &provenance.commit_date)
+            .replace("{built}", &provenance.build_date),
+    )
 }
 
 /// Builds the menu in `language`.
@@ -168,9 +196,13 @@ pub fn build<R: tauri::Runtime>(
 ) -> tauri::Result<Menu<R>> {
     let l = |label| Some(text(language, label));
     let info = app.package_info();
+    // macOS shows `credits` in its About panel, the others `comments`.
+    let orc = about_orc(language);
     let about = AboutMetadata {
         name: Some(info.name.clone()),
         version: Some(info.version.to_string()),
+        comments: orc.clone(),
+        credits: orc,
         ..AboutMetadata::default()
     };
     let quit = MenuItem::with_id(
@@ -325,5 +357,20 @@ mod tests {
             assert_eq!(same, allowed, "{language}");
         }
         assert_eq!(text("tlh", Label::Quit), "Quit PolarEffects");
+    }
+
+    /// About names the catalogue's source commit and dates (spec.md 5.1), in
+    /// every language, with every placeholder filled.
+    #[test]
+    fn about_names_the_orc_catalogue_provenance() {
+        let provenance = pe_orc::provenance().unwrap();
+        for &language in LANGUAGES {
+            let about = about_orc(language).unwrap();
+            assert!(about.contains(&provenance.commit[..10]), "{about}");
+            assert!(about.contains(&provenance.commit_date), "{about}");
+            assert!(about.contains(&provenance.build_date), "{about}");
+            assert!(about.contains(&provenance.records.to_string()), "{about}");
+            assert!(!about.contains('{'), "{about}");
+        }
     }
 }

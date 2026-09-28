@@ -10,8 +10,11 @@ use std::path::PathBuf;
 use pe_app::autosave::RecoveredProject;
 use pe_app::commands::AppInfo;
 use pe_app::error::AppErrorPayload;
+use pe_app::orc::{OrcCatalogueInfo, OrcFilters, OrcHit, OrcSearchResult, OrcThumbCurve};
 use pe_app::polar_files::{PolarImportFailure, PolarImportResult};
-use pe_app::projects::{BoatInput, PolarFileSummary, ProjectSummary, RecentProject, SourceSummary};
+use pe_app::projects::{
+    BoatInput, OrcSourceSummary, PolarFileSummary, ProjectSummary, RecentProject, SourceSummary,
+};
 use pe_app::settings::{AutosaveMode, ChunkCacheStatus, Settings};
 use ts_rs::{Config, TS};
 
@@ -35,6 +38,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     PolarFileSummary::export_all(&cfg)?;
     PolarImportResult::export_all(&cfg)?;
     PolarImportFailure::export_all(&cfg)?;
+    OrcSourceSummary::export_all(&cfg)?;
+    OrcCatalogueInfo::export_all(&cfg)?;
+    OrcFilters::export_all(&cfg)?;
+    OrcHit::export_all(&cfg)?;
+    OrcThumbCurve::export_all(&cfg)?;
+    OrcSearchResult::export_all(&cfg)?;
     RecentProject::export_all(&cfg)?;
     BoatInput::export_all(&cfg)?;
     RecoveredProject::export_all(&cfg)?;

@@ -130,6 +130,8 @@ const catalogue: Record<string, string> = {
   // History labels of polar file imports.
   "Import polar files": "Polardateien importieren",
   "Import polar file": "Polardatei importieren",
+  // ORC polars (spec.md 5.3).
+  "The project already holds this certificate.": "Das Projekt enthält diesen Messbrief bereits.",
 };
 
 export default catalogue;
