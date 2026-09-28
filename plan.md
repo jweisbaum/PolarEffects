@@ -351,7 +351,7 @@ this size are still to measure (M18).
 
 ---
 
-### M9 — Environment: wind, waves, currents
+### M9 — Environment: wind, waves, currents · **complete**
 
 **Deliverables**
 
@@ -374,6 +374,35 @@ this size are still to measure (M18).
   independently from the same chunk (record the reference in the test).
 - A cancelled job leaves a consistent project that resumes to the same
   result as an uninterrupted one.
+
+Built as specified (acceptance: `pe-env/tests/sampler.rs`
+`acceptance_u10_at_50n_5w_matches_numcodecs` — u10 = 9.382978439331055 at
+2020-07-27T12Z, 50N 5W through the whole provider, the reference decoded
+from the same WeatherBench2 chunk with numcodecs 0.12.1 in M3 and recorded
+in the test; `pe-app/tests/env_jobs.rs`
+`a_cancelled_fetch_resumes_to_the_uninterrupted_result` and
+`…_saves_as_partial_and_resumes_after_reopening`, against a fake provider,
+no network). `pe-env` gained the `Provider` trait and `Reanalysis`
+(WeatherBench2 then ARCO wind, ARCO waves as unit vectors, the four current
+tiers with int16 `scale_factor` unpacking and the surface level), whole-chunk
+reads grouped per batch, the pre-flight estimate, HTTP retry/backoff and a
+body cap, and the cache carries from M3. Current fixtures
+(`currents-crop/`, 340 KB) are the NW Shelf, merged and GlobCurrent chunks
+around 49.86N 5.13W cut to 48 hours, with numcodecs references
+(`currents-crop/record.py`). `Sample::relate` (in `pe-core`, plain vector
+arithmetic on stored values) recomputes TWA, tack, the D13 correction and
+the wave angle, and `SetDerivation` runs it both ways (M8 carry). Jobs live
+in `pe-app/src/env.rs`: one runner, per-batch writes, cancel, resume,
+Refetch, cancel on project replacement; the import opens the pre-flight
+(spec §7.5, §13). New undoable commands `SetUseCorrected`,
+`SetStokesDrift`. The autosave snapshot is renamed into place under the
+lock (M3 carry).
+
+*Measured 2026-09-28*, live (`provider_end_to_end`, 5 positions through
+every tier): cold 29.9 s, of which about 15 s is opening seven stores'
+metadata; the same provider again 0.15 s (the second boat of a session);
+a new provider over a warm cache 15.6 s (metadata only). A real race opens
+only the stores its positions need. 5-day cold numbers stand as in M3.
 
 ---
 
@@ -544,6 +573,16 @@ The user accepted the proposals below on 2026-09-27 ("all good").
 - **Q5 — Linux ARM64:** deferred.
 - **Q6 — Terms of use:** the user accepts the risk; imports stay
   user-initiated, one event at a time, with polite concurrency.
+
+### Open (raised in M9)
+
+- **Q7 — GlobCurrent and tides:** the 202411 GlobCurrent store's own
+  metadata describes `uo`/`vo` as "absolute geostrophic velocity + depth
+  Ekman + tide velocity", and it also publishes `utide`/`vtide`. Spec §7.5.1
+  (D20) treats the tier as "no tide", so its samples are marked
+  `has_tide: false` and can be filtered out. If the tide is really in, the
+  mark should go, and tier 3 would give tidal currents everywhere from 1993.
+  Needs a decision before M14.
 
 ---
 

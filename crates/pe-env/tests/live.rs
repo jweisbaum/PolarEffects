@@ -414,6 +414,24 @@ fn provider_end_to_end() {
         )
         .unwrap();
     println!("provider: {:.1} s", start.elapsed().as_secs_f64());
+    // The same provider again (the second boat of a session): archives
+    // already open, chunks in the cache.
+    let again = Instant::now();
+    let second = p
+        .sample(
+            &points,
+            &Options {
+                interval: Interval::Hourly,
+                stokes_drift: false,
+            },
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .unwrap();
+    println!(
+        "provider, second time: {:.2} s",
+        again.elapsed().as_secs_f64()
+    );
+    assert_eq!(second, got);
     for (point, env) in points.iter().zip(&got) {
         println!("{} {:?}", to_iso(point.t), env);
     }

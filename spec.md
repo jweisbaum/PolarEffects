@@ -219,7 +219,11 @@ or a failed write leaves the previous setting in place.
 - **Chunk cache**: location, size limit (default 20 GB, 1–2000), Clear cache
   button, current size. The chunks live in a `chunks` folder inside the chosen
   location (the platform cache directory by default), and Clear removes only
-  that folder, never the rest of a folder the user pointed at.
+  that folder, never the rest of a folder the user pointed at. The least
+  recently used chunks are removed to stay under the limit. A chunk being
+  written is a `.partial` file beside its name; opening the cache removes
+  only those older than an hour, since a younger one may be another running
+  PolarEffects writing it.
 - **Network**: request concurrency (default 8, 1–32), timeout (default 60 s,
   5–600 s).
 - **Map projection** (§9.1), remembered here rather than in the project.
@@ -361,7 +365,12 @@ The ten most recent, stored in `settings.json`, updated on open and save.
 Copied from VectorEffects: in recovery mode the dirty project is written to
 `<data_dir>/autosave/<project id>.wpsproj` every 60 s or every 50 history
 entries. A clean save or close deletes it. After a crash the start screen
-offers it under Recovered work; it opens dirty at its original path.
+offers it under Recovered work; it opens dirty at its original path. The
+snapshot is written beside its final name and renamed into place under the
+session lock, after checking that the project is still open, unsaved and
+not on its way out, so a Save, Close or "Don't save" during the write never
+leaves stale work to be offered back. A running environment fetch dirties
+the project as it writes, so its results are snapshotted too.
 
 ### 4.6 Undo and redo
 
@@ -507,8 +516,8 @@ The ORC catalogue is **embedded in the app** (D3):
 ### 7.1 Track list
 
 The Tracks section lists every track source: colour, boat name, event title,
-date range, sample count, and an environment status (not fetched, fetching
-n %, ready, partial, failed). Each has Show on map, Remove, Refetch
+date range, sample count, and an environment status (not fetched, queued,
+fetching n %, ready, partial, failed). Each has Show on map, Remove, Refetch
 environment, and Export reanalysis GRIB (§7.8).
 
 Buttons above the list: **YellowBrick…**, **Geovoile…**, **Blue Water…**,
@@ -639,8 +648,10 @@ undo entry that restores the previous values exactly.
 
 ### 7.5 Environment for each sample
 
-After import, every track is matched against reanalysis automatically, as a
-background job (§7.7):
+After import, every track is matched against reanalysis, as a background
+job (§7.7). The import opens the fetch's pre-flight (§13) for the tracks it
+added, with Fetch as its default answer; Not now leaves them "not fetched"
+until Refetch environment.
 
 | Quantity | Dataset | Variable |
 |---|---|---|
@@ -658,14 +669,30 @@ background job (§7.7):
   records which dataset supplied it. See D12.
 - From these, each sample stores: TWS (kn), TWD (from), TWA (0–180),
   tack side, Hs (m), wave direction (from), wave angle relative to the bow,
-  current speed and direction (toward), and dataset ids.
+  current speed and direction (toward), and dataset ids. Units are
+  converted once, on ingest (1 m/s = 3600/1852 kn). The track records each
+  dataset's name, version (the store's dated name) and fetch time, and
+  whether its current has tides; each sample records which supplied its
+  wind, waves and current, and whether the fetch has answered for it
+  (what Refetch resumes from).
+- TWA is the angle between the heading and where the wind comes from; the
+  wind over the starboard side is starboard tack, and head to wind or dead
+  downwind is neither. The wave angle is measured off the bow (0° head
+  seas, 180° following), the bow pointing along the heading through the
+  water where there is a current and the ground heading otherwise.
+- The environment is stored as found; everything that relates it to the
+  boat's motion (TWA, tack, the corrected values, the wave angle) is
+  recomputed from the stored values whenever the motion changes, so a
+  change of derivation settings (§7.4) needs no fetch and undoes exactly.
 - **Current correction** (D13). Wind and current are both ground-relative;
   a polar is water-relative. When a current is available:
   - boat velocity through the water = ground velocity − current;
     BSP = its magnitude and heading = its direction (leeway ignored);
   - wind over the water = wind − current; TWS and TWA use it.
-  Both raw (ground) and corrected values are stored. A project-level toggle
-  chooses which feed the polar (default: corrected where current exists).
+  Both raw (ground) and corrected values are stored. A project-level toggle,
+  **Correct for current** above the track list, chooses which feed the
+  polar (default: corrected where current exists); it is one undo, as is
+  **Include Stokes drift** (§7.5.1), which applies to the next fetch.
 
 #### 7.5.1 Current source
 
@@ -689,7 +716,24 @@ this chain that covers its time and place (D20):
    setting to include Stokes drift.
 3. **GlobCurrent** (`MULTIOBS_GLO_PHY_MYNRT_015_003`, the store VectorEffects
    reads), 1993 onward, **without tides**. Samples from this tier are marked
-   "no tide" and can be filtered.
+   "no tide" and can be filtered. The multi-year series
+   (`cmems_obs-mob_glo_phy-cur_my_0.25deg_PT1H-i`) is read first and the
+   near-real-time one (`…_nrt_…`) after it ends; `uo`/`vo` are read at the
+   level nearest the surface (0 m of 0 and −15 m). *Open:* the 202411
+   version's metadata describes `uo` as "geostrophic + Ekman + tide", which
+   would make the "no tide" mark wrong; see `plan.md` §6, Q7.
+
+A position is looked for in a tier only if it lies inside that tier's grid
+and time axis (the regional tiers only inside their boxes, so a race
+elsewhere never opens those stores). A tier whose value is missing there —
+land, fill, or a chunk the archive does not have — passes the position to
+the next tier. The stores read (versions as recorded on each sample):
+`cmems_mod_nws_phy-uv_my_7km-2D_PT1H-i_202112`,
+`cmems_mod_ibi_phy-cur_my_0.027deg_PT1H-m_202511`,
+`cmems_mod_glo_phy_anfc_merged-uv_PT1H-i_202211`,
+`cmems_obs-mob_glo_phy-cur_{my,nrt}_0.25deg_PT1H-i_202411`. Integer-packed
+arrays (the NW Shelf and GlobCurrent `int16`) are unpacked with their own
+`scale_factor`/`add_offset`, and their fill value is missing.
 
 All are Copernicus Marine ARCO zarr v2 on `s3.waw3-1.cloudferro.com`, read
 anonymously with the same blosc/LZ4 codec as ERA5. For sampling along a
@@ -729,9 +773,11 @@ Filtered-out samples stay in the project and appear dimmed in the plots when
   60–120°, quarter 120–150°, following from 150°.
 - BSP, TWS and TWA are the water-relative (current-corrected) values where
   they exist and the project uses them (§7.5), the ground values otherwise.
-- The filters that need no environment (time window, BSP range, manoeuvres,
-  given versus derived) are edited in the Tracks section from M8; the wind,
-  wave and current filters join them with the environment (M9).
+- Every filter is edited in a track's details in the Tracks section: time
+  window, BSP range, manoeuvres and given versus derived (M8), and TWS,
+  TWA, wave height and current speed ranges, the wave direction (sectors,
+  an angle off the bow, or a compass range from–to clockwise) and "leave
+  out currents without tide" (M9). Each change is one undo.
 
 ### 7.7 Jobs
 
@@ -741,6 +787,35 @@ cancelled. A cancelled or failed fetch keeps whatever samples completed
 (status "partial") and can be resumed with Refetch. Jobs for tracks from the
 same event share the chunk cache, so the second boat of a race costs almost
 nothing.
+
+The environment fetch in detail (M9):
+
+- One runner takes the queued tracks one after another, so a second boat
+  reads the chunks the first one just cached instead of downloading them at
+  the same moment. Within a track, samples go in batches of at most three
+  sampling intervals of track time (3 h hourly, 9 h 3-hourly) and 400
+  samples; each batch's chunk reads run on a pool of the network
+  concurrency setting (§3.4), each chunk fetched and decoded once.
+- Each finished batch is written into the project at once. Cancel stops at
+  the next chunk read, keeping every finished batch. Each sample's values
+  depend only on its own time and place, so a resumed fetch ends exactly
+  where an uninterrupted one would.
+- Refetch fetches the samples still missing; on a ready track, or at a
+  different interval than the last fetch, it starts over (a track is never
+  a mix of hourly and 3-hourly).
+- The status bar shows the running track, its progress and how many wait,
+  with Cancel fetch (all); a track's details have Cancel fetch for it. A
+  failure is reported on the status line and leaves "partial" (or "failed"
+  when nothing finished).
+- A job belongs to the project it was started for: New, Open, Close and
+  opening recovered work first ask to cancel a running fetch, and a result
+  for a track that was removed or changed meanwhile is dropped.
+- Reads: a transient failure (a 5xx or 429 answer, a timeout, a dropped
+  connection) is retried three times, pausing 0.5, 1 and 2 s; anything else
+  fails at once. A body over 64 MB is refused. A cached chunk that fails to
+  decode is removed from the cache and fetched once more. Opened archives
+  are kept for the session, so only the first track pays their metadata
+  requests.
 
 ### 7.8 Reanalysis GRIB export
 
@@ -1004,7 +1079,12 @@ comparison (about 0.8 MB per variable per 1.3° × 0.7° box per six months).
 The job shows the expected download size before it starts and lets the user
 pick hourly or 3-hourly sampling (D19). Hourly is the default; when the
 hourly download would exceed half the chunk-cache size limit (a long ocean
-race), 3-hourly is preselected instead.
+race), 3-hourly is preselected instead. The estimate counts the ERA5 hours
+the samples need at each interval (wind 3.3 MB × 2, wave height 1.8 MB,
+wave direction 1.7 MB per hour), leaves out the chunks already in the
+cache, and adds about 0.8 MB per current variable per geoChunk box and half
+year crossed. 3-hourly reads 00, 03, … 21 UTC and interpolates linearly
+between them; currents are always hourly.
 
 ---
 

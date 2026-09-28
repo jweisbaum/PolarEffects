@@ -256,6 +256,14 @@ fn every_history_label_is_listed_for_translation() {
             motion_before: Vec::new(),
             motion_after: Vec::new(),
         },
+        Command::SetUseCorrected {
+            before: true,
+            after: false,
+        },
+        Command::SetStokesDrift {
+            before: false,
+            after: true,
+        },
     ];
     let mut labels: Vec<String> = commands.iter().map(Command::label).collect();
     // Batches carry their own label; these are every one Rust builds.
