@@ -17,12 +17,15 @@ import { pickTrackFiles } from "../project/dialogs";
 import { focusMap } from "../selection";
 import EnvFetchDialog from "./EnvFetchDialog";
 import TrackImportDialog from "./TrackImportDialog";
+import TrackerImportDialog from "./TrackerImportDialog";
+import type { TrackerId } from "./trackerImport";
+import type { TrackImportResult } from "../generated/TrackImportResult";
 import { dateRange, describeImportLine, describeTrackFailure, envStatusText, fromLocalInput, toLocalInput } from "./trackImport";
 
 /**
  * The Tracks section of the left navigation (spec.md 7.1): the tracker
- * buttons (their imports arrive in later versions), File… for GeoJSON and
- * CSV, the result of the last import, and every track with its colour, boat,
+ * buttons (YellowBrick opens the tracker dialog, spec.md 7.2; Geovoile and
+ * Blue Water arrive in later versions), File… for GeoJSON and CSV, the result of the last import, and every track with its colour, boat,
  * event, dates, samples used, environment status and actions. Each track
  * unfolds to its sample filters and heading and speed derivation (spec.md
  * 7.4, 7.6), every change one undo.
@@ -33,6 +36,7 @@ export default function Tracks({ project, onProject }: {
 }) {
   const t = useT();
   const [inspections, setInspections] = useState<TrackFileInspection[] | null>(null);
+  const [tracker, setTracker] = useState<TrackerId | null>(null);
   const [imported, setImported] = useState<TrackImportLine[]>([]);
   const [failures, setFailures] = useState<TrackImportFailure[]>([]);
   const [open, setOpen] = useState<number | null>(null);
@@ -56,12 +60,27 @@ export default function Tracks({ project, onProject }: {
     }
   };
 
+  /** After any import, file or tracker: the summary, and the environment fetch's pre-flight. */
+  const afterImport = (result: TrackImportResult) => {
+    onProject(result.project);
+    setImported(result.imported);
+    setFailures(result.failures);
+    const count = result.imported.length;
+    if (count > 0) setHint(count === 1 ? t("Imported 1 track.") : t("Imported {count} tracks.", { count }));
+    // Importing starts the environment fetch (spec.md 7.5), after its
+    // pre-flight (spec.md 13).
+    if (count > 0) setFetching({ ids: result.imported.map((line) => line.source_id), restart: false });
+  };
+
   const remove = (id: number) => { api.removeSource(id).then(onProject).catch(reportFailure); };
 
   return (
     <>
       <div className="section-actions">
-        <button data-feature="tracks:yellowbrick" disabled title={later}>{t("YellowBrick…")}</button>
+        <button data-feature="tracks:yellowbrick" onClick={() => setTracker("yellowbrick")}
+          title={t("Import boats from a YellowBrick race: paste its link or race key")}>
+          {t("YellowBrick…")}
+        </button>
         <button data-feature="tracks:geovoile" disabled title={later}>{t("Geovoile…")}</button>
         <button data-feature="tracks:bluewater" disabled title={later}>{t("Blue Water…")}</button>
         <button data-feature="tracks:import-file" onClick={() => void chooseFiles()}
@@ -76,7 +95,7 @@ export default function Tracks({ project, onProject }: {
         </ul>
       )}
       {failures.length > 0 && (
-        <ul className="import-failures" role="alert" aria-label={t("Files that were not imported")}>
+        <ul className="import-failures" role="alert" aria-label={t("Files or boats that were not imported")}>
           {failures.map((failure, k) => <li key={k} title={failure.message}>{describeTrackFailure(failure)}</li>)}
         </ul>
       )}
@@ -94,14 +113,14 @@ export default function Tracks({ project, onProject }: {
         <TrackImportDialog inspections={inspections} onCancel={() => setInspections(null)}
           onDone={(result) => {
             setInspections(null);
-            onProject(result.project);
-            setImported(result.imported);
-            setFailures(result.failures);
-            const count = result.imported.length;
-            if (count > 0) setHint(count === 1 ? t("Imported 1 track.") : t("Imported {count} tracks.", { count }));
-            // Importing starts the environment fetch (spec.md 7.5), after its
-            // pre-flight (spec.md 13).
-            if (count > 0) setFetching({ ids: result.imported.map((line) => line.source_id), restart: false });
+            afterImport(result);
+          }} />
+      )}
+      {tracker !== null && (
+        <TrackerImportDialog tracker={tracker} onCancel={() => setTracker(null)}
+          onDone={(result) => {
+            setTracker(null);
+            afterImport(result);
           }} />
       )}
       {fetching !== null && <EnvFetchDialog sourceIds={fetching.ids} restart={fetching.restart} onClose={closeFetch} />}

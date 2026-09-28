@@ -9,7 +9,7 @@ import { msg, useT } from "../i18n";
 import { api } from "../ipc";
 import { clearSamples, getSampleSelection, onFocusMap, selectSamples, takePendingFocus, useSampleSelection, type MapFocus } from "../selection";
 import { mapColour, onThemeChange, rgba } from "../settings/themes";
-import { parseBasemap, type Basemap } from "./format";
+import { loadBasemap } from "./basemap";
 import { hoverLines } from "./hover";
 import { fitCamera, inverse, MAX_SCALE, pan, PROJECTIONS, zoomAt, type Camera, type ProjectionId, type Viewport } from "./projection";
 import { MapRenderer, type MapColours } from "./renderer";
@@ -25,13 +25,6 @@ const PROJECTION_NAMES: Record<ProjectionId, string> = {
 /** A fix within this many pixels of the pointer is hovered. */
 const HOVER_RADIUS_PX = 8;
 
-/** The basemap is read once per launch, whichever stage asks first. */
-let basemapPromise: Promise<Basemap> | null = null;
-function loadBasemap(): Promise<Basemap> {
-  basemapPromise ??= api.basemap().then(parseBasemap);
-  basemapPromise.catch(() => { basemapPromise = null; });
-  return basemapPromise;
-}
 
 function colours(): MapColours {
   return {

@@ -83,6 +83,10 @@ pub enum AppError {
         why: String,
     },
 
+    /// A tracker download or decode failed (spec.md 7.2).
+    #[error("{0}")]
+    Tracker(#[from] pe_trackers::TrackerError),
+
     /// A failure with no more specific classification.
     #[error("{0}")]
     Internal(String),
@@ -122,6 +126,15 @@ impl AppError {
             Self::BadOption { .. } => "bad-option",
             Self::DuplicateCertificate { .. } => "orc-duplicate",
             Self::Doing { .. } => "doing",
+            Self::Tracker(e) => match e {
+                pe_trackers::TrackerError::NotAnEvent { .. } => "tracker-address",
+                pe_trackers::TrackerError::Unavailable { .. } => "tracker-unavailable",
+                pe_trackers::TrackerError::NoSuchEvent { .. } => "tracker-no-event",
+                pe_trackers::TrackerError::Cancelled => "cancelled",
+                pe_trackers::TrackerError::Decode { .. }
+                | pe_trackers::TrackerError::Unsupported { .. } => "tracker-decode",
+                pe_trackers::TrackerError::Network(_) => "tracker-network",
+            },
             Self::Internal(_) => "internal",
         }
     }

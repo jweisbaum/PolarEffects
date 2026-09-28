@@ -805,3 +805,21 @@ button.source-label:hover { border-color: var(--border); background: var(--raise
   .help-body { grid-template-columns: 175px minmax(0, 1fr); }
   .help-body article { padding: 10px 14px; }
 }
+
+/* The tracker dialog (spec.md 7.2). */
+.tracker-import { width: min(920px, 95vw); max-height: 92vh; display: flex; flex-direction: column; gap: 8px; }
+.tracker-address { display: flex; gap: 8px; align-items: flex-end; }
+.tracker-address label { flex: 1; display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+.tracker-progress { display: grid; gap: 6px; justify-items: start; }
+.tracker-progress .progress-bar { width: 100%; }
+.tracker-progress p { margin: 0; }
+.tracker-import .import-failures { display: flex; gap: 8px; align-items: center; }
+.tracker-event-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.tracker-preview { width: 100%; max-height: 240px; border: 1px solid var(--border); border-radius: 6px; }
+.tracker-preview-line { fill: none; stroke: var(--muted); stroke-width: 0.8; opacity: 0.55; }
+.tracker-preview-line.chosen { stroke: var(--accent); stroke-width: 2; opacity: 1; }
+.tracker-search { width: 100%; }
+.tracker-boats { overflow: auto; flex: 1; min-height: 120px; font-size: 12px; }
+.tracker-boats table { border-collapse: collapse; width: 100%; }
+.tracker-boats th { position: sticky; top: 0; background: var(--surface); text-align: left; }
+.tracker-boats th, .tracker-boats td { border-bottom: 1px solid var(--border-subtle); padding: 2px 6px; white-space: nowrap; }

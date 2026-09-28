@@ -15,11 +15,19 @@ import type { TrackFileInspection } from "../generated/TrackFileInspection";
 import type { TrackSummary } from "../generated/TrackSummary";
 
 const calls: [string, unknown][] = [];
-const record = (name: string) => (...args: unknown[]) => { calls.push([name, args]); return Promise.resolve(responses[name]); };
+/** A response that is a failure, as Rust sends one. */
+class Rejection { constructor(readonly error: unknown) {} }
+const record = (name: string) => (...args: unknown[]) => {
+  calls.push([name, args]);
+  const response = responses[name];
+  return response instanceof Rejection ? Promise.reject(response.error) : Promise.resolve(response);
+};
 const responses: Record<string, unknown> = {};
 vi.mock("../ipc", () => ({
   api: new Proxy({}, { get: (_t, name: string) => record(name) }),
+  TRACKER_PROGRESS: "tracker://progress",
 }));
+vi.mock("@tauri-apps/api/event", () => ({ listen: () => Promise.resolve(() => undefined) }));
 vi.mock("../project/dialogs", () => ({ pickTrackFiles: () => Promise.resolve(["/races/log.csv", "/races/fleet.geojson"]) }));
 const focus = vi.fn();
 vi.mock("../selection", () => ({ focusMap: (f: unknown) => focus(f) }));
@@ -85,8 +93,9 @@ it("lists a track with its boat, event, dates, samples used and environment stat
   expect(text).toContain("Environment: not fetched");
   await click(q('[data-feature="tracks:show-on-map"]'));
   expect(focus).toHaveBeenCalledWith({ kind: "track", sourceId: 5 });
-  // The tracker imports are there, and say they come later.
-  expect((q('[data-feature="tracks:yellowbrick"]') as HTMLButtonElement).disabled).toBe(true);
+  // YellowBrick imports; the other trackers are there and say they come later.
+  expect((q('[data-feature="tracks:yellowbrick"]') as HTMLButtonElement).disabled).toBe(false);
+  expect((q('[data-feature="tracks:geovoile"]') as HTMLButtonElement).disabled).toBe(true);
 });
 
 it("edits the filters and the derivation through their commands", async () => {
@@ -245,4 +254,82 @@ it("commits a time-window edit once, on leaving the field, not on every keystrok
   const sent = calls.filter(([n]) => n === "setTrackFilters");
   expect(sent).toHaveLength(1);
   expect(sent[0]![1]).toEqual([5, { ...TRACK.filters, time_start: 1_753_531_200 }]);
+});
+
+const boat = (id: string, name: string, sail: string, division: string, fixes: number) => ({
+  id, name, sail, model: "First 40", division, status: fixes > 0 ? "RACING" : null, fixes,
+  first: fixes > 0 ? 1_729_233_205 : null, last: fixes > 0 ? 1_729_731_600 : null,
+  preview: fixes > 0 ? [14.5, 35.9, 15.2, 36.4] : [],
+});
+const EVENT = {
+  tracker: "yellowbrick", key: "rmsr2024", url: "yb.tl/rmsr2024", title: "Rolex Middle Sea Race 2024",
+  start: 1_729_209_600, stop: 1_729_897_200, fallback: false, cached: false,
+  boats: [boat("1", "12 NACIRA 69", "ITA17498", "IRC Class 2", 1689), boat("2", "Afazik Impulse", "FRA 9967", "ORC 3", 1692),
+    boat("4", "Alquimia", "ESP 1", "IRC Class 4", 0)],
+};
+
+it("downloads a YellowBrick event, searches and picks boats, imports them and offers the fetch", async () => {
+  responses.trackerEvent = EVENT;
+  const line = {
+    source_id: 7, file: "Rolex Middle Sea Race 2024", label: "Afazik Impulse", fixes: 1692, out_of_order: 0, duplicates: 3,
+    heading_given: 0, heading_derived: 1692, speed_given: 0, speed_derived: 1692,
+  };
+  responses.importTrackerBoats = { project: project([SOURCE]), imported: [line], failures: [] };
+  responses.envEstimate = {
+    samples: 1692, hourly_bytes: 1_000_000, three_hourly_bytes: 400_000, cached_bytes: 0,
+    cache_limit_bytes: 20 * 2 ** 30, recommended: "hourly",
+  };
+  await act(async () => root.render(<Tracks project={project([])} onProject={() => undefined} />));
+  await click(q('[data-feature="tracks:yellowbrick"]'));
+  const url = q('[data-feature="tracker-import:url"]') as HTMLInputElement;
+  await act(async () => {
+    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    set.call(url, " yb.tl/rmsr2024 ");
+    url.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await click(q('[data-feature="tracker-import:open"]'));
+  await settle();
+  expect(calls.find(([n]) => n === "trackerEvent")?.[1]).toEqual(["yellowbrick", "yb.tl/rmsr2024", false]);
+  const dialog = q("[role=dialog]")!;
+  expect(dialog.textContent).toContain("Rolex Middle Sea Race 2024");
+  expect(dialog.textContent).toContain("3 boats");
+  expect(dialog.querySelectorAll(".tracker-preview-line")).toHaveLength(2);
+  // Search by sail number, written without its space.
+  const search = q('[data-feature="tracker-import:search"]') as HTMLInputElement;
+  await act(async () => {
+    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    set.call(search, "fra9967");
+    search.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  const rows = dialog.querySelectorAll("tbody tr");
+  expect(rows).toHaveLength(1);
+  expect(rows[0]!.textContent).toContain("Afazik Impulse");
+  await click(rows[0]!.querySelector("input"));
+  expect(dialog.querySelectorAll(".tracker-preview-line.chosen")).toHaveLength(1);
+  await click(q(".modal-actions button.primary"));
+  await settle();
+  expect(calls.find(([n]) => n === "importTrackerBoats")?.[1]).toEqual(["yellowbrick", "rmsr2024", ["2"]]);
+  // The tracker dialog gave way to the environment fetch's pre-flight.
+  expect(calls.find(([n]) => n === "envEstimate")?.[1]).toEqual([[7], false]);
+  expect(q('[data-feature="tracker-import:url"]')).toBeNull();
+});
+
+it("says a tracker is not answering and retries", async () => {
+  responses.trackerEvent = new Rejection({ kind: "tracker-unavailable", message: "YellowBrick answered 500" });
+  await act(async () => root.render(<Tracks project={project([])} onProject={() => undefined} />));
+  await click(q('[data-feature="tracks:yellowbrick"]'));
+  const url = q('[data-feature="tracker-import:url"]') as HTMLInputElement;
+  await act(async () => {
+    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    set.call(url, "nosuchrace");
+    url.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await click(q('[data-feature="tracker-import:open"]'));
+  await settle();
+  expect(q("[role=alert]")!.textContent).toContain("The tracker is not answering right now.");
+  responses.trackerEvent = EVENT;
+  await click(q('[data-feature="tracker-import:retry"]'));
+  await settle();
+  expect(calls.filter(([n]) => n === "trackerEvent").at(-1)?.[1]).toEqual(["yellowbrick", "nosuchrace", true]);
+  expect(q("[role=dialog]")!.textContent).toContain("Rolex Middle Sea Race 2024");
 });

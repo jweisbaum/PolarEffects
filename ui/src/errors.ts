@@ -33,6 +33,12 @@ function lineFor(kind: string): string | null {
     case "orc-duplicate": return t("The project already holds this certificate.");
     case "doing": return t("The operation could not be completed.");
     case "internal": return t("Something went wrong inside PolarEffects.");
+    case "tracker-address": return t("This is not an event address this tracker serves.");
+    case "tracker-unavailable": return t("The tracker is not answering right now. Try again in a moment.");
+    case "tracker-no-event": return t("The tracker has no public event at this address.");
+    case "tracker-decode": return t("The tracker's data could not be read.");
+    case "tracker-network": return t("The tracker could not be reached or refused the request.");
+    case "cancelled": return t("Cancelled.");
     default: return null;
   }
 }

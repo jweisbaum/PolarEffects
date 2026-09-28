@@ -419,7 +419,7 @@ only the stores its positions need. 5-day cold numbers stand as in M3.
 
 ---
 
-### M10 — YellowBrick
+### M10 — YellowBrick · **complete**
 
 **Deliverables:** `pe-trackers::yellowbrick` (URL → key, RaceSetup with
 ISO-8859-1, AllPositions3 decoder, KML fallback), the shared tracker dialog
@@ -427,6 +427,39 @@ ISO-8859-1, AllPositions3 decoder, KML fallback), the shared tracker dialog
 
 **Acceptance:** fixture tests from recorded responses; one live test behind
 `PE_TEST_LIVE`.
+
+*Done 2026-09-28.* `pe-trackers` gained the `TrackerClient` trait and the
+shared event model (`event.rs`: resolve without network, one fetch
+returns the whole event), `http.rs` (`Fetcher`: 256 MB body cap, the
+§7.7 transient/permanent rules with three retries, progress, cancel; a
+small copy of `pe-env`'s classification, since the two network crates do
+not depend on each other) and `kml.rs` (a bounded reader for YellowBrick's
+per-team `gx:Track` placemarks). The YellowBrick client reads RaceSetup
+tags into a division and each team's own start and `finishedAt`; a binary
+that does not decode, is refused, or is a web page falls back to
+`https://yb.tl/<key>.kml` (the CDN answers 504 for it) with a 10-minute
+timeout. `TrackOrigin::Tracker` gained optional `model` and `division`
+(left out of the file when absent, so no schema bump). `pe-app/trackers.rs`
+downloads on a worker with progress events and an immediate Cancel, keeps
+four events per session, and imports through the file import's commit
+(one Batch, next palette colours), setting each boat's start–finish as its
+time window; the environment pre-flight opens after it. The UI adds
+`TrackerImportDialog` (address, progress, Retry, table with search and
+tick-all, SVG map preview over the basemap coastline), the Race trackers
+help topic, and the registry entries (landing on YellowBrick…).
+
+*Fixtures* (2026-09-28): Rolex Middle Sea Race 2024 — RaceSetup (97 KB),
+the first three teams of `AllPositions3` (45 KB of 1.37 MB) and of the KML
+(844 KB of 23 MB). The KML is checked against the binary: every KML fix is
+a binary fix at the same time and 1e-5° position; the binary also holds
+reports at repeated times (1689 against 1670 for the first team). A local
+server replays the recordings through the client (primary, fallback, 5xx).
+*Live* (`PE_TEST_LIVE=1`): Fastnet 2025 through the client 444 boats,
+714,380 fixes in 0.4–1.6 s; Middle Sea 2024 KML 23 MB in 17 s; an unknown
+key answers 500 four times and is reported "not answering". *Unverified:*
+the AllPositions3 alt/lap/pc layouts — every race probed (about 50 keys:
+Fastnet 2023/2025, ARC 2025, RMSR 2024 and others) has flags `0x02`, so
+Appendix B's note stands.
 
 ---
 

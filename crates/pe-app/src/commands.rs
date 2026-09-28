@@ -28,6 +28,9 @@ pub struct AppState {
     /// fetch and kept so its opened archives serve every track.
     pub env_provider:
         std::sync::Mutex<Option<(crate::env::ProviderKey, std::sync::Arc<pe_env::Reanalysis>)>>,
+    /// Tracker events downloaded this session, and the running download
+    /// (spec.md 7.2).
+    pub trackers: crate::trackers::TrackerSession,
 }
 
 impl AppState {
@@ -40,6 +43,7 @@ impl AppState {
             exit_allowed: std::sync::atomic::AtomicBool::new(false),
             env_jobs: crate::env::EnvJobs::default(),
             env_provider: std::sync::Mutex::new(None),
+            trackers: crate::trackers::TrackerSession::default(),
         }
     }
 

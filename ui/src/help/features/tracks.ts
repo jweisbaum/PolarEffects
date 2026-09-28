@@ -6,20 +6,24 @@ import type { Feature } from "../features";
  * track's filters and derivation show once the track is unfolded, which the
  * `track:details` step does for the first track. The import dialog's
  * controls exist only once files are chosen, so they land on File…
- * (`landing`), and each description says so.
+ * (`landing`), and each description says so; the tracker dialog's land on
+ * YellowBrick… the same way.
  */
 const section = ["section:tracks"];
 const details = ["section:tracks", "track:details"];
 const topic = "tracks";
 const environment = "environment";
+const trackers = "trackers";
+/** The tracker dialog's controls exist only once it is open: they land on its button. */
+const dialog = { topic: trackers, reveal: section, landing: "tracks:yellowbrick" };
 
 const features: Feature[] = [
   { id: "tracks:import-file", label: msg("Import track files"),
     description: msg("Import GeoJSON and CSV tracks, several files at once, choosing the boats and mapping the columns."),
     keywords: [msg("import"), "GeoJSON", "CSV", msg("race"), msg("positions"), msg("column mapping"), msg("boat picker"),
       msg("time format"), msg("speed unit")], topic, reveal: section },
-  { id: "tracks:yellowbrick", label: msg("YellowBrick import"), description: msg("Import boats from a YellowBrick race. Arrives in a later version."),
-    keywords: [msg("tracker"), msg("race")], topic, reveal: section },
+  { id: "tracks:yellowbrick", label: msg("YellowBrick import"), description: msg("Import boats from a YellowBrick race: paste its yb.tl link or race key, pick boats from the whole fleet."),
+    keywords: [msg("tracker"), msg("race"), "yb.tl", msg("fleet")], topic: trackers, reveal: section },
   { id: "tracks:geovoile", label: msg("Geovoile import"), description: msg("Import boats from a Geovoile race. Arrives in a later version."),
     keywords: [msg("tracker"), msg("race")], topic, reveal: section },
   { id: "tracks:bluewater", label: msg("Blue Water Tracks import"), description: msg("Import boats from Blue Water Tracks. Arrives in a later version."),
@@ -112,6 +116,22 @@ const features: Feature[] = [
     keywords: [msg("knots"), "km/h", "m/s"], topic, reveal: section, landing: "tracks:import-file" },
   { id: "track-import:boats", label: msg("Boats in this file"), description: msg("Inside the track import dialog (choose files with File… first): tick the boats to import from a file with several."),
     keywords: [msg("boat picker"), msg("choose")], topic, reveal: section, landing: "tracks:import-file" },
+  { id: "tracker-import:url", label: msg("Event address"), description: msg("In the tracker dialog (YellowBrick… first): paste the race's link or key."),
+    keywords: [msg("link"), msg("race key"), "yb.tl", msg("paste")], ...dialog },
+  { id: "tracker-import:open", label: msg("Open the event"), description: msg("In the tracker dialog (YellowBrick… first): download every boat's full track, or open the event kept from earlier in this session."),
+    keywords: [msg("download"), msg("fleet"), msg("tracker")], ...dialog },
+  { id: "tracker-import:cancel-download", label: msg("Cancel the download"), description: msg("In the tracker dialog, while an event downloads: stop it; nothing is imported."),
+    keywords: [msg("stop"), msg("download"), msg("job")], ...dialog },
+  { id: "tracker-import:retry", label: msg("Retry the download"), description: msg("In the tracker dialog, after a failed download: ask the tracker again."),
+    keywords: [msg("again"), msg("error"), msg("download")], ...dialog },
+  { id: "tracker-import:refresh", label: msg("Download the event again"), description: msg("In the tracker dialog, for an event kept from earlier in this session: download it again for newer positions."),
+    keywords: [msg("refresh"), msg("update"), msg("download")], ...dialog },
+  { id: "tracker-import:search", label: msg("Search the fleet"), description: msg("In the tracker dialog, once an event is open: show only the boats whose name, sail number, model or division contains the words typed."),
+    keywords: [msg("find"), msg("sail number"), msg("division"), msg("boat")], ...dialog },
+  { id: "tracker-import:boats", label: msg("Boats of the event"), description: msg("In the tracker dialog, once an event is open: every boat with its sail number, model, division, positions and status; tick the ones to import."),
+    keywords: [msg("boat picker"), msg("choose"), msg("fleet")], ...dialog },
+  { id: "tracker-import:select-shown", label: msg("Tick every boat shown"), description: msg("In the tracker dialog, once an event is open: tick or untick every boat the search shows."),
+    keywords: [msg("select all"), msg("choose"), msg("fleet")], ...dialog },
 ];
 
 export default features;

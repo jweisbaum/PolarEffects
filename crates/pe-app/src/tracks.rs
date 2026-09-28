@@ -296,7 +296,7 @@ pub struct TrackSummary {
 }
 
 /// Counts that fit the wire.
-fn count(value: usize) -> u32 {
+pub(crate) fn count(value: usize) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
 }
 
@@ -493,7 +493,7 @@ impl TrackImportFailure {
         }
     }
 
-    fn simple(file: &str, reason: &str, message: String) -> Self {
+    pub(crate) fn simple(file: &str, reason: &str, message: String) -> Self {
         Self {
             file: file.to_owned(),
             line: None,
@@ -756,11 +756,18 @@ pub struct TrackImportResult {
 }
 
 /// A track read and derived outside the lock, waiting for its ids.
-struct Pending {
-    file: String,
-    label: String,
-    track: Track,
-    report: ImportReport,
+pub(crate) struct Pending {
+    /// The file (or, for a tracker, the event) it came from.
+    pub file: String,
+    /// The source's label.
+    pub label: String,
+    /// The track, with placeholder ids.
+    pub track: Track,
+    /// What building it found.
+    pub report: ImportReport,
+    /// The source's starting filters: the defaults, and for a tracker boat
+    /// its start and finish as the time window (spec.md 7.6).
+    pub filters: SampleFilters,
 }
 
 fn file_stem(file: &str) -> String {
@@ -825,6 +832,7 @@ fn prepare(request: &TrackFileRequest) -> std::result::Result<Vec<Pending>, Trac
                 label,
                 track,
                 report,
+                filters: SampleFilters::default(),
             }
         })
         .collect())
@@ -852,6 +860,16 @@ pub fn import(state: &AppState, files: &[TrackFileRequest]) -> Result<TrackImpor
         }
     }
 
+    add_tracks(state, pending, failures)
+}
+
+/// Adds read tracks as one source each, with the next palette colours, as
+/// **one** history entry, and says what was added.
+pub(crate) fn add_tracks(
+    state: &AppState,
+    pending: Vec<Pending>,
+    failures: Vec<TrackImportFailure>,
+) -> Result<TrackImportResult> {
     state.with_session(|session| {
         let open = session.require_open()?;
         let mut imported = Vec::new();
@@ -884,7 +902,7 @@ pub fn import(state: &AppState, files: &[TrackFileRequest]) -> Result<TrackImpor
                     speed_given: count(r.speed_given),
                     speed_derived: count(r.speed_derived),
                 });
-                let source = Source::new(
+                let mut source = Source::new(
                     source_id,
                     p.label,
                     colour,
@@ -892,6 +910,7 @@ pub fn import(state: &AppState, files: &[TrackFileRequest]) -> Result<TrackImpor
                         track: Box::new(p.track),
                     },
                 );
+                source.overlay.filters = p.filters;
                 commands.push(Command::AddSource {
                     index: start + k,
                     source: Box::new(source),

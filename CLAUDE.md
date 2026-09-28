@@ -170,8 +170,11 @@ save → load → save byte-identity test and, if it is user-editable, a `Comman
 with an undo inverse test. Run `npm run bindings`.
 
 **Adding a tracker.** A new module in `pe-trackers` implementing
-`TrackerClient` (resolve a URL to an event, list boats, fetch one boat's
-fixes). Add its hosts to the `pe-trackers` allow-list in
+`TrackerClient` (`resolve` a pasted URL to an `EventRef` without network;
+`fetch` the whole `TrackerEvent` — title, dates, every boat and its fixes —
+through the shared `Fetcher`, whose boats and fixes the dialog then lists),
+and a line in `event::client`. The dialog, session cache and import in
+`pe-app/src/trackers.rs` and `TrackerImportDialog.tsx` are shared. Add its hosts to the `pe-trackers` allow-list in
 `tools/check-offline.sh`. Decoders get fixture tests from a recorded response
 in `crates/pe-trackers/tests/fixtures/`. No live request in the default suite.
 

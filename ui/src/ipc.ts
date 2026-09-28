@@ -38,6 +38,7 @@ import type { TrackFileInspection } from "./generated/TrackFileInspection";
 import type { TrackFileRequest } from "./generated/TrackFileRequest";
 import type { TrackFilters } from "./generated/TrackFilters";
 import type { TrackImportResult } from "./generated/TrackImportResult";
+import type { TrackerEventView } from "./generated/TrackerEventView";
 
 /** An error raised by a Rust command, carrying its machine-readable kind. */
 export class IpcError extends Error {
@@ -74,6 +75,7 @@ const LONG_RUNNING: Readonly<Record<string, string>> = {
   inspect_track_files: msg("Reading track files"),
   inspect_csv_track: msg("Reading track files"),
   import_track_files: msg("Importing tracks"),
+  import_tracker_boats: msg("Importing tracks"),
   env_estimate: msg("Estimating the download"),
   orc_catalogue_info: msg("Loading the ORC catalogue"),
 };
@@ -194,6 +196,23 @@ export const api = {
     call<TrackFileInspection>("inspect_csv_track", { path, mapping }),
   /** Imports the chosen boats of each file, one source per boat, as one undoable change. */
   importTrackFiles: (files: TrackFileRequest[]) => call<TrackImportResult>("import_track_files", { files }),
+
+  // Tracker imports (spec.md 7.2). A download reports `TRACKER_PROGRESS`
+  // events and can be cancelled; the event is kept for the session.
+
+  /**
+   * Resolves a pasted event address and downloads every boat's full track,
+   * or recalls the event from this session unless `refresh`. Fails with
+   * kind "tracker-address", "tracker-unavailable", "tracker-no-event",
+   * "tracker-decode", "tracker-network" or "cancelled".
+   */
+  trackerEvent: (tracker: "yellowbrick" | "geovoile" | "bluewater", url: string, refresh = false) =>
+    call<TrackerEventView>("tracker_event", { tracker, url, refresh }),
+  /** Stops the running event download. */
+  cancelTrackerEvent: () => call<void>("cancel_tracker_event"),
+  /** Imports the chosen boats of a downloaded event, one source per boat, as one undoable change. */
+  importTrackerBoats: (tracker: string, key: string, boats: string[]) =>
+    call<TrackImportResult>("import_tracker_boats", { tracker, key, boats }),
   /** Changes a track's time window, boat-speed band, manoeuvre threshold and origin filters (undoable). */
   setTrackFilters: (id: number, filters: TrackFilters) =>
     call<ProjectSummary>("set_track_filters", { id, filters }),
@@ -313,6 +332,9 @@ export const api = {
 export const ENV_PROGRESS = "env://progress";
 /** The event saying a fetch wrote into the open project. */
 export const ENV_CHANGED = "env://changed";
+
+/** The event carrying a tracker download's progress. */
+export const TRACKER_PROGRESS = "tracker://progress";
 
 /** The event Rust sends when the user asks to quit or close the window. */
 export const QUIT_REQUESTED = "app://quit-requested";

@@ -310,7 +310,8 @@ Overlay
   excluded_samples: [SampleId]                  // track dots removed, §10.3
   filters: SampleFilters                        // track sources only, §7.6
 Track
-  origin: { tracker, event_url, event_title, boat_id, boat_name, sail_no } | File { name }
+  origin: { tracker, event_url, event_title, boat_id, boat_name, sail_no,
+            model?, division?, race_start?, race_finish? } | File { name }
   fixes: [Fix { t, lat, lon, cog?, sog? }]      // as imported
   derivation: DerivationSettings                // §7.4
   statistic: median | mean | p75 | p90          // §12.1
@@ -545,12 +546,47 @@ All three trackers share one dialog flow (D4):
 4. The downloaded event is kept in memory for the session, so a second import
    from the same event does not download again.
 
+In detail (M10):
+
+- Each tracker is a `TrackerClient` in `pe-trackers`: resolving the pasted
+  address needs no network; one fetch then returns the whole event (title,
+  dates, every boat with its sail number, model, division, status, own
+  start and finish, and full track). The dialog shows the event's title,
+  dates and boat count, a map preview of every boat's track (64 points
+  each, over the basemap coastline, the ticked boats highlighted), a search
+  over name, sail number, model and division (every word must match; case,
+  accents and the spaces or slashes inside sail numbers do not matter), and
+  a tick-all box for the boats shown. A boat without positions cannot be
+  ticked.
+- The download is a job (§7.7) run from the dialog: its progress (bytes and
+  fraction) shows in the dialog with Cancel download, which returns at once
+  even while the tracker has not answered; nothing is kept from a cancelled
+  or failed download. Requests follow §7.7's rules: a 5xx or 429 answer, a
+  timeout or a dropped connection is retried three times (0.5, 1, 2 s),
+  anything else fails at once, and a body over 256 MB is refused. A failure
+  is shown in the dialog in the interface language with Retry (which
+  downloads again); an address the tracker does not serve has no Retry.
+- The session keeps the last four events downloaded. Reopening one says it
+  was kept and offers Download again for newer positions.
+- Import adds one track source per ticked boat, labelled with the boat's
+  name, as one undo entry, and opens the environment fetch pre-flight as a
+  file import does (§7.5). The track's origin records the tracker, the
+  canonical event address (`https://yb.tl/<key>`), the title, and the
+  boat's tracker id, name, sail number, model, division, start and finish.
+  Its time-window filter starts at the boat's start and ends at its finish
+  when the tracker gives them, else at the event's start and end (§7.6).
+
 **YellowBrick** (host `yb.tl`, CDN `cf.yb.tl`):
 
 - Race key = the first path segment of `https://yb.tl/<key>` (also accepts
   `cf.yb.tl`, `app.yb.tl` viewer links, and a bare key).
 - `GET /JSON/<key>/RaceSetup` (ISO-8859-1): title, start, stop, `teams[]`
-  (id, name, sail, model, type, tags).
+  (id, name, sail, model, type, tags, status, and the team's own `start`
+  and `finishedAt`), `tags[]` (id, name, sort, show, and a `start` for the
+  divisions that start separately). A boat's **division** is the names of
+  its tags that have their own start (e.g. "IRC 2"), else of all its shown
+  tags, in tag order. Its status is FINISHED when it has a `finishedAt`,
+  else the team's status.
 - `GET /BIN/<key>/AllPositions3`: the full history, decoded in Rust. Big-endian.
   `u8 flags` (bit0 altitude, bit1 DTF, bit2 lap, bit3 percent), `u32 refTime`,
   then per team `u16 id`, `u16 count` and `count` moments newest first. A
@@ -559,8 +595,19 @@ All three trackers share one dialog flow (D4):
   otherwise it is a delta from the previous (newer) moment
   (`u16 dt & 0x7FFF, i16 dlat, i16 dlon`, then optional deltas).
 - YellowBrick gives no speed or course; both are derived (§7.4).
-- Fallback if the binary fails to decode: `GET /<key>.kml`.
-- Some keys return 5xx; the dialog says so and offers Retry.
+- Fallback if the binary fails to decode (or is refused, or is a web page,
+  which is what an unknown key's `AllPositions3` answers with status 200):
+  `GET https://yb.tl/<key>.kml` (the CDN answers 504 for it). YellowBrick
+  builds it on request, so it has its own 10-minute timeout (Middle Sea
+  Race 2024: 23 MB in 17–73 s; Fastnet 2025: 99 MB, over two minutes).
+  Each placemark (named after the team) holds a `gx:Track` of `when` and
+  `gx:coord` (`lon,lat,alt`) pairs; coordinates are rounded back to
+  YellowBrick's 1e-5° grid and placemarks are matched to teams by name. The
+  KML leaves out the binary's few reports at a repeated time. A cancel or a
+  tracker that keeps failing (5xx) does not fall back.
+- Some keys return 5xx (an unknown key's `RaceSetup` answers 500); the
+  dialog says the tracker is not answering and offers Retry. A `RaceSetup`
+  that is a web page is "no public event at this address".
 - The app.yb.tl purchase flow and any device credential are never used (D5).
 
 **Geovoile** (hosts `*.geovoile.com`):

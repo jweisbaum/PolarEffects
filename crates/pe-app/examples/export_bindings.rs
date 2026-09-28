@@ -19,6 +19,7 @@ use pe_app::projects::{
     BoatInput, OrcSourceSummary, PolarFileSummary, ProjectSummary, RecentProject, SourceSummary,
 };
 use pe_app::settings::{AutosaveMode, ChunkCacheStatus, Settings};
+use pe_app::trackers::{TrackerBoatRow, TrackerEventView, TrackerProgress};
 use pe_app::tracks::{
     CsvMappingInput, CsvPreview, SampleDetails, TrackBoatPreview, TrackFileInspection,
     TrackFileRequest, TrackFilters, TrackImportFailure, TrackImportLine, TrackImportResult,
@@ -52,6 +53,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     PolarPlotResult::export_all(&cfg)?;
     PolarNodeRef::export_all(&cfg)?;
     TrackSummary::export_all(&cfg)?;
+    TrackerBoatRow::export_all(&cfg)?;
+    TrackerEventView::export_all(&cfg)?;
+    TrackerProgress::export_all(&cfg)?;
     EnvEstimate::export_all(&cfg)?;
     EnvJobTrack::export_all(&cfg)?;
     EnvJobsStatus::export_all(&cfg)?;

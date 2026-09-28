@@ -3,7 +3,8 @@
  * in the interface language, kept free of React so it can be tested.
  *
  * Rust reports each failed file with a stable reason code (`pe_tracks`'
- * `Reason::code`, or `"unreadable"`, `"no-mapping"`, `"no-boat"`) and an
+ * `Reason::code`, or `"unreadable"`, `"no-mapping"`, `"no-boat"`, and for a
+ * tracker boat `"no-positions"`) and an
  * English message; the line shown is built here from the code, and the
  * English goes in the tooltip, like every other error.
  */
@@ -38,6 +39,7 @@ export function trackReasonText(code: string): string {
     case "unreadable": return t("the file could not be read");
     case "no-mapping": return t("choose the time, latitude and longitude columns");
     case "no-boat": return t("no boat was chosen");
+    case "no-positions": return t("the tracker has no positions for this boat");
     default: return t("the file could not be imported");
   }
 }

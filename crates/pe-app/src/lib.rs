@@ -2,7 +2,7 @@
 //!
 //! Rust owns the entire domain; the webview is a view layer. Everything the
 //! frontend can reach goes through a Tauri command in [`commands`],
-//! [`projects`], [`edit`], [`env`], [`polar_files`], [`tracks`], [`map_tracks`], [`polar_plot`], [`polar3d`], [`orc`], [`settings`], [`basemap`],
+//! [`projects`], [`edit`], [`env`], [`polar_files`], [`tracks`], [`trackers`], [`map_tracks`], [`polar_plot`], [`polar3d`], [`orc`], [`settings`], [`basemap`],
 //! [`quit`] or [`autosave`], and every failure it can see is an
 //! [`error::AppError`].
 
@@ -23,6 +23,7 @@ pub mod projects;
 pub mod quit;
 pub mod session;
 pub mod settings;
+pub mod trackers;
 pub mod tracks;
 
 use tauri::Manager;
@@ -91,6 +92,9 @@ pub fn run() -> anyhow::Result<()> {
             tracks::set_track_filters,
             tracks::set_track_derivation,
             tracks::sample_details,
+            trackers::tracker_event,
+            trackers::cancel_tracker_event,
+            trackers::import_tracker_boats,
             env::env_estimate,
             env::start_env_fetch,
             env::cancel_env_fetch,
