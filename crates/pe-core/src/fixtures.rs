@@ -192,7 +192,14 @@ fn colour() -> impl Strategy<Value = Colour> {
 }
 
 fn range() -> impl Strategy<Value = Range> {
-    (opt_f(0.0..50.0), opt_f(0.0..50.0)).prop_map(|(min, max)| Range { min, max })
+    // Valid filters run upwards (`SampleFilters::validate`).
+    (opt_f(0.0..50.0), opt_f(0.0..50.0)).prop_map(|(min, max)| match (min, max) {
+        (Some(a), Some(b)) if a > b => Range {
+            min: Some(b),
+            max: Some(a),
+        },
+        _ => Range { min, max },
+    })
 }
 
 fn filters() -> impl Strategy<Value = SampleFilters> {
@@ -221,8 +228,9 @@ fn filters() -> impl Strategy<Value = SampleFilters> {
             proptest::option::of(any::<i64>()),
             proptest::option::of(any::<i64>()),
         ),
-        opt_f(0.0..40.0),
-        opt_f(0.0..180.0),
+        // Above the 1 kn default minimum, so the band runs upwards.
+        opt_f(1.0..40.0),
+        opt_f(0.1..180.0),
         any::<bool>(),
     )
         .prop_map(
@@ -231,8 +239,13 @@ fn filters() -> impl Strategy<Value = SampleFilters> {
                     wave_height_m,
                     wave_direction,
                     tws_kn,
-                    time_window: (start.is_some() || end.is_some())
-                        .then_some(TimeWindow { start, end }),
+                    time_window: (start.is_some() || end.is_some()).then_some(match (start, end) {
+                        (Some(a), Some(b)) if a > b => TimeWindow {
+                            start: Some(b),
+                            end: Some(a),
+                        },
+                        _ => TimeWindow { start, end },
+                    }),
                     max_bsp_kn,
                     max_heading_change_deg: turn,
                     heading_origin: if no_tide {

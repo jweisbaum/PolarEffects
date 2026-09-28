@@ -8,6 +8,12 @@ description = "PolarEffects track model, file import and sample derivation."
 
 [dependencies]
 pe-core = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+# Arbitrary input for the never-panics tests.
+proptest = "1.11.0"
 
 [lints]
 workspace = true

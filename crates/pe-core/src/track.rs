@@ -308,6 +308,41 @@ impl Sample {
     }
 }
 
+/// A sample's motion over the ground: heading and speed with where each
+/// came from (spec.md 7.4). What re-deriving a track rewrites, and all it
+/// rewrites; [`crate::Command::SetDerivation`] carries it both ways.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct Motion {
+    /// Heading over the ground, degrees in [0, 360).
+    pub heading: Option<f64>,
+    /// Whether the heading was given or derived.
+    pub heading_origin: Option<ValueOrigin>,
+    /// Speed over the ground, knots.
+    pub speed: Option<f64>,
+    /// Whether the speed was given or derived.
+    pub speed_origin: Option<ValueOrigin>,
+}
+
+impl Sample {
+    /// This sample's motion.
+    pub fn motion(&self) -> Motion {
+        Motion {
+            heading: self.heading,
+            heading_origin: self.heading_origin,
+            speed: self.speed,
+            speed_origin: self.speed_origin,
+        }
+    }
+
+    /// Replaces this sample's motion.
+    pub fn set_motion(&mut self, motion: Motion) {
+        self.heading = motion.heading;
+        self.heading_origin = motion.heading_origin;
+        self.speed = motion.speed;
+        self.speed_origin = motion.speed_origin;
+    }
+}
+
 /// Which value to use when a fix has both a given and a derived one.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -328,6 +363,24 @@ pub struct DerivationSettings {
     pub max_gap_s: i64,
     /// Given or derived values first.
     pub prefer: PreferValues,
+}
+
+/// The longest maximum gap offered, seconds: a central difference across
+/// more than a day says nothing about how the boat was sailing.
+pub const MAX_GAP_LIMIT_S: i64 = 24 * 3600;
+
+impl DerivationSettings {
+    /// Checks the settings are ones the derivation can use.
+    pub fn validate(&self) -> crate::Result<()> {
+        if (1..=MAX_GAP_LIMIT_S).contains(&self.max_gap_s) {
+            Ok(())
+        } else {
+            Err(crate::CoreError::Invalid(format!(
+                "a maximum gap of {} s is outside 1 s to {MAX_GAP_LIMIT_S} s",
+                self.max_gap_s
+            )))
+        }
+    }
 }
 
 impl Default for DerivationSettings {

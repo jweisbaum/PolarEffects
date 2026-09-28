@@ -29,6 +29,6 @@ mod fixtures;
 pub use command::Command;
 pub use error::{CoreError, Result};
 pub use history::History;
-pub use id::{ProjectId, SampleId, SourceId, TrackId};
+pub use id::{MAX_ID, ProjectId, SampleId, SourceId, TrackId};
 pub use project::{Boat, Project, SCHEMA_VERSION};
 pub use source::{Colour, Overlay, Source, SourceKind};

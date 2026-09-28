@@ -14,9 +14,10 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::{CoreError, Result};
-use crate::id::SourceId;
+use crate::id::{SampleId, SourceId};
 use crate::project::Project;
-use crate::source::{CellRef, Colour, Source, SourceKind, validate_weight};
+use crate::source::{CellRef, Colour, SampleFilters, Source, SourceKind, validate_weight};
+use crate::track::{DerivationSettings, Motion, Track};
 
 /// A reversible change to a project.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -102,6 +103,48 @@ pub enum Command {
         source: SourceId,
         /// The nodes included, each once.
         cells: Vec<CellRef>,
+    },
+    /// Excludes samples of one track from the blend (spec.md 10.3).
+    /// `samples` are exactly the ones this changes: each is the track's,
+    /// none is already excluded, so undo removes exactly them.
+    ExcludeSamples {
+        /// Target track source.
+        source: SourceId,
+        /// The samples excluded, each once.
+        samples: Vec<SampleId>,
+    },
+    /// Includes excluded samples again; the inverse of
+    /// [`Command::ExcludeSamples`]. Every sample must currently be excluded.
+    IncludeSamples {
+        /// Target track source.
+        source: SourceId,
+        /// The samples included, each once.
+        samples: Vec<SampleId>,
+    },
+    /// Replaces a track's sample filters (spec.md 7.6).
+    SetSampleFilters {
+        /// Target track source.
+        source: SourceId,
+        /// Previous filters.
+        before: Box<SampleFilters>,
+        /// New filters.
+        after: Box<SampleFilters>,
+    },
+    /// Changes how a track derives heading and speed (spec.md 7.4), with
+    /// every sample's motion before and after. `pe-core` does not derive
+    /// (that is `pe-tracks`), so the command carries the result both ways
+    /// and undo is exact rather than recomputed.
+    SetDerivation {
+        /// Target track source.
+        source: SourceId,
+        /// Previous settings.
+        before: DerivationSettings,
+        /// New settings.
+        after: DerivationSettings,
+        /// Every sample's motion under `before`, in sample order.
+        motion_before: Vec<Motion>,
+        /// Every sample's motion under `after`, in sample order.
+        motion_after: Vec<Motion>,
     },
     /// Several commands as one history entry, e.g. a multi-file import.
     Batch {
@@ -267,6 +310,56 @@ impl Command {
                     add_cells(list, cells)
                 }
             }
+            Self::ExcludeSamples { source, samples } => {
+                let target = track_source_mut(project, *source)?;
+                if forward {
+                    add_samples(target, samples)
+                } else {
+                    remove_samples(target, samples)
+                }
+            }
+            Self::IncludeSamples { source, samples } => {
+                let target = track_source_mut(project, *source)?;
+                if forward {
+                    remove_samples(target, samples)
+                } else {
+                    add_samples(target, samples)
+                }
+            }
+            Self::SetSampleFilters {
+                source,
+                before,
+                after,
+            } => {
+                let (from, to) = if forward {
+                    (&**before, &**after)
+                } else {
+                    (&**after, &**before)
+                };
+                to.validate()?;
+                let target = track_source_mut(project, *source)?;
+                swap(&mut target.overlay.filters, from, to, "sample filters")
+            }
+            Self::SetDerivation {
+                source,
+                before,
+                after,
+                motion_before,
+                motion_after,
+            } => {
+                let (from, to, motion_from, motion_to) = if forward {
+                    (&*before, &*after, &*motion_before, &*motion_after)
+                } else {
+                    (&*after, &*before, &*motion_after, &*motion_before)
+                };
+                to.validate()?;
+                let target = track_source_mut(project, *source)?;
+                let label = target.label.clone();
+                let track = target
+                    .track_mut()
+                    .ok_or_else(|| CoreError::Invalid(format!("{label} is not a track")))?;
+                set_derivation(track, from, to, motion_from, motion_to)
+            }
             Self::Batch { commands, .. } => {
                 if forward {
                     for (done, command) in commands.iter_mut().enumerate() {
@@ -342,6 +435,10 @@ impl Command {
             Self::MoveSource { .. } => "Reorder sources",
             Self::ExcludeCells { .. } => EXCLUDE_NODES_LABEL,
             Self::IncludeCells { .. } => INCLUDE_NODES_LABEL,
+            Self::ExcludeSamples { .. } => EXCLUDE_SAMPLES_LABEL,
+            Self::IncludeSamples { .. } => INCLUDE_SAMPLES_LABEL,
+            Self::SetSampleFilters { .. } => "Change sample filters",
+            Self::SetDerivation { .. } => "Change heading and speed derivation",
             Self::Batch { label, .. } => return label.clone(),
         }
         .to_owned()
@@ -353,6 +450,109 @@ impl Command {
 pub const EXCLUDE_NODES_LABEL: &str = "Exclude polar nodes";
 /// The history label of an inclusion.
 pub const INCLUDE_NODES_LABEL: &str = "Include polar nodes";
+
+/// The history label of a sample exclusion.
+pub const EXCLUDE_SAMPLES_LABEL: &str = "Exclude samples";
+/// The history label of a sample inclusion.
+pub const INCLUDE_SAMPLES_LABEL: &str = "Include samples";
+/// The history label of an exclusion over polar nodes and samples together.
+pub const EXCLUDE_DOTS_LABEL: &str = "Exclude dots";
+/// The history label of an inclusion over polar nodes and samples together.
+pub const INCLUDE_DOTS_LABEL: &str = "Include dots";
+
+/// A track source.
+fn track_source_mut(project: &mut Project, id: SourceId) -> Result<&mut Source> {
+    let source = source_mut(project, id)?;
+    if !matches!(source.kind, SourceKind::Track { .. }) {
+        return Err(CoreError::Invalid(format!(
+            "{} is not a track; it has no samples",
+            source.label
+        )));
+    }
+    Ok(source)
+}
+
+/// Checks `samples` is a non-empty set of the track's own samples, each
+/// named once, and returns them sorted.
+fn checked_samples(source: &Source, samples: &[SampleId]) -> Result<Vec<SampleId>> {
+    if samples.is_empty() {
+        return Err(CoreError::Invalid(
+            "an exclusion names at least one sample".to_owned(),
+        ));
+    }
+    let mut sorted = samples.to_vec();
+    sorted.sort_unstable();
+    if sorted.windows(2).any(|pair| pair[0] == pair[1]) {
+        return Err(CoreError::Invalid(
+            "an exclusion names the same sample twice".to_owned(),
+        ));
+    }
+    let mut own: Vec<SampleId> = source
+        .track()
+        .map(|track| track.samples.iter().map(|s| s.id).collect())
+        .unwrap_or_default();
+    own.sort_unstable();
+    if let Some(stranger) = sorted.iter().find(|id| own.binary_search(id).is_err()) {
+        return Err(CoreError::Invalid(format!(
+            "sample {stranger} is not one of {}'s",
+            source.label
+        )));
+    }
+    Ok(sorted)
+}
+
+/// Adds `samples` to the source's sorted exclusion list; refuses (changing
+/// nothing) if any is already there.
+fn add_samples(source: &mut Source, samples: &[SampleId]) -> Result<()> {
+    let sorted = checked_samples(source, samples)?;
+    let list = &mut source.overlay.excluded_samples;
+    if sorted.iter().any(|id| list.binary_search(id).is_ok()) {
+        return Err(stale("the excluded samples"));
+    }
+    // A merge, not an insert per id: a lasso can take a hundred thousand.
+    list.extend(sorted);
+    list.sort_unstable();
+    Ok(())
+}
+
+/// Removes `samples` from the source's sorted exclusion list; refuses
+/// (changing nothing) if any is not there.
+fn remove_samples(source: &mut Source, samples: &[SampleId]) -> Result<()> {
+    let sorted = checked_samples(source, samples)?;
+    let list = &mut source.overlay.excluded_samples;
+    if sorted.iter().any(|id| list.binary_search(id).is_err()) {
+        return Err(stale("the excluded samples"));
+    }
+    list.retain(|id| sorted.binary_search(id).is_err());
+    Ok(())
+}
+
+/// Moves a track from one derivation to another, checking it is in the
+/// first before writing the second.
+fn set_derivation(
+    track: &mut Track,
+    from: &DerivationSettings,
+    to: &DerivationSettings,
+    motion_from: &[Motion],
+    motion_to: &[Motion],
+) -> Result<()> {
+    if track.derivation != *from
+        || motion_from.len() != track.samples.len()
+        || motion_to.len() != track.samples.len()
+        || track
+            .samples
+            .iter()
+            .zip(motion_from)
+            .any(|(sample, motion)| sample.motion() != *motion)
+    {
+        return Err(stale("the track's heading and speed"));
+    }
+    track.derivation = to.clone();
+    for (sample, motion) in track.samples.iter_mut().zip(motion_to) {
+        sample.set_motion(*motion);
+    }
+    Ok(())
+}
 
 /// A source whose polar nodes can be excluded: an ORC or file polar. A
 /// track's positions are excluded one sample at a time instead (spec.md 10.3).
@@ -470,10 +670,14 @@ mod tests {
             Command::MoveSource { .. } => "MoveSource",
             Command::ExcludeCells { .. } => "ExcludeCells",
             Command::IncludeCells { .. } => "IncludeCells",
+            Command::ExcludeSamples { .. } => "ExcludeSamples",
+            Command::IncludeSamples { .. } => "IncludeSamples",
+            Command::SetSampleFilters { .. } => "SetSampleFilters",
+            Command::SetDerivation { .. } => "SetDerivation",
             Command::Batch { .. } => "Batch",
         }
     }
-    const VARIANTS: usize = 11;
+    const VARIANTS: usize = 15;
 
     fn cell(twa: f64, tws: f64) -> CellRef {
         CellRef { twa, tws }
@@ -500,6 +704,31 @@ mod tests {
         // A node already excluded, for the inclusion to include.
         project.sources[1].overlay.excluded_cells = vec![cell(0.0, 6.0), cell(45.0, 12.0)];
         let track = project.sources[2].clone();
+        let track_id = track.id;
+        let sample_ids: Vec<SampleId> = track
+            .track()
+            .unwrap()
+            .samples
+            .iter()
+            .map(|s| s.id)
+            .collect();
+        // One sample already excluded, for the inclusion to include.
+        project.sources[2].overlay.excluded_samples = vec![sample_ids[1]];
+        let motion_before: Vec<Motion> = track
+            .track()
+            .unwrap()
+            .samples
+            .iter()
+            .map(|s| s.motion())
+            .collect();
+        let motion_after: Vec<Motion> = motion_before
+            .iter()
+            .map(|m| Motion {
+                speed: Some(6.5),
+                speed_origin: Some(crate::track::ValueOrigin::Derived),
+                ..*m
+            })
+            .collect();
         let added = new_polar(project);
         let also = new_polar(project);
         vec![
@@ -543,6 +772,33 @@ mod tests {
             Command::IncludeCells {
                 source: project.sources[1].id,
                 cells: vec![cell(45.0, 12.0)],
+            },
+            Command::ExcludeSamples {
+                source: track_id,
+                samples: vec![sample_ids[2], sample_ids[0]],
+            },
+            Command::IncludeSamples {
+                source: track_id,
+                samples: vec![sample_ids[1]],
+            },
+            Command::SetSampleFilters {
+                source: track_id,
+                before: Box::new(SampleFilters::default()),
+                after: Box::new(SampleFilters {
+                    min_bsp_kn: Some(2.0),
+                    max_heading_change_deg: None,
+                    ..SampleFilters::default()
+                }),
+            },
+            Command::SetDerivation {
+                source: track_id,
+                before: DerivationSettings::default(),
+                after: DerivationSettings {
+                    max_gap_s: 600,
+                    prefer: crate::track::PreferValues::Derived,
+                },
+                motion_before,
+                motion_after,
             },
             Command::Batch {
                 label: "Import polar files".to_owned(),
@@ -819,6 +1075,110 @@ mod tests {
             Err(CoreError::Invalid(_))
         ));
         assert_eq!(project, before);
+    }
+
+    /// Excluded samples stay sorted, and refusals change nothing.
+    #[test]
+    fn sample_exclusions_keep_their_order_and_refuse_strangers() {
+        let mut project = fixtures::project();
+        project.sources[2].overlay.excluded_samples.clear();
+        let original = project.clone();
+        let track = project.sources[2].id;
+        let ids: Vec<SampleId> = project.sources[2]
+            .track()
+            .unwrap()
+            .samples
+            .iter()
+            .map(|s| s.id)
+            .collect();
+        let mut exclude = Command::ExcludeSamples {
+            source: track,
+            samples: vec![ids[2], ids[0]],
+        };
+        exclude.apply(&mut project).unwrap();
+        assert_eq!(
+            project.sources[2].overlay.excluded_samples,
+            vec![ids[0], ids[2]]
+        );
+        project.validate().unwrap();
+        let before = project.clone();
+        for samples in [
+            vec![],
+            vec![ids[1], ids[1]],
+            vec![SampleId(999_999)],
+            vec![ids[0], ids[1]],
+        ] {
+            let mut bad = Command::ExcludeSamples {
+                source: track,
+                samples,
+            };
+            assert!(bad.apply(&mut project).is_err());
+        }
+        let mut absent = Command::IncludeSamples {
+            source: track,
+            samples: vec![ids[1]],
+        };
+        assert!(matches!(
+            absent.apply(&mut project),
+            Err(CoreError::Stale(_))
+        ));
+        let mut polar = Command::ExcludeSamples {
+            source: project.sources[0].id,
+            samples: vec![ids[1]],
+        };
+        assert!(matches!(
+            polar.apply(&mut project),
+            Err(CoreError::Invalid(_))
+        ));
+        assert_eq!(project, before);
+        exclude.undo(&mut project).unwrap();
+        assert_eq!(project, original);
+    }
+
+    /// A derivation change refuses when the samples no longer hold what it
+    /// was built against, and invalid filters are refused.
+    #[test]
+    fn stale_derivations_and_invalid_filters_are_refused() {
+        let mut project = fixtures::project();
+        let track = project.sources[2].id;
+        let n = project.sources[2].track().unwrap().samples.len();
+        let mut stale_motion = Command::SetDerivation {
+            source: track,
+            before: DerivationSettings::default(),
+            after: DerivationSettings::default(),
+            motion_before: vec![Motion::default(); n],
+            motion_after: vec![Motion::default(); n],
+        };
+        assert!(matches!(
+            stale_motion.apply(&mut project),
+            Err(CoreError::Stale(_))
+        ));
+        let mut bad_gap = Command::SetDerivation {
+            source: track,
+            before: DerivationSettings::default(),
+            after: DerivationSettings {
+                max_gap_s: 0,
+                ..DerivationSettings::default()
+            },
+            motion_before: vec![],
+            motion_after: vec![],
+        };
+        assert!(matches!(
+            bad_gap.apply(&mut project),
+            Err(CoreError::Invalid(_))
+        ));
+        let mut bad_filters = Command::SetSampleFilters {
+            source: track,
+            before: Box::new(SampleFilters::default()),
+            after: Box::new(SampleFilters {
+                min_bsp_kn: Some(-1.0),
+                ..SampleFilters::default()
+            }),
+        };
+        assert!(matches!(
+            bad_filters.apply(&mut project),
+            Err(CoreError::Invalid(_))
+        ));
     }
 
     /// Exclusions survive a save and reload byte for byte, and a list out of

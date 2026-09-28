@@ -148,6 +148,19 @@ impl Source {
             }
             SourceKind::PolarFile { polar, .. } => polar.validate()?,
             SourceKind::Track { track } => {
+                track.derivation.validate()?;
+                self.overlay.filters.validate()?;
+                if self
+                    .overlay
+                    .excluded_samples
+                    .windows(2)
+                    .any(|pair| pair[0] >= pair[1])
+                {
+                    return Err(CoreError::Invalid(format!(
+                        "the excluded samples of {} are not in order, or one is listed twice",
+                        self.label
+                    )));
+                }
                 for fix in &track.fixes {
                     if !(-90.0..=90.0).contains(&fix.lat) || !(-180.0..=180.0).contains(&fix.lon) {
                         return Err(CoreError::Invalid(format!(
@@ -439,6 +452,72 @@ impl Default for SampleFilters {
     }
 }
 
+fn check_range(range: &Option<Range>, what: &str, lo: f64, hi: f64) -> Result<()> {
+    let Some(range) = range else { return Ok(()) };
+    for value in [range.min, range.max].into_iter().flatten() {
+        if !value.is_finite() || value < lo || value > hi {
+            return Err(CoreError::Invalid(format!(
+                "the {what} filter bound {value} is outside {lo} to {hi}"
+            )));
+        }
+    }
+    if let (Some(min), Some(max)) = (range.min, range.max)
+        && min > max
+    {
+        return Err(CoreError::Invalid(format!(
+            "the {what} filter runs from {min} down to {max}"
+        )));
+    }
+    Ok(())
+}
+
+impl SampleFilters {
+    /// Checks every bound is a number in its quantity's range and every
+    /// range runs upwards.
+    pub fn validate(&self) -> Result<()> {
+        check_range(&self.wave_height_m, "wave height", 0.0, 100.0)?;
+        check_range(&self.current_speed_kn, "current speed", 0.0, 100.0)?;
+        check_range(&self.tws_kn, "wind speed", 0.0, 200.0)?;
+        check_range(&self.twa_deg, "wind angle", 0.0, 180.0)?;
+        let bsp = Some(Range {
+            min: self.min_bsp_kn,
+            max: self.max_bsp_kn,
+        });
+        check_range(&bsp, "boat speed", 0.0, 100.0)?;
+        if let Some(limit) = self.max_heading_change_deg
+            && !(limit.is_finite() && limit > 0.0 && limit <= 180.0)
+        {
+            return Err(CoreError::Invalid(format!(
+                "a manoeuvre threshold of {limit}° is outside 0° to 180°"
+            )));
+        }
+        if let Some(window) = &self.time_window
+            && let (Some(start), Some(end)) = (window.start, window.end)
+            && start > end
+        {
+            return Err(CoreError::Invalid(
+                "the time window ends before it starts".to_owned(),
+            ));
+        }
+        match &self.wave_direction {
+            Some(WaveDirectionFilter::Relative { range }) => {
+                check_range(&Some(range.clone()), "wave angle", 0.0, 180.0)?;
+            }
+            Some(WaveDirectionFilter::Absolute { range }) => {
+                for value in [range.from, range.to] {
+                    if !(value.is_finite() && (0.0..=360.0).contains(&value)) {
+                        return Err(CoreError::Invalid(format!(
+                            "the wave direction {value}° is outside 0° to 360°"
+                        )));
+                    }
+                }
+            }
+            Some(WaveDirectionFilter::Sectors { .. }) | None => {}
+        }
+        Ok(())
+    }
+}
+
 /// A time window, UTC epoch seconds; either end may be open.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TimeWindow {
@@ -472,6 +551,43 @@ mod tests {
         assert_eq!(filters.min_bsp_kn, Some(1.0));
         assert_eq!(filters.max_heading_change_deg, Some(30.0));
         assert!(Overlay::default().is_empty());
+    }
+
+    #[test]
+    fn filters_out_of_range_or_upside_down_are_refused() {
+        SampleFilters::default().validate().unwrap();
+        let bad = [
+            SampleFilters {
+                min_bsp_kn: Some(5.0),
+                max_bsp_kn: Some(4.0),
+                ..SampleFilters::default()
+            },
+            SampleFilters {
+                min_bsp_kn: Some(f64::NAN),
+                ..SampleFilters::default()
+            },
+            SampleFilters {
+                max_heading_change_deg: Some(0.0),
+                ..SampleFilters::default()
+            },
+            SampleFilters {
+                time_window: Some(TimeWindow {
+                    start: Some(10),
+                    end: Some(5),
+                }),
+                ..SampleFilters::default()
+            },
+            SampleFilters {
+                twa_deg: Some(Range {
+                    min: Some(0.0),
+                    max: Some(190.0),
+                }),
+                ..SampleFilters::default()
+            },
+        ];
+        for filters in bad {
+            assert!(filters.validate().is_err(), "{filters:?}");
+        }
     }
 
     #[test]

@@ -8,6 +8,17 @@
 
 use serde::{Deserialize, Serialize};
 
+/// The largest id a project allocates: 2^53 − 1.
+///
+/// Ids cross IPC as JavaScript numbers, which are exact only up to 2^53, so
+/// a larger one would silently name a different source or sample in the
+/// frontend. Ids are allocated one after another from 1, so a project would
+/// need nine quadrillion allocations to reach this; it is still a checked
+/// bound rather than an assumption: [`crate::Project::reserve_ids`] refuses
+/// an import that would pass it, and validation refuses a document whose
+/// counter already has.
+pub const MAX_ID: u64 = (1 << 53) - 1;
+
 macro_rules! id_type {
     ($name:ident, $doc:literal) => {
         #[doc = $doc]

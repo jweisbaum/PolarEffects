@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::canonical;
 use crate::error::{CoreError, Result};
-use crate::id::{ProjectId, SampleId, SourceId, TrackId};
+use crate::id::{MAX_ID, ProjectId, SampleId, SourceId, TrackId};
 use crate::polar::validate_axis;
 use crate::source::{Colour, PALETTE, Source};
 
@@ -127,6 +127,25 @@ impl Project {
         }
     }
 
+    /// How many ids are left before [`MAX_ID`].
+    pub fn ids_left(&self) -> u64 {
+        (MAX_ID + 1).saturating_sub(self.next_id)
+    }
+
+    /// Checks `count` more ids can be allocated without passing [`MAX_ID`].
+    /// Every import calls this before allocating, so no id the project hands
+    /// out is ever beyond what the frontend can hold exactly.
+    pub fn reserve_ids(&self, count: u64) -> Result<()> {
+        if count <= self.ids_left() {
+            Ok(())
+        } else {
+            Err(CoreError::Invalid(format!(
+                "the project has only {} ids left, and this needs {count}",
+                self.ids_left()
+            )))
+        }
+    }
+
     fn allocate(&mut self) -> u64 {
         let id = self.next_id;
         self.next_id = self.next_id.saturating_add(1);
@@ -207,6 +226,12 @@ impl Project {
         validate_axis(&self.grid.twa, "output TWA", 0.0, 180.0)?;
         validate_axis(&self.grid.tws, "output TWS", 0.0, f64::MAX)?;
 
+        if self.next_id > MAX_ID + 1 {
+            return Err(CoreError::Invalid(format!(
+                "the next id {} is beyond the largest id {MAX_ID}",
+                self.next_id
+            )));
+        }
         let mut ids = BTreeSet::new();
         let mut claim = |raw: u64, what: &str| -> Result<()> {
             if raw >= self.next_id {
@@ -312,6 +337,25 @@ mod tests {
         assert_eq!(picked, [PALETTE[0], PALETTE[2], PALETTE[3]]);
         assert_eq!(p.next_palette_colours(17).len(), 17);
         assert_eq!(p.next_palette_colour().as_str(), PALETTE[0]);
+    }
+
+    /// Ids never pass 2^53 − 1, the largest integer a JavaScript number
+    /// holds exactly, so every id survives the trip to the frontend.
+    #[test]
+    fn ids_stay_within_what_javascript_holds_exactly() {
+        assert_eq!(MAX_ID, 9_007_199_254_740_991);
+        assert_eq!(MAX_ID as f64 as u64, MAX_ID);
+        let mut p = Project::new("P", Boat::default(), 0);
+        p.reserve_ids(1000).unwrap();
+        p.next_id = MAX_ID;
+        p.reserve_ids(1).unwrap();
+        assert!(p.reserve_ids(2).is_err());
+        assert_eq!(p.allocate_sample_id().raw(), MAX_ID);
+        assert_eq!(p.ids_left(), 0);
+        assert!(p.reserve_ids(1).is_err());
+        p.validate().unwrap();
+        p.next_id = MAX_ID + 2;
+        assert!(p.validate().is_err());
     }
 
     #[test]
