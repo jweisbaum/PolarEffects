@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AppSettings } from "./generated/AppSettings";
 import type { ProjectSummary } from "./generated/ProjectSummary";
+import type { SourceSummary } from "./generated/SourceSummary";
 
 const invoke = vi.hoisted(() => vi.fn());
 const events = vi.hoisted(() => new Map<string, () => void>());
@@ -39,9 +40,19 @@ HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
 };
 HTMLElement.prototype.scrollIntoView = () => undefined;
 
-function summary(dirty: boolean, path: string | null = null): ProjectSummary {
+/** An imported Adrena polar, as the source list and Polar files section show it. */
+const POLAR: SourceSummary = {
+  id: 7, kind: "polar_file", label: "boat.pol", colour: "#4e79a7", visible: true, weight: 1, count: 71, used: null,
+  polar_file: { format: "adrena", file_name: "boat.pol", twa: [0, 42.5, 180], tws: [6, 8, 20] },
+};
+const TRACK: SourceSummary = {
+  id: 8, kind: "track", label: "Fastnet 2025", colour: "#f28e2b", visible: false, weight: 0.5, count: 120, used: 100,
+  polar_file: null,
+};
+
+function summary(dirty: boolean, path: string | null = null, sources: SourceSummary[] = []): ProjectSummary {
   return {
-    id: 1, name: "Fastnet", path, dirty, revision: 1, boat_name: "", boat_notes: "", sources: [],
+    id: 1, name: "Fastnet", path, dirty, revision: 1, boat_name: "", boat_notes: "", sources,
     can_undo: false, can_redo: false, undo_label: null, redo_label: null,
   };
 }
@@ -74,6 +85,15 @@ function backend() {
       case "set_theme": settings = { ...settings, theme: args?.theme as string }; return settings;
       case "chunk_cache_status": return { path: "/cache/chunks", bytes: 0 };
       case "quit_app": return null;
+      case "import_polar_files":
+        project = summary(true, project?.path ?? null, [...(project?.sources ?? []), POLAR]);
+        return {
+          project, imported: ["boat.pol"],
+          failures: [{ file: "bad.csv", line: 2, column: 6, reason: "not-a-number", message: "bad.csv, line 2, column 6: \"x\" is not a number" }],
+        };
+      case "set_source_label": case "set_source_visible": case "set_source_colour": case "set_source_weight":
+      case "move_source": case "remove_source":
+        return project;
       default: return null;
     }
   });
@@ -444,7 +464,8 @@ describe("finding every control (plan.md M2 acceptance)", () => {
       setLanguage(lang);
       for (const entry of windowFeatures) {
         foldEverything();
-        project = summary(false, "/p.wpsproj");
+        // A source, so that the source list's row controls are on screen.
+        project = summary(false, "/p.wpsproj", [POLAR]);
         await mount();
         // The map stage is hidden behind the 3D stage, to be revealed.
         await click(feature("stage:3d"));
@@ -473,4 +494,111 @@ describe("finding every control (plan.md M2 acceptance)", () => {
       }
     });
   }
+});
+
+describe("polar files and the source list (plan.md M4)", () => {
+  const open = async (sources: SourceSummary[]) => {
+    project = summary(false, "/p.wpsproj", sources);
+    await mount();
+  };
+  const commands = (name: string) => calls.filter(([command]) => command === name).map(([, args]) => args);
+
+  it("imports several files at once, lists them and says which failed, and where", async () => {
+    await open([]);
+    dialog.open.mockResolvedValue(["/boats/boat.pol", "/boats/bad.csv"]);
+    await click(feature("polar-files:import"));
+    expect(dialog.open.mock.calls[0]![0]).toMatchObject({ multiple: true });
+    expect(commands("import_polar_files")).toEqual([{ paths: ["/boats/boat.pol", "/boats/bad.csv"] }]);
+    const listed = q(".polar-file-list")!.textContent!;
+    expect(listed).toContain("boat.pol");
+    expect(listed).toContain("Adrena · TWA 0–180° (3) · TWS 6–20 kn (3)");
+    const failure = q(".import-failures li")!;
+    expect(failure.textContent).toBe("bad.csv, line 2, column 6: this is not a number");
+    expect(failure.title).toContain("is not a number");
+    // The row in the source list arrived with it.
+    expect(q(".source-list")!.textContent).toContain("boat.pol");
+    expect(q(".source-list")!.textContent).toContain("71 cells");
+  });
+
+  it("does nothing when the picker is cancelled", async () => {
+    await open([]);
+    await click(feature("polar-files:import"));
+    expect(commands("import_polar_files")).toEqual([]);
+  });
+
+  it("removes a polar file from its section", async () => {
+    await open([POLAR]);
+    await click(feature("polar-files:remove"));
+    expect(commands("remove_source")).toEqual([{ id: 7 }]);
+  });
+
+  it("puts the blend first, then each source with its kind and count", async () => {
+    await open([POLAR, TRACK]);
+    const rows = [...document.querySelectorAll(".source-list > li")];
+    expect(rows[0]!.textContent).toContain("Blend");
+    expect(rows[1]!.textContent).toContain("71 cells");
+    expect(rows[2]!.textContent).toContain("100/120 samples");
+    expect(rows[2]!.classList.contains("hidden-source")).toBe(true);
+    expect((feature("sources:blend-settings") as HTMLButtonElement).disabled).toBe(true);
+    expect((feature("sources:edit") as HTMLButtonElement).disabled).toBe(true);
+    expect((feature("sources:compare") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("edits a source through Rust: visibility, name, colour, order and removal", async () => {
+    await open([POLAR, TRACK]);
+    await click(feature("sources:visible"));
+    expect(commands("set_source_visible")).toEqual([{ id: 7, visible: false }]);
+
+    await click(feature("sources:rename"));
+    const input = q<HTMLInputElement>("input.source-rename")!;
+    await type(input, "  Sister ship  ");
+    await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    await settle();
+    expect(commands("set_source_label")).toEqual([{ id: 7, label: "Sister ship" }]);
+
+    await click(feature("sources:colour"));
+    const swatches = [...document.querySelectorAll<HTMLButtonElement>(".palette-swatch")];
+    expect(swatches).toHaveLength(16);
+    expect(swatches[0]!.getAttribute("aria-pressed")).toBe("true");
+    await click(swatches[3]!);
+    expect(commands("set_source_colour")).toEqual([{ id: 7, colour: "#76b7b2" }]);
+    expect(q(".colour-popover")).toBeNull();
+
+    const handle = feature("sources:reorder")!;
+    await act(async () => handle.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
+    await act(async () => handle.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true })));
+    await settle();
+    // Down moves the first source to 1; up from the first row goes nowhere.
+    expect(commands("move_source")).toEqual([{ id: 7, to: 1 }]);
+
+    await click(feature("sources:remove"));
+    expect(commands("remove_source")).toEqual([{ id: 7 }]);
+  });
+
+  it("drags the weight slider as one gesture", async () => {
+    await open([POLAR]);
+    const slider = feature("sources:weight") as HTMLInputElement;
+    await act(async () => {
+      slider.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+      for (const value of ["1.2", "1.4"]) {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(slider, value);
+        slider.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      slider.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+    });
+    await settle();
+    const weights = commands("set_source_weight") as { id: number; weight: number; gesture: string | null }[];
+    expect(weights.map((w) => w.weight)).toEqual([1.2, 1.4]);
+    expect(weights[0]!.gesture).not.toBeNull();
+    expect(weights[1]!.gesture).toBe(weights[0]!.gesture);
+  });
+
+  it("says why a file failed in the interface language", async () => {
+    settings = { ...settings, language: "de" };
+    setLanguage("de");
+    await open([]);
+    dialog.open.mockResolvedValue(["/boats/bad.csv"]);
+    await click(feature("polar-files:import"));
+    expect(q(".import-failures li")!.textContent).toBe("bad.csv, Zeile 2, Spalte 6: dies ist keine Zahl");
+  });
 });

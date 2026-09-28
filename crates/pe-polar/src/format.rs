@@ -86,6 +86,25 @@ pub enum Reason {
 }
 
 impl Reason {
+    /// Every [`Reason::code`], for the interface's translation table to be
+    /// checked against.
+    pub const CODES: [&'static str; 14] = [
+        "empty",
+        "too-large",
+        "unknown-format",
+        "missing-header",
+        "not-a-number",
+        "negative",
+        "too-fast",
+        "angle-out-of-range",
+        "duplicate-tws",
+        "duplicate-twa",
+        "missing-bsp",
+        "too-many-cells",
+        "too-many-values",
+        "no-speeds",
+    ];
+
     /// A stable identifier for the interface to translate by.
     pub fn code(&self) -> &'static str {
         match self {
@@ -464,6 +483,48 @@ mod tests {
         assert_eq!(decode(b"\xFF\xFEa\0b\0"), "ab");
         assert_eq!(decode(b"\xFE\xFF\0a\0b"), "ab");
         assert_eq!(decode(b"caf\xE9"), "café");
+    }
+
+    /// `CODES` lists every variant's code once. The match has no wildcard, so
+    /// a new variant does not compile until it is named here.
+    #[test]
+    fn every_reason_code_is_listed() {
+        let every = [
+            Reason::Empty,
+            Reason::TooLarge,
+            Reason::UnknownFormat,
+            Reason::MissingHeader(String::new()),
+            Reason::NotANumber(String::new()),
+            Reason::Negative(-1.0),
+            Reason::TooFast(61.0),
+            Reason::AngleOutOfRange(400.0),
+            Reason::DuplicateTws(6.0),
+            Reason::DuplicateTwa(40.0),
+            Reason::MissingBsp,
+            Reason::TooManyCells,
+            Reason::TooManyValues,
+            Reason::NoSpeeds,
+        ];
+        for reason in &every {
+            match reason {
+                Reason::Empty
+                | Reason::TooLarge
+                | Reason::UnknownFormat
+                | Reason::MissingHeader(_)
+                | Reason::NotANumber(_)
+                | Reason::Negative(_)
+                | Reason::TooFast(_)
+                | Reason::AngleOutOfRange(_)
+                | Reason::DuplicateTws(_)
+                | Reason::DuplicateTwa(_)
+                | Reason::MissingBsp
+                | Reason::TooManyCells
+                | Reason::TooManyValues
+                | Reason::NoSpeeds => {}
+            }
+        }
+        let codes: Vec<&str> = every.iter().map(Reason::code).collect();
+        assert_eq!(codes, Reason::CODES);
     }
 
     #[test]

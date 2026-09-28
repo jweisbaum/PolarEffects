@@ -427,8 +427,32 @@ The ORC catalogue is **embedded in the app** (D3):
     comma-separated): top-left cell `TWA\TWS`, `TWA/TWS` or `TWA`; first row
     TWS values; first column TWA values; cells BSP in knots.
 - A parse error names the file, line and column and imports nothing from that
-  file. Other files in the same batch still import.
+  file. Other files in the same batch still import. Everything a batch
+  imports is one undo entry.
 - Speeds above 60 kn or negative values are refused as a format error.
+- Reading details:
+  - Text is UTF-8 (with or without a BOM), UTF-16 with a BOM, or else
+    Latin-1; CRLF, CR and LF line endings are all accepted. Blank lines and
+    `!` comment lines are skipped in both layouts.
+  - Expedition rows keep their own angles: the polar's TWA axis is the union
+    of every row's angles, and a row that has no point at an angle leaves that
+    cell empty. Rows and pairs may come in any order.
+  - Table cells may be quoted, trailing separators are ignored, an empty cell
+    or a short row is an empty cell, and a row longer than the header is an
+    error. In tab- and semicolon-separated files (and Expedition), a comma
+    inside a number is its decimal point (`5,25`).
+  - Angles in (180°, 360°] are the port side and are folded (`360 − TWA`);
+    where a file gives both sides of one angle, the two speeds are averaged.
+    Angles below 0° or above 360° are refused. The same TWS twice, or the
+    same written TWA twice in a row or table, is refused.
+  - Files over 4 MB, or with more than 512 distinct angles or wind speeds,
+    are refused as not being polars.
+- Writing (used by export, §12, and pinned by golden files): `\n` line
+  endings, axis values with at most two decimals and no trailing zeros,
+  boat speeds with exactly two decimals. Expedition: a `!` comment line, then
+  one tab-separated row per TWS holding only the cells that have a value.
+  Adrena: `TWA\TWS` top-left, tab-separated, empty cells left blank. CSV: the
+  same with semicolons.
 - Imported files are listed with colour, format and axes. **Remove** is
   undoable.
 
@@ -800,7 +824,11 @@ Project setting, editable in Blend settings:
 - TWA default: 0, 30, 35, 40, 45, 52, 60, 70, 75, 80, 90, 100, 110, 120,
   135, 150, 160, 170, 180.
 - Polar sources are resampled onto this grid (bilinear in TWA × TWS, never
-  extrapolated beyond the source's axes).
+  extrapolated beyond the source's axes). The two linear steps run along TWA
+  within each bracketing TWS column first, using that column's own known
+  angles, then along TWS; so a ragged Expedition polar reads each wind speed
+  between its own points, and a query below a column's first or above its
+  last angle has no value.
 
 ### 12.3 Blend
 

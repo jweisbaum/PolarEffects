@@ -39,3 +39,24 @@ export async function pickCacheFolder(): Promise<string | null> {
   );
   return typeof chosen === "string" ? chosen : null;
 }
+
+/**
+ * Asks for polar files to import (spec.md 6): several at once. The format is
+ * read from the content, so "All files" is offered beside the usual
+ * extensions. Returns the chosen paths; empty if the user cancelled.
+ */
+export async function pickPolarFiles(): Promise<string[]> {
+  const chosen = await whileChoosing(msg("Choosing polar files"), () =>
+    open({
+      multiple: true,
+      directory: false,
+      title: t("Import polar files"),
+      filters: [
+        { name: t("Polar files"), extensions: ["txt", "pol", "csv"] },
+        { name: t("All files"), extensions: ["*"] },
+      ],
+    }),
+  );
+  if (Array.isArray(chosen)) return chosen.filter((path): path is string => typeof path === "string");
+  return typeof chosen === "string" ? [chosen] : [];
+}

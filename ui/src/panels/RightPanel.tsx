@@ -2,14 +2,15 @@ import type { ProjectSummary } from "../generated/ProjectSummary";
 import { useT } from "../i18n";
 import type { PanelState } from "./layout";
 import Section from "./Section";
+import SourceList from "./SourceList";
 
 /**
  * The right panel (spec.md 3.2): the source list (§8) above the 2D polar plot
- * (§9.2). The list's controls and the plot arrive in M6 and later; the IPC
- * for every source edit already exists (`api.setSource…`).
+ * (§9.2). The plot arrives in M6.
  */
-export default function RightPanel({ project, panels, onToggle }: {
+export default function RightPanel({ project, onProject, panels, onToggle }: {
   project: ProjectSummary;
+  onProject: (project: ProjectSummary) => void;
   panels: PanelState;
   onToggle: (panel: keyof PanelState) => void;
 }) {
@@ -18,16 +19,7 @@ export default function RightPanel({ project, panels, onToggle }: {
     <div className="right-panel">
       <Section feature="panel:sources" title={t("Sources")} tooltip={t("Every source, with its colour, visibility and weight")}
         open={panels.sources} onToggle={() => onToggle("sources")}>
-        {project.sources.length === 0
-          ? <p className="muted placeholder">{t("No sources yet.")}</p>
-          : <ul className="source-list">
-            {project.sources.map((source) => (
-              <li key={source.id} className={source.visible ? undefined : "hidden-source"}>
-                <span className="swatch" style={{ backgroundColor: source.colour }} aria-hidden="true" />
-                <span className="source-label">{source.label}</span>
-              </li>
-            ))}
-          </ul>}
+        <SourceList project={project} onProject={onProject} />
       </Section>
       <Section feature="panel:plot" title={t("Polar plot")} tooltip={t("Boat speed against wind angle for one wind speed")}
         open={panels.plot} onToggle={() => onToggle("plot")}>

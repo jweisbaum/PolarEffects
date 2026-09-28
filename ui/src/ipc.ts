@@ -18,6 +18,7 @@ import type { ChunkCacheSettings } from "./generated/ChunkCacheSettings";
 import type { ChunkCacheStatus } from "./generated/ChunkCacheStatus";
 import type { MapProjection } from "./generated/MapProjection";
 import type { NetworkSettings } from "./generated/NetworkSettings";
+import type { PolarImportResult } from "./generated/PolarImportResult";
 import type { Units } from "./generated/Units";
 import type { ProjectSummary } from "./generated/ProjectSummary";
 import type { RecentProject } from "./generated/RecentProject";
@@ -54,6 +55,7 @@ const LONG_RUNNING: Readonly<Record<string, string>> = {
   save_project_as: msg("Saving"),
   chunk_cache_status: msg("Measuring the cache"),
   clear_chunk_cache: msg("Clearing the cache"),
+  import_polar_files: msg("Importing polar files"),
 };
 
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
@@ -142,6 +144,15 @@ export const api = {
   moveSource: (id: number, to: number) => call<ProjectSummary>("move_source", { id, to }),
   /** Removes a source; undo puts it back. */
   removeSource: (id: number) => call<ProjectSummary>("remove_source", { id }),
+
+  // Polar files (spec.md 6).
+
+  /**
+   * Parses and imports polar files, one source per file, as one undoable
+   * change. A file that fails is listed with its line, column and a reason
+   * code; the others still import.
+   */
+  importPolarFiles: (paths: string[]) => call<PolarImportResult>("import_polar_files", { paths }),
 
   // Settings (spec.md 3.4). Each returns the settings as saved.
 

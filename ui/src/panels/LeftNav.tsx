@@ -1,14 +1,18 @@
+import type { ProjectSummary } from "../generated/ProjectSummary";
 import { useT } from "../i18n";
 import type { PanelState } from "./layout";
+import PolarFiles from "./PolarFiles";
 import Section from "./Section";
 
 /**
  * The left navigation (spec.md 3.2): ORC polars (§5), Polar files (§6) and
- * Tracks (§7), in that order, each foldable. Their contents arrive with the
- * milestones that build them (M5, M4, M8–M12); for now each says what it is
- * for.
+ * Tracks (§7), in that order, each foldable. ORC polars and Tracks arrive
+ * with the milestones that build them (M5, M8–M12); for now each says what it
+ * is for.
  */
-export default function LeftNav({ panels, onToggle }: {
+export default function LeftNav({ project, onProject, panels, onToggle }: {
+  project: ProjectSummary;
+  onProject: (project: ProjectSummary) => void;
   panels: PanelState;
   onToggle: (panel: keyof PanelState) => void;
 }) {
@@ -21,7 +25,7 @@ export default function LeftNav({ panels, onToggle }: {
       </Section>
       <Section feature="nav:polar-files" title={t("Polar files")} tooltip={t("Import Expedition and Adrena polars")}
         open={panels.polarFiles} onToggle={() => onToggle("polarFiles")}>
-        <p className="muted placeholder">{t("No polar files in this project yet.")}</p>
+        <PolarFiles project={project} onProject={onProject} />
       </Section>
       <Section feature="nav:tracks" title={t("Tracks")} tooltip={t("Import race tracks from trackers and files")}
         open={panels.tracks} onToggle={() => onToggle("tracks")}>

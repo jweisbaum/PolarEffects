@@ -127,6 +127,9 @@ const catalogue: Record<string, string> = {
   "Something went wrong.": "Etwas ist schiefgegangen.",
   "Undone: {action}": "Widerrufen: {action}",
   "Redone: {action}": "Wiederholt: {action}",
+  // History labels of polar file imports.
+  "Import polar files": "Polardateien importieren",
+  "Import polar file": "Polardatei importieren",
 };
 
 export default catalogue;

@@ -1,0 +1,17 @@
+[
+  "empty",
+  "too-large",
+  "unknown-format",
+  "missing-header",
+  "not-a-number",
+  "negative",
+  "too-fast",
+  "angle-out-of-range",
+  "duplicate-tws",
+  "duplicate-twa",
+  "missing-bsp",
+  "too-many-cells",
+  "too-many-values",
+  "no-speeds",
+  "unreadable"
+]

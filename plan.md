@@ -196,7 +196,7 @@ numbers, and a go/no-go on each budget in spec §13.
 
 ---
 
-### M4 — Polar core and polar file import
+### M4 — Polar core and polar file import · **complete**
 
 **Deliverables**
 

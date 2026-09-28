@@ -360,7 +360,7 @@ function Shell() {
         "--dock-left": panels.left ? "var(--sidebar-left)" : "0px",
         "--dock-right": panels.right ? "var(--sidebar-right)" : "0px",
       } as CSSProperties}>
-        {panels.left && <aside className="sidebar left"><LeftNav panels={panels} onToggle={toggle} /></aside>}
+        {panels.left && <aside className="sidebar left"><LeftNav project={project} onProject={setProject} panels={panels} onToggle={toggle} /></aside>}
         <main className="centre-stage" aria-label={t("Stage")}>
           {stage === "map" && <MapView settings={settings} onSettings={setSettings} />}
           {stage === "3d" && <Placeholder title={msg("3D polar")}
@@ -368,7 +368,7 @@ function Shell() {
           {stage === "compare" && <Placeholder title={msg("Compare")}
             body={msg("Comparing two polars arrives in a later version.")} />}
         </main>
-        {panels.right && <aside className="sidebar right"><RightPanel project={project} panels={panels} onToggle={toggle} /></aside>}
+        {panels.right && <aside className="sidebar right"><RightPanel project={project} onProject={setProject} panels={panels} onToggle={toggle} /></aside>}
         <DockToggle side="left" open={panels.left}
           labels={[msg("Show the navigation"), msg("Hide the navigation")]} onToggle={() => toggle("left")} />
         <DockToggle side="right" open={panels.right}

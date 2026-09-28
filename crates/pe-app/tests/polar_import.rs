@@ -118,3 +118,14 @@ fn importing_needs_an_open_project() {
         Err(AppError::NoProjectOpen)
     ));
 }
+
+/// The interface translates failures by reason code; its list is every code
+/// Rust can send.
+#[test]
+fn the_frontend_knows_every_failure_reason() {
+    let listed: Vec<String> =
+        serde_json::from_str(include_str!("../../../ui/src/panels/polar-reasons.json")).unwrap();
+    let mut codes: Vec<&str> = pe_polar::Reason::CODES.to_vec();
+    codes.push("unreadable");
+    assert_eq!(listed, codes);
+}
