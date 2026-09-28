@@ -1,0 +1,10 @@
+{
+ "_ARRAY_DIMENSIONS": [
+  "elevation"
+ ],
+ "axis": "Z",
+ "long_name": "Elevation",
+ "positive": "up",
+ "standard_name": "elevation",
+ "units": "m"
+}

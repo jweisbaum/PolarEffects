@@ -175,6 +175,10 @@ pub struct ProjectSummary {
     pub undo_label: Option<String>,
     /// The history label redo would reapply.
     pub redo_label: Option<String>,
+    /// Whether the polar uses current-corrected values (spec.md 7.5, D13).
+    pub use_corrected: bool,
+    /// Whether the global merged current includes Stokes drift.
+    pub stokes_drift: bool,
 }
 
 impl ProjectSummary {
@@ -198,6 +202,8 @@ impl ProjectSummary {
             can_redo: open.history.can_redo(),
             undo_label: open.history.undo_label().map(str::to_owned),
             redo_label: open.history.redo_label().map(str::to_owned),
+            use_corrected: project.blend.use_corrected,
+            stokes_drift: project.blend.include_stokes_drift,
         }
     }
 }
@@ -285,6 +291,8 @@ pub fn create(
             now_unix_s(),
         );
         session.open = Some(OpenProject::created(project));
+        // Jobs belong to the project they were started for (spec.md 3.3).
+        state.env_jobs.cancel(None);
         Ok(ProjectSummary::of(session.require_open()?))
     })
 }
@@ -321,6 +329,8 @@ pub fn open(state: &AppState, path: String, discard_unsaved: bool) -> Result<Pro
         session.refuse_to_discard(discard_unsaved)?;
         forget_open(state, session);
         session.open = Some(OpenProject::loaded(project, path.clone()));
+        // Jobs belong to the project they were started for (spec.md 3.3).
+        state.env_jobs.cancel(None);
         session.settings.remember(&path);
         persist_recent(state, session);
         Ok(ProjectSummary::of(session.require_open()?))
@@ -400,6 +410,8 @@ pub fn close(state: &AppState, discard_unsaved: bool) -> Result<()> {
         session.refuse_to_discard(discard_unsaved)?;
         forget_open(state, session);
         session.open = None;
+        // Jobs belong to the project they were started for (spec.md 3.3).
+        state.env_jobs.cancel(None);
         Ok(())
     })
 }

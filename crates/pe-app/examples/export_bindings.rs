@@ -9,6 +9,7 @@ use std::path::PathBuf;
 
 use pe_app::autosave::RecoveredProject;
 use pe_app::commands::AppInfo;
+use pe_app::env::{EnvEstimate, EnvJobTrack, EnvJobsStatus};
 use pe_app::error::AppErrorPayload;
 use pe_app::orc::{OrcCatalogueInfo, OrcFilters, OrcHit, OrcSearchResult, OrcThumbCurve};
 use pe_app::polar_files::{PolarImportFailure, PolarImportResult};
@@ -51,6 +52,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     PolarPlotResult::export_all(&cfg)?;
     PolarNodeRef::export_all(&cfg)?;
     TrackSummary::export_all(&cfg)?;
+    EnvEstimate::export_all(&cfg)?;
+    EnvJobTrack::export_all(&cfg)?;
+    EnvJobsStatus::export_all(&cfg)?;
     TrackFilters::export_all(&cfg)?;
     CsvMappingInput::export_all(&cfg)?;
     CsvPreview::export_all(&cfg)?;

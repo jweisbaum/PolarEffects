@@ -227,6 +227,14 @@ fn a_close_during_the_snapshot_write_leaves_no_stale_snapshot() {
         autosave::list(&state).is_empty(),
         "a dropped project came back"
     );
+    // Written aside and never put in place: nothing is left in the folder,
+    // not even for an instant the start screen could have seen (M3 carry).
+    let left: Vec<_> = std::fs::read_dir(&state.paths.autosave_dir)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name())
+        .collect();
+    assert!(left.is_empty(), "{left:?}");
 }
 
 /// Another project opened in the gap: the first one's snapshot is stale too.

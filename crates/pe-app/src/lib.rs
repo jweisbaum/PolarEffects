@@ -2,7 +2,7 @@
 //!
 //! Rust owns the entire domain; the webview is a view layer. Everything the
 //! frontend can reach goes through a Tauri command in [`commands`],
-//! [`projects`], [`edit`], [`polar_files`], [`tracks`], [`map_tracks`], [`polar_plot`], [`polar3d`], [`orc`], [`settings`], [`basemap`],
+//! [`projects`], [`edit`], [`env`], [`polar_files`], [`tracks`], [`map_tracks`], [`polar_plot`], [`polar3d`], [`orc`], [`settings`], [`basemap`],
 //! [`quit`] or [`autosave`], and every failure it can see is an
 //! [`error::AppError`].
 
@@ -10,6 +10,7 @@ pub mod autosave;
 pub mod basemap;
 pub mod commands;
 pub mod edit;
+pub mod env;
 pub mod error;
 pub mod map_tracks;
 pub mod menu;
@@ -41,6 +42,7 @@ pub fn run() -> anyhow::Result<()> {
                 .unwrap_or_else(|_| settings::LANGUAGES[0].to_owned());
             app.set_menu(menu::build(app.handle(), &language)?)?;
             autosave::start(app.handle().clone());
+            env::start(app.handle().clone());
             Ok(())
         })
         .on_menu_event(|app, event| match event.id().as_ref() {
@@ -89,6 +91,12 @@ pub fn run() -> anyhow::Result<()> {
             tracks::set_track_filters,
             tracks::set_track_derivation,
             tracks::sample_details,
+            env::env_estimate,
+            env::start_env_fetch,
+            env::cancel_env_fetch,
+            env::env_jobs,
+            env::set_use_corrected,
+            env::set_stokes_drift,
             map_tracks::map_tracks,
             polar3d::polar_scene,
             polar3d::set_excluded,

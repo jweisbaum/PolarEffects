@@ -52,4 +52,12 @@ undo_label: string | null,
 /**
  * The history label redo would reapply.
  */
-redo_label: string | null, };
+redo_label: string | null,
+/**
+ * Whether the polar uses current-corrected values (spec.md 7.5, D13).
+ */
+use_corrected: boolean,
+/**
+ * Whether the global merged current includes Stokes drift.
+ */
+stokes_drift: boolean, };

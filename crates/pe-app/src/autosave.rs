@@ -157,9 +157,6 @@ pub fn snapshot_with_hook(state: &AppState, force: bool, between: impl FnOnce())
         if !saved {
             return Ok(false);
         }
-    } else {
-        let target = snapshot_path(dir, id);
-        io::save(&project, &target).doing("write a recovery snapshot to", target.display())?;
     }
     let manifest = Manifest {
         name: project.name.clone(),
@@ -168,34 +165,47 @@ pub fn snapshot_with_hook(state: &AppState, force: bool, between: impl FnOnce())
         revision,
         recorded,
     };
-    let target = manifest_path(dir, id);
-    let json = serde_json::to_string_pretty(&manifest)
-        .doing("write the autosave record to", target.display())?;
-    io::write_atomic(&target, json.as_bytes())
-        .doing("write the autosave record to", target.display())?;
+    let manifest_json = serde_json::to_string_pretty(&manifest).doing(
+        "write the autosave record to",
+        manifest_path(dir, id).display(),
+    )?;
     if in_place {
+        let target = manifest_path(dir, id);
+        io::write_atomic(&target, manifest_json.as_bytes())
+            .doing("write the autosave record to", target.display())?;
         return Ok(true);
     }
 
-    // The files were written outside the lock. A Save or a Close in that gap
-    // already called `forget`, and the write put the snapshot back: stale
-    // work that would be offered as Recovered and could overwrite what was
-    // saved, or revive a deliberate "Don't save". Checked again under the
-    // lock, and removed if the project it was taken from is no longer the
-    // open, dirty, unsaved-since one.
-    //
-    // The quit guard's answer counts too: `quit::confirm` forgets the
-    // snapshot and allows the exit under the lock, so a snapshot finished
-    // after it is removed here, and one finished before it is removed there.
+    // Written outside the lock to a file nobody reads, then put in place
+    // under the lock, after the checks (M3 carry). A Save or a Close in the
+    // unlocked gap already called `forget`, and the quit guard's "Don't
+    // save" forgets and allows the exit under the lock: in either case the
+    // snapshot is stale work that would be offered back as Recovered, so it
+    // is dropped instead of renamed. Nothing stale is ever visible, even for
+    // an instant, to a crash or to the start screen.
+    let writing = dir.join(format!("{id}.writing"));
+    if let Err(err) = io::save(&project, &writing) {
+        let _ = std::fs::remove_file(&writing);
+        return Err(err).doing("write a recovery snapshot to", writing.display());
+    }
     state.with_session(|session| {
         let still_current = !exiting(state)
             && session.open.as_ref().is_some_and(|open| {
                 open.project.id.raw() == id && open.dirty && open.saves == saves
             });
         if !still_current {
-            forget(state, id);
+            let _ = std::fs::remove_file(&writing);
+            return Ok(false);
         }
-        Ok(still_current)
+        let target = snapshot_path(dir, id);
+        if let Err(err) = std::fs::rename(&writing, &target) {
+            let _ = std::fs::remove_file(&writing);
+            return Err(err).doing("write a recovery snapshot to", target.display());
+        }
+        let record = manifest_path(dir, id);
+        io::write_atomic(&record, manifest_json.as_bytes())
+            .doing("write the autosave record to", record.display())?;
+        Ok(true)
     })
 }
 
@@ -272,6 +282,7 @@ pub fn recover(state: &AppState, id: u64, discard_unsaved: bool) -> Result<Proje
         };
         open.dirty = true;
         session.open = Some(open);
+        state.env_jobs.cancel(None);
         Ok(ProjectSummary::of(session.require_open()?))
     })
 }

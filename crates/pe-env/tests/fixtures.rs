@@ -148,3 +148,33 @@ fn an_absent_variable_is_refused() {
     let store = open_dir(&fixture("cmems-merged-geo")).unwrap().store;
     assert!(OpenVariable::open(&store, vars::CMEMS_VTIDE).is_err());
 }
+
+/// A cached chunk that no longer decodes (a damaged file) is evicted and
+/// fetched once more from the archive, rather than failing every read
+/// after it (M3 carry).
+#[test]
+fn a_cached_chunk_that_fails_to_decode_is_evicted_and_fetched_again() {
+    use std::sync::Arc;
+
+    use pe_env::cache::{CachedStore, ChunkCache};
+    use zarrs::storage::ReadableStorage;
+
+    let dir = std::env::temp_dir().join(format!("pe-evict-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let cache = ChunkCache::open(&dir, 1 << 30).unwrap();
+    let key = "10m_u_component_of_wind/539724.0.0";
+    cache.put("wb2", key, b"not a blosc container").unwrap();
+    pe_env::codec::register();
+    let inner = zarrs::filesystem::FilesystemStore::new(fixture("wb2-crop")).unwrap();
+    let store: ReadableStorage = Arc::new(CachedStore::new(inner, Arc::clone(&cache), "wb2"));
+    let u = OpenVariable::open(&store, vars::WB2_U10)
+        .unwrap()
+        .with_cache(Arc::clone(&cache), "wb2");
+    let t = parse_utc("2020-07-27T12:00Z").unwrap();
+    let got = u.sample(t, 50.0, -5.0).unwrap().expect("inside");
+    assert!(close(got, 9.382_978_439_331_055, 1e-6), "{got}");
+    // The good bytes replaced the damaged ones.
+    let recached = cache.get("wb2", key).expect("cached again");
+    assert_ne!(&recached[..], b"not a blosc container");
+    let _ = std::fs::remove_dir_all(&dir);
+}

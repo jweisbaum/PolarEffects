@@ -50,6 +50,19 @@ with_wind: number,
  */
 env_status: string,
 /**
+ * Samples the environment fetch has answered for.
+ */
+env_fetched: number,
+/**
+ * `"hourly"` or `"three_hourly"`: how the last fetch sampled wind and
+ * waves; null before any.
+ */
+env_interval: string | null,
+/**
+ * Samples whose current has no tide (the GlobCurrent tier).
+ */
+no_tide: number,
+/**
  * Longest gap a central difference may span, seconds.
  */
 max_gap_s: number,

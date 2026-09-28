@@ -271,6 +271,12 @@ pub struct Sample {
     /// Which dataset supplied the current.
     #[serde(default)]
     pub current_dataset: Option<u16>,
+    /// Whether the environment fetch has answered for this sample (even if
+    /// it found nothing there, as over land for waves or before an
+    /// archive's first hour). What a Refetch resumes from: samples without
+    /// it are the ones still to fetch (spec.md 7.7).
+    #[serde(default)]
+    pub env_fetched: bool,
 }
 
 impl Sample {
@@ -304,6 +310,7 @@ impl Sample {
             wind_dataset: None,
             wave_dataset: None,
             current_dataset: None,
+            env_fetched: false,
         }
     }
 }
@@ -340,6 +347,100 @@ impl Sample {
         self.heading_origin = motion.heading_origin;
         self.speed = motion.speed;
         self.speed_origin = motion.speed_origin;
+    }
+
+    /// Recomputes everything that relates the boat's motion to the stored
+    /// environment (spec.md 7.5, D13): TWA and tack over the ground, the
+    /// current-corrected motion and wind, and the wave angle off the bow.
+    ///
+    /// Reads only the stored motion and environment, so a change of
+    /// derivation settings recomputes these without fetching anything
+    /// (M8 carry), and the environment fetch calls it once it has stored
+    /// what it found. Plain vector arithmetic on the stored values, which is
+    /// why it lives with the data rather than in `pe-tracks` or `pe-env`.
+    ///
+    /// - Wind over the ground: TWA is the angle between the heading and
+    ///   where the wind comes from, 0–180°; the wind on the starboard side
+    ///   is starboard tack.
+    /// - With a current: the boat's velocity through the water is its
+    ///   ground velocity minus the current (leeway ignored), and the wind
+    ///   over the water is the wind minus the current. Without one, every
+    ///   corrected value is empty.
+    /// - The wave angle is measured off the bow, which points along the
+    ///   heading through the water where there is a current and the ground
+    ///   heading otherwise: 0° head seas, 180° following.
+    pub fn relate(&mut self) {
+        self.twa = self
+            .heading
+            .zip(self.twd_from)
+            .map(|(h, w)| angle_off(h, w));
+        self.tack = self
+            .heading
+            .zip(self.twd_from)
+            .and_then(|(h, w)| tack_of(h, w));
+        self.bsp_corrected = None;
+        self.heading_corrected = None;
+        self.tws_corrected = None;
+        self.twd_from_corrected = None;
+        self.twa_corrected = None;
+        self.tack_corrected = None;
+        if let (Some(cs), Some(ct)) = (self.current_speed, self.current_toward) {
+            let (ce, cn) = toward(cs, ct);
+            if let (Some(h), Some(s)) = (self.heading, self.speed) {
+                let (ge, gn) = toward(s, h);
+                let (we, wn) = (ge - ce, gn - cn);
+                let bsp = we.hypot(wn);
+                self.bsp_corrected = Some(bsp);
+                // A boat stopped in the water has no heading through it.
+                self.heading_corrected = (bsp > 1e-9).then(|| compass(we, wn));
+            }
+            if let (Some(tws), Some(from)) = (self.tws, self.twd_from) {
+                let (ae, an) = toward(tws, from + 180.0);
+                let (re, rn) = (ae - ce, an - cn);
+                let speed = re.hypot(rn);
+                self.tws_corrected = Some(speed);
+                self.twd_from_corrected =
+                    (speed > 1e-9).then(|| (compass(re, rn) + 180.0).rem_euclid(360.0));
+            }
+            let pair = self.heading_corrected.zip(self.twd_from_corrected);
+            self.twa_corrected = pair.map(|(h, w)| angle_off(h, w));
+            self.tack_corrected = pair.and_then(|(h, w)| tack_of(h, w));
+        }
+        let bow = self.heading_corrected.or(self.heading);
+        self.wave_angle = bow.zip(self.wave_from).map(|(h, w)| angle_off(h, w));
+    }
+}
+
+/// East and north components of `speed` toward compass `direction`.
+fn toward(speed: f64, direction: f64) -> (f64, f64) {
+    let r = direction.to_radians();
+    (speed * r.sin(), speed * r.cos())
+}
+
+/// The compass direction a vector points toward, degrees in [0, 360).
+pub fn compass(east: f64, north: f64) -> f64 {
+    let d = east.atan2(north).to_degrees().rem_euclid(360.0);
+    // rem_euclid can round a tiny negative up to exactly 360.
+    if d >= 360.0 { 0.0 } else { d }
+}
+
+/// The unsigned angle between two compass directions, [0, 180].
+fn angle_off(a: f64, b: f64) -> f64 {
+    let d = (a - b).rem_euclid(360.0);
+    if d > 180.0 { 360.0 - d } else { d }
+}
+
+/// The tack for a heading and a wind "from": wind over the starboard side
+/// (coming from 0–180° clockwise of the bow) is starboard tack. Head to
+/// wind or dead downwind is neither.
+fn tack_of(heading: f64, from: f64) -> Option<Tack> {
+    let r = (from - heading).rem_euclid(360.0);
+    if r > 0.0 && r < 180.0 {
+        Some(Tack::Starboard)
+    } else if r > 180.0 && r < 360.0 {
+        Some(Tack::Port)
+    } else {
+        None
     }
 }
 
@@ -415,6 +516,11 @@ pub struct EnvMeta {
     pub datasets: Vec<DatasetRecord>,
     /// How far the environment fetch got.
     pub status: EnvStatus,
+    /// The wind and wave sampling interval of the last fetch, seconds (3600
+    /// hourly, 10800 3-hourly, D19); `None` before any fetch. A Refetch
+    /// at another interval starts over rather than mixing the two.
+    #[serde(default)]
+    pub interval_s: Option<i64>,
 }
 
 /// One dataset a track's environment was taken from.
@@ -447,4 +553,93 @@ pub enum EnvStatus {
     Partial,
     /// The fetch failed with nothing to show.
     Failed,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample() -> Sample {
+        let fix = Fix {
+            t: 0,
+            lat: 50.0,
+            lon: -5.0,
+            cog: None,
+            sog: None,
+        };
+        Sample::at(SampleId(1), 0, &fix)
+    }
+
+    fn close(a: Option<f64>, b: f64) -> bool {
+        a.is_some_and(|a| (a - b).abs() < 1e-9)
+    }
+
+    /// No current: TWA off the ground heading, tack by the side the wind is
+    /// on, nothing corrected; waves from astern are following seas.
+    #[test]
+    fn without_a_current_only_ground_values_are_related() {
+        let mut s = sample();
+        s.heading = Some(0.0);
+        s.speed = Some(6.0);
+        s.tws = Some(10.0);
+        s.twd_from = Some(45.0);
+        s.wave_from = Some(180.0);
+        s.relate();
+        assert!(close(s.twa, 45.0));
+        assert_eq!(s.tack, Some(Tack::Starboard));
+        assert_eq!(s.bsp_corrected, None);
+        assert_eq!(s.twa_corrected, None);
+        assert!(close(s.wave_angle, 180.0));
+        s.heading = Some(90.0);
+        s.twd_from = Some(0.0);
+        s.relate();
+        assert!(close(s.twa, 90.0));
+        assert_eq!(s.tack, Some(Tack::Port));
+    }
+
+    /// Hand-computed (D13): heading 0° at 6 kn in 1 kn of current toward
+    /// 090°. Through the water (-1, 6): BSP √37, heading 360 − atan(1/6) =
+    /// 350.537677792°. Wind 10 kn from 0°, i.e. (0, −10) toward, minus the
+    /// current: (−1, −10), √101 kn from atan(1/10) = 5.710593137°. TWA
+    /// through the water 5.710593137 + 9.462322208 = 15.172915345°,
+    /// starboard. Waves from 350.537677792° are dead ahead of the bow.
+    #[test]
+    fn a_current_is_taken_out_of_the_motion_and_the_wind() {
+        let mut s = sample();
+        s.heading = Some(0.0);
+        s.speed = Some(6.0);
+        s.tws = Some(10.0);
+        s.twd_from = Some(0.0);
+        s.current_speed = Some(1.0);
+        s.current_toward = Some(90.0);
+        s.wave_from = Some(350.537_677_792);
+        s.relate();
+        assert!(close(s.bsp_corrected, 37f64.sqrt()));
+        assert!(close(s.heading_corrected, 350.537_677_791_974_9));
+        assert!(close(s.tws_corrected, 101f64.sqrt()));
+        assert!(close(s.twd_from_corrected, 5.710_593_137_499_643));
+        assert!(close(s.twa_corrected, 15.172_915_345_524_7));
+        assert_eq!(s.tack_corrected, Some(Tack::Starboard));
+        assert!(s.wave_angle.is_some_and(|a| a < 1e-6), "{:?}", s.wave_angle);
+        // Ground values are untouched by the current.
+        assert!(close(s.twa, 0.0));
+        assert_eq!(s.tack, None, "head to wind is neither tack");
+    }
+
+    /// Without a heading there is no angle, and a missing speed leaves the
+    /// water track unknown while the wind over the water is still known.
+    #[test]
+    fn missing_motion_leaves_angles_empty() {
+        let mut s = sample();
+        s.tws = Some(10.0);
+        s.twd_from = Some(0.0);
+        s.current_speed = Some(1.0);
+        s.current_toward = Some(90.0);
+        s.wave_from = Some(0.0);
+        s.relate();
+        assert_eq!((s.twa, s.tack, s.wave_angle), (None, None, None));
+        assert_eq!(s.bsp_corrected, None);
+        assert!(close(s.tws_corrected, 101f64.sqrt()));
+        assert_eq!(s.twa_corrected, None);
+    }
 }

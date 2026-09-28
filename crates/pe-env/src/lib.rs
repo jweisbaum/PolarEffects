@@ -21,9 +21,14 @@ pub mod grid;
 pub mod http;
 pub mod net;
 pub mod parallel;
+pub mod sampler;
 pub mod store;
 pub mod time;
 
 pub use cache::{CachedStore, ChunkCache};
 pub use dataset::{Dataset, OpenVariable, Variable, vars};
 pub use error::{EnvError, Result};
+pub use sampler::{
+    Access, EnvPoint, Estimate, Interval, Options, Point, Provider, Reanalysis, Vector, Waves,
+    estimate,
+};

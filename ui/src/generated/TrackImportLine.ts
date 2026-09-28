@@ -5,6 +5,10 @@
  */
 export type TrackImportLine = {
 /**
+ * The track source it became, for the environment fetch that follows.
+ */
+source_id: number,
+/**
  * The file it came from.
  */
 file: string,

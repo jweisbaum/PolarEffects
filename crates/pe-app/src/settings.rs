@@ -587,6 +587,9 @@ pub fn cache_clear(state: &AppState) -> Result<ChunkCacheStatus> {
     if dir.exists() {
         std::fs::remove_dir_all(&dir).doing("clear the chunk cache at", dir.display())?;
     }
+    // The next fetch reopens the (now empty) cache rather than trusting an
+    // index of files that are gone.
+    crate::env::reset_provider(state);
     cache_status(state)
 }
 

@@ -13,7 +13,10 @@
 use std::path::Path;
 
 use pe_core::command::Command;
-use pe_core::source::{OriginFilter, SampleFilters, Source, TimeWindow};
+use pe_core::source::{
+    DirectionRange, OriginFilter, Range, SampleFilters, Source, TimeWindow, WaveDirectionFilter,
+    WaveSector,
+};
 use pe_core::track::{DerivationSettings, PreferValues, Track, TrackOrigin, ValueOrigin};
 use pe_core::{SampleId, SourceId, SourceKind, TrackId};
 use pe_tracks::csv::{CsvGuess, CsvMapping, CsvTable, SpeedUnit, guess, parse_table, read_csv};
@@ -37,9 +40,8 @@ pub const PREVIEW_ROWS: usize = 8;
 
 // ------------------------------------------------------------ summaries
 
-/// A track's filters as the Tracks section edits them (spec.md 7.6). The
-/// filters that need the environment (wind, waves, current) are kept as
-/// they are by an edit here; they arrive with the environment (M9).
+/// A track's filters as the Tracks section edits them (spec.md 7.6): every
+/// one, the environment's included (M9).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export_to = "TrackFilters.ts")]
 pub struct TrackFilters {
@@ -57,6 +59,55 @@ pub struct TrackFilters {
     pub heading_origin: String,
     /// `"any"`, `"given"` or `"derived"`.
     pub speed_origin: String,
+    /// True wind speed range, knots.
+    pub tws_min: Option<f64>,
+    /// See `tws_min`.
+    pub tws_max: Option<f64>,
+    /// True wind angle range, degrees.
+    pub twa_min: Option<f64>,
+    /// See `twa_min`.
+    pub twa_max: Option<f64>,
+    /// Significant wave height range, metres.
+    pub hs_min: Option<f64>,
+    /// See `hs_min`.
+    pub hs_max: Option<f64>,
+    /// Current speed range, knots.
+    pub current_min: Option<f64>,
+    /// See `current_min`.
+    pub current_max: Option<f64>,
+    /// The wave-direction filter: `"off"`, `"sectors"`, `"relative"` (off
+    /// the bow, `wave_min`–`wave_max`) or `"absolute"` (from
+    /// `wave_from` clockwise to `wave_to`).
+    pub wave_mode: String,
+    /// The sectors kept: `"head"`, `"bow"`, `"beam"`, `"quarter"`,
+    /// `"following"`.
+    pub wave_sectors: Vec<String>,
+    /// Relative wave angle range, degrees 0–180.
+    pub wave_min: Option<f64>,
+    /// See `wave_min`.
+    pub wave_max: Option<f64>,
+    /// Absolute wave direction range start, degrees "from".
+    pub wave_from: Option<f64>,
+    /// Absolute wave direction range end.
+    pub wave_to: Option<f64>,
+    /// Leave out samples whose current has no tide (spec.md 7.5.1).
+    pub exclude_no_tide: bool,
+}
+
+const SECTORS: [(WaveSector, &str); 5] = [
+    (WaveSector::Head, "head"),
+    (WaveSector::Bow, "bow"),
+    (WaveSector::Beam, "beam"),
+    (WaveSector::Quarter, "quarter"),
+    (WaveSector::Following, "following"),
+];
+
+fn range(min: Option<f64>, max: Option<f64>) -> Option<Range> {
+    (min.is_some() || max.is_some()).then_some(Range { min, max })
+}
+
+fn bounds(range: Option<&Range>) -> (Option<f64>, Option<f64>) {
+    range.map_or((None, None), |r| (r.min, r.max))
 }
 
 fn origin_filter_name(filter: OriginFilter) -> &'static str {
@@ -91,11 +142,93 @@ impl TrackFilters {
             max_heading_change: filters.max_heading_change_deg,
             heading_origin: origin_filter_name(filters.heading_origin).to_owned(),
             speed_origin: origin_filter_name(filters.speed_origin).to_owned(),
+            tws_min: bounds(filters.tws_kn.as_ref()).0,
+            tws_max: bounds(filters.tws_kn.as_ref()).1,
+            twa_min: bounds(filters.twa_deg.as_ref()).0,
+            twa_max: bounds(filters.twa_deg.as_ref()).1,
+            hs_min: bounds(filters.wave_height_m.as_ref()).0,
+            hs_max: bounds(filters.wave_height_m.as_ref()).1,
+            current_min: bounds(filters.current_speed_kn.as_ref()).0,
+            current_max: bounds(filters.current_speed_kn.as_ref()).1,
+            wave_mode: match &filters.wave_direction {
+                None => "off",
+                Some(WaveDirectionFilter::Sectors { .. }) => "sectors",
+                Some(WaveDirectionFilter::Relative { .. }) => "relative",
+                Some(WaveDirectionFilter::Absolute { .. }) => "absolute",
+            }
+            .to_owned(),
+            wave_sectors: match &filters.wave_direction {
+                Some(WaveDirectionFilter::Sectors { sectors }) => SECTORS
+                    .iter()
+                    .filter(|(s, _)| sectors.contains(s))
+                    .map(|(_, name)| (*name).to_owned())
+                    .collect(),
+                _ => Vec::new(),
+            },
+            wave_min: match &filters.wave_direction {
+                Some(WaveDirectionFilter::Relative { range }) => range.min,
+                _ => None,
+            },
+            wave_max: match &filters.wave_direction {
+                Some(WaveDirectionFilter::Relative { range }) => range.max,
+                _ => None,
+            },
+            wave_from: match &filters.wave_direction {
+                Some(WaveDirectionFilter::Absolute { range }) => Some(range.from),
+                _ => None,
+            },
+            wave_to: match &filters.wave_direction {
+                Some(WaveDirectionFilter::Absolute { range }) => Some(range.to),
+                _ => None,
+            },
+            exclude_no_tide: filters.exclude_no_tide,
         }
     }
 
-    /// `current` with this edit applied; the environment filters stay.
-    pub fn applied_to(&self, current: &SampleFilters) -> Result<SampleFilters> {
+    fn wave_direction(&self) -> Result<Option<WaveDirectionFilter>> {
+        Ok(match self.wave_mode.as_str() {
+            "off" => None,
+            "sectors" => {
+                let mut sectors = Vec::new();
+                for name in &self.wave_sectors {
+                    let (sector, _) = SECTORS.iter().find(|(_, n)| n == name).ok_or_else(|| {
+                        AppError::BadOption {
+                            field: "Wave sector",
+                            value: name.clone(),
+                        }
+                    })?;
+                    if !sectors.contains(sector) {
+                        sectors.push(*sector);
+                    }
+                }
+                sectors.sort();
+                Some(WaveDirectionFilter::Sectors { sectors })
+            }
+            "relative" => Some(WaveDirectionFilter::Relative {
+                range: Range {
+                    min: self.wave_min,
+                    max: self.wave_max,
+                },
+            }),
+            "absolute" => Some(WaveDirectionFilter::Absolute {
+                range: DirectionRange {
+                    from: self.wave_from.unwrap_or(0.0),
+                    to: self.wave_to.unwrap_or(360.0),
+                },
+            }),
+            other => {
+                return Err(AppError::BadOption {
+                    field: "Wave direction filter",
+                    value: other.to_owned(),
+                });
+            }
+        })
+    }
+
+    /// The filters this edit gives. Every filter is edited here, so none of
+    /// `_current` carries over; the argument stays so a caller cannot forget
+    /// what it replaces.
+    pub fn applied_to(&self, _current: &SampleFilters) -> Result<SampleFilters> {
         let window = TimeWindow {
             start: self.time_start,
             end: self.time_end,
@@ -107,7 +240,12 @@ impl TrackFilters {
             max_heading_change_deg: self.max_heading_change,
             heading_origin: origin_filter(&self.heading_origin)?,
             speed_origin: origin_filter(&self.speed_origin)?,
-            ..current.clone()
+            tws_kn: range(self.tws_min, self.tws_max),
+            twa_deg: range(self.twa_min, self.twa_max),
+            wave_height_m: range(self.hs_min, self.hs_max),
+            current_speed_kn: range(self.current_min, self.current_max),
+            wave_direction: self.wave_direction()?,
+            exclude_no_tide: self.exclude_no_tide,
         };
         filters.validate()?;
         Ok(filters)
@@ -140,6 +278,13 @@ pub struct TrackSummary {
     pub with_wind: u32,
     /// `"not_fetched"`, `"ready"`, `"partial"` or `"failed"` (spec.md 7.1).
     pub env_status: String,
+    /// Samples the environment fetch has answered for.
+    pub env_fetched: u32,
+    /// `"hourly"` or `"three_hourly"`: how the last fetch sampled wind and
+    /// waves; null before any.
+    pub env_interval: Option<String>,
+    /// Samples whose current has no tide (the GlobCurrent tier).
+    pub no_tide: u32,
     /// Longest gap a central difference may span, seconds.
     pub max_gap_s: i64,
     /// `"given"` or `"derived"`.
@@ -170,6 +315,15 @@ impl TrackSummary {
         let out = pe_tracks::filtered_out(track, filters, use_corrected);
         let excluded = &source.overlay.excluded_samples;
         let (mut filtered, mut hand, mut used, mut with_wind) = (0, 0, 0, 0);
+        let no_tide = track
+            .samples
+            .iter()
+            .filter(|s| {
+                s.current_dataset
+                    .and_then(|i| track.env_meta.datasets.get(usize::from(i)))
+                    .is_some_and(|d| d.has_tide == Some(false))
+            })
+            .count();
         for (sample, out) in track.samples.iter().zip(&out) {
             let is_excluded = excluded.binary_search(&sample.id).is_ok();
             filtered += usize::from(*out);
@@ -195,6 +349,12 @@ impl TrackSummary {
                 pe_core::track::EnvStatus::Failed => "failed",
             }
             .to_owned(),
+            env_fetched: count(track.samples.iter().filter(|s| s.env_fetched).count()),
+            env_interval: track
+                .env_meta
+                .interval_s
+                .map(|s| if s == 3600 { "hourly" } else { "three_hourly" }.to_owned()),
+            no_tide: count(no_tide),
             max_gap_s: track.derivation.max_gap_s,
             prefer: match track.derivation.prefer {
                 PreferValues::Given => "given",
@@ -561,6 +721,8 @@ pub struct TrackFileRequest {
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[ts(export_to = "TrackImportLine.ts")]
 pub struct TrackImportLine {
+    /// The track source it became, for the environment fetch that follows.
+    pub source_id: u64,
     /// The file it came from.
     pub file: String,
     /// The source's label.
@@ -711,6 +873,7 @@ pub fn import(state: &AppState, files: &[TrackFileRequest]) -> Result<TrackImpor
                 }
                 let r = p.report;
                 imported.push(TrackImportLine {
+                    source_id: source_id.raw(),
                     file: p.file,
                     label: p.label.clone(),
                     fixes: count(r.fixes),

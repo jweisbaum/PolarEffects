@@ -25,6 +25,8 @@ pub struct OpenStore {
     pub store: ReadableStorage,
     /// Network counters; `None` for a store on disk.
     pub net: Option<Arc<NetStats>>,
+    /// The chunk cache it reads through, and its namespace there.
+    pub cache: Option<(Arc<ChunkCache>, String)>,
 }
 
 impl std::fmt::Debug for OpenStore {
@@ -48,11 +50,18 @@ pub fn open_http(
     crate::codec::register();
     let http = HttpStore::new(url, timeout)?;
     let net = Some(http.stats());
+    let kept = cache
+        .as_ref()
+        .map(|(cache, namespace)| (Arc::clone(cache), (*namespace).to_owned()));
     let store: ReadableStorage = match cache {
         Some((cache, namespace)) => Arc::new(CachedStore::new(http, cache, namespace)),
         None => Arc::new(http),
     };
-    Ok(OpenStore { store, net })
+    Ok(OpenStore {
+        store,
+        net,
+        cache: kept,
+    })
 }
 
 /// Opens a store kept in a folder: a recorded fixture, in tests.
@@ -66,6 +75,7 @@ pub fn open_dir(path: &Path) -> Result<OpenStore> {
     Ok(OpenStore {
         store: Arc::new(store),
         net: None,
+        cache: None,
     })
 }
 

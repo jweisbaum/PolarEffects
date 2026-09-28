@@ -8,22 +8,29 @@
 //! - **WeatherBench2 and ARCO-ERA5** keep one *global* field per chunk: every
 //!   hour of every variable is a separate 2–3.5 MB download, wherever the
 //!   boat is.
-//! - **Copernicus Marine geoChunked** keeps 4272 hours (about six months) of
-//!   a 16 × 8 cell box (1.3° × 0.7°) per chunk: a track costs about one
-//!   chunk per box it crosses, whatever its length.
+//! - **Copernicus Marine geoChunked** keeps months of a small box of cells
+//!   per chunk: a track costs about one chunk per box it crosses, whatever
+//!   its length.
+//!
+//! Values are read a whole chunk at a time ([`OpenVariable::read_cells`]):
+//! every cell a batch of track positions needs is grouped by the chunk that
+//! holds it, and each chunk is fetched and decoded once, on at most
+//! `concurrency` threads.
 
+use std::collections::BTreeMap;
 use std::ops::Range;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use zarrs::array::codec::api::CodecOptions;
 use zarrs::config::MetadataRetrieveVersion;
 use zarrs::group::Group;
 use zarrs::storage::ReadableStorage;
 
+use crate::cache::ChunkCache;
 use crate::error::{EnvError, Result};
 use crate::grid::{Axis, Grid, Stencil};
-use crate::store::{
-    ReadArray, TimeAxis, dtype_name, open_array, read_axis, read_err, read_time_axis,
-};
+use crate::store::{ReadArray, TimeAxis, dtype_name, open_array, read_axis, read_time_axis};
 
 /// The WeatherBench2 hourly ERA5 store (D12). Frozen at 2023-01-10.
 pub const WB2_HOURLY_URL: &str = "https://storage.googleapis.com/weatherbench2/datasets/era5/1959-2023_01_10-full_37-1h-0p25deg-chunk-1.zarr";
@@ -32,24 +39,54 @@ pub const WB2_HOURLY_URL: &str = "https://storage.googleapis.com/weatherbench2/d
 /// name.
 pub const ARCO_ERA5_URL: &str = "https://storage.googleapis.com/gcp-public-data-arco-era5/ar/full_37-1h-0p25deg-chunk-1.zarr-v3";
 
+/// The Copernicus Marine NW European Shelf reanalysis surface current,
+/// hourly, about 7 km (spec.md 7.5.1 tier 1).
+pub const CMEMS_NWS_MY_URL: &str = "https://s3.waw3-1.cloudferro.com/mdl-arco-geo-041/arco/NWSHELF_MULTIYEAR_PHY_004_009/cmems_mod_nws_phy-uv_my_7km-2D_PT1H-i_202112/geoChunked.zarr";
+
+/// The Copernicus Marine Iberia–Biscay–Ireland reanalysis current, hourly
+/// means, 1/36° (spec.md 7.5.1 tier 1).
+pub const CMEMS_IBI_MY_URL: &str = "https://s3.waw3-1.cloudferro.com/mdl-arco-geo-032/arco/IBI_MULTIYEAR_PHY_005_002/cmems_mod_ibi_phy-cur_my_0.027deg_PT1H-m_202511/geoChunked.zarr";
+
 /// The Copernicus Marine global merged surface current, hourly, 1/12°,
 /// chunked for time series at a place (spec.md 7.5.1 tier 2).
 pub const CMEMS_MERGED_GEO_URL: &str = "https://s3.waw3-1.cloudferro.com/mdl-arco-geo-015/arco/GLOBAL_ANALYSISFORECAST_PHY_001_024/cmems_mod_glo_phy_anfc_merged-uv_PT1H-i_202211/geoChunked.zarr";
 
+/// GlobCurrent (MULTIOBS), multi-year, hourly, 0.25° (spec.md 7.5.1 tier 3).
+pub const GLOBCURRENT_MY_URL: &str = "https://s3.waw3-1.cloudferro.com/mdl-arco-geo-037/arco/MULTIOBS_GLO_PHY_MYNRT_015_003/cmems_obs-mob_glo_phy-cur_my_0.25deg_PT1H-i_202411/geoChunked.zarr";
+
+/// GlobCurrent near real time, after the multi-year series ends.
+pub const GLOBCURRENT_NRT_URL: &str = "https://s3.waw3-1.cloudferro.com/mdl-arco-geo-039/arco/MULTIOBS_GLO_PHY_MYNRT_015_003/cmems_obs-mob_glo_phy-cur_nrt_0.25deg_PT1H-i_202411/geoChunked.zarr";
+
 /// A dataset: one Zarr store.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Dataset {
     /// WeatherBench2 ERA5, hourly, 0.25°, 1959 to 2023-01-10.
     Wb2Era5Hourly,
     /// ARCO-ERA5, hourly, 0.25°, 1940 to a few days ago.
     ArcoEra5,
+    /// Copernicus Marine NW European Shelf reanalysis, 1993 on.
+    CmemsNwsMy,
+    /// Copernicus Marine Iberia–Biscay–Ireland reanalysis, 1993 on.
+    CmemsIbiMy,
     /// Copernicus Marine global merged current, 2020-11 onward.
     CmemsGlobalMerged,
+    /// GlobCurrent multi-year, 1993 on.
+    GlobCurrentMy,
+    /// GlobCurrent near real time.
+    GlobCurrentNrt,
 }
 
 impl Dataset {
     /// Every dataset.
-    pub const ALL: [Self; 3] = [Self::Wb2Era5Hourly, Self::ArcoEra5, Self::CmemsGlobalMerged];
+    pub const ALL: [Self; 7] = [
+        Self::Wb2Era5Hourly,
+        Self::ArcoEra5,
+        Self::CmemsNwsMy,
+        Self::CmemsIbiMy,
+        Self::CmemsGlobalMerged,
+        Self::GlobCurrentMy,
+        Self::GlobCurrentNrt,
+    ];
 
     /// The name recorded on each sample (`DatasetRecord::name`), and the
     /// chunk cache namespace.
@@ -57,7 +94,11 @@ impl Dataset {
         match self {
             Self::Wb2Era5Hourly => "wb2-era5-1h",
             Self::ArcoEra5 => "arco-era5",
+            Self::CmemsNwsMy => "cmems-nws-my-uv-geo",
+            Self::CmemsIbiMy => "cmems-ibi-my-cur-geo",
             Self::CmemsGlobalMerged => "cmems-glo-merged-uv-geo",
+            Self::GlobCurrentMy => "globcurrent-my-geo",
+            Self::GlobCurrentNrt => "globcurrent-nrt-geo",
         }
     }
 
@@ -66,7 +107,11 @@ impl Dataset {
         match self {
             Self::Wb2Era5Hourly => WB2_HOURLY_URL,
             Self::ArcoEra5 => ARCO_ERA5_URL,
+            Self::CmemsNwsMy => CMEMS_NWS_MY_URL,
+            Self::CmemsIbiMy => CMEMS_IBI_MY_URL,
             Self::CmemsGlobalMerged => CMEMS_MERGED_GEO_URL,
+            Self::GlobCurrentMy => GLOBCURRENT_MY_URL,
+            Self::GlobCurrentNrt => GLOBCURRENT_NRT_URL,
         }
     }
 
@@ -75,8 +120,28 @@ impl Dataset {
         match self {
             Self::Wb2Era5Hourly => "1959-2023_01_10-full_37-1h-0p25deg-chunk-1",
             Self::ArcoEra5 => "full_37-1h-0p25deg-chunk-1.zarr-v3",
+            Self::CmemsNwsMy => "cmems_mod_nws_phy-uv_my_7km-2D_PT1H-i_202112",
+            Self::CmemsIbiMy => "cmems_mod_ibi_phy-cur_my_0.027deg_PT1H-m_202511",
             Self::CmemsGlobalMerged => "cmems_mod_glo_phy_anfc_merged-uv_PT1H-i_202211",
+            Self::GlobCurrentMy => "cmems_obs-mob_glo_phy-cur_my_0.25deg_PT1H-i_202411",
+            Self::GlobCurrentNrt => "cmems_obs-mob_glo_phy-cur_nrt_0.25deg_PT1H-i_202411",
         }
+    }
+
+    /// Whether this dataset's current includes tides: `None` for wind and
+    /// wave datasets. The GlobCurrent tier is marked "no tide" (spec.md
+    /// 7.5.1), which the sample filters can leave out.
+    pub fn has_tide(self) -> Option<bool> {
+        match self {
+            Self::Wb2Era5Hourly | Self::ArcoEra5 => None,
+            Self::CmemsNwsMy | Self::CmemsIbiMy | Self::CmemsGlobalMerged => Some(true),
+            Self::GlobCurrentMy | Self::GlobCurrentNrt => Some(false),
+        }
+    }
+
+    /// The dataset whose [`Self::id`] this is.
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|d| d.id() == id)
     }
 }
 
@@ -107,8 +172,10 @@ pub struct Variable {
     pub land_is_missing: bool,
 }
 
-/// The variable table (spec.md 7.5; CLAUDE.md "Adding a reanalysis
-/// variable").
+/// The variable table (spec.md 7.5, 7.5.1; CLAUDE.md "Adding a reanalysis
+/// variable"). Integer-packed arrays (`int16` with `scale_factor`) are
+/// unpacked on read from their own attributes, so the table does not repeat
+/// the factors.
 pub mod vars {
     use super::{Dataset, Sense, Variable};
 
@@ -126,6 +193,10 @@ pub mod vars {
             sense,
             land_is_missing,
         }
+    }
+
+    const fn current(dataset: Dataset, array: &'static str) -> Variable {
+        v(dataset, array, "m s-1", Sense::Toward, true)
     }
 
     /// 10 m wind, eastward, WeatherBench2.
@@ -176,54 +247,38 @@ pub mod vars {
         Sense::From,
         true,
     );
+    /// NW Shelf total current, eastward (int16, scale 0.001).
+    pub const NWS_UO: Variable = current(Dataset::CmemsNwsMy, "uo");
+    /// NW Shelf total current, northward.
+    pub const NWS_VO: Variable = current(Dataset::CmemsNwsMy, "vo");
+    /// IBI total current, eastward.
+    pub const IBI_UO: Variable = current(Dataset::CmemsIbiMy, "uo");
+    /// IBI total current, northward.
+    pub const IBI_VO: Variable = current(Dataset::CmemsIbiMy, "vo");
     /// Eulerian (circulation) current, eastward.
-    pub const CMEMS_UO: Variable = v(
-        Dataset::CmemsGlobalMerged,
-        "uo",
-        "m s-1",
-        Sense::Toward,
-        true,
-    );
+    pub const CMEMS_UO: Variable = current(Dataset::CmemsGlobalMerged, "uo");
     /// Eulerian (circulation) current, northward.
-    pub const CMEMS_VO: Variable = v(
-        Dataset::CmemsGlobalMerged,
-        "vo",
-        "m s-1",
-        Sense::Toward,
-        true,
-    );
+    pub const CMEMS_VO: Variable = current(Dataset::CmemsGlobalMerged, "vo");
     /// Tidal current, eastward.
-    pub const CMEMS_UTIDE: Variable = v(
-        Dataset::CmemsGlobalMerged,
-        "utide",
-        "m s-1",
-        Sense::Toward,
-        true,
-    );
+    pub const CMEMS_UTIDE: Variable = current(Dataset::CmemsGlobalMerged, "utide");
     /// Tidal current, northward.
-    pub const CMEMS_VTIDE: Variable = v(
-        Dataset::CmemsGlobalMerged,
-        "vtide",
-        "m s-1",
-        Sense::Toward,
-        true,
-    );
+    pub const CMEMS_VTIDE: Variable = current(Dataset::CmemsGlobalMerged, "vtide");
+    /// Stokes drift, eastward.
+    pub const CMEMS_VSDX: Variable = current(Dataset::CmemsGlobalMerged, "vsdx");
+    /// Stokes drift, northward.
+    pub const CMEMS_VSDY: Variable = current(Dataset::CmemsGlobalMerged, "vsdy");
     /// Total current including Stokes drift, eastward.
-    pub const CMEMS_UTOTAL: Variable = v(
-        Dataset::CmemsGlobalMerged,
-        "utotal",
-        "m s-1",
-        Sense::Toward,
-        true,
-    );
+    pub const CMEMS_UTOTAL: Variable = current(Dataset::CmemsGlobalMerged, "utotal");
     /// Total current including Stokes drift, northward.
-    pub const CMEMS_VTOTAL: Variable = v(
-        Dataset::CmemsGlobalMerged,
-        "vtotal",
-        "m s-1",
-        Sense::Toward,
-        true,
-    );
+    pub const CMEMS_VTOTAL: Variable = current(Dataset::CmemsGlobalMerged, "vtotal");
+    /// GlobCurrent multi-year current, eastward (int16, scale 0.001).
+    pub const GC_MY_UO: Variable = current(Dataset::GlobCurrentMy, "uo");
+    /// GlobCurrent multi-year current, northward.
+    pub const GC_MY_VO: Variable = current(Dataset::GlobCurrentMy, "vo");
+    /// GlobCurrent near-real-time current, eastward.
+    pub const GC_NRT_UO: Variable = current(Dataset::GlobCurrentNrt, "uo");
+    /// GlobCurrent near-real-time current, northward.
+    pub const GC_NRT_VO: Variable = current(Dataset::GlobCurrentNrt, "vo");
 }
 
 /// Values at or above this magnitude are fill, not data. Copernicus Marine
@@ -261,16 +316,75 @@ pub fn read_coverage(store: &ReadableStorage) -> Result<Coverage> {
     })
 }
 
+/// How the stored numbers become values.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Stored {
+    /// `float32`; NaN and ≥ 1e30 are fill.
+    F32,
+    /// `float64`; as `F32`.
+    F64,
+    /// `int16` packed with `scale_factor` / `add_offset`; `fill` is missing.
+    I16 { fill: i16 },
+}
+
+/// Unpacking for one array.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Unpack {
+    stored: Stored,
+    scale: f64,
+    offset: f64,
+}
+
+impl Unpack {
+    fn float(&self, v: f64) -> f32 {
+        if !v.is_finite() || v.abs() >= f64::from(FILL_MAGNITUDE) {
+            f32::NAN
+        } else {
+            (v * self.scale + self.offset) as f32
+        }
+    }
+
+    fn int(&self, v: i16, fill: i16) -> f32 {
+        if v == fill {
+            f32::NAN
+        } else {
+            (f64::from(v) * self.scale + self.offset) as f32
+        }
+    }
+}
+
+/// One grid cell of a variable at one time step: `(step, lat index, lon
+/// index)`.
+pub type Cell = (u64, usize, usize);
+
+/// The cells wanted from one chunk, each with its offset inside it.
+type ChunkRequest = (Vec<u64>, Vec<(Cell, usize)>);
+
+/// A decoded chunk: every value of the chunk's full (regular) shape, in C
+/// order; `None` for a chunk the archive does not have.
+type Decoded = Option<Arc<Vec<f32>>>;
+
+/// How many decoded multi-hour chunks a variable keeps in memory. A
+/// geoChunk holds months of a small box, and consecutive batches of one
+/// track read the same one again; an ERA5 chunk is one hour and is never
+/// kept.
+const MEMO_CHUNKS: usize = 4;
+
 /// An opened variable: its array, grid and time axis.
 pub struct OpenVariable {
     spec: Variable,
     array: ReadArray,
     grid: Grid,
     time: TimeAxis,
-    /// Number of dimensions between time and latitude (a level), each read
-    /// at index 0.
-    middle: usize,
+    /// Index read along each dimension between time and latitude (a level):
+    /// the one nearest the surface.
+    middle: Vec<u64>,
+    unpack: Unpack,
     concurrency: usize,
+    /// Where the store keeps its chunks, so a chunk that fails to decode can
+    /// be evicted and fetched once more.
+    cache: Option<(Arc<ChunkCache>, String)>,
+    memo: Mutex<Vec<(Vec<u64>, Decoded)>>,
 }
 
 impl std::fmt::Debug for OpenVariable {
@@ -283,12 +397,20 @@ impl std::fmt::Debug for OpenVariable {
     }
 }
 
+/// A number attribute of an array.
+fn number_attr(array: &ReadArray, key: &str) -> Option<f64> {
+    array
+        .attributes()
+        .get(key)
+        .and_then(serde_json::Value::as_f64)
+}
+
 impl OpenVariable {
     /// Opens `spec`'s array on `store` and reads its axes.
     ///
     /// # Errors
     /// [`EnvError::Layout`] if the array is not `(time, …, latitude,
-    /// longitude)` float32 on regular axes.
+    /// longitude)` on regular axes, stored as float32, float64 or int16.
     pub fn open(store: &ReadableStorage, spec: Variable) -> Result<Self> {
         let array = open_array(store, &format!("/{}", spec.array))?;
         let dims: Vec<String> = array
@@ -313,20 +435,35 @@ impl OpenVariable {
                 spec.array
             )));
         }
-        if !dtype_name(&array).contains("float32") {
+        let dtype = dtype_name(&array);
+        let stored = if dtype.contains("float32") {
+            Stored::F32
+        } else if dtype.contains("float64") {
+            Stored::F64
+        } else if dtype.contains("int16") && !dtype.contains("uint16") {
+            let bytes = array.fill_value().as_ne_bytes();
+            let fill = <[u8; 2]>::try_from(bytes)
+                .map(i16::from_ne_bytes)
+                .map_err(|_| EnvError::Layout(format!("{} has no int16 fill value", spec.array)))?;
+            Stored::I16 { fill }
+        } else {
             return Err(EnvError::Layout(format!(
-                "{} is stored as {}; this reader expects float32",
-                spec.array,
-                dtype_name(&array)
+                "{} is stored as {dtype}; this reader expects float32, float64 or int16",
+                spec.array
             )));
-        }
+        };
+        let unpack = Unpack {
+            stored,
+            scale: number_attr(&array, "scale_factor").unwrap_or(1.0),
+            offset: number_attr(&array, "add_offset").unwrap_or(0.0),
+        };
         let lat = read_axis(store, "/latitude", "the latitude axis")?;
         let lon = read_axis(store, "/longitude", "the longitude axis")?;
         let grid = Grid {
             lat: Axis::from_values("latitude", &lat)?,
             lon: Axis::from_values("longitude", &lon)?,
         };
-        let shape = array.shape();
+        let shape = array.shape().to_vec();
         if shape[n - 2] != grid.lat.len as u64 || shape[n - 1] != grid.lon.len as u64 {
             return Err(EnvError::Layout(format!(
                 "{} is {:?} but the axes are {} x {}",
@@ -347,19 +484,49 @@ impl OpenVariable {
         {
             time.len = ((last - time.first) / time.step + 1).max(0) as u64;
         }
+        // A level between time and latitude (GlobCurrent keeps 0 m and
+        // 15 m): read the one nearest the surface, by its coordinate when
+        // the store has one.
+        let middle = dims[1..n - 2]
+            .iter()
+            .zip(&shape[1..n - 2])
+            .map(|(name, len)| {
+                read_axis(store, &format!("/{name}"), "a level axis")
+                    .ok()
+                    .filter(|values| values.len() as u64 == *len)
+                    .and_then(|values| {
+                        values
+                            .iter()
+                            .enumerate()
+                            .min_by(|a, b| a.1.abs().total_cmp(&b.1.abs()))
+                            .map(|(i, _)| i as u64)
+                    })
+                    .unwrap_or(0)
+            })
+            .collect();
         Ok(Self {
             spec,
             array,
             grid,
             time,
-            middle: n - 3,
+            middle,
+            unpack,
             concurrency: 8,
+            cache: None,
+            memo: Mutex::new(Vec::new()),
         })
     }
 
     /// Limits how many chunks are fetched and decoded at once (spec.md 3.4).
     pub fn with_concurrency(mut self, n: usize) -> Self {
         self.concurrency = n.max(1);
+        self
+    }
+
+    /// Names the chunk cache the store reads through, so a cached chunk
+    /// that fails to decode is evicted and fetched once more (M3 carry).
+    pub fn with_cache(mut self, cache: Arc<ChunkCache>, namespace: &str) -> Self {
+        self.cache = Some((cache, namespace.to_owned()));
         self
     }
 
@@ -390,64 +557,163 @@ impl OpenVariable {
             .map_err(|e| EnvError::Layout(format!("{}: {e}", self.spec.array)))
     }
 
+    /// The level index read along each middle dimension.
+    pub fn levels(&self) -> &[u64] {
+        &self.middle
+    }
+
+    /// The chunk that holds `cell`, and the cell's offset inside it.
+    fn locate(&self, chunk: &[u64], cell: Cell) -> (Vec<u64>, usize) {
+        let (step, lat, lon) = cell;
+        let mut index: Vec<u64> = Vec::with_capacity(chunk.len());
+        index.push(step);
+        index.extend(self.middle.iter().copied());
+        index.push(lat as u64);
+        index.push(lon as u64);
+        let mut chunk_index = Vec::with_capacity(chunk.len());
+        let mut offset: u64 = 0;
+        for (i, size) in index.iter().zip(chunk) {
+            chunk_index.push(i / size);
+            offset = offset * size + i % size;
+        }
+        (chunk_index, offset as usize)
+    }
+
+    /// Fetches and decodes one chunk, once more after evicting it from the
+    /// cache if the first attempt fails (a damaged cache file).
+    fn fetch_chunk(&self, index: &[u64]) -> Result<Decoded> {
+        match self.decode_chunk(index) {
+            Ok(decoded) => Ok(decoded),
+            Err(first) => match &self.cache {
+                Some((cache, namespace)) => {
+                    let key = self.array.chunk_key(index);
+                    cache.remove(namespace, key.as_str());
+                    self.decode_chunk(index)
+                }
+                None => Err(first),
+            },
+        }
+    }
+
+    fn decode_chunk(&self, index: &[u64]) -> Result<Decoded> {
+        let options = CodecOptions::default();
+        let what = self.spec.array;
+        let err = |e: zarrs::array::ArrayError| EnvError::Read {
+            what: format!("{what} chunk {index:?}"),
+            source: Box::new(e),
+        };
+        let unpack = self.unpack;
+        let values: Option<Vec<f32>> = match unpack.stored {
+            Stored::F32 => self
+                .array
+                .retrieve_chunk_if_exists_opt::<Vec<f32>>(index, &options)
+                .map_err(err)?
+                .map(|v| v.into_iter().map(|x| unpack.float(f64::from(x))).collect()),
+            Stored::F64 => self
+                .array
+                .retrieve_chunk_if_exists_opt::<Vec<f64>>(index, &options)
+                .map_err(err)?
+                .map(|v| v.into_iter().map(|x| unpack.float(x)).collect()),
+            Stored::I16 { fill } => self
+                .array
+                .retrieve_chunk_if_exists_opt::<Vec<i16>>(index, &options)
+                .map_err(err)?
+                .map(|v| v.into_iter().map(|x| unpack.int(x, fill)).collect()),
+        };
+        Ok(values.map(Arc::new))
+    }
+
+    /// A chunk, from the in-memory memo when it spans many hours.
+    fn chunk(&self, index: &[u64], multi_hour: bool) -> Result<Decoded> {
+        if multi_hour
+            && let Ok(memo) = self.memo.lock()
+            && let Some((_, decoded)) = memo.iter().find(|(i, _)| i == index)
+        {
+            return Ok(decoded.clone());
+        }
+        let decoded = self.fetch_chunk(index)?;
+        if multi_hour && let Ok(mut memo) = self.memo.lock() {
+            if memo.len() >= MEMO_CHUNKS {
+                memo.remove(0);
+            }
+            memo.push((index.to_vec(), decoded.clone()));
+        }
+        Ok(decoded)
+    }
+
+    /// The values of `cells`, NaN where missing (land, fill, a chunk the
+    /// archive does not have, or outside the array). Each chunk is fetched
+    /// and decoded once, on at most `concurrency` threads, and `cancel` is
+    /// checked before each.
+    ///
+    /// # Errors
+    /// [`EnvError::Cancelled`] once `cancel` is set; [`EnvError::Read`] on a
+    /// failed read.
+    pub fn read_cells(&self, cells: &[Cell], cancel: &AtomicBool) -> Result<BTreeMap<Cell, f32>> {
+        self.read_cells_with(cells, cancel, self.concurrency)
+    }
+
+    fn read_cells_with(
+        &self,
+        cells: &[Cell],
+        cancel: &AtomicBool,
+        concurrency: usize,
+    ) -> Result<BTreeMap<Cell, f32>> {
+        let chunk = self.chunk_shape()?;
+        let shape = self.array.shape().to_vec();
+        let multi_hour = chunk.first().is_some_and(|&n| n > 1);
+        let mut by_chunk: BTreeMap<Vec<u64>, Vec<(Cell, usize)>> = BTreeMap::new();
+        let mut out = BTreeMap::new();
+        for &cell in cells {
+            let inside = cell.0 < shape[0]
+                && (cell.1 as u64) < shape[shape.len() - 2]
+                && (cell.2 as u64) < shape[shape.len() - 1];
+            if !inside {
+                out.insert(cell, f32::NAN);
+                continue;
+            }
+            let (index, offset) = self.locate(&chunk, cell);
+            by_chunk.entry(index).or_default().push((cell, offset));
+        }
+        let groups: Vec<ChunkRequest> = by_chunk.into_iter().collect();
+        let read = crate::parallel::map_bounded(&groups, concurrency.max(1), |(index, wanted)| {
+            if cancel.load(Ordering::SeqCst) {
+                return Err(EnvError::Cancelled);
+            }
+            let decoded = self.chunk(index, multi_hour)?;
+            Ok(wanted
+                .iter()
+                .map(|(cell, offset)| {
+                    let value = decoded
+                        .as_ref()
+                        .and_then(|values| values.get(*offset).copied())
+                        .unwrap_or(f32::NAN);
+                    (*cell, value)
+                })
+                .collect::<Vec<_>>())
+        })?;
+        out.extend(read.into_iter().flatten());
+        Ok(out)
+    }
+
     /// The stencil values for time steps `steps` at `stencil`, one
     /// `[f32; 4]` per step, NaN where missing.
     ///
     /// # Errors
     /// [`EnvError::Read`] on a failed read.
     pub fn stencil_series(&self, steps: Range<u64>, stencil: &Stencil) -> Result<Vec<[f32; 4]>> {
-        let nt = (steps.end - steps.start) as usize;
-        let mut out = vec![[f32::NAN; 4]; nt];
-        let (i0, i1) = (
-            stencil.lat[0].min(stencil.lat[1]),
-            stencil.lat[0].max(stencil.lat[1]),
-        );
-        let lat_rows = (i1 - i0 + 1) as u64;
-        // Longitude columns: one contiguous read unless the stencil wraps.
-        let columns: Vec<(usize, Vec<usize>)> =
-            if stencil.lon[1] == stencil.lon[0] + 1 || stencil.lon[1] == stencil.lon[0] {
-                vec![(stencil.lon[0], vec![stencil.lon[0], stencil.lon[1]])]
-            } else {
-                vec![
-                    (stencil.lon[0], vec![stencil.lon[0]]),
-                    (stencil.lon[1], vec![stencil.lon[1]]),
-                ]
-            };
-        let options = CodecOptions::default().with_concurrent_target(self.concurrency);
-        for (j_start, js) in columns {
-            let j_end = js.iter().copied().max().unwrap_or(j_start) as u64 + 1;
-            let width = j_end - j_start as u64;
-            let mut subset: Vec<Range<u64>> = vec![steps.clone()];
-            subset.extend(std::iter::repeat_n(0..1, self.middle));
-            subset.push(i0 as u64..i1 as u64 + 1);
-            subset.push(j_start as u64..j_end);
-            let values = self
-                .array
-                .retrieve_array_subset_opt::<Vec<f32>>(&subset, &options)
-                .map_err(read_err(self.spec.array))?;
-            let per_step = (lat_rows * width) as usize;
-            for (t, block) in values.chunks(per_step).enumerate().take(nt) {
-                for (corner, (li, lj)) in [(0, 0), (0, 1), (1, 0), (1, 1)].into_iter().enumerate() {
-                    let row = stencil.lat[li] - i0;
-                    let col = stencil.lon[lj];
-                    if col < j_start || col as u64 >= j_end {
-                        continue;
-                    }
-                    let v = block[row * width as usize + (col - j_start)];
-                    out[t][corner] = if v.abs() >= FILL_MAGNITUDE {
-                        f32::NAN
-                    } else {
-                        v
-                    };
-                }
-            }
-        }
-        Ok(out)
+        let cells: Vec<Cell> = steps
+            .clone()
+            .flat_map(|step| corner_cells(step, stencil))
+            .collect();
+        let values = self.read_cells(&cells, &AtomicBool::new(false))?;
+        Ok(steps
+            .map(|step| corners_of(&values, step, stencil))
+            .collect())
     }
 
-    /// [`Self::stencil_series`] for scattered steps, one read per step on at
-    /// most `concurrency` threads: the shape of a track, whose hours are
-    /// known up front and each need their own global chunk.
+    /// [`Self::stencil_series`] for scattered steps: the shape of a track,
+    /// whose hours are known up front and each need their own global chunk.
     ///
     /// # Errors
     /// The first failed read.
@@ -457,10 +723,15 @@ impl OpenVariable {
         stencil: &Stencil,
         concurrency: usize,
     ) -> Result<Vec<[f32; 4]>> {
-        let per_step = crate::parallel::map_bounded(steps, concurrency, |&step| {
-            self.stencil_series(step..step + 1, stencil)
-        })?;
-        Ok(per_step.into_iter().flatten().collect())
+        let cells: Vec<Cell> = steps
+            .iter()
+            .flat_map(|&step| corner_cells(step, stencil))
+            .collect();
+        let values = self.read_cells_with(&cells, &AtomicBool::new(false), concurrency)?;
+        Ok(steps
+            .iter()
+            .map(|&step| corners_of(&values, step, stencil))
+            .collect())
     }
 
     /// The value at `(lat, lon)` and UTC epoch second `t`: bilinear in
@@ -483,13 +754,35 @@ impl OpenVariable {
             return Ok(first);
         }
         let second = series.last().and_then(|c| stencil.interpolate(*c));
-        Ok(match (first, second) {
-            (Some(x), Some(y)) => Some(x + (y - x) * w),
-            // One side missing (an unwritten hour): the nearer side only.
-            (Some(x), None) if w <= 0.5 => Some(x),
-            (None, Some(y)) if w >= 0.5 => Some(y),
-            _ => None,
-        })
+        Ok(lerp_time(first, second, w))
+    }
+}
+
+/// The four cells of a stencil at one step, in [`Stencil::interpolate`]'s
+/// corner order.
+pub fn corner_cells(step: u64, stencil: &Stencil) -> [Cell; 4] {
+    [
+        (step, stencil.lat[0], stencil.lon[0]),
+        (step, stencil.lat[0], stencil.lon[1]),
+        (step, stencil.lat[1], stencil.lon[0]),
+        (step, stencil.lat[1], stencil.lon[1]),
+    ]
+}
+
+/// The four corner values of a stencil at one step, NaN where unread.
+pub fn corners_of(values: &BTreeMap<Cell, f32>, step: u64, stencil: &Stencil) -> [f32; 4] {
+    corner_cells(step, stencil).map(|cell| values.get(&cell).copied().unwrap_or(f32::NAN))
+}
+
+/// Linear interpolation in time between the values at the steps either side
+/// (weight `w` on the later). One side missing (an unwritten hour): the
+/// nearer side only, and nothing if the missing side is the nearer.
+pub fn lerp_time(first: Option<f64>, second: Option<f64>, w: f64) -> Option<f64> {
+    match (first, second) {
+        (Some(x), Some(y)) => Some(x + (y - x) * w),
+        (Some(x), None) if w <= 0.5 => Some(x),
+        (None, Some(y)) if w >= 0.5 => Some(y),
+        _ => None,
     }
 }
 

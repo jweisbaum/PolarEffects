@@ -33,8 +33,14 @@ use zarrs_storage::{
 
 use crate::error::{EnvError, Result};
 
-/// Suffix of a file being written; never read, and removed on open.
+/// Suffix of a file being written; never read.
 const PARTIAL: &str = "partial";
+
+/// How old a `.partial` file must be before opening the cache removes it.
+/// A younger one may be another running PolarEffects writing that chunk
+/// right now (two windows share the cache folder); deleting it would fail
+/// that write. An hour is far longer than any chunk takes to write.
+pub const STALE_PARTIAL: std::time::Duration = std::time::Duration::from_secs(3600);
 
 /// Counters for how the cache has been used.
 #[derive(Debug, Default)]
@@ -106,8 +112,17 @@ fn walk(dir: &Path, out: &mut Vec<(PathBuf, u64, SystemTime)>) {
             walk(&path, out);
         } else if kind.is_file() {
             if path.extension().is_some_and(|ext| ext == PARTIAL) {
-                // Left by a write that never finished.
-                let _ = std::fs::remove_file(&path);
+                // Left by a write that never finished, unless it is recent:
+                // then another process may still be writing it.
+                let stale = entry
+                    .metadata()
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|m| SystemTime::now().duration_since(m).ok())
+                    .is_some_and(|age| age >= STALE_PARTIAL);
+                if stale {
+                    let _ = std::fs::remove_file(&path);
+                }
                 continue;
             }
             if let Ok(meta) = entry.metadata() {
@@ -222,6 +237,33 @@ impl ChunkCache {
         Some(Bytes::from(bytes))
     }
 
+    /// Whether `namespace/key` is held, without touching its recency (the
+    /// pre-flight estimate asks this of every chunk a fetch would need).
+    pub fn contains(&self, namespace: &str, key: &str) -> bool {
+        relative(namespace, key)
+            .and_then(|rel| {
+                self.lock()
+                    .ok()
+                    .map(|index| index.entries.contains_key(&rel))
+            })
+            .unwrap_or(false)
+    }
+
+    /// Forgets and deletes `namespace/key`: a chunk that failed to decode is
+    /// removed so the next read fetches it again rather than failing
+    /// forever on a damaged file.
+    pub fn remove(&self, namespace: &str, key: &str) {
+        let Some(rel) = relative(namespace, key) else {
+            return;
+        };
+        let _ = std::fs::remove_file(self.root.join(&rel));
+        if let Ok(mut index) = self.lock()
+            && let Some(entry) = index.entries.remove(&rel)
+        {
+            index.total = index.total.saturating_sub(entry.size);
+        }
+    }
+
     /// Stores `bytes` for `namespace/key`, evicting the least recently used
     /// files until the total is within the limit. A value larger than the
     /// whole limit is not stored.
@@ -314,6 +356,13 @@ impl<S> CachedStore<S> {
             cache,
             namespace: namespace.into(),
         }
+    }
+}
+
+impl<S> CachedStore<S> {
+    /// The cache and namespace this store keeps its chunks under.
+    pub fn cache(&self) -> (&Arc<ChunkCache>, &str) {
+        (&self.cache, &self.namespace)
     }
 }
 
@@ -507,6 +556,43 @@ mod tests {
         assert!(cache.put("ds", "../escape", &[0]).is_err());
         assert!(cache.put("..", "x", &[0]).is_err());
         assert!(cache.put("ds", "/abs", &[0]).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Another process's write in progress is left alone; an abandoned one
+    /// is cleaned up.
+    #[test]
+    fn only_stale_partial_files_are_removed_on_open() {
+        let dir = temp("partial");
+        std::fs::create_dir_all(dir.join("ds")).expect("dir");
+        let fresh = dir.join("ds/k.99-0.partial");
+        let old = dir.join("ds/j.99-1.partial");
+        std::fs::write(&fresh, b"half").expect("write");
+        std::fs::write(&old, b"half").expect("write");
+        let long_ago = SystemTime::now() - STALE_PARTIAL - std::time::Duration::from_secs(60);
+        std::fs::File::options()
+            .write(true)
+            .open(&old)
+            .and_then(|f| f.set_modified(long_ago))
+            .expect("backdate");
+        let cache = ChunkCache::open(&dir, 100).expect("opens");
+        assert!(fresh.exists(), "a recent write in progress is kept");
+        assert!(!old.exists(), "an abandoned write is removed");
+        assert_eq!(cache.size(), 0, "neither counts as a chunk");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_removed_chunk_is_gone_and_contains_does_not_touch_recency() {
+        let dir = temp("remove");
+        let cache = ChunkCache::open(&dir, 100).expect("opens");
+        cache.put("ds", "k", &[1; 5]).expect("put");
+        assert!(cache.contains("ds", "k"));
+        assert_eq!(cache.stats().snapshot().0, 0, "contains is not a hit");
+        cache.remove("ds", "k");
+        assert!(!cache.contains("ds", "k"));
+        assert_eq!(cache.size(), 0);
+        assert!(!dir.join("ds/k").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

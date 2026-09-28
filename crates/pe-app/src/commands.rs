@@ -22,6 +22,12 @@ pub struct AppState {
     /// Set once the user has answered the unsaved-changes guard for quitting
     /// (spec.md 3.3); from then on nothing stops the exit.
     pub exit_allowed: std::sync::atomic::AtomicBool,
+    /// The environment fetch queue (spec.md 7.7).
+    pub env_jobs: crate::env::EnvJobs,
+    /// The reanalysis provider for the current settings, built on the first
+    /// fetch and kept so its opened archives serve every track.
+    pub env_provider:
+        std::sync::Mutex<Option<(crate::env::ProviderKey, std::sync::Arc<pe_env::Reanalysis>)>>,
 }
 
 impl AppState {
@@ -32,6 +38,8 @@ impl AppState {
             paths,
             session: std::sync::Mutex::new(session),
             exit_allowed: std::sync::atomic::AtomicBool::new(false),
+            env_jobs: crate::env::EnvJobs::default(),
+            env_provider: std::sync::Mutex::new(None),
         }
     }
 

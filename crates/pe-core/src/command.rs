@@ -146,6 +146,22 @@ pub enum Command {
         /// Every sample's motion under `after`, in sample order.
         motion_after: Vec<Motion>,
     },
+    /// Chooses whether the polar is fed from current-corrected (water)
+    /// values where a current exists, or ground values (spec.md 7.5, D13).
+    SetUseCorrected {
+        /// Previous choice.
+        before: bool,
+        /// New choice.
+        after: bool,
+    },
+    /// Chooses whether the global merged current includes Stokes drift
+    /// (spec.md 7.5.1, Q3). Applies to the next environment fetch.
+    SetStokesDrift {
+        /// Previous choice.
+        before: bool,
+        /// New choice.
+        after: bool,
+    },
     /// Several commands as one history entry, e.g. a multi-file import.
     Batch {
         /// The history label.
@@ -360,6 +376,32 @@ impl Command {
                     .ok_or_else(|| CoreError::Invalid(format!("{label} is not a track")))?;
                 set_derivation(track, from, to, motion_from, motion_to)
             }
+            Self::SetUseCorrected { before, after } => {
+                let (from, to) = if forward {
+                    (*before, *after)
+                } else {
+                    (*after, *before)
+                };
+                swap(
+                    &mut project.blend.use_corrected,
+                    &from,
+                    &to,
+                    "current correction",
+                )
+            }
+            Self::SetStokesDrift { before, after } => {
+                let (from, to) = if forward {
+                    (*before, *after)
+                } else {
+                    (*after, *before)
+                };
+                swap(
+                    &mut project.blend.include_stokes_drift,
+                    &from,
+                    &to,
+                    "Stokes drift",
+                )
+            }
             Self::Batch { commands, .. } => {
                 if forward {
                     for (done, command) in commands.iter_mut().enumerate() {
@@ -439,6 +481,8 @@ impl Command {
             Self::IncludeSamples { .. } => INCLUDE_SAMPLES_LABEL,
             Self::SetSampleFilters { .. } => "Change sample filters",
             Self::SetDerivation { .. } => "Change heading and speed derivation",
+            Self::SetUseCorrected { .. } => "Change current correction",
+            Self::SetStokesDrift { .. } => "Change Stokes drift",
             Self::Batch { label, .. } => return label.clone(),
         }
         .to_owned()
@@ -548,8 +592,12 @@ fn set_derivation(
         return Err(stale("the track's heading and speed"));
     }
     track.derivation = to.clone();
+    // What relates the motion to the stored environment follows it, from
+    // the stored values, so the angles never go stale and nothing is
+    // fetched again (M8 carry).
     for (sample, motion) in track.samples.iter_mut().zip(motion_to) {
         sample.set_motion(*motion);
+        sample.relate();
     }
     Ok(())
 }
@@ -674,10 +722,12 @@ mod tests {
             Command::IncludeSamples { .. } => "IncludeSamples",
             Command::SetSampleFilters { .. } => "SetSampleFilters",
             Command::SetDerivation { .. } => "SetDerivation",
+            Command::SetUseCorrected { .. } => "SetUseCorrected",
+            Command::SetStokesDrift { .. } => "SetStokesDrift",
             Command::Batch { .. } => "Batch",
         }
     }
-    const VARIANTS: usize = 15;
+    const VARIANTS: usize = 17;
 
     fn cell(twa: f64, tws: f64) -> CellRef {
         CellRef { twa, tws }
@@ -799,6 +849,14 @@ mod tests {
                 },
                 motion_before,
                 motion_after,
+            },
+            Command::SetUseCorrected {
+                before: true,
+                after: false,
+            },
+            Command::SetStokesDrift {
+                before: false,
+                after: true,
             },
             Command::Batch {
                 label: "Import polar files".to_owned(),
@@ -1133,6 +1191,49 @@ mod tests {
         assert_eq!(project, before);
         exclude.undo(&mut project).unwrap();
         assert_eq!(project, original);
+    }
+
+    /// A derivation change recomputes what relates the motion to the stored
+    /// wind (M8 carry): with the wind from 270° a heading of 45° is TWA 135°
+    /// port, a heading of 90° is dead downwind (TWA 180°, no tack), and undo
+    /// gives back 135° port. Nothing is fetched: the wind is as stored.
+    #[test]
+    fn a_derivation_change_relates_the_new_heading_to_the_stored_wind() {
+        let mut project = fixtures::project();
+        let original = project.clone();
+        let source = project.sources[2].id;
+        let track = project.sources[2].track().unwrap();
+        let before: Vec<Motion> = track.samples.iter().map(|s| s.motion()).collect();
+        let after: Vec<Motion> = before
+            .iter()
+            .map(|m| Motion {
+                heading: Some(90.0),
+                ..*m
+            })
+            .collect();
+        let mut command = Command::SetDerivation {
+            source,
+            before: DerivationSettings::default(),
+            after: DerivationSettings {
+                max_gap_s: 600,
+                ..DerivationSettings::default()
+            },
+            motion_before: before,
+            motion_after: after,
+        };
+        command.apply(&mut project).unwrap();
+        let samples = &project.sources[2].track().unwrap().samples;
+        assert!(
+            samples
+                .iter()
+                .all(|s| s.twa == Some(180.0) && s.tack.is_none())
+        );
+        assert!(
+            samples.iter().all(|s| s.tws == Some(14.2)),
+            "the wind is as stored"
+        );
+        command.undo(&mut project).unwrap();
+        assert!(project == original, "undo restores the related values");
     }
 
     /// A derivation change refuses when the samples no longer hold what it
