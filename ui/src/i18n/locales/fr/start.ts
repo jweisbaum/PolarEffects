@@ -46,7 +46,6 @@ const catalogue: Record<string, string> = {
   "Unsaved work kept when PolarEffects did not close cleanly.": "Travail non enregistré conservé lorsque PolarEffects ne s’est pas fermé correctement.",
   "autosave": "enregistrement automatique",
   "restore": "restaurer",
-  "Language, theme, units, autosave, cache and network": "Langue, thème, unités, enregistrement automatique, cache et réseau",
   "Build a sailing polar for one boat from ORC certificates, polar files and race tracks.": "Construire la polaire d’un bateau à partir de certificats ORC, de fichiers de polaires et de traces de course.",
   "PolarEffects did not close cleanly. These are snapshots of unsaved work; recovering one opens it as the project it came from, unsaved.": "PolarEffects ne s’est pas fermé correctement. Voici des instantanés du travail non enregistré ; en récupérer un l’ouvre comme le projet d’origine, non enregistré.",
   "never saved": "jamais enregistré",
@@ -62,6 +61,7 @@ const catalogue: Record<string, string> = {
   "Project not found": "Projet introuvable",
   "{path} is no longer there. Remove it from the recent projects?": "{path} n’existe plus. Le retirer des projets récents ?",
   "Remove": "Retirer",
+  "Language, theme, units, autosave, cache and network ({chord})": "Langue, thème, unités, enregistrement automatique, cache et réseau ({chord})",
 };
 
 export default catalogue;

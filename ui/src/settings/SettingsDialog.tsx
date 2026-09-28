@@ -14,7 +14,8 @@ import type { Units } from "../generated/Units";
 import { onReveal } from "../help/highlight";
 import { useT } from "../i18n";
 import LanguagePicker from "../i18n/LanguagePicker";
-import { api, IpcError } from "../ipc";
+import { describeError } from "../errors";
+import { api } from "../ipc";
 import ConfirmDialog from "../project/ConfirmDialog";
 import { pickCacheFolder } from "../project/dialogs";
 import ThemePicker from "./ThemePicker";
@@ -56,11 +57,12 @@ export default function SettingsDialog({ settings, onSettings, onClose }: {
   onClose: () => void;
 }) {
   const t = useT();
-  const [error, setError] = useState<string | null>(null);
+  /** The last failure, described at render so a language switch relabels it. */
+  const [error, setError] = useState<unknown>(null);
   const [cache, setCache] = useState<ChunkCacheStatus | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
 
-  const report = (err: unknown) => setError(err instanceof IpcError ? err.message : String(err));
+  const report = (err: unknown) => setError(err ?? new Error("unknown"));
   const save = (change: Promise<AppSettings>) => {
     setError(null);
     change.then(onSettings).catch(report);
@@ -109,7 +111,7 @@ export default function SettingsDialog({ settings, onSettings, onClose }: {
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal settings" role="dialog" aria-label={t("Settings")} onClick={(event) => event.stopPropagation()}>
         <h2>{t("Settings")}</h2>
-        {error !== null && <p className="modal-error" role="alert">{error}</p>}
+        {error !== null && <p className="modal-error" role="alert" title={describeError(error).detail}>{describeError(error).text}</p>}
 
         <section data-section="settings:appearance">
           <h3>{t("Appearance")}</h3>
@@ -180,7 +182,7 @@ export default function SettingsDialog({ settings, onSettings, onClose }: {
             <button data-feature="settings:cache-location" title={t("Keep the chunk cache in another folder")}
               onClick={() => void pickCacheFolder().then((folder) => {
                 if (folder !== null) save(api.setChunkCache({ ...chunkCache, location: folder }));
-              })}>
+              }).catch(report)}>
               {t("Choose folder…")}
             </button>
             <button data-feature="settings:cache-default" disabled={chunkCache.location === ""}

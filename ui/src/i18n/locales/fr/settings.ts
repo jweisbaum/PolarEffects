@@ -52,7 +52,6 @@ const catalogue: Record<string, string> = {
   "Close the Settings dialog.": "Fermer la fenêtre des réglages.",
   "done": "terminé",
   "Interface language": "Langue de l’interface",
-  "The language could not be saved: {error}": "La langue n’a pas pu être enregistrée : {error}",
   "Appearance": "Apparence",
   "Applies throughout the app, across all projects.": "S’applique à toute l’application, pour tous les projets.",
   "Units": "Unités",
@@ -95,6 +94,7 @@ const catalogue: Record<string, string> = {
   "Plum": "Prune",
   "Ember": "Braise",
   "Paper": "Papier",
+  "The language could not be saved.": "La langue n’a pas pu être enregistrée.",
 };
 
 export default catalogue;

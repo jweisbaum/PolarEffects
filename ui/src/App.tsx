@@ -8,6 +8,7 @@ import type { ProjectSummary } from "./generated/ProjectSummary";
 import Help from "./help/Help";
 import HelpMenu from "./help/HelpMenu";
 import { onReveal } from "./help/highlight";
+import { describeError, reportFailure } from "./errors";
 import { reportError, shown, useHint } from "./hint";
 import { isBusy, useBusy } from "./busy";
 import { msg, setLanguage, useT } from "./i18n";
@@ -38,11 +39,15 @@ export default function App() {
   return <Help><Shell /><LoadingScreen /></Help>;
 }
 
-/** An error as the status line shows it: the message, with the kind kept for the tooltip. */
-function report(err: unknown) {
-  if (err instanceof IpcError) reportError(err.message, err.kind);
-  else reportError(String(err));
+/** Cmd/Ctrl-N on the start screen: the new-project form is already there, so go to its name. */
+function focusNewProjectName() {
+  const input = document.querySelector<HTMLInputElement>('[data-feature="new:name"] input');
+  input?.focus();
+  input?.select();
 }
+
+/** An error on the status line: translated by its kind, the English kept for the tooltip. */
+const report = reportFailure;
 
 function Shell() {
   const t = useT();
@@ -123,6 +128,7 @@ function Shell() {
   const enter = useCallback((next: ProjectSummary | null) => {
     reportError(null);
     setRenaming(null);
+    setCreating(null);
     setProject(next);
   }, []);
 
@@ -260,7 +266,10 @@ function Shell() {
         setShowSettings(true);
       } else if (key === "n") {
         event.preventDefault();
-        void startNewProject();
+        // The start screen has the form inline; the project window asks
+        // about unsaved changes, then opens the dialog.
+        if (project) void startNewProject();
+        else focusNewProjectName();
       } else if (key === "o") {
         event.preventDefault();
         void openProject();
@@ -426,8 +435,10 @@ function BusySpinner() {
 
 /** The status bar's middle: a flash, the error, or the hint. */
 function StatusHint({ status }: { status: string | null }) {
+  useT();
   const state = useHint();
-  const line = shown(state);
+  const described = state.failure !== undefined && state.error !== null ? describeError(state.failure) : null;
+  const line = described ? { text: described.text, kind: "error" as const, detail: described.detail } : shown(state);
   if (status !== null) return <span className="hint accent">{status}</span>;
   if (line === null) return <span className="hint" />;
   return <span className={line.kind === "error" ? "hint error" : "hint muted"} role={line.kind === "error" ? "alert" : undefined}

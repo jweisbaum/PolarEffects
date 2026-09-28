@@ -39,8 +39,22 @@ describe("feature registry", () => {
     const ids = new Set(FEATURES.map(f => f.id));
     expect([...tagged].filter(id => !ids.has(id))).toEqual([]);
   });
+  /**
+   * An id with no literal tag must come from a family (`project:${…}`) *and*
+   * its suffix must be written somewhere as a string literal, so a family
+   * cannot hide a registry entry that no element carries.
+   */
+  const withoutElement = (ids: string[]) => ids.filter(id => {
+    if (tagged.has(id)) return false;
+    const family = families.find(p => id.startsWith(p));
+    return family === undefined || !text.includes(`"${id.slice(family.length)}"`);
+  });
   it("has an element for every feature", () => {
-    expect(FEATURES.map(f => f.id).filter(id => !tagged.has(id) && !families.some(p => id.startsWith(p)))).toEqual([]);
+    expect(withoutElement(FEATURES.map(f => f.id))).toEqual([]);
+  });
+  it("does not let a family excuse an entry nothing renders", () => {
+    expect(families).toContain("project:");
+    expect(withoutElement(["project:zq-no-such-item", "stage:zq-no-such-stage"])).toEqual(["project:zq-no-such-item", "stage:zq-no-such-stage"]);
   });
   it("names help pages that exist", () => {
     const topics = new Set(TOPICS.map(p => p.id));

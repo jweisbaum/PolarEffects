@@ -55,7 +55,8 @@ it("puts the previous language back when the save fails", async () => {
   await choose("de");
   expect(language()).toBe("en");
   expect(host.querySelector("#label")?.textContent).toBe("Help");
-  expect(currentHint().error).toContain("disk full");
+  expect(currentHint().error).toBe("The language could not be saved.");
+  expect(currentHint().errorDetail).toContain("disk full");
 });
 
 it("falls back to English for a string no catalogue holds, and fills placeholders", () => {

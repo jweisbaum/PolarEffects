@@ -118,6 +118,7 @@ interface Program {
 
 interface Geo {
   vao: WebGLVertexArrayObject;
+  buffers: WebGLBuffer[];
   count: number;
   indexed: boolean;
 }
@@ -209,14 +210,16 @@ export class MapRenderer {
     gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    const buffers = [vbo];
     if (indices) {
       const ibo = gl.createBuffer();
       if (!ibo) throw new Error("could not allocate map buffers");
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
       gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
+      buffers.push(ibo);
     }
     gl.bindVertexArray(null);
-    return { vao, count: indices ? indices.length : vertices.length / 2, indexed: indices !== undefined };
+    return { vao, buffers, count: indices ? indices.length : vertices.length / 2, indexed: indices !== undefined };
   }
 
   private draw(geo: Geo, mode: number) {
@@ -253,6 +256,27 @@ export class MapRenderer {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.deleteFramebuffer(framebuffer);
     return texture;
+  }
+
+  /**
+   * Frees everything this renderer put on the GPU and gives the context back.
+   * A stage switch unmounts the map; without this each visit to it would
+   * leave a basemap's worth of buffers and a 32 MB mask behind, and browsers
+   * cap live WebGL contexts at a handful.
+   */
+  dispose(): void {
+    const gl = this.gl;
+    const all = [...this.land.values(), ...this.coast.values(), this.sea, this.grid, this.quad];
+    for (const geo of all) {
+      gl.deleteVertexArray(geo.vao);
+      for (const buffer of geo.buffers) gl.deleteBuffer(buffer);
+    }
+    this.land.clear();
+    this.coast.clear();
+    gl.deleteTexture(this.mask);
+    gl.deleteProgram(this.geo.program);
+    gl.deleteProgram(this.globe.program);
+    gl.getExtension("WEBGL_lose_context")?.loseContext();
   }
 
   /** Draws one frame. `view` is in CSS pixels; `pixelRatio` maps it to the canvas. */

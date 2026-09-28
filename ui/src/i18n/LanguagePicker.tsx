@@ -1,4 +1,5 @@
 import { api } from "../ipc";
+import { describeError } from "../errors";
 import { reportError } from "../hint";
 import type { AppSettings } from "../generated/AppSettings";
 import { LANGUAGES, language, setLanguage, useLanguage, useT } from "./index";
@@ -24,7 +25,7 @@ export default function LanguagePicker({ feature, onSettings }: {
       setLanguage(next);
       api.setLanguage(next).then(settings => onSettings?.(settings)).catch(error => {
         setLanguage(before);
-        reportError(t("The language could not be saved: {error}", { error: String(error) }));
+        reportError(t("The language could not be saved."), describeError(error).detail);
       });
     }}>
     {LANGUAGES.map(({ id, name }) => <option key={id} value={id} lang={id}>{name}</option>)}

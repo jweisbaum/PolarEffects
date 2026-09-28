@@ -162,6 +162,47 @@ describe("the start screen", () => {
   });
 });
 
+describe("shortcuts on the start screen", () => {
+  it("Cmd/Ctrl-N goes to the inline form; nothing is left open behind it", async () => {
+    await mount();
+    const { IS_MAC } = await import("./chords");
+    const accel = (key: string) => act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key, metaKey: IS_MAC, ctrlKey: !IS_MAC, bubbles: true }));
+    });
+    await accel("n");
+    await settle();
+    expect(document.activeElement).toBe(q('[data-feature="new:name"] input'));
+    expect(q("[role=dialog]")).toBeNull();
+    // The other shortcuts still work: no invisible dialog swallowed them.
+    await accel(",");
+    await settle();
+    expect(q(".modal.settings")).not.toBeNull();
+    await act(async () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
+    await settle();
+    await click(feature("new:create"));
+    expect(feature("shell:rename")).not.toBeNull();
+    expect(q("[role=dialog]"), "no stray New Project dialog").toBeNull();
+  });
+});
+
+describe("errors", () => {
+  it("are shown in the interface language, with Rust's English only as the tooltip", async () => {
+    settings = { ...settings, language: "fr" };
+    setLanguage("fr");
+    await mount();
+    invoke.mockImplementationOnce(async () => {
+      throw { kind: "schema-too-new", message: "file schema version 9; this build reads up to version 1" };
+    });
+    await click(q(".recent-item:not(.missing)"));
+    const alert = q("[role=alert]");
+    expect(alert?.textContent).toBe("Ce projet a été enregistré par une version plus récente de PolarEffects. Mettez PolarEffects à jour pour l’ouvrir.");
+    expect(alert?.getAttribute("title")).toContain("file schema version 9");
+    // Switching language relabels the error too.
+    await act(async () => setLanguage("de"));
+    expect(q("[role=alert]")?.textContent).toContain("neueren Version von PolarEffects");
+  });
+});
+
 describe("the project window", () => {
   it("folds the navigation and its sections, and remembers it for the person", async () => {
     project = summary(false, "/p.wpsproj");
@@ -292,7 +333,46 @@ function visibleStrings(): string[] {
 }
 
 describe("switching language (plan.md M2 acceptance)", () => {
+  // Data, not interface: the project's name and path, the version, the
+  // languages' own names, and symbols.
+  const data = new Set(["Fastnet", "/boats/Fastnet.wpsproj", "v0.1.0", "PolarEffects", "English", "Français",
+    "Deutsch", "/cache/chunks", "…", "Old", "/gone/Old.wpsproj", "Lost", "?"]);
+  const untranslated = (target: "fr" | "de", before: string[], after: string[]) =>
+    before.filter((text, index) =>
+      text === after[index] && !data.has(text) && CATALOGUES[target][text] !== text && /\p{L}{2}/u.test(text)
+      && !/^(Cmd|Ctrl)\+/.test(text) && !/^\d/.test(text));
+  const switchTo = async (target: string) => {
+    await act(async () => {
+      const picker = document.querySelector<HTMLSelectElement>(".language-picker")!;
+      picker.value = target;
+      picker.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await settle();
+  };
+
   for (const target of ["fr", "de"] as const) {
+    it(`relabels the start screen in ${target}`, async () => {
+      await mount();
+      const before = visibleStrings();
+      await switchTo(target);
+      const after = visibleStrings();
+      expect(after.length).toBe(before.length);
+      expect(untranslated(target, before, after)).toEqual([]);
+    });
+
+    it(`relabels the help window in ${target}`, async () => {
+      project = summary(false, "/boats/Fastnet.wpsproj");
+      await mount();
+      const { openHelp } = await import("./help/open");
+      await act(async () => openHelp("projects"));
+      const before = visibleStrings();
+      await act(async () => setLanguage(target));
+      await settle();
+      const after = visibleStrings();
+      expect(after.length).toBe(before.length);
+      expect(untranslated(target, before, after)).toEqual([]);
+    });
+
     it(`relabels every visible string and tooltip in ${target}, without a reload`, async () => {
       project = summary(true, "/boats/Fastnet.wpsproj");
       await mount();

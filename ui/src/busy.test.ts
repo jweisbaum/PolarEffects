@@ -5,9 +5,9 @@ import { beginBusy, currentBusy, isBusy, whileChoosing } from "./busy";
 describe("the busy store", () => {
   it("spins while any task runs, and ending one twice is harmless", () => {
     expect(isBusy(currentBusy())).toBe(false);
-    const endImport = beginBusy("Importing GRIB");
+    const endImport = beginBusy("Opening project");
     const endSave = beginBusy("Saving");
-    expect(currentBusy().labels).toEqual(["Importing GRIB", "Saving"]);
+    expect(currentBusy().labels).toEqual(["Opening project", "Saving"]);
     endImport();
     endImport();
     expect(currentBusy().labels).toEqual(["Saving"]);
@@ -18,12 +18,7 @@ describe("the busy store", () => {
 });
 
 describe("the wait while a dialog is up", () => {
-  /**
-   * The report (M74): clicking Open gave no sign that anything had happened.
-   * The command's own marker starts after the decision prompt and the native
-   * dialog, so the spinner answered the click only once a file had been
-   * chosen. The dialog is part of the operation.
-   */
+  /** The dialog is part of the operation: a click on Open answers at once. */
   it("is busy while choosing and clear afterwards", async () => {
     expect(isBusy(currentBusy())).toBe(false);
     let seen = false;
@@ -53,10 +48,10 @@ describe("the wait while a dialog is up", () => {
   /** It names what is happening, which is what the spinner's tooltip shows. */
   it("says what it is waiting for", async () => {
     let label: readonly string[] = [];
-    await whileChoosing("Choosing a GRIB file", async () => {
+    await whileChoosing("Choosing a folder", async () => {
       label = currentBusy().labels;
       return null;
     });
-    expect(label).toEqual(["Choosing a GRIB file"]);
+    expect(label).toEqual(["Choosing a folder"]);
   });
 });

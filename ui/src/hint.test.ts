@@ -29,6 +29,6 @@ describe("the hint store", () => {
     expect(line?.text).not.toContain("doing");
     expect(line?.detail).toBe("doing");
     reportError(null);
-    expect(currentHint().errorKind).toBeNull();
+    expect(currentHint().errorDetail).toBeNull();
   });
 });

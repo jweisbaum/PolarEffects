@@ -15,17 +15,23 @@ export interface HintSnapshot {
   /** The last error, until the next hint or a clear. */
   error: string | null;
   /**
-   * The error's `kind` discriminant: shown as the line's tooltip for a bug
-   * report, never in the line (a `[bad-option]` reads as machine trouble).
+   * What a bug report would want and a reader would not — the backend's
+   * `kind` and its English message: the line's tooltip, never the line.
    */
-  errorKind: string | null;
+  errorDetail: string | null;
+  /**
+   * The failure itself, when it came through `reportFailure`: the status bar
+   * describes it again at every render, so a language switch relabels it.
+   */
+  failure?: unknown;
 }
 
-let snapshot: HintSnapshot = { hint: null, error: null, errorKind: null };
+let snapshot: HintSnapshot = { hint: null, error: null, errorDetail: null };
 const listeners = new Set<() => void>();
 
 function publish(next: HintSnapshot) {
-  if (next.hint === snapshot.hint && next.error === snapshot.error && next.errorKind === snapshot.errorKind) return;
+  if (next.hint === snapshot.hint && next.error === snapshot.error && next.errorDetail === snapshot.errorDetail
+    && next.failure === snapshot.failure) return;
   snapshot = next;
   for (const listener of listeners) listener();
 }
@@ -36,17 +42,18 @@ function publish(next: HintSnapshot) {
  */
 export function setHint(hint: string | null): void {
   const keep = hint === snapshot.hint;
-  publish({ hint, error: keep ? snapshot.error : null, errorKind: keep ? snapshot.errorKind : null });
+  publish({ hint, error: keep ? snapshot.error : null, errorDetail: keep ? snapshot.errorDetail : null,
+    failure: keep ? snapshot.failure : undefined });
 }
 
 /** Reports an error, which shows in place of the hint until the hint changes. */
-export function reportError(error: string | null, kind: string | null = null): void {
-  publish({ ...snapshot, error, errorKind: error === null ? null : kind });
+export function reportError(error: string | null, detail: string | null = null, failure?: unknown): void {
+  publish({ ...snapshot, error, errorDetail: error === null ? null : detail, failure: error === null ? undefined : failure });
 }
 
 /** What the status bar shows: the error if there is one, else the hint. */
 export function shown(state: HintSnapshot): { text: string; kind: "error" | "hint"; detail: string | null } | null {
-  if (state.error !== null) return { text: state.error, kind: "error", detail: state.errorKind };
+  if (state.error !== null) return { text: state.error, kind: "error", detail: state.errorDetail };
   if (state.hint !== null) return { text: state.hint, kind: "hint", detail: null };
   return null;
 }

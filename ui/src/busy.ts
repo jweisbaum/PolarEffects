@@ -2,9 +2,10 @@
  * What long-running work is in flight, for the status bar's spinner.
  *
  * A counter with labels, outside React like the hint store: the ipc layer
- * marks the commands that can take seconds — a GRIB or image import, a
- * project opening or saving, an export, a capture's bake — and the one
- * spinner subscribes. Callers do nothing; the command's name is enough.
+ * marks the commands that can take seconds — opening or saving a project,
+ * measuring or clearing the chunk cache, and later imports and fetches — and
+ * the one spinner subscribes. Callers do nothing; the command's name is
+ * enough. Copied from VectorEffects.
  */
 
 import { useSyncExternalStore } from "react";
@@ -44,11 +45,9 @@ export function beginBusy(label: string): () => void {
  * it — which is the property that keeps two callers of one thing from showing
  * two spinners' worth of nothing.
  *
- * It exists because the command's own marker starts too late to answer the
- * click. Opening a project is a decision prompt, then a native dialog, and
- * only then `open_project`: the spinner appeared after all of it, so a click
- * on Open produced no sign that anything had happened until the file had been
- * chosen. The dialog is part of the operation and is marked as such.
+ * The command's own marker starts too late to answer the click: opening a
+ * project is a decision prompt, then a native dialog, and only then
+ * `open_project`. The dialog is part of the operation and is marked as such.
  */
 export async function whileChoosing<T>(label: string, choose: () => Promise<T>): Promise<T> {
   const done = beginBusy(label);

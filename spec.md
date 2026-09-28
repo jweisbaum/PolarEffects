@@ -266,9 +266,16 @@ Copied from VectorEffects (spec §5.8 there), with the highlight in orange:
   tag, and if any feature is not found by its own translated label in every
   language.
 - The start screen has no search box (as in VectorEffects); its Help button
-  opens the help window. The answer buttons of transient dialogs (Save / Don't
-  save / Cancel, confirmations) are not in the registry: nothing can reveal a
-  question that has not been asked.
+  opens the help window. The help window's own controls (search, topic list,
+  related pages, Close) are registered, revealed by `help:open`.
+- Exempt from the registry, and only these: dynamic per-item list rows — one
+  recent or recovered project, its Discard button, one Open Recent entry —
+  whose containers carry the id instead; and the answer buttons of transient
+  dialogs (Save / Don't save / Cancel, confirmations), since nothing can
+  reveal a question that has not been asked.
+- Errors are shown translated by their `kind` (§1.4); Rust's English message
+  is kept only as the tooltip, and an unknown kind shows a translated generic
+  line.
 
 ---
 

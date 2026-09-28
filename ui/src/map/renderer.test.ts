@@ -28,3 +28,45 @@ describe("the graticule", () => {
     expect([...lons].sort((a, b) => a - b)).toEqual([-180, -150, -120, -90, -60, -30, 0, 30, 60, 90, 120, 150]);
   });
 });
+
+describe("disposing the renderer", () => {
+  /** A WebGL2 context that only counts what is made and what is freed. */
+  function fakeGl() {
+    const made = { buffer: 0, vao: 0, texture: 0, program: 0 };
+    const freed = { buffer: 0, vao: 0, texture: 0, program: 0 };
+    let lost = false;
+    const gl = new Proxy({}, {
+      get: (_target, name: string) => {
+        if (name === "createBuffer") return () => (made.buffer++, {});
+        if (name === "createVertexArray") return () => (made.vao++, {});
+        if (name === "createTexture") return () => (made.texture++, {});
+        if (name === "createProgram") return () => (made.program++, {});
+        if (name === "deleteBuffer") return () => freed.buffer++;
+        if (name === "deleteVertexArray") return () => freed.vao++;
+        if (name === "deleteTexture") return () => freed.texture++;
+        if (name === "deleteProgram") return () => freed.program++;
+        if (name === "getExtension") return () => ({ loseContext: () => { lost = true; } });
+        if (name === "getParameter") return () => 4096;
+        if (/^(get(Shader|Program)Parameter)$/.test(name)) return () => true;
+        if (/^(create|get)/.test(name)) return () => ({});
+        if (/^[A-Z_0-9]+$/.test(name)) return 0;
+        return () => undefined;
+      },
+    }) as WebGL2RenderingContext;
+    return { gl, made, freed, lost: () => lost };
+  }
+
+  it("frees every buffer, array, texture and program it made, and gives the context back", async () => {
+    const { MapRenderer } = await import("./renderer");
+    const lod = (marker: number) => ({
+      marker, triVertices: new Float32Array([0, 0, 1, 0, 0, 1]), triIndices: new Uint32Array([0, 1, 2]),
+      lineVertices: new Float32Array([0, 0, 1, 0]), lineIndices: new Uint32Array([0, 1]),
+    });
+    const fake = fakeGl();
+    const renderer = new MapRenderer(fake.gl, { version: 1, lods: [lod(110), lod(50)] });
+    expect(fake.made.buffer).toBeGreaterThan(0);
+    renderer.dispose();
+    expect(fake.freed).toEqual(fake.made);
+    expect(fake.lost()).toBe(true);
+  });
+});

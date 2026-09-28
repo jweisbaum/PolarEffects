@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 
-import { api, IpcError } from "../ipc";
+import { ACCEL } from "../chords";
+import { describeError } from "../errors";
+import { api } from "../ipc";
 import type { AppSettings } from "../generated/AppSettings";
 import type { ProjectSummary } from "../generated/ProjectSummary";
 import type { RecentProject } from "../generated/RecentProject";
 import type { RecoveredProject } from "../generated/RecoveredProject";
 import { openHelp } from "../help/open";
-import { useT } from "../i18n";
+import { useLanguage, useT } from "../i18n";
 import LanguagePicker from "../i18n/LanguagePicker";
 import ConfirmDialog from "./ConfirmDialog";
 import { pickProjectToOpen } from "./dialogs";
@@ -32,10 +34,12 @@ export default function StartScreen({
   onPreferences: (settings: AppSettings) => void;
 }) {
   const t = useT();
+  const language = useLanguage();
   const [recent, setRecent] = useState<RecentProject[]>([]);
   const [recovered, setRecovered] = useState<RecoveredProject[]>([]);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  /** The last failure, described at render so a language switch relabels it. */
+  const [error, setError] = useState<unknown>(null);
   /** The confirmation up, if any: clearing the list, or forgetting one missing file. */
   const [confirm, setConfirm] = useState<{ kind: "clear" } | { kind: "missing"; entry: RecentProject } | null>(null);
 
@@ -44,7 +48,7 @@ export default function StartScreen({
     api.recoveredProjects().then(setRecovered).catch(() => setRecovered([]));
   }, []);
 
-  const report = (err: unknown) => setError(err instanceof IpcError ? err.message : String(err));
+  const report = (err: unknown) => setError(err ?? new Error("unknown"));
 
   const run = async (action: () => Promise<ProjectSummary>) => {
     setBusy(true);
@@ -61,7 +65,13 @@ export default function StartScreen({
   const create = (request: NewProjectRequest) => void run(() => api.newProject(request.name, request.boat));
   const openFrom = (path: string) => run(() => api.openProject(path));
   const browse = async () => {
-    const path = await pickProjectToOpen();
+    let path: string | null;
+    try {
+      path = await pickProjectToOpen();
+    } catch (err) {
+      report(err);
+      return;
+    }
     if (path !== null) await openFrom(path);
   };
 
@@ -93,7 +103,7 @@ export default function StartScreen({
             <button data-feature="start:help" onClick={() => openHelp()} title={t("Open the help reference (F1)")}>
               {t("Help")}
             </button>
-            <button data-feature="start:settings" onClick={onSettings} title={t("Language, theme, units, autosave, cache and network")}>
+            <button data-feature="start:settings" onClick={onSettings} title={t("Language, theme, units, autosave, cache and network ({chord})", { chord: `${ACCEL}+,` })}>
               {t("Settings")}
             </button>
           </div>
@@ -125,7 +135,7 @@ export default function StartScreen({
                   >
                     <span className="recent-name">{entry.name}</span>
                     <span className="recent-path muted">
-                      {entry.original_path ?? t("never saved")} · {new Date(entry.saved_unix_s * 1000).toLocaleString()}
+                      {entry.original_path ?? t("never saved")} · {new Date(entry.saved_unix_s * 1000).toLocaleString(language)}
                     </span>
                   </button>
                   <button
@@ -181,7 +191,7 @@ export default function StartScreen({
           )}
         </section>
 
-        {error !== null && <p className="error" role="alert">{error}</p>}
+        {error !== null && <p className="error" role="alert" title={describeError(error).detail}>{describeError(error).text}</p>}
       </div>
 
       {confirm?.kind === "clear" && (

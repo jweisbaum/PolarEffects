@@ -21,6 +21,16 @@ const catalogue: Record<string, string> = {
   "Features": "Funktionen",
   "Help pages": "Hilfeseiten",
   "Nothing matches “{query}”.": "Nichts passt zu „{query}“.",
+  "Go to this page": "Zu dieser Seite wechseln",
+  "Find help pages by any word in them.": "Hilfeseiten über jedes Wort darin finden.",
+  "The list of help pages, one per area.": "Die Liste der Hilfeseiten, eine pro Bereich.",
+  "pages": "Seiten",
+  "contents": "Inhalt",
+  "Go to a page about a related area.": "Zur Seite eines verwandten Bereichs wechseln.",
+  "see also": "siehe auch",
+  "links": "Verweise",
+  "Close the help window.": "Das Hilfefenster schließen.",
+  "exit": "verlassen",
 };
 
 export default catalogue;

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { AppSettings } from "../generated/AppSettings";
-import { reportError, setHint } from "../hint";
+import { reportFailure } from "../errors";
+import { setHint } from "../hint";
 import { msg, useT } from "../i18n";
 import { api } from "../ipc";
 import { mapColour, onThemeChange, rgba } from "../settings/themes";
@@ -99,7 +100,7 @@ export default function MapView({ settings, onSettings }: {
       })
       .catch((error: unknown) => {
         if (live) setUnavailable(msg("The map could not be drawn."));
-        reportError(String(error));
+        reportFailure(error);
       });
     const resize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => draw());
     resize?.observe(element);
@@ -110,6 +111,8 @@ export default function MapView({ settings, onSettings }: {
       offTheme();
       cancelAnimationFrame(frame.current);
       frame.current = 0;
+      renderer.current?.dispose();
+      renderer.current = null;
     };
   }, [draw]);
 
@@ -131,7 +134,7 @@ export default function MapView({ settings, onSettings }: {
   }, [draw]);
 
   const choose = (next: ProjectionId) => {
-    api.setProjection(next).then(onSettings).catch((error: unknown) => reportError(String(error)));
+    api.setProjection(next).then(onSettings).catch(reportFailure);
   };
 
   return (

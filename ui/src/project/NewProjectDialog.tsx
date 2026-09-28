@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
-import { api, IpcError } from "../ipc";
+import { describeError } from "../errors";
+import { api } from "../ipc";
 import type { ProjectSummary } from "../generated/ProjectSummary";
 import NewProjectForm, { type NewProjectRequest } from "./NewProjectForm";
 import { useT } from "../i18n";
@@ -25,7 +26,7 @@ export default function NewProjectDialog({
 }) {
   const t = useT();
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -44,7 +45,7 @@ export default function NewProjectDialog({
     api
       .newProject(request.name, request.boat, discardUnsaved)
       .then(onCreated)
-      .catch((err) => setError(err instanceof IpcError ? err.message : String(err)))
+      .catch((err: unknown) => setError(err ?? new Error("unknown")))
       .finally(() => setBusy(false));
   };
 
@@ -55,7 +56,7 @@ export default function NewProjectDialog({
         <div className="start-new">
           <NewProjectForm disabled={busy} submitLabel={t("Create project")} onSubmit={create} />
         </div>
-        {error !== null && <p className="error">{error}</p>}
+        {error !== null && <p className="error" role="alert" title={describeError(error).detail}>{describeError(error).text}</p>}
         <div className="modal-actions">
           <button onClick={onCancel} disabled={busy} title={t("Close without creating a project")}>
             {t("Cancel")}

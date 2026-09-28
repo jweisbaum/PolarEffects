@@ -21,6 +21,16 @@ const catalogue: Record<string, string> = {
   "Features": "Commandes",
   "Help pages": "Pages d’aide",
   "Nothing matches “{query}”.": "Rien ne correspond à « {query} ».",
+  "Go to this page": "Aller à cette page",
+  "Find help pages by any word in them.": "Trouver des pages d’aide par n’importe quel mot qu’elles contiennent.",
+  "The list of help pages, one per area.": "La liste des pages d’aide, une par partie de l’application.",
+  "pages": "pages",
+  "contents": "sommaire",
+  "Go to a page about a related area.": "Aller à la page d’une partie voisine.",
+  "see also": "voir aussi",
+  "links": "liens",
+  "Close the help window.": "Fermer la fenêtre d’aide.",
+  "exit": "quitter",
 };
 
 export default catalogue;

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useLanguage, useT } from "../i18n";
+import { onReveal } from "./highlight";
 import { onOpenHelp } from "./open";
 import { searchTopics, topicsFor, type Parameter } from "./topics";
 
@@ -35,7 +36,9 @@ export default function Help({ children }: { children: ReactNode }) {
       if (topic) { setTopicId(topic); setQuery(""); }
       show();
     });
-    return () => { opening(); void listening.then(off => off?.()); };
+    // The search's reveal step for the window's own controls (spec.md 3.6).
+    const revealing = onReveal("help:open", () => show());
+    return () => { opening(); revealing(); void listening.then(off => off?.()); };
   }, []);
   useEffect(() => {
     if (!open) previousFocus.current?.focus({ preventScroll: true });
@@ -60,20 +63,21 @@ export default function Help({ children }: { children: ReactNode }) {
     {open && <div className="modal-backdrop help-backdrop" onClick={close}>
       <section className="help-dialog" role="dialog" aria-modal="true" aria-labelledby="help-title" onClick={e => e.stopPropagation()}>
         <header><h2 id="help-title">{t("PolarEffects Help")}</h2>
-          <button onClick={close} aria-label={t("Close help")} title={t("Close help (Esc)")}>{t("Close")}</button></header>
+          <button data-feature="help:close" onClick={close} aria-label={t("Close help")} title={t("Close help (Esc)")}>{t("Close")}</button></header>
         <div className="help-body"><nav aria-label={t("Help topics")}>
-          <input autoFocus type="search" aria-label={t("Search help")} title={t("Search the help pages")}
+          <input autoFocus type="search" data-feature="help:search" aria-label={t("Search help")} title={t("Search the help pages")}
             placeholder={t("Search the help…")} value={query} onChange={e => setQuery(e.target.value)} />
           <p className="help-count" role="status">{t("{found} of {total} pages", { found: found.length, total: topics.length })}</p>
           {found.map((p, i) => <div key={p.id}>
             {(i === 0 || found[i - 1]?.group !== p.group) && <h3>{p.group}</h3>}
-            <button aria-current={topic?.id === p.id ? "page" : undefined} onClick={() => choose(p.id)}>{p.title}</button>
+            <button data-feature="help:topic" aria-current={topic?.id === p.id ? "page" : undefined}
+              title={p.group} onClick={() => choose(p.id)}>{p.title}</button>
           </div>)}
         </nav><article key={topic?.id} tabIndex={0} aria-label={topic?.title ?? t("Search results")}>
           {topic ? <><h3>{topic.title}</h3>{topic.paragraphs.map(p => <p key={p}>{p}</p>)}
             <Parameters rows={topic.parameters} />
             {topic.related && <footer className="help-related"><h4>{t("Related pages")}</h4>
-              {topic.related.map(id => <button key={id} onClick={() => choose(id, true)}>{topics.find(page => page.id === id)?.title}</button>)}
+              {topic.related.map(id => <button key={id} data-feature="help:related" title={t("Go to this page")} onClick={() => choose(id, true)}>{topics.find(page => page.id === id)?.title}</button>)}
             </footer>}
           </> : <p>{t("No page matches “{query}”.", { query })}</p>}
         </article></div>
