@@ -190,8 +190,14 @@ and, in CI, ecCodes.
 - The whole back end is Rust. No Python, Node or browser sidecars, and no
   headless browser for scraping. Tracker formats are decoded in Rust.
 - Use `rustls` with the `ring` provider and `reqwest` blocking with
-  `default-features = false`. No OpenSSL, no `zarrs_http`. This keeps the
-  Windows ARM64 and cross-compiled builds working.
+  `default-features = false` and the `rustls-no-provider` feature (reqwest's
+  plain `rustls` feature pulls in `aws-lc-rs`, a C library). No OpenSSL, no
+  `zarrs_http`. This keeps the Windows ARM64 and cross-compiled builds
+  working.
+- `zarrs` builds `libz-sys` as a build-time dependency of its build script
+  only; it runs on the build host and is not linked into the app. That is
+  the one accepted C build dependency. Anything linked into the app stays
+  pure Rust.
 - Blosc is decoded by our own pure-Rust decoder over `lz4_flex`; never pull
   `blosc-src` or any other C library.
 - Geovoile hwx seeds differ per site. Parse them from the viewer HTML; never
