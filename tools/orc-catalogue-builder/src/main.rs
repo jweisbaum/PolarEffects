@@ -11,7 +11,9 @@
 //! only in case (`FIN/FIN71.json`, `FIN/Fin71.json`), which a macOS or
 //! Windows checkout silently collapses into one; reading the commit sees
 //! every file and makes the result independent of local edits. The commit's
-//! hash and date are recorded in the catalogue.
+//! hash and date are recorded in the catalogue, and the build date is the
+//! commit's date unless `SOURCE_DATE_EPOCH` says otherwise, so a rebuild from
+//! the same commit is byte-identical.
 //!
 //! Every file that is left out is reported on stderr with its reason: the
 //! per-boat schema has changed over the years, and a silently shorter
@@ -132,8 +134,11 @@ fn run() -> Result<(), Failure> {
     let provenance = Provenance {
         source: "jieter/orc-data".to_owned(),
         commit: commit.clone(),
+        build_date: build_date(
+            std::env::var("SOURCE_DATE_EPOCH").ok().as_deref(),
+            &commit_date,
+        )?,
         commit_date,
-        build_date: build_date()?,
         records: u32::try_from(entries.len())?,
         dropped: u32::try_from(dropped_count)?,
     };
@@ -458,18 +463,14 @@ fn entry(value: &Value, lists: &YearLists, make_year: Option<i32>) -> Result<Ent
     })
 }
 
-/// Today (UTC) as `YYYY-MM-DD`, or the day of `SOURCE_DATE_EPOCH` when it is
-/// set, so a rebuild can be made byte-identical.
-fn build_date() -> Result<String, Failure> {
-    let seconds = match std::env::var("SOURCE_DATE_EPOCH") {
-        Ok(text) => text.trim().parse::<i64>()?,
-        Err(_) => i64::try_from(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)?
-                .as_secs(),
-        )?,
-    };
-    Ok(civil_date(seconds.div_euclid(86_400)))
+/// The build date recorded in the catalogue: the day of `SOURCE_DATE_EPOCH`
+/// when it is set, else the orc-data commit's date. Never the wall clock, so
+/// rebuilding from the same commit gives the same bytes.
+fn build_date(source_date_epoch: Option<&str>, commit_date: &str) -> Result<String, Failure> {
+    match source_date_epoch {
+        Some(text) => Ok(civil_date(text.trim().parse::<i64>()?.div_euclid(86_400))),
+        None => Ok(commit_date.to_owned()),
+    }
 }
 
 /// The proleptic Gregorian date of a day number since 1970-01-01 (Howard
@@ -771,5 +772,11 @@ mod tests {
         assert_eq!(civil_date(20_454), "2026-01-01");
         assert_eq!(civil_date(11_016), "2000-02-29");
         assert_eq!(civil_date(-1), "1969-12-31");
+        assert_eq!(build_date(None, "2026-09-28").unwrap(), "2026-09-28");
+        assert_eq!(
+            build_date(Some("1767225600"), "2026-09-28").unwrap(),
+            "2026-01-01"
+        );
+        assert!(build_date(Some("soon"), "2026-09-28").is_err());
     }
 }

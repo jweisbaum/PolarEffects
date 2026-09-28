@@ -409,7 +409,8 @@ The ORC catalogue is **embedded in the app** (D3):
   orc-data's two decimals) in `crates/pe-orc/data/`, about 5.7 MB. It is
   embedded in the binary and decoded and indexed on first use (about 0.2 s).
   Its small uncompressed header holds the orc-data commit, the commit's date
-  and the build date; About shows them (the native About panel), and the
+  and the build date (the commit's date unless `SOURCE_DATE_EPOCH` is set,
+  so rebuilding one commit is byte-identical); About shows them (the native About panel), and the
   ORC polars section's footer shows the certificate count and commit date.
 - Refreshing the catalogue is a developer task and a new release, never a
   run-time fetch (invariant 4).
@@ -419,12 +420,13 @@ The ORC catalogue is **embedded in the app** (D3):
 - One search box that matches **across all fields**: boat name, sail number,
   country, model/type, builder, designer, year built and certificate year.
   Tokens are ANDed, and each must match the **start of a word** of some field,
-  so `farr 40 2023` finds Farr 40s from 2023 and `arr` finds nothing.
+  so `farr 40 2023` finds Farr 40s from 2023 and `arr` finds nothing. The name
+  is also indexed without its punctuation, so `oneil` finds O'Neil.
 - Results update **as the user types**, within 30 ms of each keystroke, best
   first. Ranking: exact sail number (with or without its country), then name
   prefix, then model prefix, then other token matches; within each, newer
   certificates first, then by name.
-- Case- and accent-insensitive; accepts `GBR1124`, `GBR 1124`, `GBR/1124`.
+- Case- and accent-insensitive (decomposed accents and `İ` included); accepts `GBR1124`, `GBR 1124`, `GBR/1124`.
 - Each result shows name, sail number, model, year, builder, the certificate
   year and a small polar thumbnail (light, medium and strong wind: the
   certificate's wind speeds nearest 6, 12 and 20 kn). Filters: year built

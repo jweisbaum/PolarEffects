@@ -140,7 +140,10 @@ impl Index {
                         hay.push_str(&word);
                     }
                 }
-                for extra in [&sail, &sail_number] {
+                // The name without its punctuation too, so `oneil` finds
+                // O'Neil and `xrated` finds X-Rated.
+                let name = compact(&entry.name);
+                for extra in [&sail, &sail_number, &name] {
                     if !extra.is_empty() {
                         hay.push(' ');
                         hay.push_str(extra);
@@ -261,9 +264,22 @@ mod tests {
         let index = Index::new(&entries);
         let none = Filters::default();
         assert_eq!(ids(&index, &entries, "FROKEN", &none), vec![2]);
+        assert_eq!(ids(&index, &entries, "fro\u{308}ken", &none), vec![2]);
         for query in ["GBR1124", "GBR 1124", "GBR/1124", "gbr-1124"] {
             assert_eq!(ids(&index, &entries, query, &none)[0], 0, "{query}");
         }
+    }
+
+    #[test]
+    fn a_name_is_found_without_its_punctuation() {
+        let mut entries = fleet();
+        entries.push(boat("TUR 1", "TUR", "O'Neil İstanbul", "X-35", 2010, 2024)); // 5
+        let index = Index::new(&entries);
+        let none = Filters::default();
+        assert_eq!(ids(&index, &entries, "oneil", &none), vec![5]);
+        assert_eq!(ids(&index, &entries, "o'neil", &none), vec![5]);
+        assert_eq!(ids(&index, &entries, "istanbul", &none), vec![5]);
+        assert_eq!(ids(&index, &entries, "İSTANBUL", &none), vec![5]);
     }
 
     #[test]

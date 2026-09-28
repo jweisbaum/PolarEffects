@@ -112,7 +112,7 @@ fn catalogue() -> Result<&'static pe_orc::Catalogue> {
 }
 
 /// The catalogue's size, provenance, countries and years.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn orc_catalogue_info() -> Result<OrcCatalogueInfo> {
     info()
 }
@@ -167,7 +167,7 @@ fn thumbnail(record: &pe_core::orc::OrcRecord) -> Vec<OrcThumbCurve> {
 }
 
 /// Searches the catalogue (spec.md 5.2).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn orc_search(
     state: tauri::State<'_, AppState>,
     query: String,
@@ -254,7 +254,7 @@ fn label(record: &pe_core::orc::OrcRecord) -> String {
 /// certificate the project already holds is refused with kind
 /// `"orc-duplicate"` unless `allow_duplicate`: the frontend asks, then calls
 /// again.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn orc_add(
     state: tauri::State<'_, AppState>,
     id: u32,

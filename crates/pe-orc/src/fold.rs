@@ -35,11 +35,17 @@ fn plain(c: char) -> Option<&'static str> {
     })
 }
 
+/// Whether `c` is a combining diacritical mark (U+0300–U+036F): the accent
+/// of decomposed text (`e` + U+0301), and the dot `İ` lower-cases to.
+fn combining(c: char) -> bool {
+    ('\u{300}'..='\u{36f}').contains(&c)
+}
+
 /// Lower-cases `text` and removes accents.
 pub fn fold(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for upper in text.chars() {
-        for c in upper.to_lowercase() {
+        for c in upper.to_lowercase().filter(|c| !combining(*c)) {
             match plain(c) {
                 Some(ascii) => out.push_str(ascii),
                 None => out.push(c),
@@ -77,6 +83,9 @@ mod tests {
         assert_eq!(fold("Æolus"), "aeolus");
         assert_eq!(fold("Łódź"), "lodz");
         assert_eq!(fold("J/109"), "j/109");
+        // Decomposed accents, and the Turkish dotted capital I.
+        assert_eq!(fold("Fro\u{308}ken Jose\u{301}"), "froken jose");
+        assert_eq!(fold("İSTANBUL"), "istanbul");
     }
 
     #[test]

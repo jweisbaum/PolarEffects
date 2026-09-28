@@ -120,8 +120,10 @@ npm run check:offline       # invariant 4
 # Regenerate TS bindings after changing any IPC-facing Rust type
 npm run bindings            # cargo run -p pe-app --example export_bindings
 
-# Rebuild the embedded ORC catalogue from a jieter/orc-data checkout
-cargo run -p orc-catalogue-builder --release -- ../orc-data/site/data \
+# Rebuild the embedded ORC catalogue from a jieter/orc-data git checkout
+# (read from its HEAD commit; the build date is that commit's date unless
+# SOURCE_DATE_EPOCH is set, so rebuilding the same commit is byte-identical)
+cargo run -p orc-catalogue-builder -- ../orc-data/site/data \
     crates/pe-orc/data/catalogue.bin
 
 # Tests that use the network on purpose (never in the default suite)
