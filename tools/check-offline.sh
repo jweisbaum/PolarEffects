@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# Enforces invariant 4: nothing is fetched that the user did not ask for, and
+# only two crates may use the network, each for its allow-listed hosts.
+#
+# Adapted from VectorEffects. Four layers, each checking what it can check:
+#
+#   1. Hand-written sources     -- any absolute URL is suspicious, so flag all,
+#      except in `pe-env` and `pe-trackers`, where every URL must name one of
+#      that crate's allow-listed hosts.
+#   2. Dependencies             -- a network client crate may be a direct
+#      dependency of those two crates only, and no C library that the five
+#      targets cannot all build (OpenSSL, blosc) may be in the lockfile.
+#   3. The built bundle         -- only remote *resource references* are flagged.
+#      A minified bundle is full of documentation URLs inside error strings
+#      (React links to react.dev when it throws); scanning it for `http` finds
+#      hundreds of those and nothing useful. What matters is whether the HTML or
+#      CSS actually loads something remote.
+#   4. The CSP                  -- the runtime enforcement. Even if a remote URL
+#      slipped through, `default-src 'self'` stops the load. So the CSP itself
+#      is checked for having been weakened.
+set -uo pipefail
+cd "$(dirname "$0")/.."
+
+CONF=crates/pe-app/tauri.conf.json
+
+# Legitimately present, never fetched by the shipped app: the JSON schema
+# reference, the dev server, and the Tauri IPC origin.
+# `.localhost` is a reserved TLD (RFC 6761) that never resolves off-machine, so
+# the Tauri IPC origin's Windows form is local by definition.
+# The SVG XML namespace is an identifier, never a location: an XML parser
+# compares it as a string and dereferences nothing.
+# `.invalid` is reserved by RFC 2606 and never resolves, which is what makes it
+# the right host for a test that must not reach anything.
+ALLOW='schema\.tauri\.app|//localhost:|\.localhost|//127\.0\.0\.1|www\.w3\.org/2000/svg|\.invalid'
+# Pure comment lines. A URL in a comment fetches nothing, and the generated
+# ts-rs bindings carry a provenance URL in their header.
+COMMENT=':[0-9]+:[[:space:]]*(//|\*|/\*)'
+# A URL as it appears in source: up to a quote, space, bracket or backtick.
+URL='https?://[^"'"'"'`[:space:])>]+'
+
+# The two network crates and their hosts (CLAUDE.md invariant 4). Each URL in
+# them must *start* with one of these, so a line naming an allowed host cannot
+# smuggle a second one past the check. `{…}` stands for a format placeholder
+# in a subdomain, which is how Geovoile's per-race hosts are built.
+ENV_HOSTS='^https?://(storage\.googleapis\.com/weatherbench2|storage\.googleapis\.com/gcp-public-data-arco-era5|s3\.waw3-1\.cloudferro\.com/mdl-arco-)'
+TRACKER_HOSTS='^https?://((cf\.)?yb\.tl|([A-Za-z0-9_{}-]+\.)*geovoile\.com|api\.bluewatertracks\.com)([/:?#]|$)'
+
+fail=0
+report() {
+  echo "OFFLINE CHECK FAILED -- $1:"
+  echo "$2" | sed 's/^/  /'
+  fail=1
+}
+
+# Every URL on the non-comment lines of the given .rs files under a crate,
+# as `file:line:url`, minus the always-local ones.
+urls_in() {
+  find "$1" -name '*.rs' -exec grep -nHE 'https?://' {} + 2>/dev/null \
+    | grep -vE "$COMMENT" \
+    | while IFS= read -r line; do
+        loc=$(echo "$line" | cut -d: -f1-2)
+        echo "$line" | cut -d: -f3- | grep -oE "$URL" | grep -vE "$ALLOW" | sed "s|^|$loc:|"
+      done
+}
+
+# --- 1. Hand-written sources -------------------------------------------------
+hits=$(grep -rnE 'https?://' ui/src ui/index.html 2>/dev/null \
+  | grep -vE "$COMMENT" | grep -vE "$ALLOW" || true)
+[ -n "$hits" ] && report "absolute URL in frontend source" "$hits"
+
+# Everywhere but the two network crates, a URL in Rust is a finding, so a fetch
+# that creeps into another crate is caught -- which is the whole point of
+# naming the exceptions here.
+hits=$(find crates -name '*.rs' -not -path 'crates/pe-env/*' -not -path 'crates/pe-trackers/*' \
+  -exec grep -nHE 'https?://' {} + 2>/dev/null \
+  | grep -vE "$COMMENT" | grep -vE "$ALLOW" || true)
+[ -n "$hits" ] && report "absolute URL in rust source" "$hits"
+
+# In those crates, only the hosts they exist to read.
+hits=$(urls_in crates/pe-env | grep -vE ":[0-9]+:${ENV_HOSTS#^}" || true)
+[ -n "$hits" ] && report "unexpected remote host in pe-env" "$hits"
+
+hits=$(urls_in crates/pe-trackers | grep -vE ":[0-9]+:${TRACKER_HOSTS#^}" || true)
+[ -n "$hits" ] && report "unexpected remote host in pe-trackers" "$hits"
+
+hits=$(grep -nE 'https?://' "$CONF" 2>/dev/null | grep -vE "$ALLOW" || true)
+[ -n "$hits" ] && report "absolute URL in tauri.conf.json" "$hits"
+
+# --- 2. Dependencies ---------------------------------------------------------
+# A network client named as a direct dependency outside the two network crates.
+NET_CRATES='reqwest|ureq|hyper|hyper-util|isahc|curl|attohttpc|surf|tokio-tungstenite|tungstenite|zarrs_http'
+hits=$(find crates -name Cargo.toml -not -path 'crates/pe-env/*' -not -path 'crates/pe-trackers/*' \
+  -exec grep -nHE "^[[:space:]]*($NET_CRATES)[[:space:]]*=" {} + 2>/dev/null || true)
+[ -n "$hits" ] && report "network client dependency outside pe-env and pe-trackers" "$hits"
+
+# C libraries the Windows ARM64 and cross-compiled builds cannot rely on
+# (spec.md 1.3, CLAUDE.md): rustls with ring instead of OpenSSL or native-tls,
+# our own Blosc decoder instead of blosc-src. The lockfile lists every
+# platform's dependencies, so this holds for all five targets at once.
+if [ -f Cargo.lock ]; then
+  hits=$(grep -nE '^name = "(openssl|openssl-sys|native-tls|blosc-src|blosc-sys|zarrs_http)"' Cargo.lock || true)
+  [ -n "$hits" ] && report "forbidden dependency in Cargo.lock" "$hits"
+fi
+
+# --- 3. Built bundle: remote resource references only ------------------------
+if [ -d ui/dist ]; then
+  # <script src="http...">, <link href="http...">, and CSS url(http...)/@import.
+  hits=$(grep -rnE '(src|href)[[:space:]]*=[[:space:]]*"https?://|url\([[:space:]]*["'"'"']?https?://|@import[^;]*https?://' \
+    ui/dist 2>/dev/null | grep -vE "$ALLOW" || true)
+  [ -n "$hits" ] && report "remote resource reference in built bundle" "$hits"
+
+  # A websocket is the one network call that no CSP default-src catches loosely.
+  hits=$(grep -rnoE 'wss?://[A-Za-z0-9.-]+' ui/dist 2>/dev/null | grep -vE "$ALLOW" || true)
+  [ -n "$hits" ] && report "websocket URL in built bundle" "$hits"
+fi
+
+# --- 4. CSP: the actual runtime enforcement ----------------------------------
+csp=$(grep -o '"csp"[^,]*' "$CONF" 2>/dev/null || true)
+if [ -z "$csp" ]; then
+  report "tauri.conf.json" "no CSP is declared"
+elif ! echo "$csp" | grep -q "default-src 'self'"; then
+  report "CSP" "default-src must be 'self', got: $csp"
+elif echo "$csp" | grep -qE "\*|https://" ; then
+  report "CSP" "allows a wildcard or remote origin: $csp"
+fi
+
+if [ "$fail" -eq 0 ]; then
+  echo "offline check passed: no remote references, network only in pe-env and pe-trackers, CSP is 'self'-only"
+fi
+exit "$fail"
