@@ -19,6 +19,8 @@ import type { BoatInput } from "./generated/BoatInput";
 import type { ChunkCacheSettings } from "./generated/ChunkCacheSettings";
 import type { ChunkCacheStatus } from "./generated/ChunkCacheStatus";
 import type { CsvMappingInput } from "./generated/CsvMappingInput";
+import type { EnvEstimate } from "./generated/EnvEstimate";
+import type { EnvJobsStatus } from "./generated/EnvJobsStatus";
 import type { MapProjection } from "./generated/MapProjection";
 import type { NetworkSettings } from "./generated/NetworkSettings";
 import type { OrcCatalogueInfo } from "./generated/OrcCatalogueInfo";
@@ -72,6 +74,7 @@ const LONG_RUNNING: Readonly<Record<string, string>> = {
   inspect_track_files: msg("Reading track files"),
   inspect_csv_track: msg("Reading track files"),
   import_track_files: msg("Importing tracks"),
+  env_estimate: msg("Estimating the download"),
   orc_catalogue_info: msg("Loading the ORC catalogue"),
 };
 
@@ -200,6 +203,31 @@ export const api = {
   /** One sample's time, position, motion and environment, for the map's hover. */
   sampleDetails: (sourceId: number, sampleId: number) =>
     call<SampleDetails>("sample_details", { sourceId, sampleId }),
+
+  // The environment of track samples (spec.md 7.5, 7.7, 13). Progress
+  // arrives as `ENV_PROGRESS` events; `ENV_CHANGED` says the project changed
+  // under a running fetch.
+
+  /**
+   * What fetching the named tracks would download, hourly and 3-hourly,
+   * less what the chunk cache already holds, and which interval to offer
+   * first. `restart` counts every sample, not only the missing ones.
+   */
+  envEstimate: (sourceIds: number[], restart: boolean) =>
+    call<EnvEstimate>("env_estimate", { sourceIds, restart }),
+  /** Queues the named tracks' fetch: what is missing, or everything with `restart`. */
+  startEnvFetch: (sourceIds: number[], interval: "hourly" | "three_hourly", restart: boolean) =>
+    call<EnvJobsStatus>("start_env_fetch", { sourceIds, interval, restart }),
+  /** Cancels the named tracks' fetches, or every fetch for null; finished samples are kept. */
+  cancelEnvFetch: (sourceIds: number[] | null = null) =>
+    call<EnvJobsStatus>("cancel_env_fetch", { sourceIds }),
+  /** The fetch queue now. */
+  envJobs: () => call<EnvJobsStatus>("env_jobs"),
+  /** Feeds the polar from current-corrected values, or ground values (undoable). */
+  setUseCorrected: (on: boolean) => call<ProjectSummary>("set_use_corrected", { on }),
+  /** Includes Stokes drift in the global merged current from the next fetch (undoable). */
+  setStokesDrift: (on: boolean) => call<ProjectSummary>("set_stokes_drift", { on }),
+
   /** Every visible track for the map, packed as binary (layout in `map/trackPacket.ts`). */
   mapTracks: async (): Promise<TrackPacket> => {
     const bytes = await call<ArrayBuffer | number[]>("map_tracks");
@@ -280,6 +308,11 @@ export const api = {
    */
   quitApp: (discardUnsaved: boolean) => call<void>("quit_app", { discardUnsaved }),
 };
+
+/** The event carrying the environment fetch queue as it changes. */
+export const ENV_PROGRESS = "env://progress";
+/** The event saying a fetch wrote into the open project. */
+export const ENV_CHANGED = "env://changed";
 
 /** The event Rust sends when the user asks to quit or close the window. */
 export const QUIT_REQUESTED = "app://quit-requested";

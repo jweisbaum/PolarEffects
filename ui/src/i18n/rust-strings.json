@@ -20,5 +20,7 @@
   "Exclude dots",
   "Include dots",
   "Change sample filters",
-  "Change heading and speed derivation"
+  "Change heading and speed derivation",
+  "Change current correction",
+  "Change Stokes drift"
 ]

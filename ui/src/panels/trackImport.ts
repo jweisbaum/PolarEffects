@@ -8,6 +8,7 @@
  * English goes in the tooltip, like every other error.
  */
 import type { CsvMappingInput } from "../generated/CsvMappingInput";
+import type { EnvJobTrack } from "../generated/EnvJobTrack";
 import type { TrackImportFailure } from "../generated/TrackImportFailure";
 import type { TrackImportLine } from "../generated/TrackImportLine";
 import type { TrackSummary } from "../generated/TrackSummary";
@@ -96,9 +97,20 @@ const ENV_STATUS: Record<string, string> = {
   failed: msg("failed"),
 };
 
-/** The environment status column (spec.md 7.1). */
-export function envStatusText(track: TrackSummary): string {
+/**
+ * The environment status column (spec.md 7.1): "fetching n %" or "queued"
+ * while a job has the track, else what the project records.
+ */
+export function envStatusText(track: TrackSummary, job?: EnvJobTrack): string {
+  if (job?.state === "fetching") return t("fetching {percent} %", { percent: Math.floor(job.fraction * 100) });
+  if (job?.state === "queued") return t("queued");
   return t(ENV_STATUS[track.env_status] ?? ENV_STATUS.not_fetched!);
+}
+
+/** A download size, for the fetch's pre-flight. */
+export function formatBytes(bytes: number): string {
+  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
+  return `${Math.max(1, Math.round(bytes / 1e6))} MB`;
 }
 
 /** The column roles of the CSV mapping step, in the order they are shown. */

@@ -284,7 +284,17 @@ button.icon-button { padding: 0 5px; line-height: 16px; font-size: 11px; }
 .track-filters p { margin: 0; font-size: 11px; }
 .track-field { display: grid; grid-template-columns: 1fr 9.5rem; align-items: center; gap: 6px; font-size: 12px; }
 .track-field input, .track-field select { min-width: 0; }
-.track-env-filters { border: 1px dashed var(--border); border-radius: 6px; margin: 0; padding: 2px 6px 4px; font-size: 11px; }
+.track-env-filters { border: 1px dashed var(--border); border-radius: 6px; margin: 0; padding: 2px 6px 4px; font-size: 11px; display: grid; gap: 4px; }
+.track-env-filters legend { font-size: 11px; padding: 0 4px; }
+.track-range { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.track-range .track-field { grid-template-columns: 1fr 4.5rem; }
+.track-wave-sectors { border: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: 11px; }
+.track-wave-sectors legend { padding: 0; }
+.track-env-options { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; margin: 0 0 6px; }
+.env-fetch-interval { border: none; margin: 8px 0; padding: 0; display: grid; gap: 4px; }
+.env-jobs { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; white-space: nowrap; }
+.env-jobs-bar { display: inline-block; width: 60px; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; }
+.env-jobs-bar > span { display: block; height: 100%; background: var(--accent); }
 .track-import-summary { list-style: none; margin: 0 0 6px; padding: 4px 6px; font-size: 11px; }
 .track-import-summary li { padding: 1px 0; overflow-wrap: anywhere; }
 .track-import { width: min(860px, 94vw); max-height: 88vh; display: flex; flex-direction: column; }

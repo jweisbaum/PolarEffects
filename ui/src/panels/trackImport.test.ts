@@ -20,7 +20,7 @@ describe("the track import's words", () => {
 
   it("summarises an import, sorted and merged fixes included", () => {
     expect(describeImportLine({
-      file: "a.csv", label: "Alpha", fixes: 3, out_of_order: 1, duplicates: 1,
+      source_id: 7, file: "a.csv", label: "Alpha", fixes: 3, out_of_order: 1, duplicates: 1,
       heading_given: 0, heading_derived: 3, speed_given: 2, speed_derived: 1,
     })).toBe("Alpha: 3 positions · 1 out of order, sorted · 1 duplicate times merged · heading 0 given, 3 derived · speed 2 given, 1 derived");
   });

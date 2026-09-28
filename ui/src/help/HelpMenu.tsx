@@ -70,8 +70,10 @@ export default function HelpMenu() {
   }, [open]);
 
   // A feature with no way on screen from here would only lead to its help
-  // page, which the pages below already do.
-  const features = searchFeatures(query).filter(m => m.feature.reveal?.length || present(m.feature.id))
+  // page, which the pages below already do. One shown only while something
+  // runs (Cancel fetch) is found where it appears: its landing.
+  const features = searchFeatures(query)
+    .filter(m => m.feature.reveal?.length || present(m.feature.landing ?? m.feature.id))
     .slice(0, FEATURE_LIMIT).map(m => ({ kind: "feature", feature: m.feature }) as const);
   const topics = query.trim() ? searchTopics(query).slice(0, TOPIC_LIMIT).map(topic => ({ kind: "topic", topic }) as const) : [];
   const results: Result[] = [...features, ...topics, { kind: "reference" }];

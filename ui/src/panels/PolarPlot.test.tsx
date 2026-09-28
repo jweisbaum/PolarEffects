@@ -23,7 +23,7 @@ const source = (overrides: Partial<SourceSummary> = {}): SourceSummary => ({
 
 const project = (overrides: Partial<ProjectSummary> = {}): ProjectSummary => ({
   id: 1, name: "P", path: null, dirty: false, revision: 1, boat_name: "", boat_notes: "",
-  sources: [source()], can_undo: false, can_redo: false, undo_label: null, redo_label: null,
+  sources: [source()], can_undo: false, can_redo: false, undo_label: null, redo_label: null, use_corrected: true, stokes_drift: false,
   ...overrides,
 });
 

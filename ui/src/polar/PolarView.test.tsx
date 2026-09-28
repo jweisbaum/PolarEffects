@@ -75,7 +75,7 @@ function packet(excluded = false): ScenePacket {
 const project = (revision: number): ProjectSummary => ({
   id: 1, name: "P", path: null, dirty: false, revision, boat_name: "", boat_notes: "",
   sources: [{ id: 10, kind: "orc", label: "Farr 40", colour: "#ff0000", visible: true, weight: 1, count: 2, used: null, polar_file: null, orc: null, track: null }],
-  can_undo: false, can_redo: false, undo_label: null, redo_label: null,
+  can_undo: false, can_redo: false, undo_label: null, redo_label: null, use_corrected: true, stokes_drift: false,
 });
 
 const onProject = vi.fn();

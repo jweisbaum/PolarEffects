@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { reportFailure } from "../errors";
 import type { ProjectSummary } from "../generated/ProjectSummary";
@@ -10,10 +10,12 @@ import type { TrackImportLine } from "../generated/TrackImportLine";
 import type { TrackSummary } from "../generated/TrackSummary";
 import { onReveal } from "../help/highlight";
 import { setHint } from "../hint";
-import { useT } from "../i18n";
+import { msg, useT } from "../i18n";
 import { api } from "../ipc";
+import { envJobOf, useEnvJobs } from "../jobs";
 import { pickTrackFiles } from "../project/dialogs";
 import { focusMap } from "../selection";
+import EnvFetchDialog from "./EnvFetchDialog";
 import TrackImportDialog from "./TrackImportDialog";
 import { dateRange, describeImportLine, describeTrackFailure, envStatusText, fromLocalInput, toLocalInput } from "./trackImport";
 
@@ -34,6 +36,9 @@ export default function Tracks({ project, onProject }: {
   const [imported, setImported] = useState<TrackImportLine[]>([]);
   const [failures, setFailures] = useState<TrackImportFailure[]>([]);
   const [open, setOpen] = useState<number | null>(null);
+  // The fetch pre-flight: which tracks, and whether to fetch every sample again.
+  const [fetching, setFetching] = useState<{ ids: number[]; restart: boolean } | null>(null);
+  const closeFetch = useCallback(() => setFetching(null), []);
   const tracks = project.sources.filter((s) => s.track !== null);
   const later = t("Arrives in a later version");
   // The search's `track:details` step unfolds the first track's filters.
@@ -64,6 +69,7 @@ export default function Tracks({ project, onProject }: {
           {t("File…")}
         </button>
       </div>
+      {tracks.length > 0 && <EnvOptions project={project} onProject={onProject} />}
       {imported.length > 0 && (
         <ul className="track-import-summary" aria-label={t("Last import")}>
           {imported.map((line, k) => <li key={k}>{describeImportLine(line)}</li>)}
@@ -80,7 +86,8 @@ export default function Tracks({ project, onProject }: {
           {tracks.map((source) => (
             <TrackItem key={source.id} source={source} track={source.track!} open={open === source.id}
               onToggle={() => setOpen(open === source.id ? null : source.id)}
-              onRemove={() => remove(source.id)} onProject={onProject} />
+              onRemove={() => remove(source.id)} onProject={onProject}
+              onRefetch={() => setFetching({ ids: [source.id], restart: source.track!.env_status === "ready" })} />
           ))}
         </ul>}
       {inspections !== null && (
@@ -92,22 +99,52 @@ export default function Tracks({ project, onProject }: {
             setFailures(result.failures);
             const count = result.imported.length;
             if (count > 0) setHint(count === 1 ? t("Imported 1 track.") : t("Imported {count} tracks.", { count }));
+            // Importing starts the environment fetch (spec.md 7.5), after its
+            // pre-flight (spec.md 13).
+            if (count > 0) setFetching({ ids: result.imported.map((line) => line.source_id), restart: false });
           }} />
       )}
+      {fetching !== null && <EnvFetchDialog sourceIds={fetching.ids} restart={fetching.restart} onClose={closeFetch} />}
     </>
   );
 }
 
-function TrackItem({ source, track, open, onToggle, onRemove, onProject }: {
+/**
+ * The project's current settings (spec.md 7.5, 7.5.1): whether the polar is
+ * fed from water-relative values where a current was found, and whether the
+ * global merged current includes Stokes drift (for the next fetch). Each
+ * change is one undo.
+ */
+function EnvOptions({ project, onProject }: { project: ProjectSummary; onProject: (project: ProjectSummary) => void }) {
+  const t = useT();
+  return (
+    <div className="track-env-options">
+      <label title={t("Take the current out of boat speed and wind where a current was found, so the polar is through the water")}>
+        <input type="checkbox" data-feature="tracks:use-corrected" checked={project.use_corrected}
+          onChange={(e) => { api.setUseCorrected(e.target.checked).then(onProject).catch(reportFailure); }} />
+        {t("Correct for current")}
+      </label>
+      <label title={t("Add Stokes drift to the global merged current; applies to the next fetch")}>
+        <input type="checkbox" data-feature="tracks:stokes-drift" checked={project.stokes_drift}
+          onChange={(e) => { api.setStokesDrift(e.target.checked).then(onProject).catch(reportFailure); }} />
+        {t("Include Stokes drift")}
+      </label>
+    </div>
+  );
+}
+
+function TrackItem({ source, track, open, onToggle, onRemove, onProject, onRefetch }: {
   source: SourceSummary;
   track: TrackSummary;
   open: boolean;
   onToggle: () => void;
   onRemove: () => void;
   onProject: (project: ProjectSummary) => void;
+  onRefetch: () => void;
 }) {
   const t = useT();
-  const later = t("Arrives with the environment fetch");
+  const later = t("Arrives in a later version");
+  const job = envJobOf(useEnvJobs(), source.id);
   return (
     <li className="track-item">
       <div className="track-row">
@@ -120,7 +157,7 @@ function TrackItem({ source, track, open, onToggle, onRemove, onProject }: {
           <span className="muted polar-file-meta">
             {t("{used} of {count} samples used", { used: source.used ?? 0, count: track.samples })}
             {" · "}
-            {t("Environment: {status}", { status: envStatusText(track) })}
+            {t("Environment: {status}", { status: envStatusText(track, job) })}
           </span>
         </span>
         <button className="icon-button" data-feature="tracks:show-on-map" disabled={!source.visible}
@@ -142,7 +179,15 @@ function TrackItem({ source, track, open, onToggle, onRemove, onProject }: {
           <TrackFiltersEditor id={source.id} track={track} onProject={onProject} />
           <DerivationEditor id={source.id} track={track} onProject={onProject} />
           <div className="section-actions">
-            <button className="small" data-feature="tracks:refetch" disabled title={later}>{t("Refetch environment")}</button>
+            {job
+              ? <button className="small" data-feature="tracks:cancel-fetch" title={t("Stop this track's fetch; samples already fetched are kept")}
+                onClick={() => { api.cancelEnvFetch([source.id]).catch(reportFailure); }}>{t("Cancel fetch")}</button>
+              : <button className="small" data-feature="tracks:refetch" onClick={onRefetch}
+                title={track.env_status === "ready"
+                  ? t("Fetch this track's wind, waves and current again, every sample")
+                  : t("Fetch the wind, waves and current this track's samples do not have yet")}>
+                {t("Refetch environment")}
+              </button>}
             <button className="small" data-feature="tracks:export-grib" disabled title={later}>{t("Export reanalysis GRIB…")}</button>
           </div>
         </div>
@@ -150,6 +195,15 @@ function TrackItem({ source, track, open, onToggle, onRemove, onProject }: {
     </li>
   );
 }
+
+/** The wave sectors off the bow (spec.md 7.6). */
+const WAVE_SECTORS: [string, string][] = [
+  ["head", msg("Head (under 30°)")],
+  ["bow", msg("Bow (30–60°)")],
+  ["beam", msg("Beam (60–120°)")],
+  ["quarter", msg("Quarter (120–150°)")],
+  ["following", msg("Following (from 150°)")],
+];
 
 /** A number field that commits on Enter or leaving it; empty is "no bound". */
 function NumberField({ feature, label, title, value, min, max, step, onCommit }: {
@@ -220,7 +274,7 @@ function TrackFiltersEditor({ id, track, onProject }: {
     { id: "given", label: t("Given only") },
     { id: "derived", label: t("Derived only") },
   ];
-  const needsWind = t("Needs the environment, which arrives with the reanalysis fetch");
+  const needsWind = t("These filters read the environment, which this track does not have yet; with one set, samples without it are left out.");
   return (
     <fieldset className="track-filters">
       <legend>{t("Sample filters")}</legend>
@@ -256,9 +310,79 @@ function TrackFiltersEditor({ id, track, onProject }: {
           {origins.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
         </select>
       </label>
-      <fieldset className="track-env-filters" disabled data-feature="tracks:env-filters" title={needsWind}>
+      <fieldset className="track-env-filters">
         <legend>{t("Wind, waves and current")}</legend>
-        <span className="muted">{t("TWS, TWA, wave height and direction, and current speed filters need the environment.")}</span>
+        {track.env_status === "not_fetched" && <p className="muted">{needsWind}</p>}
+        <div className="track-range">
+          <NumberField feature="tracks:tws-min" label={t("TWS from (kn)")} value={f.tws_min} min={0} max={200} step={1}
+            title={t("Leave out samples in less wind than this; empty for no minimum")} onCommit={(v) => set({ tws_min: v })} />
+          <NumberField feature="tracks:tws-max" label={t("to (kn)")} value={f.tws_max} min={0} max={200} step={1}
+            title={t("Leave out samples in more wind than this; empty for no maximum")} onCommit={(v) => set({ tws_max: v })} />
+        </div>
+        <div className="track-range">
+          <NumberField feature="tracks:twa-min" label={t("TWA from (°)")} value={f.twa_min} min={0} max={180} step={5}
+            title={t("Leave out samples closer to the wind than this")} onCommit={(v) => set({ twa_min: v })} />
+          <NumberField feature="tracks:twa-max" label={t("to (°)")} value={f.twa_max} min={0} max={180} step={5}
+            title={t("Leave out samples further off the wind than this")} onCommit={(v) => set({ twa_max: v })} />
+        </div>
+        <div className="track-range">
+          <NumberField feature="tracks:hs-min" label={t("Wave height from (m)")} value={f.hs_min} min={0} max={100} step={0.5}
+            title={t("Leave out samples in smaller waves than this")} onCommit={(v) => set({ hs_min: v })} />
+          <NumberField feature="tracks:hs-max" label={t("to (m)")} value={f.hs_max} min={0} max={100} step={0.5}
+            title={t("Leave out samples in bigger waves than this")} onCommit={(v) => set({ hs_max: v })} />
+        </div>
+        <label className="track-field">
+          {t("Wave direction")}
+          <select data-feature="tracks:wave-mode" value={f.wave_mode}
+            title={t("Keep samples by where the waves come from: off the bow by sector or angle, or by compass direction")}
+            onChange={(e) => set({ wave_mode: e.target.value })}>
+            <option value="off">{t("Any")}</option>
+            <option value="sectors">{t("Sectors off the bow")}</option>
+            <option value="relative">{t("Angle off the bow")}</option>
+            <option value="absolute">{t("Compass direction")}</option>
+          </select>
+        </label>
+        {f.wave_mode === "sectors" && (
+          <fieldset className="track-wave-sectors" data-feature="tracks:wave-sectors">
+            <legend>{t("Waves from")}</legend>
+            {WAVE_SECTORS.map(([id, label]) => (
+              <label key={id}>
+                <input type="checkbox" checked={f.wave_sectors.includes(id)} onChange={(e) => set({
+                  wave_sectors: e.target.checked ? [...f.wave_sectors, id] : f.wave_sectors.filter((s) => s !== id),
+                })} />
+                {t(label)}
+              </label>
+            ))}
+          </fieldset>
+        )}
+        {f.wave_mode === "relative" && (
+          <div className="track-range">
+            <NumberField feature="tracks:wave-min" label={t("Off the bow from (°)")} value={f.wave_min} min={0} max={180} step={5}
+              title={t("0° is head seas, 180° following seas")} onCommit={(v) => set({ wave_min: v })} />
+            <NumberField feature="tracks:wave-max" label={t("to (°)")} value={f.wave_max} min={0} max={180} step={5}
+              title={t("0° is head seas, 180° following seas")} onCommit={(v) => set({ wave_max: v })} />
+          </div>
+        )}
+        {f.wave_mode === "absolute" && (
+          <div className="track-range">
+            <NumberField feature="tracks:wave-from" label={t("From the compass (°)")} value={f.wave_from} min={0} max={360} step={10}
+              title={t("Waves coming from this direction, clockwise to the next")} onCommit={(v) => set({ wave_from: v })} />
+            <NumberField feature="tracks:wave-to" label={t("to (°)")} value={f.wave_to} min={0} max={360} step={10}
+              title={t("Waves coming from up to this direction")} onCommit={(v) => set({ wave_to: v })} />
+          </div>
+        )}
+        <div className="track-range">
+          <NumberField feature="tracks:current-min" label={t("Current from (kn)")} value={f.current_min} min={0} max={100} step={0.1}
+            title={t("Leave out samples in less current than this")} onCommit={(v) => set({ current_min: v })} />
+          <NumberField feature="tracks:current-max" label={t("to (kn)")} value={f.current_max} min={0} max={100} step={0.1}
+            title={t("Leave out samples in more current than this")} onCommit={(v) => set({ current_max: v })} />
+        </div>
+        <label className="track-field">
+          <input type="checkbox" data-feature="tracks:no-tide" checked={f.exclude_no_tide}
+            title={t("Leave out samples whose current comes from a source without tides")}
+            onChange={(e) => set({ exclude_no_tide: e.target.checked })} />
+          {t("Leave out currents without tide ({count})", { count: track.no_tide })}
+        </label>
       </fieldset>
     </fieldset>
   );

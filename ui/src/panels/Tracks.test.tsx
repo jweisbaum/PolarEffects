@@ -32,9 +32,11 @@ let root: Root;
 
 const TRACK: TrackSummary = {
   origin: "file", boat_name: "Alpha", event_title: "fleet.geojson", start: 1_753_531_200, end: 1_753_617_600,
-  samples: 120, filtered: 20, excluded: 0, used: 100, with_wind: 0, env_status: "not_fetched", max_gap_s: 10_800,
+  samples: 120, filtered: 20, excluded: 0, used: 100, with_wind: 0, env_status: "not_fetched", env_fetched: 0, env_interval: null, no_tide: 0, max_gap_s: 10_800,
   prefer: "given", environment_filters: false,
-  filters: { time_start: null, time_end: null, min_bsp: 1, max_bsp: null, max_heading_change: 30, heading_origin: "any", speed_origin: "any" },
+  filters: { time_start: null, time_end: null, min_bsp: 1, max_bsp: null, max_heading_change: 30, heading_origin: "any", speed_origin: "any",
+    tws_min: null, tws_max: null, twa_min: null, twa_max: null, hs_min: null, hs_max: null, current_min: null, current_max: null,
+    wave_mode: "off", wave_sectors: [], wave_min: null, wave_max: null, wave_from: null, wave_to: null, exclude_no_tide: false },
 };
 const SOURCE: SourceSummary = {
   id: 5, kind: "track", label: "Alpha", colour: "#e15759", visible: true, weight: 1, count: 120, used: 100,
@@ -42,7 +44,7 @@ const SOURCE: SourceSummary = {
 };
 const project = (sources: SourceSummary[]): ProjectSummary => ({
   id: 1, name: "P", path: null, dirty: false, revision: 1, boat_name: "", boat_notes: "", sources,
-  can_undo: false, can_redo: false, undo_label: null, redo_label: null,
+  can_undo: false, can_redo: false, undo_label: null, redo_label: null, use_corrected: true, stokes_drift: false,
 });
 
 const CSV: TrackFileInspection = {
@@ -106,8 +108,81 @@ it("edits the filters and the derivation through their commands", async () => {
     prefer.dispatchEvent(new Event("change", { bubbles: true }));
   });
   expect(calls.find(([n]) => n === "setTrackDerivation")?.[1]).toEqual([5, 10_800, "derived"]);
-  // The environment filters are there, and wait for the environment.
-  expect((q('[data-feature="tracks:env-filters"]') as HTMLFieldSetElement).disabled).toBe(true);
+  // The environment filters are edited the same way (spec.md 7.6).
+  const tws = q('[data-feature="tracks:tws-min"]') as HTMLInputElement;
+  await act(async () => {
+    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    set.call(tws, "8");
+    tws.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => { tws.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); });
+  expect(calls.filter(([n]) => n === "setTrackFilters").at(-1)?.[1]).toEqual([5, { ...TRACK.filters, tws_min: 8 }]);
+  const mode = q('[data-feature="tracks:wave-mode"]') as HTMLSelectElement;
+  await act(async () => {
+    mode.value = "sectors";
+    mode.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  expect(calls.filter(([n]) => n === "setTrackFilters").at(-1)?.[1]).toEqual([5, { ...TRACK.filters, wave_mode: "sectors" }]);
+});
+
+it("offers the fetch after an import, with its download estimate, and starts it", async () => {
+  responses.inspectTrackFiles = [GEOJSON];
+  const line = {
+    source_id: 5, file: "fleet.geojson", label: "Alpha", fixes: 3, out_of_order: 0, duplicates: 0,
+    heading_given: 0, heading_derived: 3, speed_given: 0, speed_derived: 3,
+  };
+  responses.importTrackFiles = { project: project([SOURCE]), imported: [line], failures: [] };
+  responses.envEstimate = {
+    samples: 120, hourly_bytes: 250_000_000, three_hourly_bytes: 90_000_000, cached_bytes: 0,
+    cache_limit_bytes: 20 * 2 ** 30, recommended: "hourly",
+  };
+  responses.startEnvFetch = { tracks: [], failure: null };
+  await act(async () => root.render(<Tracks project={project([])} onProject={() => undefined} />));
+  await click(q('[data-feature="tracks:import-file"]'));
+  await settle();
+  await click(q(".modal-actions button.primary"));
+  await settle();
+  // The import dialog gave way to the fetch's pre-flight.
+  expect(calls.find(([n]) => n === "envEstimate")?.[1]).toEqual([[5], false]);
+  const text = q("[role=dialog]")!.textContent!;
+  expect(text).toContain("120 samples");
+  expect(text).toContain("Hourly: about 250 MB to download");
+  expect(text).toContain("Every 3 hours: about 90 MB to download");
+  expect((q('[data-feature="env-fetch:hourly"]') as HTMLInputElement).checked).toBe(true);
+  await click(q('[data-feature="env-fetch:three-hourly"]'));
+  await click(q(".modal-actions button.primary"));
+  await settle();
+  expect(calls.find(([n]) => n === "startEnvFetch")?.[1]).toEqual([[5], "three_hourly", false]);
+  expect(q("[role=dialog]")).toBeNull();
+});
+
+it("preselects 3-hourly for a download bigger than half the cache (D19)", async () => {
+  responses.envEstimate = {
+    samples: 9000, hourly_bytes: 19e9, three_hourly_bytes: 6.4e9, cached_bytes: 1e9,
+    cache_limit_bytes: 20 * 2 ** 30, recommended: "three_hourly",
+  };
+  await act(async () => root.render(<Tracks project={project([SOURCE])} onProject={() => undefined} />));
+  await click(q('[data-feature="tracks:filters"]'));
+  await click(q('[data-feature="tracks:refetch"]'));
+  await settle();
+  expect(calls.find(([n]) => n === "envEstimate")?.[1]).toEqual([[5], false]);
+  expect((q('[data-feature="env-fetch:three-hourly"]') as HTMLInputElement).checked).toBe(true);
+  expect(q("[role=dialog]")!.textContent).toContain("1.0 GB of it is already in the chunk cache.");
+  // Not now fetches nothing.
+  await click([...host.querySelectorAll(".modal-actions button")].find((b) => b.textContent === "Not now")!);
+  expect(calls.filter(([n]) => n === "startEnvFetch")).toEqual([]);
+});
+
+it("shows a running fetch in the track list and cancels it", async () => {
+  const { setEnvJobs, resetEnvJobs } = await import("../jobs");
+  setEnvJobs({ tracks: [{ source_id: 5, label: "Alpha", state: "fetching", fraction: 0.42 }], failure: null });
+  await act(async () => root.render(<Tracks project={project([SOURCE])} onProject={() => undefined} />));
+  expect(q(".track-list")!.textContent).toContain("Environment: fetching 42 %");
+  await click(q('[data-feature="tracks:filters"]'));
+  expect(q('[data-feature="tracks:refetch"]')).toBeNull();
+  await click(q('[data-feature="tracks:cancel-fetch"]'));
+  expect(calls.find(([n]) => n === "cancelEnvFetch")?.[1]).toEqual([[5]]);
+  await act(async () => resetEnvJobs());
 });
 
 it("maps a CSV, picks boats and imports them as one request", async () => {

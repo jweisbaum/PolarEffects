@@ -42,6 +42,8 @@ const features: Feature[] = [
 
   { id: "shell:statusbar", label: msg("Status bar"), description: msg("Shows hints, errors and work in progress."),
     keywords: [msg("hint"), msg("error"), msg("progress")], topic: "workspace" },
+  { id: "shell:cancel-fetch", label: msg("Cancel the fetch"), description: msg("While wind, waves and current are being fetched, stop every fetch; the samples already fetched are kept."),
+    keywords: [msg("stop"), msg("reanalysis"), msg("job"), msg("progress")], topic: "environment", landing: "shell:statusbar" },
 ];
 
 export default features;

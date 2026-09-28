@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { mayReplaceProject } from "./saveGuard";
+import { mayReplaceProject, mayStopJobs } from "./saveGuard";
 
 const never = () => {
   throw new Error("should not have been called");
@@ -51,5 +51,24 @@ describe("mayReplaceProject", () => {
     await expect(
       mayReplaceProject({ dirty: true }, async () => "save", async () => false),
     ).resolves.toEqual({ proceed: false });
+  });
+});
+
+describe("mayStopJobs", () => {
+  it("asks nothing when no fetch is running", async () => {
+    const ask = vi.fn(() => Promise.resolve(true));
+    const cancel = vi.fn(() => Promise.resolve());
+    await expect(mayStopJobs(false, ask, cancel)).resolves.toBe(true);
+    expect(ask).not.toHaveBeenCalled();
+    expect(cancel).not.toHaveBeenCalled();
+  });
+  it("cancels the fetch only when the user agrees, and waits for it", async () => {
+    const order: string[] = [];
+    const cancel = () => new Promise<void>((resolve) => setTimeout(() => { order.push("stopped"); resolve(); }, 5));
+    await expect(mayStopJobs(true, () => Promise.resolve(true), cancel)).resolves.toBe(true);
+    expect(order).toEqual(["stopped"]);
+    const never = vi.fn(() => Promise.resolve());
+    await expect(mayStopJobs(true, () => Promise.resolve(false), never)).resolves.toBe(false);
+    expect(never).not.toHaveBeenCalled();
   });
 });

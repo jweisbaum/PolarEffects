@@ -12,7 +12,10 @@ import { describeError, reportFailure } from "./errors";
 import { reportError, shown, useHint } from "./hint";
 import { isBusy, useBusy } from "./busy";
 import { msg, setLanguage, useT } from "./i18n";
-import { api, IpcError, QUIT_REQUESTED } from "./ipc";
+import { api, ENV_CHANGED, ENV_PROGRESS, IpcError, QUIT_REQUESTED } from "./ipc";
+import type { EnvJobsStatus } from "./generated/EnvJobsStatus";
+import { currentEnvJobs, envJobsBusy, setEnvJobs, useEnvJobs } from "./jobs";
+import ConfirmDialog from "./project/ConfirmDialog";
 import MapView from "./map/MapView";
 import LeftNav from "./panels/LeftNav";
 import PolarPlot from "./panels/PolarPlot";
@@ -24,7 +27,7 @@ import LoadingScreen from "./project/LoadingScreen";
 import NewProjectDialog from "./project/NewProjectDialog";
 import ProjectMenu from "./project/ProjectMenu";
 import { quitThroughGuard } from "./project/quitGuard";
-import { mayReplaceProject, type UnsavedChoice } from "./project/saveGuard";
+import { mayReplaceProject, mayStopJobs, type UnsavedChoice } from "./project/saveGuard";
 import StartScreen from "./project/StartScreen";
 import UnsavedChangesDialog from "./project/UnsavedChangesDialog";
 import SettingsDialog from "./settings/SettingsDialog";
@@ -67,6 +70,8 @@ function Shell() {
   // buttons complete, which is what lets the guard read as a plain `await`.
   const [askUnsaved, setAskUnsaved] = useState<{ name: string; resolve: (choice: UnsavedChoice) => void } | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
+  // Set while "cancel the running fetch?" is up, holding the answer's resolver.
+  const [askStopJobs, setAskStopJobs] = useState<((stop: boolean) => void) | null>(null);
   /** Which panels are open: the person's, remembered in `localStorage` (spec.md 3.2). */
   const [panels, setPanels] = useState<PanelState>(loadPanels);
   /** The polar plot shown full size over the Map stage, on demand (spec.md 9.2). */
@@ -85,6 +90,39 @@ function Shell() {
     void api.appInfo().then(setInfo).catch(() => undefined);
     // A project may already be open after a reload of the frontend.
     void api.projectSummary().then((open) => { if (open) setProject(open); }).catch(() => undefined);
+  }, []);
+
+  /**
+   * The environment fetch (spec.md 7.7): its queue for the status bar and
+   * track list, a fresh summary whenever it writes into the project (at
+   * most every 300 ms), and its failures on the status line.
+   */
+  useEffect(() => {
+    let refresh: number | null = null;
+    const onStatus = (status: EnvJobsStatus | null) => {
+      // A backend that is not there yet (the frontend alone) answers nothing.
+      if (!status?.tracks) return;
+      const before = currentEnvJobs().failure;
+      setEnvJobs(status);
+      const failure = status.failure;
+      if (failure && JSON.stringify(failure) !== JSON.stringify(before)) {
+        reportError(t("The environment fetch of {label} stopped: {reason}", { label: failure[0] ?? "", reason: failure[1] ?? "" }), failure[1] ?? null);
+      }
+    };
+    void api.envJobs().then(onStatus).catch(() => undefined);
+    const progress = listen<EnvJobsStatus>(ENV_PROGRESS, (event) => onStatus(event.payload)).catch(() => null);
+    const changed = listen(ENV_CHANGED, () => {
+      if (refresh !== null) return;
+      refresh = window.setTimeout(() => {
+        refresh = null;
+        void api.projectSummary().then((open) => { if (open) setProject(open); }).catch(() => undefined);
+      }, 300);
+    }).catch(() => null);
+    return () => {
+      if (refresh !== null) window.clearTimeout(refresh);
+      void progress.then((off) => off?.());
+      void changed.then((off) => off?.());
+    };
   }, []);
 
   const toggle = useCallback((panel: keyof PanelState) => {
@@ -188,11 +226,29 @@ function Shell() {
     });
   }), []);
 
-  /** Asks about unsaved changes, if any, and says whether the open project may be replaced. */
-  const mayReplace = useCallback(
-    () => mayReplaceProject(project, () => ask(project?.name ?? t("This project")), save),
-    [project, ask, save],
-  );
+  /** Asks to cancel a running fetch (spec.md 3.3); resolves once it has stopped. */
+  const stopJobs = useCallback(() => mayStopJobs(
+    envJobsBusy(),
+    () => new Promise<boolean>((resolve) => setAskStopJobs(() => (stop: boolean) => { setAskStopJobs(null); resolve(stop); })),
+    async () => {
+      await api.cancelEnvFetch(null);
+      // The fetch stops at its next chunk read and writes what it finished.
+      for (let waited = 0; envJobsBusy() && waited < 15_000; waited += 100) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    },
+  ), []);
+
+  /**
+   * Asks to cancel a running fetch, then about unsaved changes, and says
+   * whether the open project may be replaced.
+   */
+  const mayReplace = useCallback(async () => {
+    if (!(await stopJobs())) return { proceed: false } as const;
+    // The fetch may have written into the project since it was last shown.
+    const current = project ? await api.projectSummary().catch(() => project) : project;
+    return mayReplaceProject(current, () => ask(project?.name ?? t("This project")), save);
+  }, [project, ask, save, stopJobs]);
 
   const answerUnsaved = useCallback((choice: UnsavedChoice) => {
     askUnsaved?.resolve(choice);
@@ -273,7 +329,7 @@ function Shell() {
   }, [plotFull]);
 
   // Standard shortcuts (spec.md 3.2).
-  const modal = creating !== null || askUnsaved !== null || showSettings;
+  const modal = creating !== null || askUnsaved !== null || askStopJobs !== null || showSettings;
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       // A dialog is a decision in progress; saving or undoing behind it would
@@ -319,7 +375,14 @@ function Shell() {
   const settingsDialog = showSettings && settings !== null && (
     <SettingsDialog settings={settings} onSettings={setSettings} onClose={() => setShowSettings(false)} />
   );
-  const unsavedDialog = askUnsaved !== null && <UnsavedChangesDialog name={askUnsaved.name} onChoose={answerUnsaved} />;
+  const unsavedDialog = <>
+    {askUnsaved !== null && <UnsavedChangesDialog name={askUnsaved.name} onChoose={answerUnsaved} />}
+    {askStopJobs !== null && (
+      <ConfirmDialog title={t("Cancel the environment fetch?")}
+        body={t("A wind, wave and current fetch is running for this project. It stops first; the samples it already fetched stay in the project, and Refetch environment resumes it later.")}
+        confirmLabel={t("Cancel the fetch")} onConfirm={() => askStopJobs(true)} onCancel={() => askStopJobs(false)} />
+    )}
+  </>;
 
   if (!project) {
     return <>
@@ -407,6 +470,7 @@ function Shell() {
 
       <div className="statusbar" data-feature="shell:statusbar" title={t("Hints, errors and work in progress")}>
         <BusySpinner />
+        <EnvJobsIndicator />
         <StatusHint status={status} />
         <span className="spacer" />
         {project.path !== null && <span className="muted path" title={project.path}>{project.path}</span>}
@@ -460,6 +524,30 @@ function BusySpinner() {
     <span className={on ? "busy-spinner on" : "busy-spinner"} role="status" aria-live="polite"
       aria-label={on ? busy.labels.map((label) => t(label)).join(", ") : t("Idle")}
       title={on ? busy.labels.map((label) => t(label)).join(" · ") : undefined} />
+  );
+}
+
+/**
+ * The status bar's line for the environment fetch (spec.md 7.7): the track
+ * being fetched and how far it is, how many wait, and Cancel. Nothing
+ * while no fetch runs.
+ */
+function EnvJobsIndicator() {
+  const t = useT();
+  const jobs = useEnvJobs();
+  const running = jobs.tracks.find((job) => job.state === "fetching") ?? jobs.tracks[0];
+  if (running === undefined) return null;
+  const waiting = jobs.tracks.length - 1;
+  return (
+    <span className="env-jobs" role="status" aria-live="polite">
+      <span className="env-jobs-bar" aria-hidden="true"><span style={{ width: `${Math.round(running.fraction * 100)}%` }} /></span>
+      {t("Fetching wind, waves and current: {label} {percent} %", { label: running.label, percent: Math.floor(running.fraction * 100) })}
+      {waiting > 0 && <span className="muted">{" "}{t("({count} more waiting)", { count: waiting })}</span>}
+      <button className="small" data-feature="shell:cancel-fetch" title={t("Stop every fetch; samples already fetched are kept")}
+        onClick={() => { api.cancelEnvFetch(null).catch(reportFailure); }}>
+        {t("Cancel fetch")}
+      </button>
+    </span>
   );
 }
 

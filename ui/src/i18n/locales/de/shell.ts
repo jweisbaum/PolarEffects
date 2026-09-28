@@ -130,6 +130,16 @@ const catalogue: Record<string, string> = {
   "Import polar file": "Polardatei importieren",
   // ORC polars (spec.md 5.3).
   "The project already holds this certificate.": "Das Projekt enthält diesen Messbrief bereits.",
+  "The environment fetch of {label} stopped: {reason}": "Der Abruf der Umweltdaten von {label} wurde angehalten: {reason}",
+  "Cancel the environment fetch?": "Abruf der Umweltdaten abbrechen?",
+  "A wind, wave and current fetch is running for this project. It stops first; the samples it already fetched stay in the project, and Refetch environment resumes it later.": "Für dieses Projekt läuft ein Abruf von Wind, Wellen und Strömung. Er wird zuerst angehalten; die bereits abgerufenen Punkte bleiben im Projekt, und Umweltdaten neu abrufen setzt ihn später fort.",
+  "Cancel the fetch": "Abruf abbrechen",
+  "Fetching wind, waves and current: {label} {percent} %": "Abruf von Wind, Wellen und Strömung: {label} {percent} %",
+  "({count} more waiting)": "({count} weitere warten)",
+  "Stop every fetch; samples already fetched are kept": "Alle Abrufe anhalten; bereits abgerufene Punkte bleiben erhalten",
+  "While wind, waves and current are being fetched, stop every fetch; the samples already fetched are kept.": "Während Wind, Wellen und Strömung abgerufen werden, alle Abrufe anhalten; bereits abgerufene Punkte bleiben erhalten.",
+  "stop": "anhalten",
+  "job": "Auftrag",
 };
 
 export default catalogue;

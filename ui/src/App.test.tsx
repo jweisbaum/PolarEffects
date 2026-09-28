@@ -54,9 +54,11 @@ const TRACK: SourceSummary = {
 const TRACKED: SourceSummary = {
   ...TRACK, id: 10, visible: true, track: {
     origin: "file", boat_name: "Alpha", event_title: "race.geojson", start: 1_753_531_200, end: 1_753_617_600,
-    samples: 120, filtered: 20, excluded: 0, used: 100, with_wind: 0, env_status: "not_fetched", max_gap_s: 10_800,
+    samples: 120, filtered: 20, excluded: 0, used: 100, with_wind: 0, env_status: "not_fetched", env_fetched: 0, env_interval: null, no_tide: 0, max_gap_s: 10_800,
     prefer: "given", environment_filters: false,
-    filters: { time_start: null, time_end: null, min_bsp: 1, max_bsp: null, max_heading_change: 30, heading_origin: "any", speed_origin: "any" },
+    filters: { time_start: null, time_end: null, min_bsp: 1, max_bsp: null, max_heading_change: 30, heading_origin: "any", speed_origin: "any",
+    tws_min: null, tws_max: null, twa_min: null, twa_max: null, hs_min: null, hs_max: null, current_min: null, current_max: null,
+    wave_mode: "off", wave_sectors: [], wave_min: null, wave_max: null, wave_from: null, wave_to: null, exclude_no_tide: false },
   },
 };
 /** An ORC certificate, as the source list and the ORC polars section show it. */
@@ -74,7 +76,7 @@ const HIT: OrcHit = {
 function summary(dirty: boolean, path: string | null = null, sources: SourceSummary[] = []): ProjectSummary {
   return {
     id: 1, name: "Fastnet", path, dirty, revision: 1, boat_name: "", boat_notes: "", sources,
-    can_undo: false, can_redo: false, undo_label: null, redo_label: null,
+    can_undo: false, can_redo: false, undo_label: null, redo_label: null, use_corrected: true, stokes_drift: false,
   };
 }
 
@@ -106,6 +108,13 @@ function backend() {
       case "set_theme": settings = { ...settings, theme: args?.theme as string }; return settings;
       case "chunk_cache_status": return { path: "/cache/chunks", bytes: 0 };
       case "quit_app": return null;
+      case "env_jobs": return { tracks: [], failure: null };
+      case "cancel_env_fetch": {
+        // Rust stops the fetch and reports the emptied queue.
+        const idle = { tracks: [], failure: null };
+        (events.get("env://progress") as ((e: { payload: unknown }) => void) | undefined)?.({ payload: idle });
+        return idle;
+      }
       case "polar_scene": {
         // An empty scene: the header alone (layout in polar/scenePacket.ts).
         const header = new ArrayBuffer(32);
@@ -299,6 +308,56 @@ describe("the project window", () => {
     expect(q(".stage-placeholder h2")?.textContent).toBe("Compare");
     await click(feature("stage:map"));
     expect(feature("map:projection")).not.toBeNull();
+  });
+});
+
+describe("the environment fetch (spec.md 7.7)", () => {
+  const progress = (payload: unknown) =>
+    act(async () => (events.get("env://progress") as unknown as (e: { payload: unknown }) => void)({ payload }));
+
+  it("shows the running fetch in the status bar, and Cancel stops it", async () => {
+    project = summary(false, "/p.wpsproj");
+    await mount();
+    expect(feature("shell:cancel-fetch")).toBeNull();
+    await progress({ tracks: [
+      { source_id: 8, label: "Fastnet 2025", state: "fetching", fraction: 0.25 },
+      { source_id: 9, label: "Other", state: "queued", fraction: 0 },
+    ], failure: null });
+    expect(q(".statusbar")!.textContent).toContain("Fetching wind, waves and current: Fastnet 2025 25 %");
+    expect(q(".statusbar")!.textContent).toContain("(1 more waiting)");
+    await click(feature("shell:cancel-fetch"));
+    expect(calls).toContainEqual(["cancel_env_fetch", { sourceIds: null }]);
+    expect(feature("shell:cancel-fetch")).toBeNull();
+  });
+
+  it("refreshes the project when the fetch writes into it, and reports a failed fetch", async () => {
+    project = summary(false, "/p.wpsproj");
+    await mount();
+    const before = calls.filter(([c]) => c === "project_summary").length;
+    await act(async () => { events.get("env://changed")!(); events.get("env://changed")!(); });
+    await settle(400);
+    // Two writes close together are one refresh.
+    expect(calls.filter(([c]) => c === "project_summary").length).toBe(before + 1);
+    await progress({ tracks: [], failure: ["Fastnet 2025", "the archive answered 500"] });
+    expect(q(".statusbar")!.textContent).toContain("The environment fetch of Fastnet 2025 stopped: the archive answered 500");
+  });
+
+  it("asks to cancel a running fetch before closing the project, and keeps both on No", async () => {
+    project = summary(false, "/p.wpsproj");
+    await mount();
+    await progress({ tracks: [{ source_id: 8, label: "Fastnet 2025", state: "fetching", fraction: 0.5 }], failure: null });
+    await click(feature("shell:project-menu"));
+    await click(feature("project:close"));
+    expect(q("[role=dialog]")?.textContent).toContain("Cancel the environment fetch?");
+    await click(buttonNamed("Cancel"));
+    expect(calls.some(([c]) => c === "cancel_env_fetch" || c === "close_project")).toBe(false);
+    await click(feature("shell:project-menu"));
+    await click(feature("project:close"));
+    await click(buttonNamed("Cancel the fetch"));
+    await settle(150);
+    expect(calls).toContainEqual(["cancel_env_fetch", { sourceIds: null }]);
+    expect(calls.some(([c]) => c === "close_project")).toBe(true);
+    expect(feature("start:new")).not.toBeNull();
   });
 });
 

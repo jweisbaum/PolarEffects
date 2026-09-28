@@ -46,3 +46,24 @@ export async function mayReplaceProject(
   if (choice === "discard") return { proceed: true, discardUnsaved: true };
   return (await save()) ? GO : STOP;
 }
+
+/**
+ * Whether a running environment fetch may be stopped so the open project
+ * can be replaced (spec.md 3.3: a running job belongs to the project, and
+ * replacing the project asks to cancel it first).
+ *
+ * Asked before the unsaved-changes question, since stopping the fetch
+ * writes its last results into the project: `cancel` resolves once the
+ * fetch has stopped, and only then is it known what there is to save.
+ * Nothing is asked when nothing is running.
+ */
+export async function mayStopJobs(
+  running: boolean,
+  ask: () => Promise<boolean>,
+  cancel: () => Promise<void>,
+): Promise<boolean> {
+  if (!running) return true;
+  if (!(await ask())) return false;
+  await cancel();
+  return true;
+}
