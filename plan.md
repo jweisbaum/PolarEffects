@@ -11,6 +11,51 @@ product description, a survey of VectorEffects, verified vendor formats
 (YellowBrick, Geovoile, Blue Water Tracks), the `tracker-index` reference
 scrapers, and the ERA5 and Copernicus Marine archives. Open questions in §6.
 
+**2026-09-28: M3 risk spikes.** Measured on the development machine only
+(2019 MacBook Pro, x86_64 Intel i9, Intel UHD 630, home broadband); the three
+reference machines of spec §13 are still to be measured. Spike code is kept
+as the foundation of `pe-env`, `pe-trackers` and `ui/src/polar/`.
+
+- *Reanalysis* (`PE_TEST_LIVE=1 cargo test -p pe-env --test live`), 24 h at
+  50N 5W. WeatherBench2 u10/v10: 3.32 MB per hourly global chunk; cold
+  0.287 s/chunk one at a time, 0.097–0.111 s/chunk with 8 in flight
+  (≈ 32 MB/s); warm (disk cache) 3 ms/chunk read + decode; open 1.2 s
+  (12 requests). ARCO-ERA5 swh 1.77 MB, mwd 1.67 MB, u10 3.32 MB per chunk;
+  0.07–0.17 s/chunk with 8 in flight; open 1.05 s (14 requests, coverage
+  from `.zattrs` to 2026-09-21). CMEMS merged geoChunked utotal/utide/uo:
+  0.88/0.81/0.75 MB per chunk (178 days × 16 × 8 cells), 0.78 s each
+  (latency-bound); a missing (all-land) chunk is HTTP 403 and reads as
+  missing. **5-day race, hourly:** 120 h × 10.1 MB ≈ 1.21 GB, ≈ 40 s cold
+  at this bandwidth, currents ≈ 3 MB per box crossed; 3-hourly ≈ 0.40 GB,
+  ≈ 13 s. Second boat of the same event (reopen + 24 cached hours): 0.76 s.
+- *Decoders*: YellowBrick AllPositions3 for Fastnet 2025 (5,726,173 bytes,
+  444 teams, 714,380 fixes) decodes in 68 ms (debug build); live fetch of
+  both responses 2.8 s. Geovoile hwx decodes 24 Heures Ultim 2025 and
+  Vendée Globe 2016 (29 boats, 107,459 fixes) with seeds parsed per site;
+  Route du Rhum 2022's page gives the same seeds as 2025. **No 2024 site
+  fixture**: recording one (New York–Vendée 2024) was blocked in this
+  session; to do before M11. The Vendée Globe 2016 viewer page now answers
+  HTTP 500, so its seeds come from Appendix A.
+- *3D* (`ui/bench3d.html` in headless Chrome, ANGLE Metal on the Intel UHD
+  630, 1280 × 800): 200k dots + 20 surfaces hold 60 fps (frame p50/p95/p99
+  16.7/16.8/16.8 ms over 600 frames; one start-up hitch of 0.1–0.6 s for
+  shader compilation). At 400k dots + 40 surfaces p95 is 33 ms, so the
+  headroom is under 2×. Building 200k dots 28 ms in the page (8 ms in Node),
+  20 surface meshes 1 ms; one lasso over 200k dots 8 ms in the page
+  (project 4.5 ms + select 12 ms in Node with a 64-vertex lasso). Chrome is
+  not WKWebView or WebView2: the Tauri webviews must be checked in M7.
+- *Budgets* (spec §13): 3D 60 fps — **go** on this machine, reference
+  machines unmeasured. Second boat < 5 s — **go** (0.76 s for one variable;
+  four variables need their opened arrays kept per session in M9, since
+  each open costs ≈ 1 s of metadata requests). Reanalysis cold — reported
+  as above, with per-chunk completions every ≈ 0.1 s, so progress every
+  second is easy. Edit to views < 100 ms — **go** for the 3D side (rebuild
+  28 + 1 ms, lasso 8 ms); IPC transfer of 200k samples unmeasured (M7).
+  Start screen < 1.5 s, ORC search < 30 ms, blend < 50 ms and opening 50
+  tracks < 2 s are not exercised by these spikes: no evidence against,
+  measured in M5, M8 and M14.
+- *D19 decided*: hourly stays the default (see §5).
+
 ---
 
 ## 1. Sequencing strategy
@@ -127,7 +172,7 @@ palette, in three languages, with a working feature search.
 
 ---
 
-### M3 — Risk spikes
+### M3 — Risk spikes · **complete**
 
 **Goal:** measure the three unknowns before building on them. Spike code may
 be thrown away; the numbers and fixtures are kept.
@@ -407,7 +452,7 @@ jieter/orc-data MIT), user guide.
 | D16 | three.js, bundled locally, for 3D | VectorEffects has no 3D; three.js is mature and works in every Tauri webview |
 | D17 | Edits stored as overlays (cell overrides, exclusions) | Invariant 1; reversible, auditable |
 | D18 | Track segment cell statistic defaults to the 90th percentile, minimum 5 samples | Polars describe good sailing; the mean undershoots |
-| D19 | Reanalysis sampling hourly by default, 3-hourly option | To be confirmed by M3 numbers |
+| D19 | Reanalysis sampling hourly by default, 3-hourly option; the pre-flight dialog preselects 3-hourly when the hourly download would exceed half the chunk-cache limit | Confirmed by M3: a 5-day race hourly is ≈ 1.2 GB and ≈ 40 s cold at 8 requests in flight, and a warm chunk is 3 ms. Hourly resolves wind shifts and tidal streams that 3-hourly smooths. A long race is different: the Vendée Globe hourly would be ≈ 19 GB, about the whole default cache, which is when 3-hourly is the better default |
 | D20 | Current tiers: regional tidal reanalysis → global merged (uo + utide, 2020-11+) → GlobCurrent without tides | Only anonymous sources; tides everywhere from 2020-11 and in NW Europe/IBI since 1993 |
 
 ## 6. Settled before coding started
@@ -484,4 +529,5 @@ lat, lon = value / 1e5 degrees; dtf in metres
 
 The alt, lap and pc layouts are unverified (the Fastnet data had those flags
 off); cover them with a fixture from a race that sets them before relying
-on them.
+on them. The M3 decoder follows the table literally: in a delta moment,
+`alt` and `pc` are read as values, not deltas, and only `dDtf` accumulates.

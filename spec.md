@@ -840,11 +840,14 @@ a Snapdragon X Windows ARM64 laptop):
 | Second boat from the same event | < 5 s (cache hit) |
 
 The chunk-cache cost of reanalysis is real: one hour of one variable is a
-global chunk of about 2–3.5 MB. A 5-day race needs about 120 hours × 4
-variables ≈ 1.3 GB. Currents from the geoChunked stores are cheap by
-comparison (about 1 MB per 1.3° × 0.7° box per six months). The job shows the expected download
-size before it starts and lets the user pick hourly or 3-hourly sampling
-(D19).
+global chunk of about 1.7–3.3 MB (measured in M3: wind 3.3 MB, wave height
+1.8 MB, wave direction 1.7 MB). A 5-day race needs about 120 hours × 4
+variables ≈ 1.2 GB. Currents from the geoChunked stores are cheap by
+comparison (about 0.8 MB per variable per 1.3° × 0.7° box per six months).
+The job shows the expected download size before it starts and lets the user
+pick hourly or 3-hourly sampling (D19). Hourly is the default; when the
+hourly download would exceed half the chunk-cache size limit (a long ocean
+race), 3-hourly is preselected instead.
 
 ---
 
