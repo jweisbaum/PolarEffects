@@ -1,3 +1,6 @@
 # Shell scripts and source fixtures use the same line endings on every platform.
 * text=auto eol=lf
 *.bin binary
+# Recorded vendor and archive responses are kept byte for byte.
+crates/pe-trackers/tests/fixtures/** -text
+crates/pe-env/tests/fixtures/** -text
