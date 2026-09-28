@@ -10,6 +10,18 @@ pub enum TrackerError {
     #[error("{0}")]
     Network(String),
 
+    /// A response's status was a permanent failure (a 4xx other than 429):
+    /// the status is kept, not only the message, so a caller can react to a
+    /// specific one — a 404 — without matching the message text (CLAUDE.md
+    /// "Adding a tracker").
+    #[error("{why}")]
+    Http {
+        /// The HTTP status code.
+        status: u16,
+        /// The full message, as [`TrackerError::Network`] would carry it.
+        why: String,
+    },
+
     /// The tracker did not answer usefully after the bounded retries: a 5xx
     /// or 429 answer, a timeout or a dropped connection (spec.md 7.2: "some
     /// keys return 5xx; the dialog says so and offers Retry").

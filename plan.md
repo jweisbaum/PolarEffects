@@ -518,10 +518,47 @@ in 0.6 s. The Vendée Globe 2024 tracker answers "Not available" at
 
 ---
 
-### M12 — Blue Water Tracks
+### M12 — Blue Water Tracks · **complete**
 
 **Deliverables:** `pe-trackers::bluewater` (slug from URL, race JSON,
 GeoJSON positions with SOG/COG).
+
+*Done 2026-09-28.* The `BlueWaterTracks` client resolves
+`race.bluewatertracks.com/<slug>`, an `api.bluewatertracks.com/api/race/
+<slug>` link, or a bare slug (no network), then makes one request:
+`GET /api/race/<slug>`. Live probing during research found the API answers
+an unknown slug with HTTP 200 and `race` an empty array rather than an
+object (`{"positions":[],"race":[]}`), not a 404 — checked before the
+object is parsed, and a plain 404 is read the same way, both as
+`NoSuchEvent`. A boat's division is the distinct `division` values across
+its `handicaps` (each rating system usually agrees); SOG and COG are given
+per position and used exactly as given (0 is a real value here, unlike
+Geovoile's official reports). The event's start is `raceStartTime`; a
+boat's finish is its own `finishTime` else the race's `trackTimeFinish`.
+Positions are not guaranteed sorted or deduplicated per boat (unlike
+YellowBrick's and Geovoile's own formats), so each boat's fixes go through
+the same `pe_tracks::normalise` a file import uses before the client
+returns, keeping `TrackerBoat`'s "oldest first" invariant for the dialog's
+table and map preview.
+
+M11 review carries, done alongside: (1) a new `TrackerError::Http { status,
+why }` replaces matching "answered 404" in the message text — Geovoile's
+same-generation 404 check now matches the status; (2) Geovoile's
+`parse_viewer` clamps `nblegs` to 1–99 and refuses a `numleg` outside
+`1..=nblegs` as unsupported, rather than trusting the page; (3) the tracker
+session cache in `pe-app` now also keys by the *requested* key (an alias to
+the actual one a race in legs was downloaded under), so re-pasting a
+multi-leg address that resolves without a leg still hits the cache instead
+of downloading again.
+
+*Fixtures and acceptance* (2026-09-28):
+`bluewater/melbournehobartwestcoaster2025-race.json` — the 2025 Melbourne
+Hobart Westcoaster (5 boats, 863 positions) as served, crew, bios, images
+and sponsor details cropped out. The whole event decodes through the
+client (local server) to the recorded boat count, fixes and first/last fix
+of Alien, every fix sorted, given and never derived. *Live*
+(`PE_TEST_LIVE=1`): the same race, 5 boats, 863 fixes, 2.2 s, matching the
+fixture exactly; an unknown slug reads as no public event.
 
 ---
 

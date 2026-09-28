@@ -11,9 +11,10 @@
 //! title, dates and every boat's full track — as one [`event::TrackerEvent`],
 //! through one [`http::Fetcher`] that caps bodies, retries transient
 //! failures, stops on cancel and follows redirects only within the
-//! allow-list ([`net::redirect_allowed`]). YellowBrick (M10) and Geovoile
-//! (M11) are complete; Blue Water Tracks follows in M12.
+//! allow-list ([`net::redirect_allowed`]). YellowBrick (M10), Geovoile
+//! (M11) and Blue Water Tracks (M12) are complete.
 
+pub mod bluewater;
 pub mod error;
 pub mod event;
 pub mod geovoile;

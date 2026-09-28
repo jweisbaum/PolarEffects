@@ -135,6 +135,7 @@ impl AppError {
                 pe_trackers::TrackerError::Unsupported { .. } => "tracker-unsupported",
                 pe_trackers::TrackerError::Legacy { .. } => "tracker-legacy",
                 pe_trackers::TrackerError::Network(_) => "tracker-network",
+                pe_trackers::TrackerError::Http { .. } => "tracker-network",
             },
             Self::Internal(_) => "internal",
         }

@@ -43,7 +43,7 @@ URL='https?://[^"'"'"'`[:space:])>]+'
 # smuggle a second one past the check. `{…}` stands for a format placeholder
 # in a subdomain, which is how Geovoile's per-race hosts are built.
 ENV_HOSTS='^https?://(storage\.googleapis\.com/weatherbench2|storage\.googleapis\.com/gcp-public-data-arco-era5|s3\.waw3-1\.cloudferro\.com/mdl-arco-)'
-TRACKER_HOSTS='^https?://((cf\.)?yb\.tl|([A-Za-z0-9_{}-]+\.)*geovoile\.com|api\.bluewatertracks\.com)([/:?#]|$)'
+TRACKER_HOSTS='^https?://((cf\.)?yb\.tl|([A-Za-z0-9_{}-]+\.)*geovoile\.com|(api|race)\.bluewatertracks\.com)([/:?#]|$)'
 
 fail=0
 report() {

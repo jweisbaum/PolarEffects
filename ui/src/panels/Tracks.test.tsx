@@ -94,10 +94,10 @@ it("lists a track with its boat, event, dates, samples used and environment stat
   expect(text).toContain("Environment: not fetched");
   await click(q('[data-feature="tracks:show-on-map"]'));
   expect(focus).toHaveBeenCalledWith({ kind: "track", sourceId: 5 });
-  // YellowBrick and Geovoile import; Blue Water is there and says it comes later.
+  // YellowBrick, Geovoile and Blue Water Tracks all open the tracker dialog.
   expect((q('[data-feature="tracks:yellowbrick"]') as HTMLButtonElement).disabled).toBe(false);
   expect((q('[data-feature="tracks:geovoile"]') as HTMLButtonElement).disabled).toBe(false);
-  expect((q('[data-feature="tracks:bluewater"]') as HTMLButtonElement).disabled).toBe(true);
+  expect((q('[data-feature="tracks:bluewater"]') as HTMLButtonElement).disabled).toBe(false);
 });
 
 it("edits the filters and the derivation through their commands", async () => {

@@ -47,29 +47,74 @@ const PROGRESS_EVERY: Duration = Duration::from_millis(100);
 #[derive(Debug, Default)]
 pub struct TrackerSession {
     events: Mutex<Vec<Arc<TrackerEvent>>>,
+    // A race in legs (Geovoile, spec.md 7.2): the page shows its *current*
+    // leg, so an address pasted without one resolves to a key without a
+    // leg, but the event downloads and is kept under the key the page
+    // actually gave (with the leg). Without this, re-pasting the same
+    // address would never hit the cache: `(tracker, requested key)` to the
+    // actual key it was kept under.
+    aliases: Mutex<Vec<(Tracker, String, String)>>,
     cancel: Mutex<Option<Arc<AtomicBool>>>,
 }
 
 impl TrackerSession {
     fn cached(&self, tracker: Tracker, key: &str) -> Option<Arc<TrackerEvent>> {
-        self.events
+        let direct = self
+            .events
             .lock()
             .ok()?
             .iter()
             .find(|e| e.event.tracker == tracker && e.event.key == key)
+            .cloned();
+        if direct.is_some() {
+            return direct;
+        }
+        let actual = self
+            .aliases
+            .lock()
+            .ok()?
+            .iter()
+            .find(|(t, from, _)| *t == tracker && from == key)
+            .map(|(_, _, to)| to.clone())?;
+        self.events
+            .lock()
+            .ok()?
+            .iter()
+            .find(|e| e.event.tracker == tracker && e.event.key == actual)
             .cloned()
     }
 
-    fn keep(&self, event: Arc<TrackerEvent>) {
+    /// Keeps `event`, downloaded for `requested` (the key it was asked
+    /// for, before the download, which may differ from `event.event.key`
+    /// once a race in legs answers with the leg the page actually shows).
+    fn keep(&self, event: Arc<TrackerEvent>, requested: &str) {
         if let Ok(mut events) = self.events.lock() {
             events.retain(|e| {
                 !(e.event.tracker == event.event.tracker && e.event.key == event.event.key)
             });
-            events.push(event);
+            events.push(event.clone());
             let fixes = |e: &TrackerEvent| e.boats.iter().map(|b| b.fixes.len()).sum::<usize>();
             let mut total: usize = events.iter().map(|e| fixes(e)).sum();
             while events.len() > 1 && total > KEPT_FIXES {
                 total -= fixes(&events.remove(0));
+            }
+            if let Ok(mut aliases) = self.aliases.lock() {
+                // Pruned to what the kept events still hold, so an alias
+                // never outlives the event it points to.
+                aliases.retain(|(t, _, to)| {
+                    events
+                        .iter()
+                        .any(|e| e.event.tracker == *t && e.event.key == *to)
+                });
+                if requested != event.event.key {
+                    aliases
+                        .retain(|(t, from, _)| !(*t == event.event.tracker && from == requested));
+                    aliases.push((
+                        event.event.tracker,
+                        requested.to_owned(),
+                        event.event.key.clone(),
+                    ));
+                }
             }
         }
     }
@@ -317,7 +362,7 @@ pub fn download_with(
         let _ = worker.join();
     }
     let downloaded = Arc::new(outcome?);
-    state.trackers.keep(Arc::clone(&downloaded));
+    state.trackers.keep(Arc::clone(&downloaded), &event.key);
     Ok(TrackerEventView::of(&downloaded, false))
 }
 
@@ -530,20 +575,50 @@ mod tests {
     fn the_session_cache_is_capped_by_positions() {
         let session = TrackerSession::default();
         for k in 0..10 {
-            session.keep(event(&format!("small{k}"), 1000));
+            let key = format!("small{k}");
+            session.keep(event(&key, 1000), &key);
         }
         assert!(
             session.cached(Tracker::YellowBrick, "small0").is_some(),
             "ten small events fit"
         );
-        session.keep(event("big", KEPT_FIXES - 5000));
+        session.keep(event("big", KEPT_FIXES - 5000), "big");
         assert!(session.cached(Tracker::YellowBrick, "small4").is_none());
         assert!(session.cached(Tracker::YellowBrick, "small5").is_some());
         assert!(session.cached(Tracker::YellowBrick, "big").is_some());
         // Over the cap on its own: kept, everything older dropped.
-        session.keep(event("huge", KEPT_FIXES + 1));
+        session.keep(event("huge", KEPT_FIXES + 1), "huge");
         assert!(session.cached(Tracker::YellowBrick, "huge").is_some());
         assert!(session.cached(Tracker::YellowBrick, "big").is_none());
         assert!(session.cached(Tracker::YellowBrick, "small9").is_none());
+    }
+
+    /// A race in legs (Geovoile, spec.md 7.2): the address pasted names no
+    /// leg, but the page shows one, so the event downloads and is kept
+    /// under a key with the leg. Re-pasting the same, leg-less address
+    /// must still find it, or every reopen would download again (M11
+    /// review carry).
+    #[test]
+    fn a_multi_leg_event_is_found_by_the_key_it_was_asked_for() {
+        let session = TrackerSession::default();
+        let requested = "x.geovoile.com/2024/".to_owned();
+        let actual = "x.geovoile.com/2024/?leg=2".to_owned();
+        session.keep(event(&actual, 10), &requested);
+        assert!(
+            session.cached(Tracker::YellowBrick, &requested).is_some(),
+            "found by the key it was asked for"
+        );
+        assert!(
+            session.cached(Tracker::YellowBrick, &actual).is_some(),
+            "still found by its own key too"
+        );
+        // A later download under a different actual key replaces the
+        // alias, so the requested key never points at a stale event.
+        let other = "x.geovoile.com/2024/?leg=3".to_owned();
+        session.keep(event(&other, 10), &requested);
+        let found = session
+            .cached(Tracker::YellowBrick, &requested)
+            .expect("still found");
+        assert_eq!(found.event.key, other);
     }
 }

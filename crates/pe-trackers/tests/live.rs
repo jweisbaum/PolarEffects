@@ -14,6 +14,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use pe_trackers::bluewater::BlueWaterTracks;
 use pe_trackers::event::PositionsFrom;
 use pe_trackers::yellowbrick::{self, YellowBrick};
 use pe_trackers::{Fetcher, TrackerClient};
@@ -152,4 +153,56 @@ fn geovoile_2024_sites() {
         assert_eq!(count, fixes);
         assert!((last - 1.0).abs() < 1e-9, "progress ends at 1, got {last}");
     }
+}
+
+/// The 2025 Melbourne Hobart Westcoaster end to end through the client,
+/// against the recorded figures.
+#[test]
+#[ignore = "network; run with PE_TEST_LIVE=1"]
+fn bluewater_melbourne_hobart_2025() {
+    if !live() {
+        return;
+    }
+    let client = BlueWaterTracks::default();
+    let event = client
+        .resolve("https://race.bluewatertracks.com/2025-melbourne-hobart-westcoaster")
+        .expect("resolves");
+    let fetcher = Fetcher::new("Blue Water Tracks", Duration::from_secs(60), Arc::default())
+        .expect("a client");
+    let start = Instant::now();
+    let mut last = 0.0;
+    let event = client
+        .fetch(&event, &fetcher, &mut |p| last = p.fraction())
+        .expect("fetches");
+    let fixes: usize = event.boats.iter().map(|b| b.fixes.len()).sum();
+    println!(
+        "M12 | Blue Water Tracks melbourne-hobart-2025 live: {} boats, {fixes} fixes, {:.2} s",
+        event.boats.len(),
+        start.elapsed().as_secs_f64()
+    );
+    assert_eq!(event.title, "2025 Melbourne Hobart Westcoaster");
+    assert_eq!(event.boats.len(), 5);
+    assert!((last - 1.0).abs() < 1e-9, "progress ends at 1, got {last}");
+}
+
+/// An unknown slug: `race` comes back an empty array, which the client
+/// reads as no public event, never as a decode failure.
+#[test]
+#[ignore = "network; run with PE_TEST_LIVE=1"]
+fn bluewater_unknown_slug() {
+    if !live() {
+        return;
+    }
+    let client = BlueWaterTracks::default();
+    let event = client.resolve("no-such-race-xyz-123").expect("a slug");
+    let fetcher = Fetcher::new("Blue Water Tracks", Duration::from_secs(60), Arc::default())
+        .expect("a client");
+    let err = client
+        .fetch(&event, &fetcher, &mut |_| {})
+        .expect_err("no such event");
+    println!("M12 | unknown slug: {err}");
+    assert!(
+        matches!(err, pe_trackers::TrackerError::NoSuchEvent { .. }),
+        "{err:?}"
+    );
 }

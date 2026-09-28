@@ -215,6 +215,8 @@ and, in CI, ecCodes.
   the root `.zattrs` (`valid_time_start`, `valid_time_stop`,
   `valid_time_stop_era5t`), and a 404 chunk means missing, not an error.
 - The YellowBrick `RaceSetup` JSON is ISO-8859-1, not UTF-8.
+- Blue Water Tracks answers an unknown slug with HTTP 200, `race` an empty
+  array rather than an object; check for that, not only for a 404.
 - Never reuse credentials, device ids or cookies found in the
   `tracker-index` reference repository.
 

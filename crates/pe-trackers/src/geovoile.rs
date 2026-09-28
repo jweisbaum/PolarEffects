@@ -231,13 +231,24 @@ pub fn parse_viewer(html: &str) -> Result<Viewer> {
                 .map(|end| rest[..end].trim().to_owned())
         })
         .unwrap_or_default();
+    // `nblegs` is clamped rather than trusted outright, and `numleg` (the
+    // leg the page says it shows) must be one this race actually has;
+    // either off is a page this build does not understand, not a wrong leg
+    // silently opened.
+    let legs = number("nblegs").unwrap_or(1).clamp(1, 99);
+    let leg = number("numleg").unwrap_or(1);
+    if !(1..=legs).contains(&leg) {
+        return Err(unsupported(format!(
+            "the viewer names leg {leg} of {legs}, which is not a leg this race has"
+        )));
+    }
     Ok(Viewer {
         title,
         root_url,
         resources_url: param(html, "resourcesurl").unwrap_or_default().to_owned(),
         versions_url: param(html, "versionsurl").unwrap_or_default().to_owned(),
-        legs: number("nblegs").unwrap_or(1),
-        leg: number("numleg").unwrap_or(1),
+        legs,
+        leg,
         seeds: seeds_from_html(html)?,
     })
 }
@@ -1198,7 +1209,7 @@ impl TrackerClient for Geovoile {
         let html = fetcher
             .get(&self.request(&page), &mut |b, t| progress(at(b, t)))
             .map_err(|e| match e {
-                TrackerError::Network(why) if why.contains("answered 404") => no_such(&site),
+                TrackerError::Http { status: 404, .. } => no_such(&site),
                 other => other,
             })?;
         let html = String::from_utf8_lossy(&html);
@@ -1386,6 +1397,26 @@ mod tests {
             err.to_string().contains("unsupported Geovoile version"),
             "{err}"
         );
+    }
+
+    /// `nblegs` beyond 99 is clamped rather than trusted, and a `numleg`
+    /// outside `1..=nblegs` is an unsupported page, not a wrong leg opened
+    /// silently (M11 review carry).
+    #[test]
+    fn nblegs_is_clamped_and_numleg_out_of_range_is_refused() {
+        let function = "window._0Xedc3=function(n){var a=0x88FE88;var b=0xFE88AA;var c=0xEECC80;var d=0xA0A0F0;for(;;){}; 0xFFFFFF}";
+        let seg = base64::engine::general_purpose::STANDARD.encode(function);
+        let page = |nblegs: &str, numleg: &str| {
+            format!(
+                "<html><title>T</title><img src=\"data:image/png;base64,iVBORw0KGgo=/C/{seg}\">rooturl :'/2025/' nblegs :{nblegs} numleg :{numleg}</html>"
+            )
+        };
+        let v = parse_viewer(&page("500", "3")).expect("clamps");
+        assert_eq!(v.legs, 99);
+        let err = parse_viewer(&page("3", "5")).expect_err("beyond nblegs");
+        assert!(matches!(err, TrackerError::Unsupported { .. }), "{err:?}");
+        let err = parse_viewer(&page("3", "0")).expect_err("zero");
+        assert!(matches!(err, TrackerError::Unsupported { .. }), "{err:?}");
     }
 
     /// Seeds as hex literals in the keystream function (the older form) are

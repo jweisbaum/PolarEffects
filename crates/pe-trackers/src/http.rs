@@ -80,7 +80,14 @@ fn chain(err: &dyn std::error::Error) -> String {
 /// One failed attempt.
 enum Failure {
     Transient(String),
-    Permanent(String),
+    /// A failure worth reporting at once. `status` is the response's status
+    /// when there was one (so [`TrackerError::Http`] can carry it), absent
+    /// for a failure with no response (a refused redirect, an oversized
+    /// body) which becomes a plain [`TrackerError::Network`].
+    Permanent {
+        status: Option<u16>,
+        why: String,
+    },
     Cancelled,
 }
 
@@ -185,7 +192,15 @@ impl Fetcher {
                         why: format!("{why} (tried {} times)", RETRIES + 1),
                     });
                 }
-                Err(Failure::Permanent(why)) => return Err(TrackerError::Network(why)),
+                Err(Failure::Permanent {
+                    status: Some(status),
+                    why,
+                }) => {
+                    return Err(TrackerError::Http { status, why });
+                }
+                Err(Failure::Permanent { status: None, why }) => {
+                    return Err(TrackerError::Network(why));
+                }
             }
         }
     }
@@ -205,7 +220,7 @@ impl Fetcher {
             if transient_error(&e) {
                 Failure::Transient(why)
             } else {
-                Failure::Permanent(why)
+                Failure::Permanent { status: None, why }
             }
         })?;
         let status = response.status();
@@ -218,19 +233,22 @@ impl Fetcher {
                 )));
             }
             Answer::Permanent => {
-                return Err(Failure::Permanent(format!(
-                    "{} answered {status} for {url}",
-                    self.tracker
-                )));
+                return Err(Failure::Permanent {
+                    status: Some(status.as_u16()),
+                    why: format!("{} answered {status} for {url}", self.tracker),
+                });
             }
         }
         let total = response.content_length();
         if total.is_some_and(|n| n > MAX_BODY_BYTES) {
-            return Err(Failure::Permanent(format!(
-                "{} offered {} bytes for {url}, more than the {MAX_BODY_BYTES}-byte limit",
-                self.tracker,
-                total.unwrap_or_default()
-            )));
+            return Err(Failure::Permanent {
+                status: None,
+                why: format!(
+                    "{} offered {} bytes for {url}, more than the {MAX_BODY_BYTES}-byte limit",
+                    self.tracker,
+                    total.unwrap_or_default()
+                ),
+            });
         }
         let mut body = Vec::with_capacity(
             total
@@ -253,10 +271,13 @@ impl Fetcher {
             }
             body.extend_from_slice(&piece[..n]);
             if body.len() as u64 > MAX_BODY_BYTES {
-                return Err(Failure::Permanent(format!(
-                    "{}'s answer for {url} is larger than the {MAX_BODY_BYTES}-byte limit",
-                    self.tracker
-                )));
+                return Err(Failure::Permanent {
+                    status: None,
+                    why: format!(
+                        "{}'s answer for {url} is larger than the {MAX_BODY_BYTES}-byte limit",
+                        self.tracker
+                    ),
+                });
             }
             progress(body.len() as u64, total);
         }
@@ -341,11 +362,17 @@ mod tests {
         assert_eq!(server.join().expect("server"), 4);
     }
 
+    /// A permanent status is not retried, and is kept on the error so a
+    /// caller can match a specific one (a 404) without matching the message
+    /// text (CLAUDE.md "Adding a tracker").
     #[test]
-    fn a_permanent_failure_is_not_retried() {
+    fn a_permanent_failure_is_not_retried_and_keeps_its_status() {
         let (url, server) = serve(vec![reply("404 Not Found", "")]);
         let err = fetcher().get(&url, &mut |_, _| {}).expect_err("refused");
-        assert!(matches!(err, TrackerError::Network(_)), "{err:?}");
+        assert!(
+            matches!(err, TrackerError::Http { status: 404, .. }),
+            "{err:?}"
+        );
         assert_eq!(server.join().expect("server"), 1);
     }
 

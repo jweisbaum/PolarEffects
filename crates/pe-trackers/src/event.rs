@@ -156,7 +156,7 @@ pub fn client(tracker: Tracker) -> Option<Box<dyn TrackerClient>> {
     match tracker {
         Tracker::YellowBrick => Some(Box::new(crate::yellowbrick::YellowBrick::default())),
         Tracker::Geovoile => Some(Box::new(crate::geovoile::Geovoile::default())),
-        Tracker::BlueWaterTracks => None,
+        Tracker::BlueWaterTracks => Some(Box::new(crate::bluewater::BlueWaterTracks::default())),
     }
 }
 

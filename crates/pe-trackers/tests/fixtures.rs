@@ -33,6 +33,11 @@
 //!   of 3, `…/2024/tracker/?leg=1` and `resources/leg1/…`);
 //!   `routedurhum2014/viewer.html`, the 2012–2015 generation's page, which
 //!   is refused.
+//! - M12 (2026-09-28): `bluewater/melbournehobartwestcoaster2025-race.json`:
+//!   `api.bluewatertracks.com/api/race/2025-melbourne-hobart-westcoaster` as
+//!   served, with crew, bios, images and sponsor details cropped out (the
+//!   fields the client reads, and the "other known fields" spec.md 7.2's
+//!   research notes list, kept).
 //!
 //! Reference values come from the Python reference decoder written during
 //! research (an independent implementation of Appendix A, used again in
@@ -48,6 +53,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use pe_trackers::bluewater::{self, BlueWaterTracks};
 use pe_trackers::event::PositionsFrom;
 use pe_trackers::geovoile::{self, Seeds};
 use pe_trackers::yellowbrick::{self, YellowBrick};
@@ -1014,4 +1020,135 @@ fn resources_that_do_not_match_the_seeds_are_an_unsupported_version() {
         err.to_string().contains("unsupported Geovoile version"),
         "{err}"
     );
+}
+
+// --- Blue Water Tracks -------------------------------------------------------
+
+/// The recorded response decodes to the race and its boats.
+#[test]
+fn melbourne_hobart_2025_race_decodes() {
+    let response = bluewater::parse_race(&fixture(
+        "bluewater/melbournehobartwestcoaster2025-race.json",
+    ))
+    .expect("parses")
+    .expect("a real event");
+    assert_eq!(response.race.race_name, "2025 Melbourne Hobart Westcoaster");
+    assert_eq!(response.race.boats.len(), 5);
+    let alien = response
+        .race
+        .boats
+        .iter()
+        .find(|b| b.boat_id == "5631641c671f0c130e6f09b6")
+        .expect("Alien");
+    assert_eq!(alien.boat_name, "ALIEN");
+    assert_eq!(alien.sail_no.as_deref(), Some("R880"));
+    assert_eq!(alien.design.as_deref(), Some("Lidgard 36"));
+    assert_eq!(alien.handicaps.len(), 3);
+}
+
+/// The whole event through the client, from a recorded response: every
+/// boat's fixes, sorted (this race's feed happens to already be sorted per
+/// boat) and each with its own SOG and COG, given rather than derived.
+#[test]
+fn a_bluewater_event_downloads_through_the_client() {
+    let host = serve(vec![(
+        "/api/race/2025-melbourne-hobart-westcoaster",
+        "200 OK",
+        fixture("bluewater/melbournehobartwestcoaster2025-race.json"),
+    )]);
+    let client = BlueWaterTracks::at(&host);
+    let event = client
+        .resolve("https://race.bluewatertracks.com/2025-melbourne-hobart-westcoaster")
+        .expect("resolves");
+    let fetcher = Fetcher::new("Blue Water Tracks", Duration::from_secs(10), Arc::default())
+        .expect("a client")
+        .with_backoff(Duration::from_millis(1));
+    let mut seen = Vec::new();
+    let event = client
+        .fetch(&event, &fetcher, &mut |p| seen.push(p.fraction()))
+        .expect("fetches");
+    assert!(seen.windows(2).all(|w| w[0] <= w[1]), "{seen:?}");
+    assert!((seen.last().copied().unwrap_or_default() - 1.0).abs() < 1e-9);
+    assert_eq!(event.title, "2025 Melbourne Hobart Westcoaster");
+    assert_eq!(event.positions_from, PositionsFrom::Primary);
+    // 2025-12-27T02:30:00Z, and the tracked window's end.
+    assert_eq!(event.start, Some(1_766_802_600));
+    assert_eq!(event.stop, Some(1_769_860_800));
+    assert_eq!(event.boats.len(), 5);
+
+    let alien = event.boat("5631641c671f0c130e6f09b6").expect("Alien");
+    assert_eq!(alien.name, "ALIEN");
+    assert_eq!(alien.sail.as_deref(), Some("R880"));
+    assert_eq!(alien.model.as_deref(), Some("Lidgard 36"));
+    assert_eq!(alien.division.as_deref(), Some("1"));
+    assert_eq!(alien.status.as_deref(), Some("Racing"));
+    // Its own finishTime, not the event's tracked end.
+    assert_eq!(alien.finish, Some(1_767_082_361));
+    assert_eq!(alien.fixes.len(), 287);
+    let first = &alien.fixes[0];
+    assert_eq!(first.t, 1_766_735_775);
+    assert_eq!((first.lat, first.lon), (-38.261_605, 144.667_088));
+    assert_eq!((first.sog, first.cog), (Some(0.0), Some(0.0)));
+    let last = alien.fixes.last().expect("fixes");
+    assert_eq!(last.t, 1_769_024_700);
+    assert_eq!((last.sog, last.cog), (Some(1.0), Some(90.0)));
+    // Oldest first, and every fix given a SOG and a COG (spec.md 7.2: both
+    // are given and used, never derived).
+    for boat in &event.boats {
+        assert!(
+            boat.fixes.windows(2).all(|w| w[0].t < w[1].t),
+            "{}",
+            boat.name
+        );
+        assert!(
+            boat.fixes
+                .iter()
+                .all(|f| f.sog.is_some() && f.cog.is_some()),
+            "{}",
+            boat.name
+        );
+    }
+    let total: usize = event.boats.iter().map(|b| b.fixes.len()).sum();
+    assert_eq!(total, 863);
+}
+
+/// An unknown slug's `{"positions":[],"race":[]}` (`race` an empty array,
+/// not the object a real event answers with) is refused as no public
+/// event, not decoded as garbage.
+#[test]
+fn a_bluewater_unknown_slug_is_no_such_event() {
+    let host = serve(vec![(
+        "/api/race/no-such-race",
+        "200 OK",
+        br#"{"positions":[],"race":[]}"#.to_vec(),
+    )]);
+    let client = BlueWaterTracks::at(&host);
+    let event = client
+        .resolve("https://race.bluewatertracks.com/no-such-race")
+        .expect("resolves");
+    let fetcher = Fetcher::new("Blue Water Tracks", Duration::from_secs(10), Arc::default())
+        .expect("a client")
+        .with_backoff(Duration::from_millis(1));
+    let err = client
+        .fetch(&event, &fetcher, &mut |_| {})
+        .expect_err("no such event");
+    assert!(matches!(err, TrackerError::NoSuchEvent { .. }), "{err:?}");
+}
+
+/// A tracker that answers a plain 404 (a redirect, or a changed API) is
+/// refused the same way as the empty-array answer.
+#[test]
+fn a_bluewater_plain_404_is_also_no_such_event() {
+    let host = serve(vec![("/api/race/gone", "404 Not Found", Vec::new())]);
+    let client = BlueWaterTracks::at(&host);
+    let event = client
+        .resolve("https://race.bluewatertracks.com/gone")
+        .expect("resolves");
+    let fetcher = Fetcher::new("Blue Water Tracks", Duration::from_secs(10), Arc::default())
+        .expect("a client")
+        .with_backoff(Duration::from_millis(1));
+    let err = client
+        .fetch(&event, &fetcher, &mut |_| {})
+        .expect_err("no such event");
+    assert!(matches!(err, TrackerError::NoSuchEvent { .. }), "{err:?}");
 }

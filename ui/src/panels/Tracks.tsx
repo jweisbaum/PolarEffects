@@ -24,11 +24,12 @@ import { dateRange, describeImportLine, describeTrackFailure, envStatusText, fro
 
 /**
  * The Tracks section of the left navigation (spec.md 7.1): the tracker
- * buttons (YellowBrick and Geovoile open the tracker dialog, spec.md 7.2;
- * Blue Water arrives in a later version), File… for GeoJSON and CSV, the result of the last import, and every track with its colour, boat,
- * event, dates, samples used, environment status and actions. Each track
- * unfolds to its sample filters and heading and speed derivation (spec.md
- * 7.4, 7.6), every change one undo.
+ * buttons (YellowBrick, Geovoile and Blue Water Tracks all open the shared
+ * tracker dialog, spec.md 7.2), File… for GeoJSON and CSV, the result of
+ * the last import, and every track with its colour, boat, event, dates,
+ * samples used, environment status and actions. Each track unfolds to its
+ * sample filters and heading and speed derivation (spec.md 7.4, 7.6),
+ * every change one undo.
  */
 export default function Tracks({ project, onProject }: {
   project: ProjectSummary;
@@ -44,7 +45,6 @@ export default function Tracks({ project, onProject }: {
   const [fetching, setFetching] = useState<{ ids: number[]; restart: boolean } | null>(null);
   const closeFetch = useCallback(() => setFetching(null), []);
   const tracks = project.sources.filter((s) => s.track !== null);
-  const later = t("Arrives in a later version");
   // The search's `track:details` step unfolds the first track's filters.
   const first = useRef<number | null>(null);
   first.current = tracks[0]?.id ?? null;
@@ -85,7 +85,10 @@ export default function Tracks({ project, onProject }: {
           title={t("Import boats from a Geovoile race: paste its viewer address")}>
           {t("Geovoile…")}
         </button>
-        <button data-feature="tracks:bluewater" disabled title={later}>{t("Blue Water…")}</button>
+        <button data-feature="tracks:bluewater" onClick={() => setTracker("bluewater")}
+          title={t("Import boats from a Blue Water Tracks race: paste its race link")}>
+          {t("Blue Water…")}
+        </button>
         <button data-feature="tracks:import-file" onClick={() => void chooseFiles()}
           title={t("Import GeoJSON and CSV tracks; several files at once")}>
           {t("File…")}

@@ -15,7 +15,6 @@ const catalogue: Record<string, string> = {
   "YellowBrick import": "YellowBrick-Import",
   "Geovoile import": "Geovoile-Import",
   "Blue Water Tracks import": "Blue-Water-Tracks-Import",
-  "Import boats from Blue Water Tracks. Arrives in a later version.": "Boote aus Blue Water Tracks importieren. Folgt in einer späteren Version.",
   "Show track on the map": "Track auf der Karte zeigen",
   "Frame one track on the map.": "Einen Track auf der Karte formatfüllend zeigen.",
   "track": "Track",
@@ -409,6 +408,8 @@ const catalogue: Record<string, string> = {
   "Import boats from a Geovoile race: paste its viewer address": "Boote einer Geovoile-Regatta importieren: Viewer-Adresse einfügen",
   "The race's Geovoile viewer address, such as vendeeglobe.geovoile.com/2016/tracker/; add ?leg=2 for the second leg": "Die Geovoile-Viewer-Adresse der Regatta, etwa vendeeglobe.geovoile.com/2016/tracker/; ?leg=2 anhängen für die zweite Etappe",
   "The race's Blue Water Tracks address": "Die Blue-Water-Tracks-Adresse der Regatta",
+  "Import boats from a Blue Water Tracks race: paste its race link": "Boote einer Blue-Water-Tracks-Regatta importieren: Regattalink einfügen",
+  "Import boats from a Blue Water Tracks race: paste its race.bluewatertracks.com link or race key, pick boats from the whole fleet.": "Boote einer Blue-Water-Tracks-Regatta importieren: race.bluewatertracks.com-Link oder Regattaschlüssel einfügen und Boote aus der ganzen Flotte wählen.",
 };
 
 export default catalogue;

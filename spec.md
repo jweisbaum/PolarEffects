@@ -684,12 +684,26 @@ In detail (M11):
 
 **Blue Water Tracks** (host `api.bluewatertracks.com`):
 
-- The user pastes `https://race.bluewatertracks.com/<slug>`; the slug is the
-  last path component.
-- `GET https://api.bluewatertracks.com/api/race/<slug>`: `race.boats[]`
-  (boat_id, boatName, sailNo, design, handicaps) and `positions[]` as GeoJSON
-  Features with `properties.{boat_id, date, sog, cog}`.
-- SOG and COG are provided and used.
+- The user pastes `https://race.bluewatertracks.com/<slug>` (the slug is the
+  last path component), an `api.bluewatertracks.com/api/race/<slug>` link, or
+  a bare slug.
+- `GET https://api.bluewatertracks.com/api/race/<slug>`: `race` (raceName,
+  raceStartTime, trackTimeFinish, and `boats[]`: boat_id, boatName, sailNo,
+  design, handicaps, each a rating system's name, rating and division) and
+  `positions[]` as GeoJSON `Point` Features with `properties.{boat_id, date,
+  sog, cog}` (the third coordinate, when given, is altitude and is ignored).
+  A boat's division is the distinct division values across its handicaps,
+  joined.
+- An unknown slug is not a 404: the API answers 200 with `race` an empty
+  array instead of an object (`{"positions":[],"race":[]}`), which is read
+  the same as no public event; an ordinary 404 is treated the same way.
+- SOG and COG are given for every position and used as they are (unlike
+  Geovoile's official reports, a value of exactly 0 is not treated as
+  absent). The event's start is `raceStartTime`; a boat's time window ends
+  at its own `finishTime` when given, else at `trackTimeFinish`.
+- Positions are not guaranteed sorted or free of duplicate timestamps per
+  boat; they are sorted and merged per boat exactly as a file import's are
+  (spec.md 7.4) before the dialog ever sees them.
 
 ### 7.3 File import
 
