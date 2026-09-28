@@ -100,9 +100,20 @@ const topics: HelpTopic[] = [
     related: ["workspace", "tracks"] },
   { id: "polar-3d", group: "Ansichten", title: "Die 3D-Polare",
     paragraphs: [
-      "Die 3D-Ansicht wird eine Polare als Fläche der Bootsgeschwindigkeit über wahrem Windwinkel und wahrer Windgeschwindigkeit zeigen, mit den Punkten der Tracks, und das Ausschließen von Punkten sowie das Bearbeiten jeweils einer Quelle erlauben.",
+      "Die 3D-Ansicht zeigt jede sichtbare Polarquelle als durchscheinende Fläche über ihrem eigenen Gitter, mit ihren Gitterpunkten als Punkte; die Trackpunkte kommen mit den Tracks hinzu. Nichts wird neu abgetastet oder extrapoliert: eine leere Zelle einer Quelle ist ein Loch in ihrer Fläche.",
+      "Im Polarturm (Standard) ist der Winkel um die senkrechte Achse der TWA, der Abstand von ihr die BSP und die Höhe der TWS; jede Windgeschwindigkeit ist so eine klassische Polarkurve, und ihr Stapel bildet eine Fläche. Die kartesische Anordnung legt TWA, TWS und BSP auf drei gerade Achsen. Die Achsen sind in Ihrer Geschwindigkeitseinheit beschriftet.",
+      "Wählen Sie Punkte aus, indem Sie einen anklicken, mit Shift weitere hinzufügen oder ein Lasso oder Rechteck um viele ziehen. Die Auswahlanzeige nennt ihre Anzahl, ihre mittleren TWA, TWS und BSP und wie viele von jeder Quelle stammen. Ausschließen entfernt die ausgewählten Gitterpunkte aus der Mischung: der Punkt wird dann als Kreuz gezeichnet, und diese Zelle ist für diese Quelle beim Mischen leer. Aufnehmen holt sie zurück. Beides sind gewöhnliche Änderungen, die Widerrufen rückgängig macht. Die Quelle selbst ändert sich nicht.",
     ],
-    related: ["compare", "sources"] },
+    parameters: [
+      ["Anordnung: Polarturm / Kartesisch", "Wie TWA, TWS und BSP in der Szene liegen."],
+      ["Oben / Seite / Isometrisch", "Voreingestellte Kameras: entlang der Windgeschwindigkeitsachse (das klassische Polardiagramm), quer dazu oder die Dreiviertelansicht."],
+      ["Drehen / Lasso / Rechteck", "Mit Drehen dreht Ziehen die Ansicht, Ziehen mit der rechten Maustaste verschiebt sie, Scrollen zoomt. Mit Lasso oder Rechteck wählt Ziehen aus. Ein Klick wählt in jedem Werkzeug den nächsten Punkt; Shift ergänzt die Auswahl; Esc hebt sie auf."],
+      ["Anzeigen: Punkte / Polarknoten / Flächen / Gefilterte Punkte", "Was gezeichnet wird. Gefilterte Punkte sind die, die die Trackfilter entfernen, abgeblendet gezeichnet; sie kommen mit den Tracks."],
+      ["Farbe", "Färbt die Punkte nach Quelle oder nach Wellenhöhe, Strömungsgeschwindigkeit oder Zeit. Die letzten drei brauchen Trackpunkte mit ihren Umweltdaten und werden angeboten, sobald es sie gibt."],
+      ["Ausschließen / Aufnehmen", "Entfernt die Auswahl aus der Mischung oder nimmt sie wieder auf. Ausgeschlossene Gitterpunkte werden als Kreuze gezeichnet, ausgeschlossene Trackpunkte als Ringe."],
+      ["Auf der Karte zeigen", "Hebt die ausgewählten Punkte auf der Karte hervor. Kommt mit den Tracks."],
+    ],
+    related: ["sources", "compare"] },
   { id: "compare", group: "Ansichten", title: "Vergleich",
     paragraphs: [
       "Die Ansicht Vergleich wird den Unterschied zwischen zwei Polaren zeigen — zwei Quellen oder einer Quelle und der Mischung —, Zelle für Zelle.",

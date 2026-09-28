@@ -407,6 +407,74 @@ button.source-label:hover { border-color: var(--border); background: var(--raise
 }
 .map-unavailable { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; }
 
+/* --- 3D polar ---------------------------------------------------------- */
+
+.view3d { position: absolute; inset: 0; outline: none; }
+.view3d-canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+.view3d-canvas:active { cursor: grabbing; }
+.view3d-canvas.tool-lasso, .view3d-canvas.tool-box { cursor: crosshair; }
+.view3d-labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.view3d-labels span {
+  position: absolute;
+  left: 0;
+  top: 0;
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+  translate: -50% -50%;
+}
+.view3d-gesture { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.view3d-gesture polygon { fill: color-mix(in srgb, var(--accent) 15%, transparent); stroke: var(--accent); stroke-width: 1; stroke-dasharray: 4 3; }
+.view3d-unavailable, .view3d-empty { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; padding: 2rem; text-align: center; pointer-events: none; }
+.view3d-toolbar {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 12px;
+}
+.view3d-group { display: inline-flex; gap: 2px; }
+.view3d-group button.selected { background: var(--selected-bg); color: var(--selected-ink); border-color: var(--selected-border); }
+.view3d-side {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+}
+.view3d-side > * {
+  padding: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin: 0;
+}
+.view3d-show { display: flex; flex-direction: column; gap: 4px; }
+.view3d-show legend { padding: 0 4px; }
+.view3d-colour { display: flex; gap: 6px; align-items: center; justify-content: space-between; }
+.view3d-ramp { display: flex; gap: 6px; align-items: center; }
+.view3d-ramp-bar {
+  flex: 1;
+  height: 8px;
+  border-radius: 4px;
+  background: linear-gradient(to right, #440154, #3a528b, #20908d, #5ec962, #fde725);
+}
+.view3d-legend { color: var(--muted); }
+.view3d-selection h3 { margin: 0 0 4px; font-size: 12px; }
+.view3d-breakdown { list-style: none; margin: 4px 0; padding: 0; }
+.view3d-breakdown .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+.view3d-actions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+
 /* --- Status bar -------------------------------------------------------- */
 
 .statusbar {

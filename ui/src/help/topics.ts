@@ -117,9 +117,20 @@ export const TOPICS: HelpTopic[] = [
     related: ["workspace", "tracks"] },
   { id: "polar-3d", group: "Views", title: "The 3D polar",
     paragraphs: [
-      "The 3D stage will show a polar as a surface of boat speed over true wind angle and true wind speed, with the track samples as dots, and will let you exclude dots and edit one source at a time.",
+      "The 3D stage shows every visible polar source as a translucent surface over its own grid, with its grid points as dots; track samples join them as dots once tracks arrive. Nothing is resampled or extrapolated: an empty cell of a source is a hole in its surface.",
+      "In the polar tower (the default) the angle round the vertical axis is TWA, the distance from it is BSP and the height is TWS, so each wind speed is a classic polar curve and the stack is a surface. The Cartesian layout puts TWA, TWS and BSP on three straight axes. The axes are labelled in your speed unit.",
+      "Select dots by clicking one, Shift-clicking to add, or drawing a lasso or a box round many. The selection panel shows how many are selected, their mean TWA, TWS and BSP, and how many come from each source. Exclude removes the selected grid points from the blend: the point is then drawn as a cross, and that cell is empty for that source when the blend is made. Include puts them back. Both are ordinary changes, undone with Undo. Nothing in the source itself changes.",
     ],
-    related: ["compare", "sources"] },
+    parameters: [
+      ["Layout: Polar tower / Cartesian", "How TWA, TWS and BSP are placed in the scene."],
+      ["Top / Side / Isometric", "Preset cameras: straight down the wind-speed axis (the classic polar diagram), across it, or the three-quarter view."],
+      ["Rotate / Lasso / Box", "With Rotate, drag to turn the view, right-drag to pan and scroll to zoom. With Lasso or Box, dragging selects instead. A click selects the nearest dot in every tool; Shift adds to the selection; Escape clears it."],
+      ["Show: Samples / Polar nodes / Surfaces / Filtered samples", "What is drawn. Filtered samples are those the track filters remove, drawn dimmed; they arrive with tracks."],
+      ["Colour", "Colours the dots by source, or by wave height, current speed or time. The last three need track samples with their environment and are offered once those exist."],
+      ["Exclude / Include", "Remove the selection from the blend, or put it back. Excluded grid points are drawn as crosses, excluded samples as rings."],
+      ["Show on map", "Highlights the selected samples on the map. It arrives with tracks."],
+    ],
+    related: ["sources", "compare"] },
   { id: "compare", group: "Views", title: "Compare",
     paragraphs: [
       "The Compare stage will show the difference between two polars — two sources, or a source and the blend — cell by cell.",

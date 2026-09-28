@@ -100,9 +100,20 @@ const topics: HelpTopic[] = [
     related: ["workspace", "tracks"] },
   { id: "polar-3d", group: "Vues", title: "La polaire 3D",
     paragraphs: [
-      "La vue 3D montrera une polaire comme une surface de vitesse du bateau selon l’angle et la vitesse du vent réel, avec les points des traces, et permettra d’exclure des points et de modifier une source à la fois.",
+      "La vue 3D montre chaque source polaire visible comme une surface translucide sur sa propre grille, avec ses nœuds comme points ; les points des traces s’y ajouteront avec les traces. Rien n’est rééchantillonné ni extrapolé : une case vide d’une source est un trou dans sa surface.",
+      "Dans la tour polaire (par défaut), l’angle autour de l’axe vertical est le TWA, la distance à cet axe la BSP et la hauteur le TWS : chaque vitesse de vent est une courbe polaire classique et leur empilement forme une surface. La disposition cartésienne place TWA, TWS et BSP sur trois axes droits. Les axes sont gradués dans votre unité de vitesse.",
+      "Sélectionnez des points en cliquant sur l’un d’eux, en cliquant avec Shift pour en ajouter, ou en traçant un lasso ou un rectangle autour de plusieurs. Le panneau de sélection indique combien sont sélectionnés, leurs TWA, TWS et BSP moyens, et combien viennent de chaque source. Exclure retire de la fusion les nœuds sélectionnés : le nœud est alors dessiné comme une croix et cette case est vide pour cette source lors de la fusion. Inclure les remet. Ce sont des modifications ordinaires, annulées par Annuler. La source elle-même ne change pas.",
     ],
-    related: ["compare", "sources"] },
+    parameters: [
+      ["Disposition : Tour polaire / Cartésienne", "Comment TWA, TWS et BSP sont placés dans la scène."],
+      ["Dessus / Côté / Isométrique", "Caméras prédéfinies : le long de l’axe de la vitesse du vent (le diagramme polaire classique), en travers, ou vue de trois quarts."],
+      ["Rotation / Lasso / Rectangle", "Avec Rotation, glissez pour faire tourner la vue, glissez avec le bouton droit pour la déplacer et faites défiler pour zoomer. Avec Lasso ou Rectangle, glisser sélectionne. Un clic sélectionne le point le plus proche avec chaque outil ; Shift ajoute à la sélection ; Échap l’efface."],
+      ["Afficher : Points / Nœuds de polaire / Surfaces / Points filtrés", "Ce qui est dessiné. Les points filtrés sont ceux que les filtres de trace retirent, dessinés atténués ; ils arrivent avec les traces."],
+      ["Couleur", "Colore les points selon la source, ou selon la hauteur des vagues, la vitesse du courant ou l’heure. Ces trois derniers modes demandent des points de trace avec leur environnement et sont proposés dès qu’ils existent."],
+      ["Exclure / Inclure", "Retire la sélection de la fusion, ou l’y remet. Les nœuds exclus sont dessinés comme des croix, les points exclus comme des anneaux."],
+      ["Montrer sur la carte", "Met en évidence les points sélectionnés sur la carte. Arrivera avec les traces."],
+    ],
+    related: ["sources", "compare"] },
   { id: "compare", group: "Vues", title: "Comparer",
     paragraphs: [
       "La vue Comparer montrera la différence entre deux polaires — deux sources, ou une source et la fusion —, case par case.",

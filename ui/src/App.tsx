@@ -16,6 +16,7 @@ import { api, IpcError, QUIT_REQUESTED } from "./ipc";
 import MapView from "./map/MapView";
 import LeftNav from "./panels/LeftNav";
 import PolarPlot from "./panels/PolarPlot";
+import PolarView from "./polar/PolarView";
 import RightPanel from "./panels/RightPanel";
 import { loadPanels, reveal, savePanels, togglePanel, type PanelState } from "./panels/layout";
 import { pickProjectToOpen, pickProjectToSave } from "./project/dialogs";
@@ -376,8 +377,7 @@ function Shell() {
         {panels.left && <aside className="sidebar left"><LeftNav project={project} onProject={setProject} panels={panels} onToggle={toggle} /></aside>}
         <main className="centre-stage" aria-label={t("Stage")}>
           {stage === "map" && <MapView settings={settings} onSettings={setSettings} />}
-          {stage === "3d" && <Placeholder title={msg("3D polar")}
-            body={msg("The 3D view of a polar and its samples arrives in a later version.")} />}
+          {stage === "3d" && <PolarView project={project} settings={settings} onProject={setProject} />}
           {stage === "compare" && <Placeholder title={msg("Compare")}
             body={msg("Comparing two polars arrives in a later version.")} />}
           {stage === "map" && plotFull && (

@@ -787,10 +787,19 @@ overlay on demand):
 - Every visible polar source is a translucent surface in its colour, with the
   grid lines drawn. Every sample is a dot in its track's colour. The blend is
   an opaque surface.
-- Orbit, pan, zoom; preset cameras (top, side per TWS, isometric); an axis
-  legend with the display units.
+- Orbit, pan, zoom; preset cameras (top, side, isometric); an axis
+  legend with the display units. Top looks down the vertical axis (in the
+  tower, the classic polar diagram with every TWS stacked); side looks
+  across it, so each TWS is a level; the axes carry tick labels in the
+  display speed unit.
+- Every surface is the source's own grid over its own axes: nothing is
+  resampled or extrapolated, and an empty cell is a hole.
 - Must hold 60 fps with 200,000 dots and 20 surfaces on the reference
   machines (§13), using instanced points.
+- Rust assembles the scene and sends it as one packed little-endian binary
+  buffer (`f32` coordinates, `u32` ids and flags), not JSON; the layout is
+  documented once on each side (`pe-app/src/polar3d.rs`,
+  `ui/src/polar/scenePacket.ts`) and pinned by a shared fixture.
 
 ### 10.2 Showing all known points
 
@@ -798,16 +807,27 @@ overlay on demand):
 visible track, and the grid nodes of every visible polar source. Toggles: show
 samples, show polar nodes, show surfaces, show filtered samples (dimmed),
 colour dots by source / by Hs / by current speed / by time.
+Polar nodes have no environment, so they keep their source colour in every
+colour mode. A mode, or "show filtered", with nothing to show (no sample has
+that value, no sample is filtered) is offered disabled with a tooltip saying
+why.
 
 ### 10.3 Excluding dots
 
-- Click selects a dot; Shift-click adds; a lasso or box (in screen space)
-  selects many.
+- Click selects a dot; Shift-click adds (or removes a dot already
+  selected); a lasso or box (in screen space) selects many, Shift adding.
+  The Rotate, Lasso and Box tools choose what a drag does; a click selects
+  in each, and Escape clears the selection. The selection survives a
+  refetch of the scene (dots are matched by source and grid cell, or by
+  sample id).
 - **Exclude** removes the selection from the blend. Excluded sample dots are
   drawn hollow; excluded ORC or file nodes are drawn as crosses. **Include**
   restores them. Both are undoable.
 - For polar sources, excluding a node stores an exclusion in the overlay; the
-  node's cell is then empty for that source in the blend.
+  node's cell is then empty for that source in the blend. The surface still
+  shows the source as imported, with the excluded node drawn as a cross.
+  One Exclude or Include over nodes of several sources is one undo entry;
+  nodes already in the asked state are left alone.
 - Selection info: count, mean TWS/TWA/BSP, source breakdown, "show on map".
 
 ### 10.4 Editing one source

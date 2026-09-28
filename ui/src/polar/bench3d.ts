@@ -8,8 +8,13 @@
  * frames, then times a lasso over every dot. Results go to `window.__bench`
  * and the page, so a person or a DevTools-protocol script can read them.
  */
-import { PolarScene } from "./scene3d";
+import * as THREE from "three";
+
+import { PolarScene, SHAPE_CROSS, SHAPE_RING } from "./scene3d";
 import { random, syntheticGrid, syntheticSamples } from "./geometry3d";
+import { unpackScene } from "./scenePacket";
+import { buildDots, DEFAULT_TOGGLES } from "./view3d";
+import { packSynthetic } from "./benchPacket";
 
 const DOTS = Number(new URLSearchParams(location.search).get("dots") ?? 200_000);
 const SURFACES = Number(new URLSearchParams(location.search).get("surfaces") ?? 20);
@@ -30,6 +35,9 @@ interface Result {
   framesOver20Ms: number;
   frames: number;
   lassoMs: number;
+  unpackMs: number;
+  rebuildDotsMs: number;
+  packedBytes: number;
   lassoSelected: number;
   width: number;
   height: number;
@@ -45,7 +53,8 @@ function percentile(sorted: number[], p: number): number {
 
 async function run(): Promise<Result> {
   const canvas = document.querySelector("canvas")!;
-  const scene = new PolarScene(canvas);
+  const webgl = new THREE.WebGLRenderer({ canvas, antialias: true });
+  const scene = new PolarScene(canvas, webgl);
   const { width, height } = canvas.getBoundingClientRect();
   scene.resize(width, height);
 
@@ -54,13 +63,25 @@ async function run(): Promise<Result> {
   const palette = Array.from({ length: 50 }, () => [rnd(), rnd(), rnd()] as const);
   const colors = new Float32Array(DOTS * 3);
   for (let i = 0; i < DOTS; i++) colors.set(palette[i % 50]!, i * 3);
+  // As M7 draws them: a few excluded samples (rings) and nodes (crosses).
+  const shapes = new Float32Array(DOTS);
+  for (let i = 0; i < DOTS; i += 97) shapes[i] = i % 2 ? SHAPE_RING : SHAPE_CROSS;
   const surfaces = Array.from({ length: SURFACES }, (_, k) => ({
     grid: syntheticGrid(0.85 + (0.3 * k) / Math.max(1, SURFACES - 1)),
     color: `#${Math.floor(rnd() * 0xffffff).toString(16).padStart(6, "0")}`,
   }));
-  const build = scene.setData({ samples, colors, surfaces, layout: "tower" });
+  const build = scene.setData({ samples, colors, shapes, surfaces, layout: "tower" });
 
-  const gl = scene.renderer.getContext();
+  // The IPC side of an edit: unpack the scene Rust sends and rebuild the dots.
+  const packed = packSynthetic(samples);
+  const u0 = performance.now();
+  const packet = unpackScene(packed);
+  const unpackMs = performance.now() - u0;
+  const b0 = performance.now();
+  buildDots(packet, DEFAULT_TOGGLES, "source");
+  const rebuildDotsMs = performance.now() - b0;
+
+  const gl = webgl.getContext();
   const info = gl.getExtension("WEBGL_debug_renderer_info");
   const renderer = info ? String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL)) : String(gl.getParameter(gl.RENDERER));
 
@@ -103,6 +124,7 @@ async function run(): Promise<Result> {
     frameP99Ms: percentile(sorted, 0.99), frameMaxMs: sorted[sorted.length - 1] ?? NaN,
     framesOver20Ms: frames.filter(f => f > 20).length, frames: frames.length,
     lassoMs, lassoSelected: selected.length, width, height,
+    unpackMs, rebuildDotsMs, packedBytes: packed.byteLength,
   };
 }
 

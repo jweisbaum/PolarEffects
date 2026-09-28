@@ -97,6 +97,13 @@ function backend() {
       case "set_theme": settings = { ...settings, theme: args?.theme as string }; return settings;
       case "chunk_cache_status": return { path: "/cache/chunks", bytes: 0 };
       case "quit_app": return null;
+      case "polar_scene": {
+        // An empty scene: the header alone (layout in polar/scenePacket.ts).
+        const header = new ArrayBuffer(32);
+        new DataView(header).setUint32(0, 0x44334550, true);
+        new DataView(header).setUint32(4, 1, true);
+        return header;
+      }
       case "import_polar_files":
         project = summary(true, project?.path ?? null, [...(project?.sources ?? []), POLAR]);
         return {
@@ -270,7 +277,8 @@ describe("the project window", () => {
     await mount();
     await click(feature("stage:3d"));
     expect(feature("map:projection")).toBeNull();
-    expect(q(".stage-placeholder h2")?.textContent).toBe("3D polar");
+    expect(feature("view3d:layout")).not.toBeNull();
+    expect(calls.some(([command]) => command === "polar_scene")).toBe(true);
     await click(feature("stage:compare"));
     expect(q(".stage-placeholder h2")?.textContent).toBe("Compare");
     await click(feature("stage:map"));
@@ -501,8 +509,8 @@ describe("finding every control (plan.md M2 acceptance)", () => {
         // section's Remove are on screen.
         project = summary(false, "/p.wpsproj", [POLAR, ORC]);
         await mount();
-        // The map stage is hidden behind the 3D stage, to be revealed.
-        await click(feature("stage:3d"));
+        // The map and 3D stages are hidden behind the Compare stage, to be revealed.
+        await click(feature("stage:compare"));
         if (entry.reveal?.length) {
           expect(feature(entry.id), `${entry.id} starts hidden`).toBeNull();
         }

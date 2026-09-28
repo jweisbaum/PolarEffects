@@ -111,6 +111,23 @@ describe("api", () => {
     expect(invoke).toHaveBeenLastCalledWith("polar_plot", { tws: null });
   });
 
+  it("unpacks the 3D scene from raw bytes and names the exclusion command's arguments", async () => {
+    const header = new Uint8Array(32);
+    new DataView(header.buffer).setUint32(0, 0x44334550, true);
+    new DataView(header.buffer).setUint32(4, 1, true);
+    invoke.mockResolvedValue(header.buffer);
+    expect((await api.polarScene()).nodes.count).toBe(0);
+    expect(invoke).toHaveBeenLastCalledWith("polar_scene", undefined);
+    invoke.mockResolvedValue([...header]);
+    expect((await api.polarScene()).sources).toEqual([]);
+    invoke.mockResolvedValue([1, 2, 3]);
+    await expect(api.polarScene()).rejects.toThrow(/no header/);
+    invoke.mockResolvedValue(null);
+    const node = { source_id: 1, twa_index: 2, tws_index: 0 };
+    await api.setExcluded([node], [], true);
+    expect(invoke).toHaveBeenLastCalledWith("set_excluded", { nodes: [node], samples: [], excluded: true });
+  });
+
   it("hands the basemap over as an ArrayBuffer either way it arrives", async () => {
     invoke.mockResolvedValue([1, 2, 3]);
     const bytes = await api.basemap();

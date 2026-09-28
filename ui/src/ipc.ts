@@ -9,6 +9,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 import { beginBusy } from "./busy";
 import { msg } from "./i18n/msg";
+import { unpackScene, type ScenePacket } from "./polar/scenePacket";
 import type { AppErrorPayload } from "./generated/AppErrorPayload";
 import type { AppInfo } from "./generated/AppInfo";
 import type { AppSettings } from "./generated/AppSettings";
@@ -22,6 +23,7 @@ import type { OrcCatalogueInfo } from "./generated/OrcCatalogueInfo";
 import type { OrcFilters } from "./generated/OrcFilters";
 import type { OrcSearchResult } from "./generated/OrcSearchResult";
 import type { PolarImportResult } from "./generated/PolarImportResult";
+import type { PolarNodeRef } from "./generated/PolarNodeRef";
 import type { PolarPlotResult } from "./generated/PolarPlotResult";
 import type { Units } from "./generated/Units";
 import type { ProjectSummary } from "./generated/ProjectSummary";
@@ -168,6 +170,25 @@ export const api = {
    * until it exists).
    */
   polarPlot: (tws: number | null) => call<PolarPlotResult>("polar_plot", { tws }),
+
+  // The 3D polar view (spec.md 10).
+
+  /**
+   * The 3D scene, packed as binary (layout in `polar/scenePacket.ts`): every
+   * visible polar source's nodes and surface, every sample dot, and which
+   * are excluded.
+   */
+  polarScene: async (): Promise<ScenePacket> => {
+    const bytes = await call<ArrayBuffer | number[]>("polar_scene");
+    return unpackScene(bytes instanceof ArrayBuffer ? bytes : new Uint8Array(bytes).buffer);
+  },
+  /**
+   * Excludes a selection from the blend (`excluded` true) or includes it
+   * again, as one undoable change (spec.md 10.3). Sample ids are accepted
+   * and ignored until tracks have samples.
+   */
+  setExcluded: (nodes: PolarNodeRef[], samples: number[], excluded: boolean) =>
+    call<ProjectSummary>("set_excluded", { nodes, samples, excluded }),
 
   // ORC polars (spec.md 5). The catalogue is built into the app.
 

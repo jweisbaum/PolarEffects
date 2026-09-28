@@ -43,6 +43,10 @@ cross-platform "Einfügen"). The native menu's labels live in Rust,
 | race | course | Regatta | |
 | sample (a track position) | point | Punkt | Shown as a dot; "échantillon"/"Messpunkt" only in technical text. |
 | polar segment | segment de polaire | Polarsegment | |
+| polar node (a grid point of a polar) | nœud de polaire | Polarknoten | "nœud de grille" / "Gitterpunkt" in descriptions. |
+| exclude / include (from the blend) | exclure / inclure | ausschließen / aufnehmen | |
+| surface (3D) | surface | Fläche | |
+| polar tower (3D layout) | tour polaire | Polarturm | |
 | ORC certificate | certificat ORC | ORC-Messbrief | "Messbrief" is the class-rule word. |
 | sister ship | sistership | Schwesterschiff | |
 | TWA — true wind angle | angle du vent réel | wahrer Windwinkel | Keep "TWA" as the abbreviation. |

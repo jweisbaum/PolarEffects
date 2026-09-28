@@ -26,3 +26,13 @@ describe("3D view, 200,000 dots and 20 surfaces", () => {
   bench("lasso select over 200k projected dots (64-vertex lasso)", () => { lassoSelect(screen, lasso); });
   bench("project + lasso (one lasso gesture)", () => { lassoSelect(project(positions, mvp, 1280, 800, screen), lasso); });
 });
+
+describe("the M7 scene transport, 200,000 samples", async () => {
+  const { packSynthetic } = await import("./benchPacket");
+  const { unpackScene } = await import("./scenePacket");
+  const { buildDots, DEFAULT_TOGGLES } = await import("./view3d");
+  const packed = packSynthetic(samples);
+  const packet = unpackScene(packed);
+  bench("unpack the packed scene (views, no copy)", () => { unpackScene(packed); });
+  bench("build the drawn dots (by source)", () => { buildDots(packet, DEFAULT_TOGGLES, "source"); });
+});

@@ -9,8 +9,6 @@ const catalogue: Record<string, string> = {
   "Unsaved changes": "Modifications non enregistrées",
   "Settings ({chord})": "Réglages ({chord})",
   "Stage": "Vue",
-  "3D polar": "Polaire 3D",
-  "The 3D view of a polar and its samples arrives in a later version.": "La vue 3D d’une polaire et de ses points arrivera dans une version ultérieure.",
   "Compare": "Comparer",
   "Comparing two polars arrives in a later version.": "La comparaison de deux polaires arrivera dans une version ultérieure.",
   "Show the navigation": "Afficher la navigation",

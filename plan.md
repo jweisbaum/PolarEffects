@@ -259,7 +259,7 @@ contribute a curve, only future dots.
 
 ---
 
-### M7 — 3D polar view
+### M7 — 3D polar view · **complete**
 
 **Deliverables**
 
@@ -272,6 +272,32 @@ contribute a curve, only future dots.
   (`tauri::ipc::Response`) of packed `f32`, not JSON.
 
 **Acceptance:** spec §13 3D budgets met on the reference machines.
+
+Built as specified. The generic selection and exclusion machinery is
+complete; per the pre-flight ruling, Exclude and Include act on **polar
+nodes** of ORC and file sources now (`Command::ExcludeCells` /
+`IncludeCells`, one history entry per action, a `Batch` across sources),
+and `set_excluded` already takes sample ids, ignored until tracks have
+samples (M8). `polar_scene` returns the scene as a packed binary
+`tauri::ipc::Response` (layout in `pe-app/src/polar3d.rs` and
+`ui/src/polar/scenePacket.ts`, pinned by `ui/src/polar/fixtures/scene-v1.bin`
+from both sides). Samples, the blend surface (M14), colour by Hs / current /
+time and "show filtered" have the wire shape and the controls but nothing to
+show yet: the controls are offered disabled with a tooltip. "Show on map" is
+disabled until M8. `pe_polar::blend_input` is the source grid the blend
+will read, with excluded cells empty.
+
+*Measured 2026-09-28 on the development machine* (2019 MacBook Pro, Intel
+UHD 630, `ui/bench3d.html` in headless Chrome with ANGLE Metal, 1280 × 800,
+now drawing M7's shaped dots): 200k dots + 20 surfaces hold 60 fps, frame
+p50/p95 16.7/16.8 ms over 300 frames in two runs (p99 16.8 and 33.2 ms; one
+shader-compile hitch of 0.15–0.33 s at start). 400k + 40: p95 33 ms, so
+the headroom is still under 2×. Per edit at 200k samples: Rust packs the
+scene in 29 ms (debug build) into 8.0 MB; the page unpacks it in 2.7 ms
+(views, no copy) and rebuilds the drawn dots in 15 ms; a lasso takes 6–7
+ms. Budget: **go** on this machine; the reference machines and the Tauri
+webviews (WKWebView, WebView2), including the IPC transfer of the 8 MB
+buffer, are still unmeasured — to do before release (M18).
 
 ---
 
