@@ -46,6 +46,10 @@ pub const DEFAULT_TIMEOUT_S: u32 = 60;
 /// The shortest and longest request timeouts offered, in seconds.
 pub const TIMEOUT_RANGE_S: (u32, u32) = (5, 600);
 
+/// The narrowest and widest TWS band the 2D polar plot offers for its
+/// sample dots, knots either side of the slice (spec.md 9.2).
+pub const PLOT_BAND_RANGE_KN: (f64, f64) = (0.25, 5.0);
+
 /// What the autosave thread does with a dirty project (spec.md 3.4, 4.5).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export_to = "AutosaveMode.ts")]
@@ -189,6 +193,10 @@ pub struct Settings {
     pub network: NetworkSettings,
     /// The map projection.
     pub projection: MapProjection,
+    /// How far from the 2D plot's wind speed a sample may be and still be
+    /// drawn, knots either side (spec.md 9.2). A display preference: it
+    /// changes what is drawn, never the blend.
+    pub plot_tws_band_kn: f64,
 }
 
 impl Default for Settings {
@@ -202,6 +210,7 @@ impl Default for Settings {
             chunk_cache: ChunkCacheSettings::default(),
             network: NetworkSettings::default(),
             projection: MapProjection::default(),
+            plot_tws_band_kn: crate::polar_plot::DEFAULT_TWS_BAND_KN,
         }
     }
 }
@@ -267,6 +276,7 @@ impl Settings {
                 read_field(network, "timeout_s", &mut settings.network.timeout_s);
             }
             read_field(&object, "projection", &mut settings.projection);
+            read_field(&object, "plot_tws_band_kn", &mut settings.plot_tws_band_kn);
         }
         settings.normalised()
     }
@@ -296,6 +306,9 @@ impl Settings {
         }
         if !(TIMEOUT_RANGE_S.0..=TIMEOUT_RANGE_S.1).contains(&self.network.timeout_s) {
             self.network.timeout_s = defaults.network.timeout_s;
+        }
+        if !(PLOT_BAND_RANGE_KN.0..=PLOT_BAND_RANGE_KN.1).contains(&self.plot_tws_band_kn) {
+            self.plot_tws_band_kn = defaults.plot_tws_band_kn;
         }
         self
     }
@@ -575,6 +588,26 @@ pub fn cache_clear(state: &AppState) -> Result<ChunkCacheStatus> {
         std::fs::remove_dir_all(&dir).doing("clear the chunk cache at", dir.display())?;
     }
     cache_status(state)
+}
+
+/// Changes the 2D polar plot's TWS band for sample dots, knots.
+#[tauri::command]
+pub fn set_plot_band(state: tauri::State<'_, AppState>, band_kn: f64) -> Result<Settings> {
+    plot_band_set(&state, band_kn)
+}
+
+/// [`set_plot_band`] without a Tauri handle.
+pub fn plot_band_set(state: &AppState, band_kn: f64) -> Result<Settings> {
+    update(state, |settings| {
+        if !(PLOT_BAND_RANGE_KN.0..=PLOT_BAND_RANGE_KN.1).contains(&band_kn) {
+            return Err(AppError::BadOption {
+                field: "Dot band",
+                value: band_kn.to_string(),
+            });
+        }
+        settings.plot_tws_band_kn = band_kn;
+        Ok(())
+    })
 }
 
 #[cfg(test)]

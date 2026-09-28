@@ -18,6 +18,11 @@ use pe_app::projects::{
     BoatInput, OrcSourceSummary, PolarFileSummary, ProjectSummary, RecentProject, SourceSummary,
 };
 use pe_app::settings::{AutosaveMode, ChunkCacheStatus, Settings};
+use pe_app::tracks::{
+    CsvMappingInput, CsvPreview, SampleDetails, TrackBoatPreview, TrackFileInspection,
+    TrackFileRequest, TrackFilters, TrackImportFailure, TrackImportLine, TrackImportResult,
+    TrackSummary,
+};
 use ts_rs::{Config, TS};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -45,6 +50,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     PolarSampleDot::export_all(&cfg)?;
     PolarPlotResult::export_all(&cfg)?;
     PolarNodeRef::export_all(&cfg)?;
+    TrackSummary::export_all(&cfg)?;
+    TrackFilters::export_all(&cfg)?;
+    CsvMappingInput::export_all(&cfg)?;
+    CsvPreview::export_all(&cfg)?;
+    TrackBoatPreview::export_all(&cfg)?;
+    TrackFileInspection::export_all(&cfg)?;
+    TrackFileRequest::export_all(&cfg)?;
+    TrackImportFailure::export_all(&cfg)?;
+    TrackImportLine::export_all(&cfg)?;
+    TrackImportResult::export_all(&cfg)?;
+    SampleDetails::export_all(&cfg)?;
     OrcSourceSummary::export_all(&cfg)?;
     OrcCatalogueInfo::export_all(&cfg)?;
     OrcFilters::export_all(&cfg)?;

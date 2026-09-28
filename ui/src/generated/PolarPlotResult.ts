@@ -21,10 +21,14 @@ tws_max: number | null,
  */
 curves: Array<PolarCurve>,
 /**
- * Samples within [`DEFAULT_TWS_BAND_KN`] of the slice. Empty until
- * tracks exist.
+ * Samples within the band of the slice (every sample with wind, in
+ * "all"); filtered ones only when asked for.
  */
 dots: Array<PolarSampleDot>,
+/**
+ * The band used, knots.
+ */
+band_kn: number,
 /**
  * The blend at the slice; `None` until the blend arrives (M14).
  */

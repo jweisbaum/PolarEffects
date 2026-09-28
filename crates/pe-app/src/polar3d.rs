@@ -46,15 +46,19 @@
 //!
 //! Flags: bit 0 excluded (spec.md 10.3), bit 1 filtered out (spec.md 7.6).
 //!
-//! Samples are always empty until tracks have them (M8/M9), and the blend
-//! surface is never sent until the blend exists (M14); the layout already
-//! carries both, so neither needs a wire change.
+//! A sample is sent only once it has a place in the polar, which needs its
+//! wind (M9): a track without environment adds no dot rather than one at an
+//! invented position. The blend surface is never sent until the blend
+//! exists (M14); the layout already carries it.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use pe_core::command::{EXCLUDE_NODES_LABEL, INCLUDE_NODES_LABEL};
+use pe_core::command::{
+    EXCLUDE_DOTS_LABEL, EXCLUDE_NODES_LABEL, EXCLUDE_SAMPLES_LABEL, INCLUDE_DOTS_LABEL,
+    INCLUDE_NODES_LABEL, INCLUDE_SAMPLES_LABEL,
+};
 use pe_core::source::{CellRef, Source, SourceKind};
-use pe_core::{Command, Project, SourceId};
+use pe_core::{Command, Project, SampleId, SourceId};
 use serde::Deserialize;
 use ts_rs::TS;
 
@@ -184,6 +188,7 @@ fn colour_code(source: &Source) -> u32 {
 /// extrapolated, and an empty cell is a hole.
 pub fn scene_of(project: &Project) -> Scene {
     let mut scene = Scene::default();
+    let mut times: Vec<i64> = Vec::new();
     for source in project.sources.iter().filter(|source| source.visible) {
         let index = scene.sources.len() as u32;
         scene.sources.push(SceneSource {
@@ -191,7 +196,31 @@ pub fn scene_of(project: &Project) -> Scene {
             colour: colour_code(source),
             kind: kind_code(&source.kind),
         });
-        // Samples arrive with tracks (M8): until then a track adds no dot.
+        if let Some(track) = source.track() {
+            let use_corrected = project.blend.use_corrected;
+            let filtered = pe_tracks::filtered_out(track, &source.overlay.filters, use_corrected);
+            let excluded = &source.overlay.excluded_samples;
+            for (sample, filtered) in track.samples.iter().zip(filtered) {
+                let Some((twa, tws, bsp)) = pe_tracks::polar_point(sample, use_corrected) else {
+                    continue;
+                };
+                scene.samples.push(SceneSample {
+                    twa: twa as f32,
+                    tws: tws as f32,
+                    bsp: bsp as f32,
+                    source: index,
+                    id: sample.id.raw(),
+                    hs: sample.hs_m.map_or(f32::NAN, |v| v as f32),
+                    current: sample.current_speed.map_or(f32::NAN, |v| v as f32),
+                    // Made relative to the time origin below.
+                    time: 0.0,
+                    excluded: excluded.binary_search(&sample.id).is_ok(),
+                    filtered,
+                });
+                times.push(sample.t);
+            }
+            continue;
+        }
         let Some(grid) = pe_polar::source_polar(source) else {
             continue;
         };
@@ -226,6 +255,12 @@ pub fn scene_of(project: &Project) -> Scene {
             tws: grid.tws.iter().map(|v| *v as f32).collect(),
             bsp,
         });
+    }
+    // Sample times travel as f32 seconds from the earliest, which keeps
+    // them to the second over any race.
+    scene.time_origin = times.iter().copied().min().unwrap_or(0);
+    for (sample, t) in scene.samples.iter_mut().zip(&times) {
+        sample.time = (t - scene.time_origin) as f32;
     }
     // The blend surface joins here once it exists (M14): it is derived, and
     // nothing in this module invents one (invariant 2).
@@ -349,10 +384,8 @@ pub struct PolarNodeRef {
 
 /// Excludes a selection from the blend, or includes it again (spec.md 10.3),
 /// as one undoable change. `nodes` are polar nodes of ORC and file sources;
-/// `samples` are track sample ids, accepted for the shape the view already
-/// sends and ignored until tracks have samples (M8). Nodes already in the
-/// asked state are left alone; a selection that changes nothing records
-/// nothing.
+/// `samples` are track sample ids. Dots already in the asked state are left
+/// alone; a selection that changes nothing records nothing.
 #[tauri::command]
 pub fn set_excluded(
     state: tauri::State<'_, AppState>,
@@ -367,10 +400,83 @@ pub fn set_excluded(
 pub fn excluded_set(
     state: &AppState,
     nodes: &[PolarNodeRef],
-    _samples: &[u64],
+    samples: &[u64],
     excluded: bool,
 ) -> Result<ProjectSummary> {
-    edit::apply(state, |project| exclusion_command(project, nodes, excluded))
+    edit::apply(state, |project| {
+        let mut commands = node_commands(project, nodes, excluded)?;
+        let node_count = commands.len();
+        commands.extend(sample_commands(project, samples, excluded)?);
+        let label = match (node_count > 0, commands.len() > node_count, excluded) {
+            (true, true, true) => EXCLUDE_DOTS_LABEL,
+            (true, true, false) => INCLUDE_DOTS_LABEL,
+            (true, false, true) => EXCLUDE_NODES_LABEL,
+            (true, false, false) => INCLUDE_NODES_LABEL,
+            (false, _, true) => EXCLUDE_SAMPLES_LABEL,
+            (false, _, false) => INCLUDE_SAMPLES_LABEL,
+        };
+        Ok(match commands.len() {
+            0 => None,
+            1 => commands.pop(),
+            _ => Some(Command::Batch {
+                label: label.to_owned(),
+                commands,
+            }),
+        })
+    })
+}
+
+/// One command per track source for the samples not yet in the asked
+/// state. Every id must be a sample of some track in the project.
+fn sample_commands(project: &Project, samples: &[u64], excluded: bool) -> Result<Vec<Command>> {
+    if samples.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut wanted: Vec<SampleId> = samples.iter().map(|id| SampleId(*id)).collect();
+    wanted.sort_unstable();
+    wanted.dedup();
+    let mut found = 0;
+    let mut commands = Vec::new();
+    for source in &project.sources {
+        let Some(track) = source.track() else {
+            continue;
+        };
+        let list = &source.overlay.excluded_samples;
+        let mut changed: Vec<SampleId> = track
+            .samples
+            .iter()
+            .map(|s| s.id)
+            .filter(|id| wanted.binary_search(id).is_ok())
+            .inspect(|_| found += 1)
+            .filter(|id| list.binary_search(id).is_ok() != excluded)
+            .collect();
+        if changed.is_empty() {
+            continue;
+        }
+        changed.sort_unstable();
+        let source = source.id;
+        commands.push(if excluded {
+            Command::ExcludeSamples {
+                source,
+                samples: changed,
+            }
+        } else {
+            Command::IncludeSamples {
+                source,
+                samples: changed,
+            }
+        });
+    }
+    if found != wanted.len() {
+        return Err(AppError::BadOption {
+            field: "Sample",
+            value: format!(
+                "{} of the selected samples are not in the project",
+                wanted.len() - found
+            ),
+        });
+    }
+    Ok(commands)
 }
 
 fn bad_node(node: &PolarNodeRef) -> AppError {
@@ -383,13 +489,13 @@ fn bad_node(node: &PolarNodeRef) -> AppError {
     }
 }
 
-/// The command that puts every node in `nodes` into the asked state: one
-/// per source, batched when there are several so the action is one entry.
-fn exclusion_command(
+/// The commands that put every node in `nodes` into the asked state: one
+/// per source (the caller batches them, so the action is one entry).
+fn node_commands(
     project: &Project,
     nodes: &[PolarNodeRef],
     excluded: bool,
-) -> Result<Option<Command>> {
+) -> Result<Vec<Command>> {
     let mut by_source: BTreeMap<u64, BTreeSet<(u32, u32)>> = BTreeMap::new();
     for node in nodes {
         by_source
@@ -442,19 +548,7 @@ fn exclusion_command(
             }
         });
     }
-    Ok(match commands.len() {
-        0 => None,
-        1 => commands.pop(),
-        _ => Some(Command::Batch {
-            label: if excluded {
-                EXCLUDE_NODES_LABEL
-            } else {
-                INCLUDE_NODES_LABEL
-            }
-            .to_owned(),
-            commands,
-        }),
-    })
+    Ok(commands)
 }
 
 #[cfg(test)]

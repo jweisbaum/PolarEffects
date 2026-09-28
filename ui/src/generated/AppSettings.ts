@@ -40,4 +40,10 @@ network: NetworkSettings,
 /**
  * The map projection.
  */
-projection: MapProjection, };
+projection: MapProjection,
+/**
+ * How far from the 2D plot's wind speed a sample may be and still be
+ * drawn, knots either side (spec.md 9.2). A display preference: it
+ * changes what is drawn, never the blend.
+ */
+plot_tws_band_kn: number, };

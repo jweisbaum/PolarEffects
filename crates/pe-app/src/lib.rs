@@ -2,7 +2,7 @@
 //!
 //! Rust owns the entire domain; the webview is a view layer. Everything the
 //! frontend can reach goes through a Tauri command in [`commands`],
-//! [`projects`], [`edit`], [`polar_files`], [`polar_plot`], [`polar3d`], [`orc`], [`settings`], [`basemap`],
+//! [`projects`], [`edit`], [`polar_files`], [`tracks`], [`map_tracks`], [`polar_plot`], [`polar3d`], [`orc`], [`settings`], [`basemap`],
 //! [`quit`] or [`autosave`], and every failure it can see is an
 //! [`error::AppError`].
 
@@ -11,6 +11,7 @@ pub mod basemap;
 pub mod commands;
 pub mod edit;
 pub mod error;
+pub mod map_tracks;
 pub mod menu;
 pub mod orc;
 pub mod paths;
@@ -21,6 +22,7 @@ pub mod projects;
 pub mod quit;
 pub mod session;
 pub mod settings;
+pub mod tracks;
 
 use tauri::Manager;
 
@@ -81,6 +83,13 @@ pub fn run() -> anyhow::Result<()> {
             edit::remove_source,
             polar_files::import_polar_files,
             polar_plot::polar_plot,
+            tracks::inspect_track_files,
+            tracks::inspect_csv_track,
+            tracks::import_track_files,
+            tracks::set_track_filters,
+            tracks::set_track_derivation,
+            tracks::sample_details,
+            map_tracks::map_tracks,
             polar3d::polar_scene,
             polar3d::set_excluded,
             orc::orc_catalogue_info,
@@ -97,6 +106,7 @@ pub fn run() -> anyhow::Result<()> {
             settings::set_chunk_cache,
             settings::set_network,
             settings::set_projection,
+            settings::set_plot_band,
             settings::chunk_cache_status,
             settings::clear_chunk_cache,
             quit::quit_app,

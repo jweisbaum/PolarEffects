@@ -12,5 +12,13 @@
   "Import polar files",
   "Add ORC polar",
   "Exclude polar nodes",
-  "Include polar nodes"
+  "Include polar nodes",
+  "Import track",
+  "Import tracks",
+  "Exclude samples",
+  "Include samples",
+  "Exclude dots",
+  "Include dots",
+  "Change sample filters",
+  "Change heading and speed derivation"
 ]

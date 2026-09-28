@@ -6,9 +6,12 @@
 //! bilinear interpolation, swept across that source's own TWA axis — nothing
 //! is invented beyond what the source's grid covers (invariant: no
 //! extrapolation). A track is not a polar source, so it contributes no
-//! curve; its samples will fill `dots` once tracks exist (M8/M9). The blend
-//! is a hook returning `None` until the blend itself lands (M14) — nothing
-//! here fabricates one.
+//! curve; its samples are `dots`, every sample of a visible track whose
+//! TWS is within the band (a display setting, ±1 kn by default) of the
+//! slice. A sample has a place only once it has wind (M9): until then it is
+//! left out rather than drawn somewhere invented. The blend is a hook
+//! returning `None` until the blend itself lands (M14) — nothing here
+//! fabricates one.
 
 use pe_core::source::Source;
 use pe_polar::Polar;
@@ -19,8 +22,8 @@ use crate::commands::AppState;
 use crate::error::Result;
 
 /// How close a sample's TWS may be to the slice and still count as at it,
-/// knots (spec.md 9.2). Configurable in a later milestone, once samples
-/// exist to filter.
+/// knots, by default (spec.md 9.2). The person changes it in Settings
+/// (`Settings::plot_tws_band_kn`).
 pub const DEFAULT_TWS_BAND_KN: f64 = 1.0;
 
 /// One point of a curve.
@@ -50,19 +53,24 @@ pub struct PolarCurve {
     pub points: Vec<PolarCurvePoint>,
 }
 
-/// One track sample near the slice (spec.md 9.2). Always empty until tracks
-/// exist (M8/M9); the shape is ready so drawing it later is only a wire-up.
+/// One track sample near the slice (spec.md 9.2).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, TS)]
 #[ts(export_to = "PolarSampleDot.ts")]
 pub struct PolarSampleDot {
     /// The track source it came from.
     pub source_id: u64,
+    /// The sample, for selection shared with the map and the 3D view.
+    pub sample_id: u64,
     /// True wind angle, degrees, folded to \[0, 180\].
     pub twa: f64,
     /// True wind speed at the sample, knots.
     pub tws: f64,
     /// Boat speed, knots.
     pub bsp: f64,
+    /// Taken out by the track's filters (only sent when asked for).
+    pub filtered: bool,
+    /// Excluded from the blend by hand.
+    pub excluded: bool,
 }
 
 /// What the 2D polar plot draws (spec.md 9.2).
@@ -77,9 +85,11 @@ pub struct PolarPlotResult {
     /// One curve per visible polar source at the chosen slice; several per
     /// source, one per wind speed it has, when `tws` was null ("all").
     pub curves: Vec<PolarCurve>,
-    /// Samples within [`DEFAULT_TWS_BAND_KN`] of the slice. Empty until
-    /// tracks exist.
+    /// Samples within the band of the slice (every sample with wind, in
+    /// "all"); filtered ones only when asked for.
     pub dots: Vec<PolarSampleDot>,
+    /// The band used, knots.
+    pub band_kn: f64,
     /// The blend at the slice; `None` until the blend arrives (M14).
     pub blend: Option<PolarCurve>,
 }
@@ -110,19 +120,74 @@ fn curve_at(source: &Source, grid: &Polar, tws: f64) -> PolarCurve {
     }
 }
 
+/// Every sample of a visible track that has a place in the polar, within
+/// `band` of `tws` (every one, for "all").
+fn dots_of(
+    project: &pe_core::Project,
+    tws: Option<f64>,
+    band: f64,
+    show_filtered: bool,
+) -> Vec<PolarSampleDot> {
+    let use_corrected = project.blend.use_corrected;
+    let mut dots = Vec::new();
+    for source in project.sources.iter().filter(|s| s.visible) {
+        let Some(track) = source.track() else {
+            continue;
+        };
+        let out = pe_tracks::filtered_out(track, &source.overlay.filters, use_corrected);
+        let excluded = &source.overlay.excluded_samples;
+        for (sample, filtered) in track.samples.iter().zip(out) {
+            if filtered && !show_filtered {
+                continue;
+            }
+            let Some((twa, sample_tws, bsp)) = pe_tracks::polar_point(sample, use_corrected) else {
+                continue;
+            };
+            if tws.is_some_and(|slice| (sample_tws - slice).abs() > band) {
+                continue;
+            }
+            dots.push(PolarSampleDot {
+                source_id: source.id.raw(),
+                sample_id: sample.id.raw(),
+                twa,
+                tws: sample_tws,
+                bsp,
+                filtered,
+                excluded: excluded.binary_search(&sample.id).is_ok(),
+            });
+        }
+    }
+    dots
+}
+
 /// The plot's answer for the open project (spec.md 9.2).
 ///
 /// `tws` chooses the slice; `None` is "all", which draws one curve per
 /// visible polar source for every wind speed that source's own grid has,
-/// rather than one slice shared by every source.
+/// rather than one slice shared by every source. `show_filtered` adds the
+/// samples the filters take out, flagged, for drawing dimmed.
 #[tauri::command]
-pub fn polar_plot(state: tauri::State<'_, AppState>, tws: Option<f64>) -> Result<PolarPlotResult> {
-    plot(&state, tws)
+pub fn polar_plot(
+    state: tauri::State<'_, AppState>,
+    tws: Option<f64>,
+    show_filtered: Option<bool>,
+) -> Result<PolarPlotResult> {
+    plot_with(&state, tws, show_filtered.unwrap_or(false))
+}
+
+/// [`polar_plot`] without a Tauri handle, filtered samples left out.
+pub fn plot(state: &AppState, tws: Option<f64>) -> Result<PolarPlotResult> {
+    plot_with(state, tws, false)
 }
 
 /// [`polar_plot`] without a Tauri handle.
-pub fn plot(state: &AppState, tws: Option<f64>) -> Result<PolarPlotResult> {
+pub fn plot_with(
+    state: &AppState,
+    tws: Option<f64>,
+    show_filtered: bool,
+) -> Result<PolarPlotResult> {
     state.with_session(|session| {
+        let band = session.settings.plot_tws_band_kn;
         let open = session.require_open()?;
         let grids: Vec<(&Source, Polar)> = open
             .project
@@ -164,9 +229,8 @@ pub fn plot(state: &AppState, tws: Option<f64>) -> Result<PolarPlotResult> {
             tws_min,
             tws_max,
             curves,
-            // No sample exists to place yet (M8/M9 add tracks with fixes);
-            // the shape is final so drawing it later needs no IPC change.
-            dots: Vec::new(),
+            dots: dots_of(&open.project, tws, band, show_filtered),
+            band_kn: band,
             // The blend is derived by pe-polar once it exists (M14,
             // invariant 2: never fabricated here in the meantime).
             blend: None,
@@ -348,6 +412,89 @@ mod tests {
         let result = plot(&app, None).unwrap();
         assert!(result.curves.iter().all(|c| c.label != "Track"));
         assert!(result.dots.is_empty());
+    }
+
+    /// A track without wind has no dots; once environment values are on
+    /// its samples (put there by hand here, as M9's fetch will), the ones
+    /// within the band of the slice appear, with their flags.
+    #[test]
+    fn samples_become_dots_once_they_have_wind() {
+        let app = two_sources();
+        let (track_id, ids) = add_track(&app);
+        assert!(plot(&app, Some(10.0)).unwrap().dots.is_empty());
+
+        app.with_session(|session| {
+            let open = session.require_open()?;
+            let source = open.project.source_mut(SourceId(track_id)).unwrap();
+            let track = source.track_mut().unwrap();
+            for (k, sample) in track.samples.iter_mut().enumerate() {
+                sample.tws = Some(9.5 + k as f64);
+                sample.twa = Some(60.0 + k as f64);
+                sample.speed = Some(6.0);
+            }
+            Ok(())
+        })
+        .unwrap();
+        let result = plot(&app, Some(10.0)).unwrap();
+        // TWS 9.5 and 10.5 are within ±1 kn of 10; 11.5 is not.
+        assert_eq!(result.band_kn, DEFAULT_TWS_BAND_KN);
+        assert_eq!(
+            result.dots.iter().map(|d| d.sample_id).collect::<Vec<_>>(),
+            [ids[0], ids[1]]
+        );
+        assert_eq!(result.dots[0].twa, 60.0);
+        assert_eq!(result.dots[0].bsp, 6.0);
+        assert!(!result.dots[0].filtered && !result.dots[0].excluded);
+        assert_eq!(plot(&app, None).unwrap().dots.len(), 3);
+
+        // A wider band takes the third; a hidden track gives none.
+        crate::settings::plot_band_set(&app, 2.0).unwrap();
+        assert_eq!(plot(&app, Some(10.0)).unwrap().dots.len(), 3);
+        edit_visible(&app, track_id, false);
+        assert!(plot(&app, None).unwrap().dots.is_empty());
+    }
+
+    /// A track of three fixes 10 minutes apart heading east at 3.6 kn,
+    /// imported through the real command; returns its source id and sample
+    /// ids.
+    fn add_track(app: &AppState) -> (u64, Vec<u64>) {
+        // The fixture's sources took ids 1 and 2 by hand.
+        app.with_session(|session| {
+            session.require_open()?.project.next_id = 10;
+            Ok(())
+        })
+        .unwrap();
+        let dir = std::env::temp_dir().join(format!("pe-plot-track-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("boat.csv");
+        std::fs::write(
+            &path,
+            "time,lat,lon\n1753531200,0,0\n1753531800,0,0.01\n1753532400,0,0.02\n",
+        )
+        .unwrap();
+        let result = crate::tracks::import(
+            app,
+            &[crate::tracks::TrackFileRequest {
+                path: path.to_string_lossy().into_owned(),
+                mapping: None,
+                boats: None,
+            }],
+        )
+        .unwrap();
+        assert!(result.failures.is_empty(), "{:?}", result.failures);
+        app.with_session(|session| {
+            let open = session.require_open()?;
+            let source = open.project.sources.last().unwrap();
+            let ids = source
+                .track()
+                .unwrap()
+                .samples
+                .iter()
+                .map(|s| s.id.raw())
+                .collect();
+            Ok((source.id.raw(), ids))
+        })
+        .unwrap()
     }
 
     #[test]

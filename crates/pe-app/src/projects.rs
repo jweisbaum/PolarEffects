@@ -36,13 +36,15 @@ pub struct SourceSummary {
     /// What the source holds (spec.md 8): cells with a value for a polar,
     /// samples for a track.
     pub count: u32,
-    /// For a track, the samples not excluded by hand; null for a polar. The
-    /// sample filters join this count when they arrive (M8).
+    /// For a track, the samples the blend uses: neither excluded by hand
+    /// nor taken out by the filters; null for a polar.
     pub used: Option<u32>,
     /// For an imported polar file, how it was read (spec.md 6).
     pub polar_file: Option<PolarFileSummary>,
     /// For an ORC polar, which certificate it is (spec.md 5.3).
     pub orc: Option<OrcSourceSummary>,
+    /// For a track, what the Tracks section lists (spec.md 7.1).
+    pub track: Option<crate::tracks::TrackSummary>,
 }
 
 /// An ORC source's certificate, as the ORC polars section lists it.
@@ -79,8 +81,9 @@ fn count(value: usize) -> u32 {
 }
 
 impl SourceSummary {
-    /// The summary of one source.
-    pub fn of(source: &pe_core::Source) -> Self {
+    /// The summary of one source. `use_corrected` is the project's choice
+    /// of water- or ground-relative values, which the filters read.
+    pub fn of(source: &pe_core::Source, use_corrected: bool) -> Self {
         let orc = match &source.kind {
             SourceKind::Orc { record } => Some(OrcSourceSummary {
                 sail_no: record.sail_no.clone(),
@@ -112,16 +115,13 @@ impl SourceSummary {
                     tws: polar.tws.clone(),
                 }),
             ),
-            SourceKind::Track { track } => {
-                let excluded = &source.overlay.excluded_samples;
-                let used = track
-                    .samples
-                    .iter()
-                    .filter(|sample| excluded.binary_search(&sample.id).is_err())
-                    .count();
-                (track.samples.len(), Some(count(used)), None)
-            }
+            // The track summary below counts what the blend uses.
+            SourceKind::Track { track } => (track.samples.len(), None, None),
         };
+        let track = source
+            .track()
+            .map(|track| crate::tracks::TrackSummary::of(source, track, use_corrected));
+        let used = used.or(track.as_ref().map(|t| t.used));
         Self {
             id: source.id.raw(),
             kind: source.kind.name().to_owned(),
@@ -133,6 +133,7 @@ impl SourceSummary {
             used,
             polar_file,
             orc,
+            track,
         }
     }
 }
@@ -188,7 +189,11 @@ impl ProjectSummary {
             revision: open.revision,
             boat_name: project.boat.name.clone(),
             boat_notes: project.boat.notes.clone(),
-            sources: project.sources.iter().map(SourceSummary::of).collect(),
+            sources: project
+                .sources
+                .iter()
+                .map(|source| SourceSummary::of(source, project.blend.use_corrected))
+                .collect(),
             can_undo: open.history.can_undo(),
             can_redo: open.history.can_redo(),
             undo_label: open.history.undo_label().map(str::to_owned),

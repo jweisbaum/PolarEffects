@@ -214,9 +214,10 @@ fn a_selection_that_changes_nothing_records_nothing() {
     let app = two_polars(&root);
     let summary = polar3d::excluded_set(&app, &[node(1, 0, 0)], &[], false).unwrap();
     assert!(!summary.can_undo);
-    // Sample ids are accepted and, until tracks have samples (M8), ignored.
-    let summary = polar3d::excluded_set(&app, &[], &[5, 6], true).unwrap();
-    assert!(!summary.can_undo);
+    // Sample ids that name no sample are refused, changing nothing (the
+    // track pipeline is tested in tests/tracks.rs).
+    assert!(polar3d::excluded_set(&app, &[], &[5, 6], true).is_err());
+    assert!(!projects::summary(&app).unwrap().unwrap().can_undo);
 }
 
 #[test]

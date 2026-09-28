@@ -236,6 +236,26 @@ fn every_history_label_is_listed_for_translation() {
             source: id,
             cells: Vec::new(),
         },
+        Command::ExcludeSamples {
+            source: id,
+            samples: Vec::new(),
+        },
+        Command::IncludeSamples {
+            source: id,
+            samples: Vec::new(),
+        },
+        Command::SetSampleFilters {
+            source: id,
+            before: Box::default(),
+            after: Box::default(),
+        },
+        Command::SetDerivation {
+            source: id,
+            before: Default::default(),
+            after: Default::default(),
+            motion_before: Vec::new(),
+            motion_after: Vec::new(),
+        },
     ];
     let mut labels: Vec<String> = commands.iter().map(Command::label).collect();
     // Batches carry their own label; these are every one Rust builds.
@@ -244,6 +264,10 @@ fn every_history_label_is_listed_for_translation() {
             pe_app::polar_files::IMPORT_ONE,
             pe_app::polar_files::IMPORT_MANY,
             pe_app::orc::ADD_ORC,
+            pe_app::tracks::IMPORT_ONE,
+            pe_app::tracks::IMPORT_MANY,
+            pe_core::command::EXCLUDE_DOTS_LABEL,
+            pe_core::command::INCLUDE_DOTS_LABEL,
         ]
         .map(str::to_owned),
     );
