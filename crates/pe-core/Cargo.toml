@@ -7,6 +7,15 @@ license.workspace = true
 description = "PolarEffects document model, history, geodesy and project file I/O."
 
 [dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+# The `.wpsproj` container (spec.md 4.3). Deflate only, pure Rust: no C
+# library behind it.
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+proptest = "1.11.0"
 
 [lints]
 workspace = true
