@@ -52,4 +52,8 @@ orc: OrcSourceSummary | null,
 /**
  * For a track, what the Tracks section lists (spec.md 7.1).
  */
-track: TrackSummary | null, };
+track: TrackSummary | null,
+/**
+ * Polar edits the source holds (spec.md 10.4).
+ */
+edits: number, };

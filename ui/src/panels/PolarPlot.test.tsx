@@ -8,7 +8,10 @@ import type { ProjectSummary } from "../generated/ProjectSummary";
 import type { SourceSummary } from "../generated/SourceSummary";
 
 const polarPlotCall = vi.fn();
-vi.mock("../ipc", () => ({ api: { polarPlot: (tws: number | null) => polarPlotCall(tws) } }));
+vi.mock("../ipc", async () => {
+  const { emptyDots } = await import("./dotPacket");
+  return { api: { polarPlot: (tws: number | null) => polarPlotCall(tws), polarPlotDots: async () => emptyDots() } };
+});
 
 const { default: PolarPlot } = await import("./PolarPlot");
 
@@ -18,7 +21,7 @@ let root: Root;
 
 const source = (overrides: Partial<SourceSummary> = {}): SourceSummary => ({
   id: 1, kind: "polar_file", label: "A", colour: "#4e79a7", visible: true, weight: 1,
-  count: 4, used: null, polar_file: null, orc: null, track: null, ...overrides,
+  count: 4, used: null, polar_file: null, orc: null, track: null, edits: 0, ...overrides,
 });
 
 const project = (overrides: Partial<ProjectSummary> = {}): ProjectSummary => ({
@@ -28,7 +31,7 @@ const project = (overrides: Partial<ProjectSummary> = {}): ProjectSummary => ({
 });
 
 const result = (overrides: Partial<PolarPlotResult> = {}): PolarPlotResult => ({
-  tws_min: 6, tws_max: 20, curves: [], dots: [], blend: null, band_kn: 1, ...overrides,
+  tws_min: 6, tws_max: 20, curves: [], blend: null, band_kn: 1, ...overrides,
 });
 
 async function render(...args: Parameters<typeof PolarPlot>) {

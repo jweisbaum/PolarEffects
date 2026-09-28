@@ -13,11 +13,61 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::canonical;
 use crate::error::{CoreError, Result};
 use crate::id::{SampleId, SourceId};
 use crate::project::Project;
-use crate::source::{CellRef, Colour, SampleFilters, Source, SourceKind, validate_weight};
-use crate::track::{DerivationSettings, Motion, Track};
+use crate::source::{
+    CellOverride, CellRef, Colour, SampleFilters, Source, SourceKind, validate_edit_bsp,
+    validate_weight,
+};
+use crate::track::{DerivationSettings, Motion, SegmentStatistic, Track};
+
+/// One cell's edit (spec.md 10.4): the override it held before and the one
+/// it holds after, `None` meaning none (the cell reads the source's value).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CellEdit {
+    /// TWA, degrees: a value of the editable surface's axis.
+    #[serde(with = "canonical::degrees_field")]
+    pub twa: f64,
+    /// TWS, knots: a value of the editable surface's axis.
+    #[serde(with = "canonical::knots_field")]
+    pub tws: f64,
+    /// The override before the edit.
+    #[serde(with = "canonical::optional_knots_field")]
+    pub before: Option<f64>,
+    /// The override after it.
+    #[serde(with = "canonical::optional_knots_field")]
+    pub after: Option<f64>,
+}
+
+impl CellEdit {
+    fn cell(&self) -> CellRef {
+        CellRef {
+            twa: self.twa,
+            tws: self.tws,
+        }
+    }
+}
+
+/// Which edit tool made a [`Command::EditCells`] (spec.md 10.4). It names
+/// the history entry, and only drags coalesce.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EditAction {
+    /// A node dragged in the 3D view.
+    Drag,
+    /// A value typed in the table.
+    Type,
+    /// A selection scaled by a percentage.
+    Scale,
+    /// A selection smoothed.
+    Smooth,
+    /// A selection reset to the source's values.
+    Reset,
+    /// Every edit of the source cleared.
+    ResetAll,
+}
 
 /// A reversible change to a project.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -145,6 +195,31 @@ pub enum Command {
         motion_before: Vec<Motion>,
         /// Every sample's motion under `after`, in sample order.
         motion_after: Vec<Motion>,
+    },
+    /// Edits cells of one source's editable surface (spec.md 10.4): the
+    /// imported grid of a file, the VPP grid of an ORC certificate, or a
+    /// track's polar segment on the output grid. Each cell's override moves
+    /// from `before` to `after`, and apply refuses unless every cell holds
+    /// its `before`, so undo is exact. The overrides stay sorted by cell,
+    /// one per cell; with none left, the source reads exactly as imported
+    /// (invariant 1).
+    EditCells {
+        /// Target source.
+        source: SourceId,
+        /// The tool that made it.
+        action: EditAction,
+        /// The cells changed, each once.
+        cells: Vec<CellEdit>,
+    },
+    /// Chooses the per-cell statistic of a track's polar segment
+    /// (spec.md 12.1).
+    SetSegmentStatistic {
+        /// Target track source.
+        source: SourceId,
+        /// Previous statistic.
+        before: SegmentStatistic,
+        /// New statistic.
+        after: SegmentStatistic,
     },
     /// Chooses whether the polar is fed from current-corrected (water)
     /// values where a current exists, or ground values (spec.md 7.5, D13).
@@ -376,6 +451,27 @@ impl Command {
                     .ok_or_else(|| CoreError::Invalid(format!("{label} is not a track")))?;
                 set_derivation(track, from, to, motion_from, motion_to)
             }
+            Self::EditCells { source, cells, .. } => {
+                let target = source_mut(project, *source)?;
+                edit_cells(&mut target.overlay.cell_overrides, cells, forward)
+            }
+            Self::SetSegmentStatistic {
+                source,
+                before,
+                after,
+            } => {
+                let (from, to) = if forward {
+                    (*before, *after)
+                } else {
+                    (*after, *before)
+                };
+                let target = track_source_mut(project, *source)?;
+                let label = target.label.clone();
+                let track = target
+                    .track_mut()
+                    .ok_or_else(|| CoreError::Invalid(format!("{label} is not a track")))?;
+                swap(&mut track.statistic, &from, &to, "segment statistic")
+            }
             Self::SetUseCorrected { before, after } => {
                 let (from, to) = if forward {
                     (*before, *after)
@@ -458,6 +554,30 @@ impl Command {
                 *after = next_after.clone();
                 true
             }
+            (
+                Self::EditCells {
+                    source,
+                    action: EditAction::Drag,
+                    cells,
+                },
+                Self::EditCells {
+                    source: next_source,
+                    action: EditAction::Drag,
+                    cells: next_cells,
+                },
+            ) if source == next_source
+                && cells.len() == next_cells.len()
+                && cells
+                    .iter()
+                    .zip(next_cells)
+                    .all(|(a, b)| a.cell().order(&b.cell()) == std::cmp::Ordering::Equal) =>
+            {
+                // One drag is one entry: its first `before`, its last `after`.
+                for (cell, next) in cells.iter_mut().zip(next_cells) {
+                    cell.after = next.after;
+                }
+                true
+            }
             _ => false,
         }
     }
@@ -481,6 +601,15 @@ impl Command {
             Self::IncludeSamples { .. } => INCLUDE_SAMPLES_LABEL,
             Self::SetSampleFilters { .. } => "Change sample filters",
             Self::SetDerivation { .. } => "Change heading and speed derivation",
+            Self::EditCells { action, .. } => match action {
+                EditAction::Drag => "Move polar node",
+                EditAction::Type => "Type polar value",
+                EditAction::Scale => "Scale polar cells",
+                EditAction::Smooth => "Smooth polar cells",
+                EditAction::Reset => "Reset polar cells",
+                EditAction::ResetAll => "Reset all edits",
+            },
+            Self::SetSegmentStatistic { .. } => "Change segment statistic",
             Self::SetUseCorrected { .. } => "Change current correction",
             Self::SetStokesDrift { .. } => "Change Stokes drift",
             Self::Batch { label, .. } => return label.clone(),
@@ -503,6 +632,58 @@ pub const INCLUDE_SAMPLES_LABEL: &str = "Include samples";
 pub const EXCLUDE_DOTS_LABEL: &str = "Exclude dots";
 /// The history label of an inclusion over polar nodes and samples together.
 pub const INCLUDE_DOTS_LABEL: &str = "Include dots";
+
+/// Moves each cell's override from `before` to `after` (forward) or back.
+/// Checks everything first, so a refusal changes nothing.
+fn edit_cells(list: &mut Vec<CellOverride>, cells: &[CellEdit], forward: bool) -> Result<()> {
+    let refs: Vec<CellRef> = cells.iter().map(CellEdit::cell).collect();
+    // The same checks as an exclusion: at least one, valid, each once.
+    check_cells(&refs, "an edit")?;
+    let find = |list: &[CellOverride], cell: &CellRef| {
+        list.binary_search_by(|held| held.cell().order(cell))
+    };
+    for edit in cells {
+        let (from, to) = if forward {
+            (edit.before, edit.after)
+        } else {
+            (edit.after, edit.before)
+        };
+        if let Some(value) = to {
+            validate_edit_bsp(value)?;
+        }
+        let held = find(list, &edit.cell())
+            .ok()
+            .and_then(|at| list.get(at))
+            .map(|o| o.bsp);
+        if held != from {
+            return Err(stale("the polar edits"));
+        }
+    }
+    for edit in cells {
+        let to = if forward { edit.after } else { edit.before };
+        let cell = edit.cell();
+        match (find(list, &cell), to) {
+            (Ok(at), Some(bsp)) => {
+                if let Some(held) = list.get_mut(at) {
+                    held.bsp = bsp;
+                }
+            }
+            (Ok(at), None) => {
+                list.remove(at);
+            }
+            (Err(at), Some(bsp)) => list.insert(
+                at,
+                CellOverride {
+                    twa: cell.twa,
+                    tws: cell.tws,
+                    bsp,
+                },
+            ),
+            (Err(_), None) => {}
+        }
+    }
+    Ok(())
+}
 
 /// A track source.
 fn track_source_mut(project: &mut Project, id: SourceId) -> Result<&mut Source> {
@@ -616,11 +797,11 @@ fn polar_source_mut(project: &mut Project, id: SourceId) -> Result<&mut Source> 
 }
 
 /// Checks `cells` is a non-empty set of valid cells, each named once.
-fn check_cells(cells: &[CellRef]) -> Result<()> {
+fn check_cells(cells: &[CellRef], what: &str) -> Result<()> {
     if cells.is_empty() {
-        return Err(CoreError::Invalid(
-            "an exclusion names at least one polar node".to_owned(),
-        ));
+        return Err(CoreError::Invalid(format!(
+            "{what} names at least one polar node"
+        )));
     }
     let mut sorted: Vec<&CellRef> = cells.iter().collect();
     sorted.sort_by(|a, b| a.order(b));
@@ -631,9 +812,9 @@ fn check_cells(cells: &[CellRef]) -> Result<()> {
         .windows(2)
         .any(|pair| pair[0].order(pair[1]) == std::cmp::Ordering::Equal)
     {
-        return Err(CoreError::Invalid(
-            "an exclusion names the same polar node twice".to_owned(),
-        ));
+        return Err(CoreError::Invalid(format!(
+            "{what} names the same polar node twice"
+        )));
     }
     Ok(())
 }
@@ -641,7 +822,7 @@ fn check_cells(cells: &[CellRef]) -> Result<()> {
 /// Adds `cells` to a sorted list, keeping it sorted; refuses (changing
 /// nothing) if any is already there.
 fn add_cells(list: &mut Vec<CellRef>, cells: &[CellRef]) -> Result<()> {
-    check_cells(cells)?;
+    check_cells(cells, "an exclusion")?;
     if cells
         .iter()
         .any(|cell| list.binary_search_by(|held| held.order(cell)).is_ok())
@@ -658,7 +839,7 @@ fn add_cells(list: &mut Vec<CellRef>, cells: &[CellRef]) -> Result<()> {
 /// Removes `cells` from a sorted list; refuses (changing nothing) if any is
 /// not there.
 fn remove_cells(list: &mut Vec<CellRef>, cells: &[CellRef]) -> Result<()> {
-    check_cells(cells)?;
+    check_cells(cells, "an exclusion")?;
     if cells
         .iter()
         .any(|cell| list.binary_search_by(|held| held.order(cell)).is_err())
@@ -722,12 +903,23 @@ mod tests {
             Command::IncludeSamples { .. } => "IncludeSamples",
             Command::SetSampleFilters { .. } => "SetSampleFilters",
             Command::SetDerivation { .. } => "SetDerivation",
+            Command::EditCells { .. } => "EditCells",
+            Command::SetSegmentStatistic { .. } => "SetSegmentStatistic",
             Command::SetUseCorrected { .. } => "SetUseCorrected",
             Command::SetStokesDrift { .. } => "SetStokesDrift",
             Command::Batch { .. } => "Batch",
         }
     }
-    const VARIANTS: usize = 17;
+    const VARIANTS: usize = 19;
+
+    fn edit(twa: f64, tws: f64, before: Option<f64>, after: Option<f64>) -> CellEdit {
+        CellEdit {
+            twa,
+            tws,
+            before,
+            after,
+        }
+    }
 
     fn cell(twa: f64, tws: f64) -> CellRef {
         CellRef { twa, tws }
@@ -849,6 +1041,16 @@ mod tests {
                 },
                 motion_before,
                 motion_after,
+            },
+            Command::EditCells {
+                source: first,
+                action: EditAction::Type,
+                cells: vec![edit(52.0, 6.0, None, Some(6.1))],
+            },
+            Command::SetSegmentStatistic {
+                source: track_id,
+                before: SegmentStatistic::P90,
+                after: SegmentStatistic::Median,
             },
             Command::SetUseCorrected {
                 before: true,
@@ -1302,5 +1504,166 @@ mod tests {
         unsorted.sources[1].overlay.excluded_cells.swap(0, 2);
         assert!(unsorted.validate().is_err());
         assert!(crate::io::to_bytes(&unsorted).is_err());
+    }
+
+    /// Invariant 1 and the M13 acceptance: edits are overlays, kept sorted
+    /// one per cell, and clearing every one of them gives the source back
+    /// byte for byte through a project file.
+    #[test]
+    fn removing_every_edit_restores_the_source_byte_for_byte() {
+        let mut project = fixtures::project();
+        let original = crate::io::to_bytes(&project).unwrap();
+        let orc = project.sources[0].id;
+        let mut first = Command::EditCells {
+            source: orc,
+            action: EditAction::Type,
+            cells: vec![
+                edit(90.0, 12.0, None, Some(8.5)),
+                edit(52.0, 6.0, None, Some(5.25)),
+            ],
+        };
+        first.apply(&mut project).unwrap();
+        let overlay = &project.sources[0].overlay;
+        assert_eq!(
+            overlay
+                .cell_overrides
+                .iter()
+                .map(|o| (o.twa, o.tws, o.bsp))
+                .collect::<Vec<_>>(),
+            [(52.0, 6.0, 5.25), (90.0, 12.0, 8.5)]
+        );
+        assert_eq!(overlay.override_at(90.0, 12.0), Some(8.5));
+        assert_eq!(overlay.override_at(90.0, 6.0), None);
+        project.validate().unwrap();
+
+        // Changing one and then resetting both, as the tools would.
+        Command::EditCells {
+            source: orc,
+            action: EditAction::Scale,
+            cells: vec![edit(52.0, 6.0, Some(5.25), Some(5.5))],
+        }
+        .apply(&mut project)
+        .unwrap();
+        let edited = crate::io::to_bytes(&project).unwrap();
+        assert_ne!(edited, original);
+        Command::EditCells {
+            source: orc,
+            action: EditAction::ResetAll,
+            cells: vec![
+                edit(52.0, 6.0, Some(5.5), None),
+                edit(90.0, 12.0, Some(8.5), None),
+            ],
+        }
+        .apply(&mut project)
+        .unwrap();
+        assert!(project.sources[0].overlay.cell_overrides.is_empty());
+        assert_eq!(crate::io::to_bytes(&project).unwrap(), original);
+    }
+
+    /// An edit built against other overrides refuses and changes nothing;
+    /// speeds a polar cannot hold are refused.
+    #[test]
+    fn stale_or_impossible_edits_are_refused() {
+        let mut project = fixtures::project();
+        let orc = project.sources[0].id;
+        Command::EditCells {
+            source: orc,
+            action: EditAction::Type,
+            cells: vec![edit(52.0, 6.0, None, Some(5.0))],
+        }
+        .apply(&mut project)
+        .unwrap();
+        let before = project.clone();
+        for cells in [
+            // The second is stale: it has an override of 5.0, not none.
+            vec![
+                edit(90.0, 6.0, None, Some(7.0)),
+                edit(52.0, 6.0, None, Some(6.0)),
+            ],
+            vec![edit(90.0, 6.0, None, Some(-1.0))],
+            vec![edit(90.0, 6.0, None, Some(61.0))],
+            vec![edit(90.0, 6.0, None, Some(f64::NAN))],
+            vec![
+                edit(90.0, 6.0, None, Some(1.0)),
+                edit(90.0, 6.0, None, Some(2.0)),
+            ],
+            vec![edit(200.0, 6.0, None, Some(1.0))],
+            vec![],
+        ] {
+            let mut bad = Command::EditCells {
+                source: orc,
+                action: EditAction::Type,
+                cells,
+            };
+            assert!(bad.apply(&mut project).is_err());
+            assert_eq!(project, before);
+        }
+        // An unsorted list read from a file is refused, not reordered.
+        let mut unsorted = project.clone();
+        unsorted.sources[0].overlay.cell_overrides.insert(
+            0,
+            CellOverride {
+                twa: 90.0,
+                tws: 6.0,
+                bsp: 7.0,
+            },
+        );
+        assert!(unsorted.validate().is_err());
+    }
+
+    /// A drag is one history entry: every step of it merges into the first,
+    /// keeping its `before`. Other tools and other cells never merge.
+    #[test]
+    fn a_drag_coalesces_and_other_edits_do_not() {
+        let project = fixtures::project();
+        let orc = project.sources[0].id;
+        let drag = |before, after| Command::EditCells {
+            source: orc,
+            action: EditAction::Drag,
+            cells: vec![edit(52.0, 6.0, before, after)],
+        };
+        let mut first = drag(None, Some(6.0));
+        assert!(first.merge(&drag(Some(6.0), Some(6.3))));
+        assert_eq!(first, drag(None, Some(6.3)));
+        let other_cell = Command::EditCells {
+            source: orc,
+            action: EditAction::Drag,
+            cells: vec![edit(90.0, 6.0, None, Some(6.0))],
+        };
+        assert!(!first.merge(&other_cell));
+        let typed = Command::EditCells {
+            source: orc,
+            action: EditAction::Type,
+            cells: vec![edit(52.0, 6.0, Some(6.3), Some(7.0))],
+        };
+        assert!(!first.merge(&typed));
+
+        let mut history = crate::History::default();
+        let mut project = project;
+        let original = project.clone();
+        history
+            .push_coalesced(&mut project, drag(None, Some(6.0)), "drag-1")
+            .unwrap();
+        history
+            .push_coalesced(&mut project, drag(Some(6.0), Some(6.4)), "drag-1")
+            .unwrap();
+        assert_eq!(history.entries().len(), 1);
+        assert_eq!(project.sources[0].overlay.override_at(52.0, 6.0), Some(6.4));
+        history.undo(&mut project).unwrap();
+        assert_eq!(project, original);
+    }
+
+    #[test]
+    fn a_polar_source_has_no_segment_statistic() {
+        let mut project = fixtures::project();
+        let mut command = Command::SetSegmentStatistic {
+            source: project.sources[0].id,
+            before: SegmentStatistic::P90,
+            after: SegmentStatistic::Mean,
+        };
+        assert!(matches!(
+            command.apply(&mut project),
+            Err(CoreError::Invalid(_))
+        ));
     }
 }

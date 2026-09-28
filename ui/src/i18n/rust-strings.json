@@ -22,5 +22,12 @@
   "Change sample filters",
   "Change heading and speed derivation",
   "Change current correction",
-  "Change Stokes drift"
+  "Change Stokes drift",
+  "Move polar node",
+  "Type polar value",
+  "Scale polar cells",
+  "Smooth polar cells",
+  "Reset polar cells",
+  "Reset all edits",
+  "Change segment statistic"
 ]

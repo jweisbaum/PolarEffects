@@ -20,6 +20,9 @@ use crate::track::Track;
 pub const DEFAULT_WEIGHT: f64 = 1.0;
 /// The largest weight a source may have (spec.md 8).
 pub const MAX_WEIGHT: f64 = 2.0;
+/// The fastest boat speed an edit may give a cell, knots: the same bound an
+/// imported polar is held to (`pe_polar::MAX_SPEED_KN`, spec.md 6).
+pub const MAX_EDIT_BSP_KN: f64 = 60.0;
 
 /// The palette new sources take colours from, in order (spec.md 8).
 pub const PALETTE: [&str; 16] = [
@@ -134,6 +137,7 @@ impl Source {
     pub fn validate(&self) -> Result<()> {
         validate_weight(self.weight)?;
         validate_cells(&self.overlay.excluded_cells, &self.label)?;
+        validate_overrides(&self.overlay.cell_overrides, &self.label)?;
         match &self.kind {
             SourceKind::Orc { record } => {
                 let vpp = &record.vpp;
@@ -204,6 +208,37 @@ pub fn validate_cells(cells: &[CellRef], label: &str) -> Result<()> {
     Ok(())
 }
 
+/// Checks a `cell_overrides` list: every cell on the axes' ranges with a
+/// boat speed in 0..=[`MAX_EDIT_BSP_KN`], and the list strictly in
+/// [`CellRef::order`], one override per cell, as [`crate::Command::EditCells`]
+/// keeps it.
+pub fn validate_overrides(overrides: &[CellOverride], label: &str) -> Result<()> {
+    for edit in overrides {
+        edit.cell().validate()?;
+        validate_edit_bsp(edit.bsp)?;
+    }
+    if overrides
+        .windows(2)
+        .any(|pair| pair[0].cell().order(&pair[1].cell()) != Ordering::Less)
+    {
+        return Err(CoreError::Invalid(format!(
+            "the polar edits of {label} are not in order, or one cell is edited twice"
+        )));
+    }
+    Ok(())
+}
+
+/// Checks a boat speed an edit gives a cell.
+pub fn validate_edit_bsp(bsp: f64) -> Result<()> {
+    if bsp.is_finite() && (0.0..=MAX_EDIT_BSP_KN).contains(&bsp) {
+        Ok(())
+    } else {
+        Err(CoreError::Invalid(format!(
+            "{bsp} kn is not a boat speed a polar cell can hold (0 to {MAX_EDIT_BSP_KN} kn)"
+        )))
+    }
+}
+
 /// What a source is.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -264,6 +299,17 @@ impl Overlay {
             .is_ok()
     }
 
+    /// The boat speed the user gave the cell at (`twa`, `tws`), if they
+    /// edited it (spec.md 10.4).
+    pub fn override_at(&self, twa: f64, tws: f64) -> Option<f64> {
+        let probe = CellRef { twa, tws };
+        self.cell_overrides
+            .binary_search_by(|edit| edit.cell().order(&probe))
+            .ok()
+            .and_then(|at| self.cell_overrides.get(at))
+            .map(|edit| edit.bsp)
+    }
+
     /// Whether the overlay changes nothing.
     pub fn is_empty(&self) -> bool {
         self.cell_overrides.is_empty()
@@ -285,6 +331,16 @@ pub struct CellOverride {
     /// The boat speed the user gave it, knots.
     #[serde(with = "canonical::knots_field")]
     pub bsp: f64,
+}
+
+impl CellOverride {
+    /// The cell it edits.
+    pub fn cell(&self) -> CellRef {
+        CellRef {
+            twa: self.twa,
+            tws: self.tws,
+        }
+    }
 }
 
 /// A cell named by its axis values.

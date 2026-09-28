@@ -44,11 +44,11 @@ HTMLElement.prototype.scrollIntoView = () => undefined;
 /** An imported Adrena polar, as the source list and Polar files section show it. */
 const POLAR: SourceSummary = {
   id: 7, kind: "polar_file", label: "boat.pol", colour: "#4e79a7", visible: true, weight: 1, count: 71, used: null,
-  polar_file: { format: "adrena", file_name: "boat.pol", twa: [0, 42.5, 180], tws: [6, 8, 20] }, orc: null, track: null,
+  polar_file: { format: "adrena", file_name: "boat.pol", twa: [0, 42.5, 180], tws: [6, 8, 20] }, orc: null, track: null, edits: 0,
 };
 const TRACK: SourceSummary = {
   id: 8, kind: "track", label: "Fastnet 2025", colour: "#f28e2b", visible: false, weight: 0.5, count: 120, used: 100,
-  polar_file: null, orc: null, track: null,
+  polar_file: null, orc: null, track: null, edits: 0,
 };
 /** A visible track with its summary, as the Tracks section lists it. */
 const TRACKED: SourceSummary = {
@@ -64,7 +64,7 @@ const TRACKED: SourceSummary = {
 /** An ORC certificate, as the source list and the ORC polars section show it. */
 const ORC: SourceSummary = {
   id: 9, kind: "orc", label: "Eratosthenes", colour: "#e15759", visible: true, weight: 1, count: 70, used: null,
-  polar_file: null, orc: { sail_no: "GBR 1124", model: "Swan 112", year: 1999, certificate_year: 2023 }, track: null,
+  polar_file: null, orc: { sail_no: "GBR 1124", model: "Swan 112", year: 1999, certificate_year: 2023 }, track: null, edits: 0,
 };
 /** A search result for it. */
 const HIT: OrcHit = {
@@ -117,10 +117,27 @@ function backend() {
       }
       case "polar_scene": {
         // An empty scene: the header alone (layout in polar/scenePacket.ts).
-        const header = new ArrayBuffer(32);
+        const header = new ArrayBuffer(48);
         new DataView(header).setUint32(0, 0x44334550, true);
+        new DataView(header).setUint32(4, 2, true);
+        return header;
+      }
+      case "polar_plot_dots": {
+        // No dots: the header alone (layout in panels/dotPacket.ts).
+        const header = new ArrayBuffer(16);
+        new DataView(header).setUint32(0, 0x44324550, true);
         new DataView(header).setUint32(4, 1, true);
         return header;
+      }
+      case "polar_edit_surface": {
+        const source = project?.sources.find((s) => s.id === args?.sourceId);
+        const grid = source?.polar_file ?? { twa: [45, 90], tws: [8] };
+        const rows = grid.twa.map(() => grid.tws.map(() => 5));
+        const flags = grid.twa.map(() => grid.tws.map(() => false));
+        return {
+          source_id: args?.sourceId, kind: source?.kind ?? "polar_file", twa: grid.twa, tws: grid.tws, source: rows, bsp: rows,
+          edited: flags, excluded: flags, count: null, spread: null, statistic: null, min_samples: 5, edit_count: 0,
+        };
       }
       case "map_tracks": {
         // No tracks: the header alone (layout in map/trackPacket.ts).
@@ -136,7 +153,7 @@ function backend() {
           failures: [{ file: "bad.csv", line: 2, column: 6, reason: "not-a-number", message: "bad.csv, line 2, column 6: \"x\" is not a number" }],
         };
       case "set_source_label": case "set_source_visible": case "set_source_colour": case "set_source_weight":
-      case "move_source": case "remove_source":
+      case "move_source": case "remove_source": case "edit_polar": case "set_segment_statistic":
         return project;
       case "orc_catalogue_info": return {
         records: 18135, source: "jieter/orc-data", commit: "c2ca870c6b22cc02c25afd5bac0f2d8297bf95de",
@@ -663,8 +680,27 @@ describe("polar files and the source list (plan.md M4)", () => {
     expect(rows[2]!.textContent).toContain("100/120 samples");
     expect(rows[2]!.classList.contains("hidden-source")).toBe(true);
     expect((feature("sources:blend-settings") as HTMLButtonElement).disabled).toBe(true);
-    expect((feature("sources:edit") as HTMLButtonElement).disabled).toBe(true);
+    expect((feature("sources:edit") as HTMLButtonElement).disabled).toBe(false);
     expect((feature("sources:compare") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("opens a source in the 3D stage to edit it, and a typed value is an edit in Rust (spec.md 10.4)", async () => {
+    await open([POLAR, TRACK]);
+    await click(feature("sources:edit"));
+    await settle();
+    expect(calls.some(([command, args]) => command === "polar_scene" && (args as { focus: number }).focus === 7)).toBe(true);
+    expect(commands("polar_edit_surface")).toEqual([{ sourceId: 7 }]);
+    expect(feature("view3d:tool-drag")).not.toBeNull();
+    const cell = q<HTMLInputElement>(".view3d-edit-table input")!;
+    await act(async () => cell.focus());
+    await type(cell, "6.25");
+    await act(async () => cell.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    await settle();
+    expect(commands("edit_polar")).toEqual([
+      { sourceId: 7, op: { type: "type", bsp: 6.25 }, cells: [{ twa_index: 0, tws_index: 0 }], gesture: null },
+    ]);
+    await click(feature("edit:done"));
+    expect(q(".view3d-edit")).toBeNull();
   });
 
   it("edits a source through Rust: visibility, name, colour, order and removal", async () => {

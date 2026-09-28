@@ -11,7 +11,7 @@
  */
 
 import type { PolarCurve } from "../generated/PolarCurve";
-import type { PolarSampleDot } from "../generated/PolarSampleDot";
+import { dotSourceId, type DotPacket } from "./dotPacket";
 
 const RAD = Math.PI / 180;
 
@@ -42,10 +42,10 @@ export function project(twa: number, bsp: number, layout: PlotLayout): { x: numb
 }
 
 /** The highest BSP any curve or dot reaches, or 0 if none has a point. */
-export function maxBoatSpeed(curves: readonly PolarCurve[], dots: readonly PolarSampleDot[]): number {
+export function maxBoatSpeed(curves: readonly PolarCurve[], dots: DotPacket | null): number {
   let max = 0;
   for (const curve of curves) for (const point of curve.points) if (point.bsp > max) max = point.bsp;
-  for (const dot of dots) if (dot.bsp > max) max = dot.bsp;
+  if (dots) for (let k = 0; k < dots.count; k++) if (dots.points[k * 3 + 2]! > max) max = dots.points[k * 3 + 2]!;
   return max;
 }
 
@@ -93,7 +93,7 @@ export interface SourceStyle {
  */
 export function nearestPoint(
   curves: readonly PolarCurve[],
-  dots: readonly PolarSampleDot[],
+  dots: DotPacket | null,
   sourcesById: ReadonlyMap<number, SourceStyle>,
   px: number,
   py: number,
@@ -113,9 +113,11 @@ export function nearestPoint(
   for (const curve of curves) {
     for (const point of curve.points) consider(curve.label, curve.colour, point.twa, curve.tws, point.bsp);
   }
-  for (const dot of dots) {
-    const style = sourcesById.get(dot.source_id);
-    if (style) consider(style.label, style.colour, dot.twa, dot.tws, dot.bsp);
+  if (dots) {
+    for (let k = 0; k < dots.count; k++) {
+      const style = sourcesById.get(dotSourceId(dots, k));
+      if (style) consider(style.label, style.colour, dots.points[k * 3]!, dots.points[k * 3 + 1]!, dots.points[k * 3 + 2]!);
+    }
   }
   return best;
 }

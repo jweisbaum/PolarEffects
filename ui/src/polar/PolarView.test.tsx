@@ -46,10 +46,13 @@ vi.mock("./scene3d", async (original) => {
   return { ...actual, PolarScene };
 });
 
-const api = vi.hoisted(() => ({ polarScene: vi.fn(), setExcluded: vi.fn() }));
+const api = vi.hoisted(() => ({
+  polarScene: vi.fn(), setExcluded: vi.fn(), editPolar: vi.fn(), polarEditSurface: vi.fn(), setSegmentStatistic: vi.fn(),
+}));
 vi.mock("../ipc", () => ({ api }));
 
-const { default: PolarView } = await import("./PolarView");
+const { default: PolarView, draggedSpeed } = await import("./PolarView");
+const { editSource } = await import("./editFocus");
 const selection = await import("../selection");
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -59,6 +62,7 @@ let root: Root;
 function packet(excluded = false): ScenePacket {
   return {
     timeOrigin: 0,
+    samplesKey: 0,
     sources: [{ id: 10, colour: "#ff0000", kind: "orc" }],
     nodes: {
       count: 2, points: Float32Array.from([52, 6, 6, 90, 12, 8]), source: Uint32Array.from([0, 0]),
@@ -74,7 +78,7 @@ function packet(excluded = false): ScenePacket {
 
 const project = (revision: number): ProjectSummary => ({
   id: 1, name: "P", path: null, dirty: false, revision, boat_name: "", boat_notes: "",
-  sources: [{ id: 10, kind: "orc", label: "Farr 40", colour: "#ff0000", visible: true, weight: 1, count: 2, used: null, polar_file: null, orc: null, track: null }],
+  sources: [{ id: 10, kind: "orc", label: "Farr 40", colour: "#ff0000", visible: true, weight: 1, count: 2, used: null, polar_file: null, orc: null, track: null, edits: 0 }],
   can_undo: false, can_redo: false, undo_label: null, redo_label: null, use_corrected: true, stokes_drift: false,
 });
 
@@ -113,6 +117,13 @@ function withSamples(): ScenePacket {
 
 beforeEach(() => {
   selection.resetSelection();
+  editSource(null);
+  api.editPolar.mockReset().mockResolvedValue(project(3));
+  api.polarEditSurface.mockReset().mockResolvedValue({
+    source_id: 10, kind: "orc", twa: [52, 90], tws: [6, 12], source: [[6, 7], [7, 8]], bsp: [[6, 7], [7, 8]],
+    edited: [[false, false], [false, false]], excluded: [[false, false], [false, false]], count: null, spread: null,
+    statistic: null, min_samples: 5, edit_count: 0,
+  });
   scenes.made = [];
   scenes.fail = false;
   scenes.pick = -1;
@@ -225,4 +236,55 @@ it("selects what a box on the map selected, but counts and excludes only drawn d
   expect(q(".view3d-breakdown")!.textContent).toBe("Unknown source: 1");
   await act(async () => (feature("view3d:exclude") as HTMLButtonElement).click());
   expect(api.setExcluded).toHaveBeenCalledWith([], [5], true);
+});
+
+it("turns a drag into a boat speed along the BSP axis on screen, snapped with Shift", () => {
+  // One knot is 30 px to the right: 45 px right is 1.5 kn more.
+  expect(draggedSpeed(6, [30, 0], 45, 10, false)).toBe(7.5);
+  // Seen end-on, the axis falls back to 20 px per knot upward.
+  expect(draggedSpeed(6, [0, 1], 0, -21, false)).toBe(7.05);
+  expect(draggedSpeed(6, [0, 1], 0, -21.5, true)).toBe(7.1);
+  expect(draggedSpeed(6, [0, -20], 0, 400, false)).toBe(0);
+  expect(draggedSpeed(6, [0, -20], 0, -4000, false)).toBe(60);
+});
+
+it("edits the focused source: opaque, with its table, and a drag is one gesture sent to Rust", async () => {
+  editSource(10);
+  await render();
+  expect(api.polarScene).toHaveBeenLastCalledWith(10, null);
+  const scene = scenes.made[0]!;
+  expect(scene.setData.mock.calls.at(-1)![0].surfaces[0].opaque).toBe(true);
+  expect(api.polarEditSurface).toHaveBeenCalledWith(10);
+  expect(q(".view3d-edit")!.textContent).toContain("Editing Farr 40");
+
+  await act(async () => (feature("view3d:tool-drag") as HTMLButtonElement).click());
+  scenes.pick = 1;
+  const canvas = q("canvas")!;
+  await act(async () => {
+    canvas.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, clientX: 50, clientY: 50 }));
+    canvas.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, button: 0, clientX: 50, clientY: 10 }));
+  });
+  await act(async () => { await Promise.resolve(); });
+  await act(async () => {
+    canvas.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, button: 0, clientX: 50, clientY: 31, shiftKey: true }));
+    canvas.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, button: 0, clientX: 50, clientY: 31 }));
+  });
+  await act(async () => { await Promise.resolve(); });
+  const sent = api.editPolar.mock.calls;
+  expect(sent.map((call) => call[1])).toEqual([{ type: "drag", bsp: 10 }, { type: "drag", bsp: 8.95 }]);
+  expect(sent.every((call) => call[0] === 10 && call[3] === sent[0]![3])).toBe(true);
+  expect(sent[0]![2]).toEqual([{ twa_index: 1, tws_index: 1 }]);
+  // Selecting the node selected its cell in the table.
+  expect(q(".view3d-edit-cell.selected")).not.toBeNull();
+
+  await act(async () => (feature("edit:done") as HTMLButtonElement).click());
+  expect(q(".view3d-edit")).toBeNull();
+  expect(feature("view3d:tool-drag")).toBeNull();
+});
+
+it("takes only the flags when the scene held names its samples", async () => {
+  await render(1);
+  const first = api.polarScene.mock.results[0]!.value as Promise<ScenePacket>;
+  await render(2);
+  expect(api.polarScene).toHaveBeenLastCalledWith(null, await first);
 });

@@ -8,16 +8,37 @@ import { msg, useT } from "../i18n";
 import { api } from "../ipc";
 import { focusMap, selectSamples, useSampleSelection } from "../selection";
 import { onThemeChange } from "../settings/themes";
-import type { Layout } from "./geometry3d";
+import EditPanel, { cellCode } from "./EditPanel";
+import { editSource, useEditFocus } from "./editFocus";
+import { place, type Layout } from "./geometry3d";
 import { PolarScene } from "./scene3d";
-import { emptyScene, type ScenePacket } from "./scenePacket";
+import { emptyScene, ScenePacketError, type ScenePacket } from "./scenePacket";
 import {
-  availableModes, buildDots, buildGuides, buildSurfaces, combine, DEFAULT_TOGGLES, drawnOnly, emptyKeys, exclusionTargets,
-  hasFiltered, keysOf, presetView, range, resolveKeys, sampleIdsOf, sceneBounds, SPEED_FACTOR, SPEED_SYMBOL, summarise,
-  type CameraPreset, type ColourMode, type GuideLabel, type SelectionKeys, type Toggles,
+  availableModes, buildGuides, buildSurfaces, combine, DEFAULT_TOGGLES, drawnOnly, editCells, emptyKeys,
+  exclusionTargets, focusIndex, hasFiltered, keysOf, mergeDots, nodeDots, nodesAtCells, sampleDots, presetView, range, resolveKeys, sampleIdsOf, sceneBounds,
+  SPEED_FACTOR, SPEED_SYMBOL, summarise, type CameraPreset, type ColourMode, type Focus, type GuideLabel, type SelectionKeys,
+  type Toggles,
 } from "./view3d";
 
-type Tool = "rotate" | "lasso" | "box";
+type Tool = "rotate" | "lasso" | "box" | "drag";
+
+/** Shift snaps a dragged node to this step, knots (spec.md 10.4). */
+export const DRAG_SNAP_KN = 0.05;
+/** A drag along a BSP axis seen end-on moves this many pixels per knot, straight up. */
+const FALLBACK_PX_PER_KN = 20;
+
+/**
+ * The boat speed a node dragged by (`dx`, `dy`) pixels reaches: the drag
+ * projected on the screen direction of one knot more BSP (`axis`, pixels),
+ * snapped to 0.05 kn with Shift, and kept to 0–60 kn.
+ */
+export function draggedSpeed(start: number, axis: readonly [number, number], dx: number, dy: number, snap: boolean): number {
+  let [ax, ay] = axis;
+  if (Math.hypot(ax, ay) < 5) [ax, ay] = [0, -FALLBACK_PX_PER_KN];
+  let value = start + (dx * ax + dy * ay) / (ax * ax + ay * ay);
+  if (snap) value = Math.round(value / DRAG_SNAP_KN) * DRAG_SNAP_KN;
+  return Math.round(Math.min(60, Math.max(0, value)) * 1000) / 1000;
+}
 
 /** A pointer that moved less than this, in pixels, clicked rather than dragged. */
 const CLICK_SLOP_PX = 4;
@@ -37,7 +58,10 @@ const TOOLS: readonly { id: Tool; label: string; tip: string }[] = [
   { id: "rotate", label: msg("Rotate"), tip: msg("Drag to turn the view, right-drag to pan, scroll to zoom; click a dot to select it") },
   { id: "lasso", label: msg("Lasso"), tip: msg("Draw round dots to select them; Shift adds to the selection") },
   { id: "box", label: msg("Box"), tip: msg("Drag a box round dots to select them; Shift adds to the selection") },
+  { id: "drag", label: msg("Drag"), tip: msg("Drag a node of the source being edited to change its boat speed; Shift snaps to 0.05 kn") },
 ];
+
+let dragGestures = 0;
 
 function cssColour(name: string, fallback: string): string {
   if (typeof document === "undefined") return fallback;
@@ -80,7 +104,18 @@ export default function PolarView({ project, settings, onProject }: {
   const [tool, setTool] = useState<Tool>("rotate");
   const [selection, setSelection] = useState<number[]>([]);
   const [path, setPath] = useState<number[] | null>(null);
+  const [hideOthers, setHideOthers] = useState(false);
+  const [dragValue, setDragValue] = useState<{ x: number; y: number; bsp: number } | null>(null);
+  const held = useRef<ScenePacket | null>(null);
+  const drag = useRef<{
+    start: number; axis: [number, number]; x: number; y: number; cell: { twa_index: number; tws_index: number };
+    gesture: string; busy: boolean; pending: number | null; source: number;
+  } | null>(null);
   const unit = settings?.units.speed ?? "kn";
+  const requested = useEditFocus();
+  // Edit mode needs the source to exist: a removed source ends it.
+  const focus = requested !== null && project.sources.some((s) => s.id === requested) ? requested : null;
+  useEffect(() => { if (requested !== null && focus === null) editSource(null); }, [requested, focus]);
 
   /** Renders on the next frame, once, and moves the axis labels to where their points now are. */
   const draw = useCallback(() => {
@@ -142,12 +177,31 @@ export default function PolarView({ project, settings, onProject }: {
 
   // Refetches on every document change (`revision` moves with every command,
   // undo and redo included) and on switching project.
+  // Only the samples' flags travel when no sample moved (the scene held
+  // names its samples key); a scene that no longer matches is fetched whole.
   useEffect(() => {
     const id = ++request.current;
-    void api.polarScene()
-      .then((next) => { if (request.current === id) setPacket(next); })
+    const base = held.current;
+    void api.polarScene(focus, base)
+      .catch((error: unknown) => {
+        if (error instanceof ScenePacketError && base !== null) return api.polarScene(focus, null);
+        throw error;
+      })
+      .then((next) => {
+        if (request.current !== id) return;
+        held.current = next;
+        setPacket(next);
+      })
       .catch((error: unknown) => { if (request.current === id) reportFailure(error); });
-  }, [project.id, project.revision]);
+  }, [project.id, project.revision, focus]);
+
+  // A new project starts from a whole scene.
+  useEffect(() => { held.current = null; }, [project.id]);
+
+  // Leaving edit mode puts the Drag tool down.
+  useEffect(() => {
+    if (focus === null && tool === "drag") chooseTool("rotate");
+  }, [focus]);
 
   /**
    * Sets the selection, remembering it by stable keys for the next refetch,
@@ -178,7 +232,23 @@ export default function PolarView({ project, settings, onProject }: {
   const filteredExist = useMemo(() => hasFiltered(packet), [packet]);
   // A mode whose data has gone (the tracks were removed) falls back to source colours.
   const shownMode: ColourMode = modes[mode] ? mode : "source";
-  const dots = useMemo(() => buildDots(packet, toggles, shownMode), [packet, toggles, shownMode]);
+  const focused = useMemo(() => focusIndex(packet, focus), [packet, focus]);
+  const focusStyle: Focus | null = useMemo(
+    () => (focus === null ? null : { index: focused, hideOthers }),
+    [focus, focused, hideOthers],
+  );
+  // The samples' dots are rebuilt only when they, their colours or how they
+  // are shown change: an edit of a polar node rebuilds the nodes alone
+  // (spec.md 13, plan.md M13).
+  const colourKey = packet.sources.map((s) => `${s.id}${s.colour}`).join(",");
+  const sampleDotsBuilt = useMemo(
+    () => sampleDots(packet, toggles, shownMode, focusStyle),
+    [packet.samples, colourKey, packet.nodes.count, toggles, shownMode, focusStyle],
+  );
+  const dots = useMemo(
+    () => mergeDots(nodeDots(packet, toggles, focusStyle), sampleDotsBuilt),
+    [packet, toggles, focusStyle, sampleDotsBuilt],
+  );
   // Only what is drawn is counted and acted on: a dot the toggles hide
   // cannot be seen to be selected.
   const acting = useMemo(
@@ -191,7 +261,7 @@ export default function PolarView({ project, settings, onProject }: {
     if (!current) return;
     current.setData({
       samples: dots.points, colors: dots.colors, shapes: dots.shapes, layout,
-      surfaces: toggles.surfaces ? buildSurfaces(packet, "#ffffff") : [],
+      surfaces: toggles.surfaces ? buildSurfaces(packet, "#ffffff", focusStyle) : [],
     });
     const guides = buildGuides(bounds, layout, unit);
     current.setGuides(guides.segments, cssColour("--muted", "#b3c9de"));
@@ -209,7 +279,7 @@ export default function PolarView({ project, settings, onProject }: {
       fitted.current = true;
     }
     draw();
-  }, [dots, packet, layout, toggles.surfaces, bounds, unit, draw]);
+  }, [dots, packet, layout, toggles.surfaces, bounds, unit, draw, focusStyle]);
 
   // Selection is by global index; the scene highlights by drawn index.
   useEffect(() => {
@@ -234,9 +304,56 @@ export default function PolarView({ project, settings, onProject }: {
     if (current) current.setView(presetView("iso", sceneBounds(packet, next), current.camera.fov));
   };
 
-  const chooseTool = (next: Tool) => {
+  function chooseTool(next: Tool) {
     setTool(next);
     scene.current?.setRotateEnabled(next === "rotate");
+  }
+
+  /** Sends a dragged node's speed: one call in flight, the newest value next. */
+  const sendDrag = (value: number) => {
+    const d = drag.current;
+    if (!d) return;
+    if (d.busy) { d.pending = value; return; }
+    d.busy = true;
+    api.editPolar(d.source, { type: "drag", bsp: value }, [d.cell], d.gesture)
+      .then(onProject)
+      .catch(reportFailure)
+      .finally(() => {
+        d.busy = false;
+        if (d.pending !== null) {
+          const next = d.pending;
+          d.pending = null;
+          if (drag.current === d) sendDrag(next);
+          else {
+            // The pointer is up: the last value still lands, in the same gesture.
+            d.busy = true;
+            api.editPolar(d.source, { type: "drag", bsp: next }, [d.cell], d.gesture)
+              .then(onProject).catch(reportFailure).finally(() => { d.busy = false; });
+          }
+        }
+      });
+  };
+
+  /** Starts dragging the focused source's node under the pointer, if there is one. */
+  const startDrag = (x: number, y: number): boolean => {
+    const current = scene.current;
+    if (!current || focus === null || focused < 0) return false;
+    const hit = current.pick(x, y, PICK_RADIUS_PX);
+    if (hit < 0) return false;
+    const g = dots.refs[hit]!;
+    if (g >= packet.nodes.count || packet.nodes.source[g] !== focused) return false;
+    const [twa, tws, bsp] = [packet.nodes.points[g * 3]!, packet.nodes.points[g * 3 + 1]!, packet.nodes.points[g * 3 + 2]!];
+    const from = current.toScreen(...place(twa, tws, bsp, layout));
+    const to = current.toScreen(...place(twa, tws, bsp + 1, layout));
+    const axis: [number, number] = from && to ? [to[0] - from[0], to[1] - from[1]] : [0, 0];
+    const cell = packet.nodes.cell[g]!;
+    dragGestures += 1;
+    drag.current = {
+      start: bsp, axis, x, y, cell: { twa_index: cell & 0xffff, tws_index: cell >>> 16 },
+      gesture: `drag-${dragGestures}`, busy: false, pending: null, source: focus,
+    };
+    select([g]);
+    return true;
   };
 
   const toGlobal = (locals: ArrayLike<number>) => Array.from(locals, (d) => dots.refs[d]!);
@@ -245,10 +362,23 @@ export default function PolarView({ project, settings, onProject }: {
     if (event.button !== 0) return;
     const rect = event.currentTarget.getBoundingClientRect();
     const x = event.clientX - rect.left, y = event.clientY - rect.top;
+    if (tool === "drag") {
+      if (startDrag(x, y)) event.currentTarget.setPointerCapture?.(event.pointerId);
+      return;
+    }
     gesture.current = { x, y, path: [x, y] };
     if (tool !== "rotate") event.currentTarget.setPointerCapture?.(event.pointerId);
   };
   const onPointerMove = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    const d = drag.current;
+    if (d) {
+      const rect = event.currentTarget.getBoundingClientRect();
+      const x = event.clientX - rect.left, y = event.clientY - rect.top;
+      const value = draggedSpeed(d.start, d.axis, x - d.x, y - d.y, event.shiftKey);
+      setDragValue({ x, y, bsp: value });
+      sendDrag(value);
+      return;
+    }
     const g = gesture.current;
     if (!g || tool === "rotate") return;
     const rect = event.currentTarget.getBoundingClientRect();
@@ -258,6 +388,11 @@ export default function PolarView({ project, settings, onProject }: {
     setPath([...g.path]);
   };
   const onPointerUp = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    if (drag.current) {
+      drag.current = null;
+      setDragValue(null);
+      return;
+    }
     const g = gesture.current;
     gesture.current = null;
     setPath(null);
@@ -277,6 +412,14 @@ export default function PolarView({ project, settings, onProject }: {
   };
 
   const summary = useMemo(() => summarise(packet, acting), [packet, acting]);
+  const selectedCells = useMemo(
+    () => new Set(editCells(packet, acting, focused).map((c) => cellCode(c.twa_index, c.tws_index))),
+    [packet, acting, focused],
+  );
+  const selectCells = (codes: number[], add: boolean) => {
+    const globals = nodesAtCells(packet, focused, new Set(codes));
+    select(add ? combine(selection, globals, true) : combine([], globals, false));
+  };
   const labelOf = useMemo(() => new Map(project.sources.map((s) => [s.id, s])), [project.sources]);
 
   const exclude = (excluded: boolean) => {
@@ -300,12 +443,17 @@ export default function PolarView({ project, settings, onProject }: {
         onPointerEnter={() => setHint(t("Drag to turn, right-drag to pan, scroll to zoom. Click a dot to select it; Shift adds."))}
         onPointerLeave={() => setHint(null)}
         onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
-        onPointerCancel={() => { gesture.current = null; setPath(null); }} />
+        onPointerCancel={() => { gesture.current = null; drag.current = null; setPath(null); setDragValue(null); }} />
       <div className="view3d-labels" ref={labelsHost} aria-hidden="true" />
       {path && path.length >= 4 && (
         <svg className="view3d-gesture" aria-hidden="true">
           <polygon points={path.join(" ")} />
         </svg>
+      )}
+      {dragValue && (
+        <div className="view3d-drag-value" style={{ left: dragValue.x + 12, top: dragValue.y - 12 }}>
+          {t("BSP {bsp} kn", { bsp: dragValue.bsp.toFixed(2) })}
+        </div>
       )}
       {unavailable !== null && <p className="view3d-unavailable muted">{t(unavailable)}</p>}
       {unavailable === null && empty && (
@@ -326,7 +474,7 @@ export default function PolarView({ project, settings, onProject }: {
           ))}
         </span>
         <span className="view3d-group" role="group" aria-label={t("Tool")}>
-          {TOOLS.map((tl) => (
+          {TOOLS.filter((tl) => tl.id !== "drag" || focus !== null).map((tl) => (
             <button key={tl.id} className={tool === tl.id ? "small selected" : "small"} aria-pressed={tool === tl.id}
               data-feature={`view3d:tool-${tl.id}`} title={t(tl.tip)} onClick={() => chooseTool(tl.id)}>
               {t(tl.label)}
@@ -334,6 +482,12 @@ export default function PolarView({ project, settings, onProject }: {
           ))}
         </span>
       </div>
+
+      {focus !== null && (
+        <EditPanel project={project} sourceId={focus} selected={selectedCells} hideOthers={hideOthers}
+          onHideOthers={setHideOthers} onSelectCells={selectCells} onProject={onProject}
+          onDone={() => editSource(null)} />
+      )}
 
       <div className="view3d-side">
         <fieldset className="view3d-show">

@@ -8,6 +8,7 @@ import { useT } from "../i18n";
 import { api } from "../ipc";
 import { useSampleSelection } from "../selection";
 import { onThemeChange } from "../settings/themes";
+import { DOT_EXCLUDED, DOT_FILTERED, dotSampleId, emptyDots, type DotPacket } from "./dotPacket";
 import {
   ANGLE_TICKS, fitLayout, maxBoatSpeed, nearestPoint, niceTicks, project as projectPoint,
   type Hover, type SourceStyle,
@@ -15,6 +16,8 @@ import {
 
 /** A point within this many pixels of the pointer counts as hovered. */
 const HOVER_DISTANCE_PX = 16;
+/** Beyond this many dots each is a small square rather than a circle: far cheaper to fill. */
+const MANY_DOTS = 20_000;
 
 /** Draws one curve's polyline; empty curves (no points in range) draw nothing. */
 function strokeCurve(ctx: CanvasRenderingContext2D, curve: PolarCurve, layout: ReturnType<typeof fitLayout>, width: number) {
@@ -36,7 +39,7 @@ function strokeCurve(ctx: CanvasRenderingContext2D, curve: PolarCurve, layout: R
  * (filtered ones dimmed, excluded ones hollow, selected ones ringed), and
  * the hovered point.
  */
-function draw(canvas: HTMLCanvasElement, result: PolarPlotResult | null, hover: Hover | null,
+function draw(canvas: HTMLCanvasElement, result: PolarPlotResult | null, dots: DotPacket, hover: Hover | null,
   colours: ReadonlyMap<number, SourceStyle>, selected: ReadonlySet<number>) {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
@@ -55,9 +58,8 @@ function draw(canvas: HTMLCanvasElement, result: PolarPlotResult | null, hover: 
   const accent = style.getPropertyValue("--accent").trim() || "#8fb8de";
 
   const curves = result?.curves ?? [];
-  const dots = result?.dots ?? [];
   const blend = result?.blend ?? null;
-  const maxBsp = Math.max(maxBoatSpeed(curves, dots), blend ? maxBoatSpeed([blend], []) : 0);
+  const maxBsp = Math.max(maxBoatSpeed(curves, dots), blend ? maxBoatSpeed([blend], null) : 0);
   if (maxBsp <= 0) return;
   const layout = fitLayout(width, height, maxBsp);
 
@@ -89,13 +91,22 @@ function draw(canvas: HTMLCanvasElement, result: PolarPlotResult | null, hover: 
   // this only ever runs once something upstream actually fills it in.
   if (blend) strokeCurve(ctx, blend, layout, 3);
 
-  for (const dot of dots) {
-    const { x, y } = projectPoint(dot.twa, dot.bsp, layout);
-    const colour = colours.get(dot.source_id)?.colour ?? line;
-    ctx.globalAlpha = dot.filtered ? 0.3 : 0.85;
+  const many = dots.count > MANY_DOTS;
+  const dotColours = dots.sources.map((id) => colours.get(id)?.colour ?? line);
+  for (let k = 0; k < dots.count; k++) {
+    const { x, y } = projectPoint(dots.points[k * 3]!, dots.points[k * 3 + 2]!, layout);
+    const colour = dotColours[dots.source[k]!]!;
+    const flags = dots.flags[k]!;
+    ctx.globalAlpha = flags & DOT_FILTERED ? 0.3 : 0.85;
+    if (many) {
+      ctx.fillStyle = colour;
+      if (flags & DOT_EXCLUDED) ctx.globalAlpha *= 0.4;
+      ctx.fillRect(x - 1, y - 1, 2, 2);
+      continue;
+    }
     ctx.beginPath();
     ctx.arc(x, y, 2.5, 0, Math.PI * 2);
-    if (dot.excluded) {
+    if (flags & DOT_EXCLUDED) {
       ctx.strokeStyle = colour;
       ctx.lineWidth = 1;
       ctx.stroke();
@@ -108,9 +119,9 @@ function draw(canvas: HTMLCanvasElement, result: PolarPlotResult | null, hover: 
   if (selected.size > 0) {
     ctx.strokeStyle = accent;
     ctx.lineWidth = 1.5;
-    for (const dot of dots) {
-      if (!selected.has(dot.sample_id)) continue;
-      const { x, y } = projectPoint(dot.twa, dot.bsp, layout);
+    for (let k = 0; k < dots.count; k++) {
+      if (!selected.has(dotSampleId(dots, k))) continue;
+      const { x, y } = projectPoint(dots.points[k * 3]!, dots.points[k * 3 + 2]!, layout);
       ctx.beginPath();
       ctx.arc(x, y, 4.5, 0, Math.PI * 2);
       ctx.stroke();
@@ -150,6 +161,7 @@ export default function PolarPlot({ project, variant, onFullSize, onClose }: {
   const wrap = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const [result, setResult] = useState<PolarPlotResult | null>(null);
+  const [dots, setDots] = useState<DotPacket>(emptyDots);
   const [tws, setTws] = useState<number | null>(null);
   const [hover, setHover] = useState<Hover | null>(null);
   const [showFiltered, setShowFiltered] = useState(false);
@@ -168,8 +180,12 @@ export default function PolarPlot({ project, variant, onFullSize, onClose }: {
   // stale plot at the same revision number. `tws` refetches the slice.
   useEffect(() => {
     const id = ++request.current;
-    void api.polarPlot(tws, showFiltered)
-      .then((next) => { if (request.current === id) setResult(next); })
+    void Promise.all([api.polarPlot(tws), api.polarPlotDots(tws, showFiltered)])
+      .then(([next, nextDots]) => {
+        if (request.current !== id) return;
+        setResult(next);
+        setDots(nextDots);
+      })
       .catch((err) => { if (request.current === id) reportFailure(err); });
   }, [project.id, project.revision, tws, showFiltered]);
 
@@ -180,8 +196,8 @@ export default function PolarPlot({ project, variant, onFullSize, onClose }: {
   }, [project.sources]);
 
   const redraw = useCallback(() => {
-    if (canvas.current) draw(canvas.current, result, hover, sourcesById, selection.ids);
-  }, [result, hover, sourcesById, selection]);
+    if (canvas.current) draw(canvas.current, result, dots, hover, sourcesById, selection.ids);
+  }, [result, dots, hover, sourcesById, selection]);
 
   useEffect(redraw, [redraw]);
 
@@ -198,19 +214,19 @@ export default function PolarPlot({ project, variant, onFullSize, onClose }: {
   const onMove = useCallback((event: MouseEvent<HTMLCanvasElement>) => {
     if (!result) return;
     const rect = event.currentTarget.getBoundingClientRect();
-    const layout = fitLayout(rect.width, rect.height, Math.max(maxBoatSpeed(result.curves, result.dots), 1));
+    const layout = fitLayout(rect.width, rect.height, Math.max(maxBoatSpeed(result.curves, dots), 1));
     const hit = nearestPoint(
-      result.curves, result.dots, sourcesById,
+      result.curves, dots, sourcesById,
       event.clientX - rect.left, event.clientY - rect.top, layout, HOVER_DISTANCE_PX,
     );
     setHover(hit);
-  }, [result, sourcesById]);
+  }, [result, dots, sourcesById]);
 
   const domainMin = result?.tws_min ?? null;
   const domainMax = result?.tws_max ?? null;
   const hasDomain = domainMin !== null && domainMax !== null;
   const sliderValue = tws ?? (hasDomain ? Math.round(((domainMin as number) + (domainMax as number)) / 2) : 0);
-  const hasAnyPoint = (result?.curves ?? []).some((curve) => curve.points.length > 0) || (result?.dots.length ?? 0) > 0;
+  const hasAnyPoint = (result?.curves ?? []).some((curve) => curve.points.length > 0) || dots.count > 0;
 
   return (
     <div className={`polar-plot polar-plot-${variant}`}>

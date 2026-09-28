@@ -45,6 +45,8 @@ pub struct SourceSummary {
     pub orc: Option<OrcSourceSummary>,
     /// For a track, what the Tracks section lists (spec.md 7.1).
     pub track: Option<crate::tracks::TrackSummary>,
+    /// Polar edits the source holds (spec.md 10.4).
+    pub edits: u32,
 }
 
 /// An ORC source's certificate, as the ORC polars section lists it.
@@ -81,9 +83,10 @@ fn count(value: usize) -> u32 {
 }
 
 impl SourceSummary {
-    /// The summary of one source. `use_corrected` is the project's choice
-    /// of water- or ground-relative values, which the filters read.
-    pub fn of(source: &pe_core::Source, use_corrected: bool) -> Self {
+    /// The summary of one source, from what is derived from it (its grid,
+    /// a track's samples placed and filtered), so a summary after an edit
+    /// reads the cache rather than every sample again.
+    pub fn of(source: &pe_core::Source, derived: &crate::derived::Derived) -> Self {
         let orc = match &source.kind {
             SourceKind::Orc { record } => Some(OrcSourceSummary {
                 sail_no: record.sail_no.clone(),
@@ -93,21 +96,16 @@ impl SourceSummary {
             }),
             _ => None,
         };
-        let (cells, used, polar_file) = match &source.kind {
+        let (cells, polar_file) = match &source.kind {
             // The cells of the polar it gives: the table plus the beat and
             // run points (spec.md 5.3).
-            SourceKind::Orc { record } => (
-                pe_polar::cell_count(&pe_polar::vpp_to_polar(&record.vpp)),
-                None,
-                None,
-            ),
+            SourceKind::Orc { .. } => (pe_polar::cell_count(&derived.base), None),
             SourceKind::PolarFile {
                 format,
                 file_name,
                 polar,
             } => (
                 pe_polar::cell_count(polar),
-                None,
                 Some(PolarFileSummary {
                     format: format_name(*format).to_owned(),
                     file_name: file_name.clone(),
@@ -116,12 +114,13 @@ impl SourceSummary {
                 }),
             ),
             // The track summary below counts what the blend uses.
-            SourceKind::Track { track } => (track.samples.len(), None, None),
+            SourceKind::Track { track } => (track.samples.len(), None),
         };
         let track = source
             .track()
-            .map(|track| crate::tracks::TrackSummary::of(source, track, use_corrected));
-        let used = used.or(track.as_ref().map(|t| t.used));
+            .zip(derived.track.as_ref())
+            .map(|(track, placed)| crate::tracks::TrackSummary::of(source, track, placed));
+        let used = track.as_ref().map(|t| t.used);
         Self {
             id: source.id.raw(),
             kind: source.kind.name().to_owned(),
@@ -134,6 +133,7 @@ impl SourceSummary {
             polar_file,
             orc,
             track,
+            edits: count(source.overlay.cell_overrides.len()),
         }
     }
 }
@@ -183,7 +183,16 @@ pub struct ProjectSummary {
 
 impl ProjectSummary {
     /// The summary of an open project.
-    pub fn of(open: &OpenProject) -> Self {
+    pub fn of(open: &mut OpenProject) -> Self {
+        let sources = open
+            .project
+            .sources
+            .iter()
+            .map(|source| {
+                let derived = open.derived.get(&open.project, source);
+                SourceSummary::of(source, &derived)
+            })
+            .collect();
         let project = &open.project;
         Self {
             id: project.id.raw(),
@@ -193,11 +202,7 @@ impl ProjectSummary {
             revision: open.revision,
             boat_name: project.boat.name.clone(),
             boat_notes: project.boat.notes.clone(),
-            sources: project
-                .sources
-                .iter()
-                .map(|source| SourceSummary::of(source, project.blend.use_corrected))
-                .collect(),
+            sources,
             can_undo: open.history.can_undo(),
             can_redo: open.history.can_redo(),
             undo_label: open.history.undo_label().map(str::to_owned),
@@ -424,7 +429,7 @@ pub fn project_summary(state: tauri::State<'_, AppState>) -> Result<Option<Proje
 
 /// [`project_summary`] without a Tauri handle.
 pub fn summary(state: &AppState) -> Result<Option<ProjectSummary>> {
-    state.with_session(|session| Ok(session.open.as_ref().map(ProjectSummary::of)))
+    state.with_session(|session| Ok(session.open.as_mut().map(ProjectSummary::of)))
 }
 
 /// The recent list, newest first, with missing files marked.

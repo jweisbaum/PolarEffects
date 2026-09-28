@@ -348,7 +348,7 @@ fn with_track<T>(
             return Ok(None);
         }
         let out = f(track);
-        open.touch();
+        open.touch_samples(target.source);
         Ok(Some(out))
     })
 }
@@ -435,7 +435,7 @@ fn run(
             samples: track.samples.len(),
         };
         if changed {
-            open.touch();
+            open.touch_samples(task.source);
         }
         Ok(Some((target, todo, stokes)))
     })?;

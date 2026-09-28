@@ -1,8 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import type { PolarCurve } from "../generated/PolarCurve";
-import type { PolarSampleDot } from "../generated/PolarSampleDot";
+import type { DotPacket } from "./dotPacket";
 import { fitLayout, maxBoatSpeed, nearestPoint, niceTicks, project } from "./plotGeometry";
+
+/** One dot of one source, as the packet carries it. */
+const dot = (sourceId: number, twa: number, tws: number, bsp: number): DotPacket => ({
+  count: 1, sources: [sourceId], points: Float32Array.from([twa, tws, bsp]), source: Uint32Array.from([0]),
+  ids: Uint32Array.from([1, 0]), flags: Uint32Array.from([0]),
+});
 
 const curve = (label: string, colour: string, tws: number, points: [number, number][]): PolarCurve => ({
   source_id: 1,
@@ -69,9 +75,9 @@ describe("niceTicks", () => {
 describe("maxBoatSpeed", () => {
   it("is the highest BSP across every curve and dot", () => {
     const curves = [curve("A", "#111", 10, [[40, 5], [90, 8]]), curve("B", "#222", 10, [[40, 3]])];
-    const dots: PolarSampleDot[] = [{ source_id: 1, sample_id: 1, twa: 90, tws: 10, bsp: 12, filtered: false, excluded: false }];
+    const dots = dot(1, 90, 10, 12);
     expect(maxBoatSpeed(curves, dots)).toBe(12);
-    expect(maxBoatSpeed([], [])).toBe(0);
+    expect(maxBoatSpeed([], null)).toBe(0);
   });
 });
 
@@ -81,7 +87,7 @@ describe("nearestPoint", () => {
 
   it("finds the closest curve point within the distance limit", () => {
     const { x, y } = project(90, 8, layout);
-    const hit = nearestPoint(curves, [], new Map(), x + 1, y - 1, layout, 10);
+    const hit = nearestPoint(curves, null, new Map(), x + 1, y - 1, layout, 10);
     expect(hit).not.toBeNull();
     expect(hit?.twa).toBe(90);
     expect(hit?.bsp).toBe(8);
@@ -89,11 +95,11 @@ describe("nearestPoint", () => {
   });
 
   it("returns null beyond the distance limit", () => {
-    expect(nearestPoint(curves, [], new Map(), 0, 0, layout, 1)).toBeNull();
+    expect(nearestPoint(curves, null, new Map(), 0, 0, layout, 1)).toBeNull();
   });
 
   it("looks a dot's source up by id for its label and colour", () => {
-    const dots: PolarSampleDot[] = [{ source_id: 7, sample_id: 1, twa: 40, tws: 10, bsp: 6, filtered: false, excluded: false }];
+    const dots = dot(7, 40, 10, 6);
     const styles = new Map([[7, { label: "Track", colour: "#e15759" }]]);
     const { x, y } = project(40, 6, layout);
     const hit = nearestPoint([], dots, styles, x, y, layout, 5);
@@ -101,7 +107,7 @@ describe("nearestPoint", () => {
   });
 
   it("ignores a dot whose source is not in the lookup", () => {
-    const dots: PolarSampleDot[] = [{ source_id: 99, sample_id: 1, twa: 40, tws: 10, bsp: 6, filtered: false, excluded: false }];
+    const dots = dot(99, 40, 10, 6);
     const { x, y } = project(40, 6, layout);
     expect(nearestPoint([], dots, new Map(), x, y, layout, 5)).toBeNull();
   });

@@ -119,6 +119,11 @@ fn dots_and_the_blend_are_always_empty_for_now() {
     let root = TempRoot::new("plot-placeholders");
     let app = project_with_orc_and_file(&root);
     let result = plot(&app, Some(10.0)).unwrap();
-    assert!(result.dots.is_empty(), "no track exists yet (M8/M9)");
+    assert!(
+        pe_app::polar_plot::dots(&app, Some(10.0), false)
+            .unwrap()
+            .is_empty(),
+        "no track exists"
+    );
     assert!(result.blend.is_none(), "the blend arrives in M14");
 }

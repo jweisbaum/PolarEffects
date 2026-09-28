@@ -8,11 +8,12 @@
  * `k` is `nodes.count + k`. The scene draws only the dots the toggles leave
  * on, so `DotBuild.refs` maps each drawn dot back to its global index.
  */
+import type { PolarCell } from "../generated/PolarCell";
 import type { PolarNodeRef } from "../generated/PolarNodeRef";
 import type { SpeedUnit } from "../generated/SpeedUnit";
 import { CARTESIAN_TWA_SCALE, place, type Layout, type PolarGrid } from "./geometry3d";
-import { BLEND_SOURCE, FLAG_EXCLUDED, FLAG_FILTERED, sampleId, type ScenePacket } from "./scenePacket";
-import { SHAPE_CROSS, SHAPE_DISC, SHAPE_RING, type SurfaceInput, type View } from "./scene3d";
+import { BLEND_SOURCE, FLAG_EDITED, FLAG_EXCLUDED, FLAG_FILTERED, sampleId, type ScenePacket } from "./scenePacket";
+import { SHAPE_CROSS, SHAPE_DISC, SHAPE_RING, SHAPE_SQUARE, type SurfaceInput, type View } from "./scene3d";
 
 export type ColourMode = "source" | "hs" | "current" | "time";
 
@@ -26,6 +27,21 @@ export interface Toggles {
 }
 
 export const DEFAULT_TOGGLES: Toggles = { samples: true, nodes: true, surfaces: true, filtered: false };
+
+/**
+ * Edit mode (spec.md 10.4): the source being edited, by its index in the
+ * packet's sources, is drawn fully; the others fade, or are hidden.
+ */
+export interface Focus {
+  index: number;
+  hideOthers: boolean;
+}
+
+/** The focused source's index in the packet, or -1 when it is not in the scene (hidden). */
+export function focusIndex(packet: ScenePacket, sourceId: number | null): number {
+  if (sourceId === null) return -1;
+  return packet.sources.findIndex((s) => s.id === sourceId);
+}
 
 /** The dots to draw. */
 export interface DotBuild {
@@ -99,29 +115,73 @@ export function hasFiltered(packet: ScenePacket): boolean {
   return false;
 }
 
-/** Dims a colour toward grey: a filtered sample (spec.md 10.2). */
-function dim([r, g, b]: readonly [number, number, number]): [number, number, number] {
-  return [0.35 * r + 0.65 * 0.5, 0.35 * g + 0.65 * 0.5, 0.35 * b + 0.65 * 0.5];
-}
+/**
+ * Dimming a colour channel toward grey, `c → DIM_KEEP · c + DIM_ADD`: once
+ * for a filtered sample (spec.md 10.2), twice for another source's dot
+ * while one is edited (spec.md 10.4).
+ */
+const DIM_KEEP = 0.35;
+const DIM_ADD = 0.65 * 0.5;
 
 /**
  * The dots the toggles leave on, coloured by `mode`. Polar nodes have no
  * environment, so they keep their source colour in every mode. Excluded
- * samples are rings, excluded nodes crosses (spec.md 10.3).
+ * samples are rings, excluded nodes crosses (spec.md 10.3), edited nodes
+ * squares (spec.md 10.4). In edit mode the other sources' dots are dimmed,
+ * or left out.
  */
-export function buildDots(packet: ScenePacket, toggles: Toggles, mode: ColourMode): DotBuild {
+export function buildDots(packet: ScenePacket, toggles: Toggles, mode: ColourMode, focus: Focus | null = null): DotBuild {
+  return mergeDots(nodeDots(packet, toggles, focus), sampleDots(packet, toggles, mode, focus));
+}
+
+/**
+ * The polar nodes' part of `buildDots`. An edit changes only these (and the
+ * samples' flags), so the view rebuilds them alone when the samples are the
+ * ones it already holds (plan.md M13).
+ */
+export function nodeDots(packet: ScenePacket, toggles: Toggles, focus: Focus | null = null): DotBuild {
+  return dotsOf(packet, toggles, "source", focus, "nodes");
+}
+
+/** The samples' part of `buildDots`. */
+export function sampleDots(packet: ScenePacket, toggles: Toggles, mode: ColourMode, focus: Focus | null = null): DotBuild {
+  return dotsOf(packet, toggles, mode, focus, "samples");
+}
+
+/** Two parts drawn together, nodes first. */
+export function mergeDots(a: DotBuild, b: DotBuild): DotBuild {
+  const join = <T extends Float32Array | Uint32Array>(x: T, y: T, make: (n: number) => T): T => {
+    const out = make(x.length + y.length);
+    out.set(x);
+    out.set(y, x.length);
+    return out;
+  };
+  return {
+    points: join(a.points, b.points, (n) => new Float32Array(n)),
+    colors: join(a.colors, b.colors, (n) => new Float32Array(n)),
+    shapes: join(a.shapes, b.shapes, (n) => new Float32Array(n)),
+    refs: join(a.refs, b.refs, (n) => new Uint32Array(n)),
+  };
+}
+
+function dotsOf(packet: ScenePacket, toggles: Toggles, mode: ColourMode, focus: Focus | null, which: "nodes" | "samples"): DotBuild {
   const { nodes, samples } = packet;
   const sourceColours = packet.sources.map((s) => rgb(s.colour));
-  const values = modeValues(packet, mode);
+  const values = which === "samples" ? modeValues(packet, mode) : null;
   const span = values ? range(values) : null;
   // Two passes over flat arrays, no per-dot allocation: this runs on every
   // edit at up to 200,000 dots (spec.md 13).
-  const refs = new Uint32Array(nodes.count + samples.count);
+  const refs = new Uint32Array(which === "nodes" ? nodes.count : samples.count);
+  const focused = focus !== null && focus.index >= 0;
+  const hidden = (source: number) => focused && focus.hideOthers && source !== focus.index;
   let n = 0;
-  if (toggles.nodes) for (let k = 0; k < nodes.count; k++) refs[n++] = k;
-  if (toggles.samples) {
+  if (which === "nodes" && toggles.nodes) {
+    for (let k = 0; k < nodes.count; k++) if (!hidden(nodes.source[k]!)) refs[n++] = k;
+  }
+  if (which === "samples" && toggles.samples) {
     for (let k = 0; k < samples.count; k++) {
       if ((samples.flags[k]! & FLAG_FILTERED) && !toggles.filtered) continue;
+      if (hidden(samples.source[k]!)) continue;
       refs[n++] = nodes.count + k;
     }
   }
@@ -146,11 +206,21 @@ export function buildDots(packet: ScenePacket, toggles: Toggles, mode: ColourMod
     } else {
       colour = sourceColours[set.source[k]!] ?? MISSING;
     }
-    if (!isNode && flags & FLAG_FILTERED) colour = dim(colour);
-    colors[d * 3] = colour[0];
-    colors[d * 3 + 1] = colour[1];
-    colors[d * 3 + 2] = colour[2];
-    shapes[d] = flags & FLAG_EXCLUDED ? (isNode ? SHAPE_CROSS : SHAPE_RING) : SHAPE_DISC;
+    // Dimming toward grey, in place (no per-dot allocation): once for a
+    // filtered sample, twice for another source's dot while one is edited.
+    let fades = !isNode && flags & FLAG_FILTERED ? 1 : 0;
+    if (focused && set.source[k] !== focus.index) fades += 2;
+    let [r, gr, b] = colour;
+    for (let f = 0; f < fades; f++) {
+      r = DIM_KEEP * r + DIM_ADD;
+      gr = DIM_KEEP * gr + DIM_ADD;
+      b = DIM_KEEP * b + DIM_ADD;
+    }
+    colors[d * 3] = r;
+    colors[d * 3 + 1] = gr;
+    colors[d * 3 + 2] = b;
+    shapes[d] = flags & FLAG_EXCLUDED ? (isNode ? SHAPE_CROSS : SHAPE_RING)
+      : isNode && flags & FLAG_EDITED ? SHAPE_SQUARE : SHAPE_DISC;
   }
   return { points, colors, shapes, refs: refs.slice(0, n) };
 }
@@ -168,16 +238,52 @@ export function surfaceGrid(twa: Float32Array, tws: Float32Array, bsp: Float32Ar
   };
 }
 
-/** Every surface to draw: one per visible polar source, the blend opaque. */
-export function buildSurfaces(packet: ScenePacket, blendColour: string): SurfaceInput[] {
-  return packet.surfaces.map((surface) => {
+/** How faint the other sources' surfaces are while one is edited (spec.md 10.4). */
+export const FADED_OPACITY = 0.05;
+
+/**
+ * Every surface to draw: one per visible polar source, the blend opaque. In
+ * edit mode the source being edited is opaque and the others fade, or are
+ * left out.
+ */
+export function buildSurfaces(packet: ScenePacket, blendColour: string, focus: Focus | null = null): SurfaceInput[] {
+  const focused = focus !== null && focus.index >= 0;
+  return packet.surfaces.flatMap((surface): SurfaceInput[] => {
     const blend = surface.source === BLEND_SOURCE;
-    return {
+    const mine = focused && surface.source === focus.index;
+    if (focused && !mine && focus.hideOthers) return [];
+    return [{
       grid: surfaceGrid(surface.twa, surface.tws, surface.bsp),
       color: blend ? blendColour : packet.sources[surface.source]?.colour ?? "#888888",
-      opaque: blend,
-    };
+      opaque: blend || mine,
+      ...(focused && !mine ? { opacity: FADED_OPACITY } : {}),
+    }];
   });
+}
+
+/** Whether a node belongs to a track: a polar segment's, shown only in edit mode, and never excluded. */
+function isSegmentNode(packet: ScenePacket, k: number): boolean {
+  return packet.sources[packet.nodes.source[k]!]?.kind === "track";
+}
+
+/** The cells of the edited source among some dots: what the edit tools act on. */
+export function editCells(packet: ScenePacket, selection: readonly number[], index: number): PolarCell[] {
+  const out: PolarCell[] = [];
+  for (const g of selection) {
+    if (g >= packet.nodes.count || packet.nodes.source[g] !== index) continue;
+    const cell = packet.nodes.cell[g]!;
+    out.push({ twa_index: cell & 0xffff, tws_index: cell >>> 16 });
+  }
+  return out;
+}
+
+/** The global indices of the edited source's nodes at some cells (TWA index | TWS index << 16). */
+export function nodesAtCells(packet: ScenePacket, index: number, cells: ReadonlySet<number>): number[] {
+  const out: number[] = [];
+  for (let k = 0; k < packet.nodes.count; k++) {
+    if (packet.nodes.source[k] === index && cells.has(packet.nodes.cell[k]!)) out.push(k);
+  }
+  return out;
 }
 
 // ------------------------------------------------------------------ units
@@ -397,7 +503,7 @@ export interface SelectionSummary {
 
 export function summarise(packet: ScenePacket, selection: readonly number[]): SelectionSummary {
   const { nodes, samples } = packet;
-  let twa = 0, tws = 0, bsp = 0, excluded = 0, sampleCount = 0;
+  let twa = 0, tws = 0, bsp = 0, excluded = 0, sampleCount = 0, segment = 0;
   const perSource = new Array<number>(packet.sources.length).fill(0);
   for (const g of selection) {
     const isNode = g < nodes.count;
@@ -407,7 +513,8 @@ export function summarise(packet: ScenePacket, selection: readonly number[]): Se
     tws += set.points[k * 3 + 1]!;
     bsp += set.points[k * 3 + 2]!;
     perSource[set.source[k]!]! += 1;
-    if (set.flags[k]! & FLAG_EXCLUDED) excluded++;
+    if (isNode && isSegmentNode(packet, k)) segment++;
+    else if (set.flags[k]! & FLAG_EXCLUDED) excluded++;
     if (!isNode) sampleCount++;
   }
   const count = selection.length;
@@ -418,7 +525,8 @@ export function summarise(packet: ScenePacket, selection: readonly number[]): Se
     meanBsp: count ? bsp / count : NaN,
     bySource: perSource.flatMap((c, i) => (c > 0 ? [{ sourceId: packet.sources[i]!.id, count: c }] : [])),
     excluded,
-    included: count - excluded,
+    // A track's segment cells are edited, never excluded: its samples are.
+    included: count - excluded - segment,
     samples: sampleCount,
   };
 }
@@ -429,6 +537,7 @@ export function exclusionTargets(packet: ScenePacket, selection: readonly number
   const samples: number[] = [];
   for (const g of selection) {
     if (g < packet.nodes.count) {
+      if (isSegmentNode(packet, g)) continue;
       const cell = packet.nodes.cell[g]!;
       nodes.push({ source_id: packet.sources[packet.nodes.source[g]!]!.id, twa_index: cell & 0xffff, tws_index: cell >>> 16 });
     } else {

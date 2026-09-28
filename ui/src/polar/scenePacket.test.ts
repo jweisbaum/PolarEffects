@@ -1,14 +1,17 @@
 /**
  * The frontend half of the scene transport: it reads the very bytes the Rust
- * packing test pins (`fixtures/scene-v1.bin`), and refuses malformed ones.
+ * packing test pins (`fixtures/scene-v2.bin`, and its flags-only twin), and
+ * refuses malformed ones.
  */
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { BLEND_SOURCE, FLAG_EXCLUDED, FLAG_FILTERED, HEADER_BYTES, sampleId, ScenePacketError, unpackScene } from "./scenePacket";
+import {
+  BLEND_SOURCE, FLAG_EDITED, FLAG_EXCLUDED, FLAG_FILTERED, HEADER_BYTES, sampleId, ScenePacketError, unpackScene,
+} from "./scenePacket";
 
-function fixture(): ArrayBuffer {
-  const bytes = readFileSync(new URL("./fixtures/scene-v1.bin", import.meta.url));
+function fixture(name = "scene-v2.bin"): ArrayBuffer {
+  const bytes = readFileSync(new URL(`./fixtures/${name}`, import.meta.url));
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
@@ -18,6 +21,7 @@ describe("unpackScene", () => {
   it("reads the scene the Rust test packed", () => {
     const scene = unpackScene(fixture());
     expect(scene.timeOrigin).toBe(1_753_000_000);
+    expect(scene.samplesKey).toBe(0x0010_0304 * 2 ** 32 + 0x0506_0708);
     expect(scene.sources).toEqual([
       { id: 7, colour: "#4e79a7", kind: "orc" },
       { id: 3 * 2 ** 32 + 9, colour: "#e15759", kind: "track" },
@@ -27,7 +31,7 @@ describe("unpackScene", () => {
     expect([...scene.nodes.source]).toEqual([0, 0]);
     expect(scene.nodes.cell[1]! & 0xffff).toBe(2);
     expect(scene.nodes.cell[1]! >>> 16).toBe(1);
-    expect([...scene.nodes.flags]).toEqual([0, FLAG_EXCLUDED]);
+    expect([...scene.nodes.flags]).toEqual([FLAG_EDITED, FLAG_EXCLUDED]);
 
     expect(scene.samples.count).toBe(1);
     expect([...scene.samples.points]).toEqual([135, 14.25, 9.5]);
@@ -64,14 +68,29 @@ describe("unpackScene", () => {
     new DataView(foreign).setUint32(0, 0x12345678, true);
     expect(() => unpackScene(foreign)).toThrow(/not a 3D scene/);
     const newer = good.slice(0);
-    new DataView(newer).setUint32(4, 2, true);
-    expect(() => unpackScene(newer)).toThrow(/version 2/);
+    new DataView(newer).setUint32(4, 3, true);
+    expect(() => unpackScene(newer)).toThrow(/version 3/);
     const longer = new Uint8Array(good.byteLength + 4);
     longer.set(new Uint8Array(good));
     expect(() => unpackScene(longer.buffer)).toThrow(/after its last surface/);
     const badSource = good.slice(0);
-    // The first node's source index (word 22) past the two sources.
-    new DataView(badSource).setUint32(22 * 4, 5, true);
+    // The first node's source index (word 26) past the two sources.
+    new DataView(badSource).setUint32(26 * 4, 5, true);
     expect(() => unpackScene(badSource)).toThrow(/names source 5/);
+  });
+
+  it("takes a flags-only scene's samples from the scene held, with the new flags", () => {
+    const held = unpackScene(fixture());
+    const changed = { ...held, samples: { ...held.samples, flags: Uint32Array.from([0]) } };
+    const delta = unpackScene(fixture("scene-v2-flags.bin"), changed);
+    expect(delta.samples.points).toBe(held.samples.points);
+    expect([...delta.samples.flags]).toEqual([FLAG_EXCLUDED | FLAG_FILTERED]);
+    // Flags that did not change keep the very samples held.
+    expect(unpackScene(fixture("scene-v2-flags.bin"), held).samples).toBe(held.samples);
+    expect(delta.surfaces).toHaveLength(2);
+    // Without the scene it updates, or with another, it is refused.
+    expect(() => unpackScene(fixture("scene-v2-flags.bin"))).toThrow(/does not match/);
+    const other = { ...held, samplesKey: 1 };
+    expect(() => unpackScene(fixture("scene-v2-flags.bin"), other)).toThrow(/does not match/);
   });
 });

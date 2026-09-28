@@ -25,14 +25,18 @@ export const SHAPE_DISC = 0;
 export const SHAPE_RING = 1;
 /** A cross: an excluded polar node. */
 export const SHAPE_CROSS = 2;
+/** A square: a polar node whose cell holds an edit (spec.md 10.4). */
+export const SHAPE_SQUARE = 3;
 
 /** One surface. */
 export interface SurfaceInput {
   grid: PolarGrid;
   /** `#rrggbb`, the source's stored colour. */
   color: string;
-  /** The blend is opaque; sources are translucent (spec.md 10.1). */
+  /** The blend is opaque, and so is the source being edited; sources are translucent (spec.md 10.1). */
   opaque?: boolean;
+  /** A translucent surface's opacity: 0.18 unless faded behind the source being edited (spec.md 10.4). */
+  opacity?: number;
 }
 
 /** What the scene draws. */
@@ -82,7 +86,7 @@ void main() {
   vColor = mix(color, vec3(1.0), selected * 0.85);
   vShape = shape;
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-  gl_PointSize = size * (1.0 + selected) * (shape > 1.5 ? 1.8 : (shape > 0.5 ? 1.4 : 1.0));
+  gl_PointSize = size * (1.0 + selected) * (shape > 2.5 ? 1.6 : (shape > 1.5 ? 1.8 : (shape > 0.5 ? 1.4 : 1.0)));
 }`;
 
 const FRAGMENT = `
@@ -91,6 +95,12 @@ varying float vShape;
 void main() {
   vec2 d = gl_PointCoord - vec2(0.5);
   float r2 = dot(d, d);
+  if (vShape > 2.5) {
+    // A square with a light rim: an edited node.
+    float edge = max(abs(d.x), abs(d.y));
+    gl_FragColor = vec4(edge > 0.36 ? vec3(1.0) : vColor, 1.0);
+    return;
+  }
   if (r2 > 0.25) discard;
   if (vShape > 1.5) {
     if (min(abs(d.x - d.y), abs(d.x + d.y)) > 0.14) discard;
@@ -195,11 +205,14 @@ export class PolarScene {
       // Translucent and not writing depth, so surfaces behind show through
       // and the dots inside them stay visible. The blend is opaque.
       const opaque = surface.opaque === true;
+      const opacity = surface.opacity ?? 0.18;
       this.surfaces.add(new THREE.Mesh(faces, new THREE.MeshBasicMaterial({
-        color, transparent: !opaque, opacity: opaque ? 1 : 0.18, side: THREE.DoubleSide, depthWrite: opaque,
+        color, transparent: !opaque, opacity: opaque ? 1 : opacity, side: THREE.DoubleSide, depthWrite: opaque,
       })));
       this.surfaces.add(new THREE.LineSegments(lines, new THREE.LineBasicMaterial({
-        color, transparent: true, opacity: 0.55, depthWrite: false,
+        // On an opaque surface the grid lines are lightened, or they vanish into it.
+        color: opaque ? color.clone().lerp(new THREE.Color(0xffffff), 0.6) : color, transparent: true,
+        opacity: opaque ? 0.9 : Math.min(0.55, opacity * 3), depthWrite: false,
       })));
     }
     const t2 = performance.now();

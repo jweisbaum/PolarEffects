@@ -521,6 +521,59 @@ button.source-label:hover { border-color: var(--border); background: var(--raise
 .view3d-breakdown { list-style: none; margin: 4px 0; padding: 0; }
 .view3d-breakdown .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
 .view3d-actions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.view3d-canvas.tool-drag { cursor: ns-resize; }
+.view3d-drag-value {
+  position: absolute;
+  pointer-events: none;
+  padding: 2px 6px;
+  font-size: 11px;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+}
+
+/* Edit mode (spec.md 10.4): the table and tools of the source being edited. */
+.view3d-edit {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  max-width: min(520px, calc(100% - 260px));
+  max-height: calc(100% - 70px);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  font-size: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.view3d-edit-head { display: flex; gap: 6px; align-items: center; }
+.view3d-edit-head .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
+.view3d-edit-head .spacer { flex: 1; }
+.view3d-edit-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.view3d-edit-statistic { display: flex; gap: 4px; align-items: center; }
+.view3d-edit-percent { width: 4em; }
+.view3d-edit-note { margin: 0; }
+.view3d-edit-table-wrap { overflow: auto; min-height: 0; }
+.view3d-edit-table { border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.view3d-edit-table th { padding: 1px 4px; color: var(--muted); font-weight: normal; text-align: right; position: sticky; top: 0; background: var(--panel); }
+.view3d-edit-table tbody th { position: sticky; left: 0; }
+.view3d-edit-cell { padding: 0; border: 1px solid var(--border-subtle); }
+.view3d-edit-cell input {
+  width: 4.2em;
+  padding: 1px 3px;
+  border: 0;
+  border-radius: 0;
+  text-align: right;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+.view3d-edit-cell.edited input { background: color-mix(in srgb, var(--accent) 22%, transparent); font-weight: 600; }
+.view3d-edit-cell.edited { box-shadow: inset 3px 0 0 var(--accent); }
+.view3d-edit-cell.excluded input { text-decoration: line-through; color: var(--muted); }
+.view3d-edit-cell.selected { outline: 2px solid var(--selected-border); outline-offset: -2px; }
 
 /* --- Status bar -------------------------------------------------------- */
 

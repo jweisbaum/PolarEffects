@@ -5,13 +5,38 @@
 //! `tws: None`), each visible polar source gives one curve per pe-polar's
 //! bilinear interpolation, swept across that source's own TWA axis — nothing
 //! is invented beyond what the source's grid covers (invariant: no
-//! extrapolation). A track is not a polar source, so it contributes no
-//! curve; its samples are `dots`, every sample of a visible track whose
-//! TWS is within the band (a display setting, ±1 kn by default) of the
-//! slice. A sample has a place only once it has wind (M9): until then it is
-//! left out rather than drawn somewhere invented. The blend is a hook
-//! returning `None` until the blend itself lands (M14) — nothing here
-//! fabricates one.
+//! extrapolation). A curve reads the source **through its overlay**, as the
+//! blend will (spec.md 12.3): its edits written in and its excluded nodes
+//! empty, so every edit shows here at once (spec.md 10.4). A track is not a
+//! polar source, so it contributes no curve; its samples are dots.
+//!
+//! # Dots: wire layout, version 1
+//!
+//! Dots travel as one packed little-endian buffer, not JSON (plan.md M13):
+//! in "all" mode every sample with wind is a dot, and 50 tracks of 10,000
+//! fixes as JSON objects would be tens of megabytes of text. The frontend's
+//! mirror is `ui/src/panels/dotPacket.ts`, and both are held to the same
+//! bytes by `ui/src/panels/fixtures/dots-v1.bin`.
+//!
+//! ```text
+//! header, 4 × u32 (16 bytes)
+//!   0  magic    0x44324550 (the bytes "PE2D")
+//!   1  version  1
+//!   2  S        sources
+//!   3  M        dots
+//! sources, S × 2 u32   id lo, id hi
+//! f32 [M × 3]  TWA °, TWS kn, BSP kn
+//! u32 [M]      source index
+//! u32 [M × 2]  sample id, lo then hi
+//! u32 [M]      flags: bit 0 excluded, bit 1 filtered out
+//! ```
+//!
+//! A sample has a place only once it has wind (M9): until then it is left
+//! out rather than drawn somewhere invented. The blend is a hook returning
+//! `None` until the blend itself lands (M14) — nothing here fabricates one.
+
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use pe_core::source::Source;
 use pe_polar::Polar;
@@ -19,12 +44,22 @@ use serde::Serialize;
 use ts_rs::TS;
 
 use crate::commands::AppState;
+use crate::derived::{Derivations, Derived};
 use crate::error::Result;
 
 /// How close a sample's TWS may be to the slice and still count as at it,
 /// knots, by default (spec.md 9.2). The person changes it in Settings
 /// (`Settings::plot_tws_band_kn`).
 pub const DEFAULT_TWS_BAND_KN: f64 = 1.0;
+
+/// "PE2D" read as a little-endian u32.
+pub const DOTS_MAGIC: u32 = u32::from_le_bytes(*b"PE2D");
+/// The dots layout's version.
+pub const DOTS_VERSION: u32 = 1;
+/// Dot flag: excluded from the blend by hand.
+pub const DOT_EXCLUDED: u32 = 1;
+/// Dot flag: taken out by the track's filters.
+pub const DOT_FILTERED: u32 = 2;
 
 /// One point of a curve.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, TS)]
@@ -54,8 +89,7 @@ pub struct PolarCurve {
 }
 
 /// One track sample near the slice (spec.md 9.2).
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, TS)]
-#[ts(export_to = "PolarSampleDot.ts")]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PolarSampleDot {
     /// The track source it came from.
     pub source_id: u64,
@@ -73,7 +107,7 @@ pub struct PolarSampleDot {
     pub excluded: bool,
 }
 
-/// What the 2D polar plot draws (spec.md 9.2).
+/// What the 2D polar plot draws besides its dots (spec.md 9.2).
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[ts(export_to = "PolarPlotResult.ts")]
 pub struct PolarPlotResult {
@@ -85,20 +119,10 @@ pub struct PolarPlotResult {
     /// One curve per visible polar source at the chosen slice; several per
     /// source, one per wind speed it has, when `tws` was null ("all").
     pub curves: Vec<PolarCurve>,
-    /// Samples within the band of the slice (every sample with wind, in
-    /// "all"); filtered ones only when asked for.
-    pub dots: Vec<PolarSampleDot>,
-    /// The band used, knots.
+    /// The band used for the dots, knots.
     pub band_kn: f64,
     /// The blend at the slice; `None` until the blend arrives (M14).
     pub blend: Option<PolarCurve>,
-}
-
-/// The grid a source's own curve is read from, if it has one. A track is not
-/// a polar source (spec.md 9.2: "every visible polar source"); its samples
-/// are dots, not curves.
-fn source_grid(source: &Source) -> Option<Polar> {
-    pe_polar::source_polar(source)
 }
 
 /// One curve of `grid` at `tws`, read at every one of the grid's own TWA
@@ -122,25 +146,32 @@ fn curve_at(source: &Source, grid: &Polar, tws: f64) -> PolarCurve {
 
 /// Every sample of a visible track that has a place in the polar, within
 /// `band` of `tws` (every one, for "all").
-fn dots_of(
+pub fn dots_of(
     project: &pe_core::Project,
+    derived: &BTreeMap<u64, Arc<Derived>>,
     tws: Option<f64>,
     band: f64,
     show_filtered: bool,
 ) -> Vec<PolarSampleDot> {
-    let use_corrected = project.blend.use_corrected;
     let mut dots = Vec::new();
     for source in project.sources.iter().filter(|s| s.visible) {
-        let Some(track) = source.track() else {
+        let (Some(track), Some(placed)) = (
+            source.track(),
+            derived.get(&source.id.raw()).and_then(|d| d.track.as_ref()),
+        ) else {
             continue;
         };
-        let out = pe_tracks::filtered_out(track, &source.overlay.filters, use_corrected);
         let excluded = &source.overlay.excluded_samples;
-        for (sample, filtered) in track.samples.iter().zip(out) {
-            if filtered && !show_filtered {
+        for ((sample, point), filtered) in track
+            .samples
+            .iter()
+            .zip(&placed.points)
+            .zip(&placed.filtered)
+        {
+            if *filtered && !show_filtered {
                 continue;
             }
-            let Some((twa, sample_tws, bsp)) = pe_tracks::polar_point(sample, use_corrected) else {
+            let Some((twa, sample_tws, bsp)) = *point else {
                 continue;
             };
             if tws.is_some_and(|slice| (sample_tws - slice).abs() > band) {
@@ -152,7 +183,7 @@ fn dots_of(
                 twa,
                 tws: sample_tws,
                 bsp,
-                filtered,
+                filtered: *filtered,
                 excluded: excluded.binary_search(&sample.id).is_ok(),
             });
         }
@@ -160,82 +191,159 @@ fn dots_of(
     dots
 }
 
-/// The plot's answer for the open project (spec.md 9.2).
+/// Packs dots into the layout in the module documentation.
+pub fn pack_dots(dots: &[PolarSampleDot]) -> Vec<u8> {
+    let mut sources: Vec<u64> = Vec::new();
+    let mut index_of: BTreeMap<u64, u32> = BTreeMap::new();
+    for dot in dots {
+        index_of.entry(dot.source_id).or_insert_with(|| {
+            sources.push(dot.source_id);
+            (sources.len() - 1) as u32
+        });
+    }
+    let m = dots.len();
+    let mut out = Vec::with_capacity(16 + sources.len() * 8 + m * 28);
+    let mut u = |value: u32| out.extend_from_slice(&value.to_le_bytes());
+    u(DOTS_MAGIC);
+    u(DOTS_VERSION);
+    u(sources.len() as u32);
+    u(m as u32);
+    for id in &sources {
+        u(*id as u32);
+        u((id >> 32) as u32);
+    }
+    for dot in dots {
+        for value in [dot.twa, dot.tws, dot.bsp] {
+            u((value as f32).to_bits());
+        }
+    }
+    for dot in dots {
+        u(index_of.get(&dot.source_id).copied().unwrap_or(0));
+    }
+    for dot in dots {
+        u(dot.sample_id as u32);
+        u((dot.sample_id >> 32) as u32);
+    }
+    for dot in dots {
+        u((if dot.excluded { DOT_EXCLUDED } else { 0 })
+            | (if dot.filtered { DOT_FILTERED } else { 0 }));
+    }
+    out
+}
+
+/// The plot's curves for the open project (spec.md 9.2).
 ///
 /// `tws` chooses the slice; `None` is "all", which draws one curve per
 /// visible polar source for every wind speed that source's own grid has,
-/// rather than one slice shared by every source. `show_filtered` adds the
-/// samples the filters take out, flagged, for drawing dimmed.
+/// rather than one slice shared by every source.
 #[tauri::command]
-pub fn polar_plot(
+pub fn polar_plot(state: tauri::State<'_, AppState>, tws: Option<f64>) -> Result<PolarPlotResult> {
+    plot(&state, tws)
+}
+
+/// The plot's dots, packed (layout in the module documentation): every
+/// sample within the band of `tws` (every one with wind, for null), and
+/// with `show_filtered` the samples the filters take out, flagged.
+#[tauri::command]
+pub fn polar_plot_dots(
     state: tauri::State<'_, AppState>,
     tws: Option<f64>,
     show_filtered: Option<bool>,
-) -> Result<PolarPlotResult> {
-    plot_with(&state, tws, show_filtered.unwrap_or(false))
+) -> Result<tauri::ipc::Response> {
+    dots_bytes(&state, tws, show_filtered.unwrap_or(false)).map(tauri::ipc::Response::new)
 }
 
-/// [`polar_plot`] without a Tauri handle, filtered samples left out.
-pub fn plot(state: &AppState, tws: Option<f64>) -> Result<PolarPlotResult> {
-    plot_with(state, tws, false)
-}
-
-/// [`polar_plot`] without a Tauri handle.
-pub fn plot_with(
+/// [`polar_plot_dots`] without a Tauri handle, unpacked.
+pub fn dots(
     state: &AppState,
     tws: Option<f64>,
     show_filtered: bool,
-) -> Result<PolarPlotResult> {
+) -> Result<Vec<PolarSampleDot>> {
     state.with_session(|session| {
         let band = session.settings.plot_tws_band_kn;
         let open = session.require_open()?;
-        let grids: Vec<(&Source, Polar)> = open
-            .project
-            .sources
-            .iter()
-            .filter(|source| source.visible)
-            .filter_map(|source| source_grid(source).map(|grid| (source, grid)))
-            .collect();
-
-        let tws_min = grids
-            .iter()
-            .filter_map(|(_, grid)| grid.tws.first().copied())
-            .fold(None, |acc: Option<f64>, value| {
-                Some(acc.map_or(value, |current| current.min(value)))
-            });
-        let tws_max = grids
-            .iter()
-            .filter_map(|(_, grid)| grid.tws.last().copied())
-            .fold(None, |acc: Option<f64>, value| {
-                Some(acc.map_or(value, |current| current.max(value)))
-            });
-
-        let curves = match tws {
-            Some(value) => grids
-                .iter()
-                .map(|(source, grid)| curve_at(source, grid, value))
-                .collect(),
-            None => grids
-                .iter()
-                .flat_map(|(source, grid)| {
-                    grid.tws
-                        .iter()
-                        .map(move |&value| curve_at(source, grid, value))
-                })
-                .collect(),
-        };
-
-        Ok(PolarPlotResult {
-            tws_min,
-            tws_max,
-            curves,
-            dots: dots_of(&open.project, tws, band, show_filtered),
-            band_kn: band,
-            // The blend is derived by pe-polar once it exists (M14,
-            // invariant 2: never fabricated here in the meantime).
-            blend: None,
-        })
+        let derived = open.derived.visible(&open.project);
+        Ok(dots_of(&open.project, &derived, tws, band, show_filtered))
     })
+}
+
+/// [`polar_plot_dots`] without a Tauri handle.
+pub fn dots_bytes(state: &AppState, tws: Option<f64>, show_filtered: bool) -> Result<Vec<u8>> {
+    dots(state, tws, show_filtered).map(|dots| pack_dots(&dots))
+}
+
+/// [`polar_plot`] without a Tauri handle.
+pub fn plot(state: &AppState, tws: Option<f64>) -> Result<PolarPlotResult> {
+    state.with_session(|session| {
+        let band = session.settings.plot_tws_band_kn;
+        let open = session.require_open()?;
+        let derived = open.derived.visible(&open.project);
+        Ok(plot_of(&open.project, &derived, tws, band))
+    })
+}
+
+/// The curves from each visible source's derived data.
+pub fn plot_of(
+    project: &pe_core::Project,
+    derived: &BTreeMap<u64, Arc<Derived>>,
+    tws: Option<f64>,
+    band: f64,
+) -> PolarPlotResult {
+    // Tracks are not polar sources (spec.md 9.2): their samples are dots.
+    let grids: Vec<(&Source, &Polar)> = project
+        .sources
+        .iter()
+        .filter(|source| source.visible && source.track().is_none())
+        .filter_map(|source| {
+            derived
+                .get(&source.id.raw())
+                .map(|data| (source, &data.blend))
+        })
+        .collect();
+
+    let tws_min = grids
+        .iter()
+        .filter_map(|(_, grid)| grid.tws.first().copied())
+        .fold(None, |acc: Option<f64>, value| {
+            Some(acc.map_or(value, |current| current.min(value)))
+        });
+    let tws_max = grids
+        .iter()
+        .filter_map(|(_, grid)| grid.tws.last().copied())
+        .fold(None, |acc: Option<f64>, value| {
+            Some(acc.map_or(value, |current| current.max(value)))
+        });
+
+    let curves = match tws {
+        Some(value) => grids
+            .iter()
+            .map(|(source, grid)| curve_at(source, grid, value))
+            .collect(),
+        None => grids
+            .iter()
+            .flat_map(|(source, grid)| {
+                grid.tws
+                    .iter()
+                    .map(move |&value| curve_at(source, grid, value))
+            })
+            .collect(),
+    };
+
+    PolarPlotResult {
+        tws_min,
+        tws_max,
+        curves,
+        band_kn: band,
+        // The blend is derived by pe-polar once it exists (M14,
+        // invariant 2: never fabricated here in the meantime).
+        blend: None,
+    }
+}
+
+/// A fresh derivation of every visible source, for tests and measurements
+/// that change a project behind the session's back.
+pub fn derive_all(project: &pe_core::Project) -> BTreeMap<u64, Arc<Derived>> {
+    Derivations::default().visible(project)
 }
 
 #[cfg(test)]
@@ -411,7 +519,7 @@ mod tests {
         .unwrap();
         let result = plot(&app, None).unwrap();
         assert!(result.curves.iter().all(|c| c.label != "Track"));
-        assert!(result.dots.is_empty());
+        assert!(dots(&app, None, false).unwrap().is_empty());
     }
 
     /// A track without wind has no dots; once environment values are on
@@ -421,7 +529,7 @@ mod tests {
     fn samples_become_dots_once_they_have_wind() {
         let app = two_sources();
         let (track_id, ids) = add_track(&app);
-        assert!(plot(&app, Some(10.0)).unwrap().dots.is_empty());
+        assert!(dots(&app, Some(10.0), false).unwrap().is_empty());
 
         app.with_session(|session| {
             let open = session.require_open()?;
@@ -432,26 +540,28 @@ mod tests {
                 sample.twa = Some(60.0 + k as f64);
                 sample.speed = Some(6.0);
             }
+            // As the environment fetch does after writing samples.
+            open.touch_samples(track_id);
             Ok(())
         })
         .unwrap();
-        let result = plot(&app, Some(10.0)).unwrap();
+        let result = dots(&app, Some(10.0), false).unwrap();
         // TWS 9.5 and 10.5 are within ±1 kn of 10; 11.5 is not.
-        assert_eq!(result.band_kn, DEFAULT_TWS_BAND_KN);
+        assert_eq!(plot(&app, None).unwrap().band_kn, DEFAULT_TWS_BAND_KN);
         assert_eq!(
-            result.dots.iter().map(|d| d.sample_id).collect::<Vec<_>>(),
+            result.iter().map(|d| d.sample_id).collect::<Vec<_>>(),
             [ids[0], ids[1]]
         );
-        assert_eq!(result.dots[0].twa, 60.0);
-        assert_eq!(result.dots[0].bsp, 6.0);
-        assert!(!result.dots[0].filtered && !result.dots[0].excluded);
-        assert_eq!(plot(&app, None).unwrap().dots.len(), 3);
+        assert_eq!(result[0].twa, 60.0);
+        assert_eq!(result[0].bsp, 6.0);
+        assert!(!result[0].filtered && !result[0].excluded);
+        assert_eq!(dots(&app, None, false).unwrap().len(), 3);
 
         // A wider band takes the third; a hidden track gives none.
         crate::settings::plot_band_set(&app, 2.0).unwrap();
-        assert_eq!(plot(&app, Some(10.0)).unwrap().dots.len(), 3);
+        assert_eq!(dots(&app, Some(10.0), false).unwrap().len(), 3);
         edit_visible(&app, track_id, false);
-        assert!(plot(&app, None).unwrap().dots.is_empty());
+        assert!(dots(&app, None, false).unwrap().is_empty());
     }
 
     /// A track of three fixes 10 minutes apart heading east at 3.6 kn,
@@ -518,5 +628,99 @@ mod tests {
         assert!(result.curves.is_empty());
         assert_eq!(result.tws_min, None);
         assert_eq!(result.tws_max, None);
+    }
+
+    /// Two dots of two tracks, one filtered and one excluded.
+    fn fixture_dots() -> Vec<PolarSampleDot> {
+        vec![
+            PolarSampleDot {
+                source_id: (2 << 32) | 7,
+                sample_id: 11,
+                twa: 45.0,
+                tws: 10.5,
+                bsp: 6.25,
+                filtered: false,
+                excluded: true,
+            },
+            PolarSampleDot {
+                source_id: 3,
+                sample_id: (1 << 32) | 12,
+                twa: 135.0,
+                tws: 9.5,
+                bsp: 8.0,
+                filtered: true,
+                excluded: false,
+            },
+        ]
+    }
+
+    /// Offsets by hand from the layout; the same bytes the frontend reads.
+    #[test]
+    fn the_dots_layout_is_the_documented_one() {
+        let bytes = pack_dots(&fixture_dots());
+        let word = |i: usize| u32::from_le_bytes(bytes[i * 4..i * 4 + 4].try_into().unwrap());
+        // 4 header + 2×2 sources + 2×3 points + 2 sources + 2×2 ids + 2 flags.
+        assert_eq!(bytes.len(), 22 * 4);
+        assert_eq!(&bytes[0..4], b"PE2D");
+        assert_eq!((1..8).map(word).collect::<Vec<_>>(), [1, 2, 2, 7, 2, 3, 0]);
+        assert_eq!(
+            (8..14).map(|i| f32::from_bits(word(i))).collect::<Vec<_>>(),
+            [45.0, 10.5, 6.25, 135.0, 9.5, 8.0]
+        );
+        assert_eq!(
+            (14..22).map(word).collect::<Vec<_>>(),
+            [0, 1, 11, 0, 12, 1, DOT_EXCLUDED, DOT_FILTERED]
+        );
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../ui/src/panels/fixtures/dots-v1.bin");
+        if std::env::var_os("PE_BLESS").is_some() {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, &bytes).unwrap();
+        }
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    }
+
+    /// A curve reads the source through its overlay: an edit moves it, an
+    /// excluded node leaves a gap (M6 carry).
+    #[test]
+    fn a_curve_shows_edits_and_leaves_out_excluded_nodes() {
+        let app = two_sources();
+        crate::polar_edit::polar_edit(
+            &app,
+            1,
+            &crate::polar_edit::EditOp::Type { bsp: Some(7.5) },
+            &[crate::polar_edit::PolarCell {
+                twa_index: 1,
+                tws_index: 1,
+            }],
+            None,
+        )
+        .unwrap();
+        crate::polar3d::excluded_set(
+            &app,
+            &[crate::polar3d::PolarNodeRef {
+                source_id: 1,
+                twa_index: 0,
+                tws_index: 1,
+            }],
+            &[],
+            true,
+        )
+        .unwrap();
+        let result = plot(&app, Some(12.0)).unwrap();
+        let a = result.curves.iter().find(|c| c.label == "A").unwrap();
+        assert_eq!(
+            a.points,
+            vec![
+                PolarCurvePoint {
+                    twa: 90.0,
+                    bsp: 7.5
+                },
+                PolarCurvePoint {
+                    twa: 150.0,
+                    bsp: 9.0
+                },
+            ]
+        );
     }
 }

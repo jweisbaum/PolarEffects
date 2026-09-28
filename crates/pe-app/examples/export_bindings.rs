@@ -12,8 +12,9 @@ use pe_app::commands::AppInfo;
 use pe_app::env::{EnvEstimate, EnvJobTrack, EnvJobsStatus};
 use pe_app::error::AppErrorPayload;
 use pe_app::orc::{OrcCatalogueInfo, OrcFilters, OrcHit, OrcSearchResult, OrcThumbCurve};
+use pe_app::polar_edit::{EditOp, EditSurface, PolarCell};
 use pe_app::polar_files::{PolarImportFailure, PolarImportResult};
-use pe_app::polar_plot::{PolarCurve, PolarCurvePoint, PolarPlotResult, PolarSampleDot};
+use pe_app::polar_plot::{PolarCurve, PolarCurvePoint, PolarPlotResult};
 use pe_app::polar3d::PolarNodeRef;
 use pe_app::projects::{
     BoatInput, OrcSourceSummary, PolarFileSummary, ProjectSummary, RecentProject, SourceSummary,
@@ -49,7 +50,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     PolarImportFailure::export_all(&cfg)?;
     PolarCurvePoint::export_all(&cfg)?;
     PolarCurve::export_all(&cfg)?;
-    PolarSampleDot::export_all(&cfg)?;
+    PolarCell::export_all(&cfg)?;
+    EditSurface::export_all(&cfg)?;
+    EditOp::export_all(&cfg)?;
     PolarPlotResult::export_all(&cfg)?;
     PolarNodeRef::export_all(&cfg)?;
     TrackSummary::export_all(&cfg)?;

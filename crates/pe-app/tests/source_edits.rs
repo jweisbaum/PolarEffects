@@ -13,6 +13,7 @@ use common::TempRoot;
 use pe_app::commands::AppState;
 use pe_app::error::AppError;
 use pe_app::{edit, projects};
+use pe_core::command::EditAction;
 use pe_core::polar::{PolarFileFormat, PolarGrid};
 use pe_core::{Colour, Command, Source, SourceKind};
 
@@ -188,7 +189,7 @@ fn every_history_label_is_listed_for_translation() {
     };
     let id = pe_core::SourceId(1);
     let black = Colour::parse("#000000").unwrap();
-    let commands = [
+    let mut commands = vec![
         Command::RenameProject {
             before: String::new(),
             after: String::new(),
@@ -264,7 +265,28 @@ fn every_history_label_is_listed_for_translation() {
             before: false,
             after: true,
         },
+        Command::SetSegmentStatistic {
+            source: id,
+            before: Default::default(),
+            after: Default::default(),
+        },
     ];
+    // An edit is named by the tool that made it.
+    commands.extend(
+        [
+            EditAction::Drag,
+            EditAction::Type,
+            EditAction::Scale,
+            EditAction::Smooth,
+            EditAction::Reset,
+            EditAction::ResetAll,
+        ]
+        .map(|action| Command::EditCells {
+            source: id,
+            action,
+            cells: Vec::new(),
+        }),
+    );
     let mut labels: Vec<String> = commands.iter().map(Command::label).collect();
     // Batches carry their own label; these are every one Rust builds.
     labels.extend(

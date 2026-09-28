@@ -12,9 +12,11 @@
 //! Export bytes are pinned by golden files, because they must be identical on
 //! every platform (invariant 5).
 
+pub mod edit;
 pub mod format;
 pub mod grid;
 pub mod orc;
+pub mod segment;
 pub mod source;
 
 mod build;
@@ -25,7 +27,8 @@ pub use format::{PolarError, Reason, detect, read, read_as, write};
 pub use grid::{cell_count, fold_twa, interpolate, resample};
 pub use orc::vpp_to_polar;
 pub use pe_core::polar::{PolarFileFormat, PolarGrid as Polar};
-pub use source::{blend_input, source_polar};
+pub use segment::{Segment, bin};
+pub use source::{blend_input, edited_polar, source_polar, with_overlay};
 
 /// The fastest a boat may go in an imported polar, knots (spec.md 6).
 /// Anything faster is a format error, not a polar. The wind speed axis has

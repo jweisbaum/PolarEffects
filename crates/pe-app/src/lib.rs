@@ -2,13 +2,14 @@
 //!
 //! Rust owns the entire domain; the webview is a view layer. Everything the
 //! frontend can reach goes through a Tauri command in [`commands`],
-//! [`projects`], [`edit`], [`env`], [`polar_files`], [`tracks`], [`trackers`], [`map_tracks`], [`polar_plot`], [`polar3d`], [`orc`], [`settings`], [`basemap`],
+//! [`projects`], [`edit`], [`env`], [`polar_files`], [`tracks`], [`trackers`], [`map_tracks`], [`polar_plot`], [`polar3d`], [`polar_edit`], [`orc`], [`settings`], [`basemap`],
 //! [`quit`] or [`autosave`], and every failure it can see is an
 //! [`error::AppError`].
 
 pub mod autosave;
 pub mod basemap;
 pub mod commands;
+pub mod derived;
 pub mod edit;
 pub mod env;
 pub mod error;
@@ -17,6 +18,7 @@ pub mod menu;
 pub mod orc;
 pub mod paths;
 pub mod polar3d;
+pub mod polar_edit;
 pub mod polar_files;
 pub mod polar_plot;
 pub mod projects;
@@ -86,6 +88,7 @@ pub fn run() -> anyhow::Result<()> {
             edit::remove_source,
             polar_files::import_polar_files,
             polar_plot::polar_plot,
+            polar_plot::polar_plot_dots,
             tracks::inspect_track_files,
             tracks::inspect_csv_track,
             tracks::import_track_files,
@@ -104,6 +107,9 @@ pub fn run() -> anyhow::Result<()> {
             map_tracks::map_tracks,
             polar3d::polar_scene,
             polar3d::set_excluded,
+            polar_edit::polar_edit_surface,
+            polar_edit::edit_polar,
+            polar_edit::set_segment_statistic,
             orc::orc_catalogue_info,
             orc::orc_search,
             orc::orc_add,

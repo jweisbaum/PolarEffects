@@ -1,24 +1,28 @@
 /**
  * The 3D scene as Rust sends it: one binary buffer, not JSON (plan.md M7).
  *
- * # Wire layout, version 1
+ * # Wire layout, version 2
  *
  * The frontend's copy of the layout; the Rust side's is the module
  * documentation of `crates/pe-app/src/polar3d.rs`. Both are held to the same
- * bytes by `fixtures/scene-v1.bin` (written by a Rust test, read by
- * `scenePacket.test.ts`). Every value is little-endian and 4 bytes wide
- * except the time origin, and every section starts on a 4-byte boundary, so
- * each array below is a view into the buffer, not a copy.
+ * bytes by `fixtures/scene-v2.bin` and `fixtures/scene-v2-flags.bin`
+ * (written by a Rust test, read by `scenePacket.test.ts`). Every value is
+ * little-endian and 4 bytes wide except the time origin and the samples
+ * key, and every section starts on a 4-byte boundary, so each array below
+ * is a view into the buffer, not a copy.
  *
  * ```text
- * header, 8 × u32 (32 bytes)
+ * header, 12 × u32 (48 bytes)
  *   0  magic       0x44334550 (the bytes "PE3D")
- *   1  version     1
+ *   1  version     2
  *   2  S           sources
  *   3  N           polar nodes
  *   4  M           samples
  *   5  F           surfaces
  *   6–7 time_origin i64, UTC epoch seconds: sample times are relative to it
+ *   8–9 samples_key u64 (below 2^53): names the samples section
+ *   10 samples_mode 0 full, 1 flags only
+ *   11 reserved, 0
  * sources, S × 4 u32
  *   id_lo, id_hi, colour 0x00RRGGBB, kind (0 ORC, 1 polar file, 2 track)
  * nodes (structure of arrays)
@@ -26,7 +30,7 @@
  *   u32 [N]      source, an index into the sources section
  *   u32 [N]      cell: TWA index | TWS index << 16, in the source's own grid
  *   u32 [N]      flags
- * samples (structure of arrays)
+ * samples, full (structure of arrays)
  *   f32 [M × 3]  TWA °, TWS kn, BSP kn
  *   u32 [M]      source index
  *   u32 [M × 2]  sample id, lo then hi
@@ -34,21 +38,31 @@
  *   f32 [M]      current speed, knots (NaN: none)
  *   f32 [M]      time, seconds since time_origin
  *   u32 [M]      flags
+ * samples, flags only
+ *   u32 [M]      flags
  * surfaces, F times
  *   u32 source index (0xFFFFFFFF: the blend), u32 ni, u32 nj
  *   f32 [ni] TWA axis, f32 [nj] TWS axis
  *   f32 [ni × nj] BSP, TWA-major (i × nj + j), NaN for an empty cell
  * ```
  *
- * Flags: bit 0 excluded (spec.md 10.3), bit 1 filtered out (spec.md 7.6).
+ * Flags: bit 0 excluded (spec.md 10.3), bit 1 filtered out (spec.md 7.6),
+ * bit 2 edited (a node whose cell holds an override, spec.md 10.4).
+ *
+ * A flags-only scene answers a request that named the samples key the view
+ * already holds: no sample moved, so only their flags travel, and
+ * `unpackScene` takes everything else of the samples from the scene held.
  */
 
 export const SCENE_MAGIC = 0x44334550;
-export const SCENE_VERSION = 1;
-export const HEADER_BYTES = 32;
+export const SCENE_VERSION = 2;
+export const HEADER_BYTES = 48;
 export const BLEND_SOURCE = 0xffffffff;
 export const FLAG_EXCLUDED = 1;
 export const FLAG_FILTERED = 2;
+export const FLAG_EDITED = 4;
+export const SAMPLES_FULL = 0;
+export const SAMPLES_FLAGS_ONLY = 1;
 
 export type SourceKindCode = "orc" | "polar_file" | "track";
 const KINDS: readonly SourceKindCode[] = ["orc", "polar_file", "track"];
@@ -71,6 +85,8 @@ export interface PacketSurface {
 
 export interface ScenePacket {
   timeOrigin: number;
+  /** Names the samples section; a later request names it to get only the flags. */
+  samplesKey: number;
   sources: PacketSource[];
   nodes: {
     count: number;
@@ -108,8 +124,12 @@ export function sampleId(ids: Uint32Array, index: number): number {
   return ids[index * 2]! + ids[index * 2 + 1]! * 2 ** 32;
 }
 
-/** Reads a packed scene; throws `ScenePacketError` on anything malformed. */
-export function unpackScene(buffer: ArrayBuffer): ScenePacket {
+/**
+ * Reads a packed scene; throws `ScenePacketError` on anything malformed. A
+ * flags-only scene needs `held`, the scene whose samples it updates: the
+ * same key and the same number of samples.
+ */
+export function unpackScene(buffer: ArrayBuffer, held?: ScenePacket): ScenePacket {
   if (buffer.byteLength < HEADER_BYTES) throw new ScenePacketError(`a scene of ${buffer.byteLength} bytes has no header`);
   const view = new DataView(buffer);
   const word = (i: number) => view.getUint32(i * 4, true);
@@ -117,6 +137,9 @@ export function unpackScene(buffer: ArrayBuffer): ScenePacket {
   if (word(1) !== SCENE_VERSION) throw new ScenePacketError(`scene version ${word(1)} is not ${SCENE_VERSION}`);
   const [s, n, m, f] = [word(2), word(3), word(4), word(5)];
   const timeOrigin = Number(view.getBigInt64(24, true));
+  const samplesKey = word(8) + word(9) * 2 ** 32;
+  const mode = word(10);
+  if (mode !== SAMPLES_FULL && mode !== SAMPLES_FLAGS_ONLY) throw new ScenePacketError(`samples mode ${mode} is unknown`);
 
   let offset = HEADER_BYTES;
   const take = <T>(make: (at: number, length: number) => T, length: number): T => {
@@ -142,10 +165,23 @@ export function unpackScene(buffer: ArrayBuffer): ScenePacket {
   }
 
   const nodes = { count: n, points: f32(n * 3), source: u32(n), cell: u32(n), flags: u32(n) };
-  const samples = {
-    count: m, points: f32(m * 3), source: u32(m), ids: u32(m * 2),
-    hs: f32(m), current: f32(m), time: f32(m), flags: u32(m),
-  };
+  let samples: ScenePacket["samples"];
+  if (mode === SAMPLES_FLAGS_ONLY) {
+    if (!held || held.samplesKey !== samplesKey || held.samples.count !== m) {
+      throw new ScenePacketError("a flags-only scene does not match the samples held");
+    }
+    const flags = u32(m);
+    // Flags that did not change either (an edit of a polar source) keep the
+    // very samples held, so the view need not redraw them.
+    let same = true;
+    for (let k = 0; k < m && same; k++) same = flags[k] === held.samples.flags[k];
+    samples = same ? held.samples : { ...held.samples, flags };
+  } else {
+    samples = {
+      count: m, points: f32(m * 3), source: u32(m), ids: u32(m * 2),
+      hs: f32(m), current: f32(m), time: f32(m), flags: u32(m),
+    };
+  }
   for (const [what, indices] of [["node", nodes.source], ["sample", samples.source]] as const) {
     for (let k = 0; k < indices.length; k++) {
       if (indices[k]! >= s) throw new ScenePacketError(`${what} ${k} names source ${indices[k]} of ${s}`);
@@ -162,7 +198,7 @@ export function unpackScene(buffer: ArrayBuffer): ScenePacket {
   if (offset !== buffer.byteLength) {
     throw new ScenePacketError(`the scene has ${buffer.byteLength - offset} bytes after its last surface`);
   }
-  return { timeOrigin, sources, nodes, samples, surfaces };
+  return { timeOrigin, samplesKey, sources, nodes, samples, surfaces };
 }
 
 /** An empty scene, for before the first answer arrives. */

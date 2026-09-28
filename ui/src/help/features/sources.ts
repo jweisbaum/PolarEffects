@@ -34,7 +34,7 @@ const features: Feature[] = [
     description: msg("How much a source counts in the blend, from 0 to 2."),
     keywords: [msg("weight"), msg("blend"), msg("slider")], topic: "sources", reveal: list },
   { id: "sources:edit", label: msg("Edit source"),
-    description: msg("Open the 3D view on one source to edit it. Arrives in a later version."),
+    description: msg("Open one source in the 3D view to edit its polar, with its table."),
     keywords: [msg("edit"), "3D"], topic: "sources", reveal: list },
   { id: "sources:compare", label: msg("Compare source"),
     description: msg("Compare one source with another or with the blend. Arrives in a later version."),

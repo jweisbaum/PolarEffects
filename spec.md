@@ -983,8 +983,8 @@ The right panel lists every source (ORC, file, track) in one list:
 - Weight slider (0–2, default 1).
 - Label (rename in place), kind icon, and a count (cells for polars,
   samples/used samples for tracks).
-- Actions: Edit (opens the 3D stage focused on this source, §10.4), Compare
-  (§11), Remove.
+- Actions: Edit (opens the 3D stage focused on this source, §10.4; a ✎
+  after it means the source holds edits), Compare (§11), Remove.
 - Drag to reorder (display order only).
 - A **Blend** entry at the top represents the current blend: colour, show or
   hide, and a Blend settings button (§12).
@@ -1028,11 +1028,18 @@ overlay on demand):
   at that TWS; "all" draws one curve per visible source per wind speed that
   source's own grid has, rather than a shared slice — the classic diagram of
   several TWS curves at once. A curve is read at bilinear interpolation
-  (`pe-polar`, no extrapolation) across the source's own TWA axis; dots are
+  (`pe-polar`, no extrapolation) across the source's own TWA axis, through
+  the source's overlay as the blend reads it: its edits written in and its
+  excluded nodes empty (§10.3, §10.4, §12.3); dots are
   for every sample whose TWS is within ±1 kn (configurable in Settings,
   §3.4) of the slice, in their track's colour, excluded ones hollow and
   selected ones ringed. A sample without wind has no place in the polar and
   is not drawn. A "Filtered" toggle adds the filtered-out samples, dimmed.
+- Dots travel from Rust as one packed binary buffer (layout in
+  `pe-app/src/polar_plot.rs` and `ui/src/panels/dotPacket.ts`, pinned by a
+  shared fixture), not JSON: "all" draws every sample with wind, and 50
+  tracks of 10,000 fixes as JSON objects are tens of megabytes. Beyond
+  20,000 dots each is drawn as a small square rather than a circle.
 - Everything uses source colours. The blend is drawn thicker.
 - Hover shows the source, TWA, TWS and BSP.
 - Full size opens the same plot as a large overlay owned by the Map stage
@@ -1059,14 +1066,20 @@ overlay on demand):
   tower, the classic polar diagram with every TWS stacked); side looks
   across it, so each TWS is a level; the axes carry tick labels in the
   display speed unit.
-- Every surface is the source's own grid over its own axes: nothing is
+- Every surface is the source's own grid over its own axes, as edited
+  (its cell overrides written in, §10.4): nothing is
   resampled or extrapolated, and an empty cell is a hole.
 - Must hold 60 fps with 200,000 dots and 20 surfaces on the reference
   machines (§13), using instanced points.
 - Rust assembles the scene and sends it as one packed little-endian binary
   buffer (`f32` coordinates, `u32` ids and flags), not JSON; the layout is
   documented once on each side (`pe-app/src/polar3d.rs`,
-  `ui/src/polar/scenePacket.ts`) and pinned by a shared fixture.
+  `ui/src/polar/scenePacket.ts`) and pinned by a shared fixture. When no sample has moved
+  since the scene the view holds (an edit, an exclusion, a filter), the view
+  names that scene's samples key and only the samples' flags travel
+  (0.8 MB rather than 8 MB at 200,000 samples); anything that moves samples
+  (the environment, the derivation, corrected or ground values, a source
+  shown, hidden, added, removed or moved) sends the whole scene.
 
 ### 10.2 Showing all known points
 
@@ -1096,7 +1109,8 @@ why.
   restores them. Both are undoable.
 - For polar sources, excluding a node stores an exclusion in the overlay; the
   node's cell is then empty for that source in the blend. The surface still
-  shows the source as imported, with the excluded node drawn as a cross.
+  shows the source (as edited, §10.4), with the excluded node drawn as a
+  cross.
   One Exclude or Include over nodes of several sources is one undo entry;
   nodes already in the asked state are left alone.
 - Selection info: count, mean TWS/TWA/BSP, source breakdown, "show on map".
@@ -1106,22 +1120,47 @@ why.
 Every source can be edited on its own (D17):
 
 - **Edit** on a source focuses it: its surface is fully opaque, others fade
-  (kept visible for context, toggle to hide).
+  (kept visible for context, "Hide other sources" hides them). An edit
+  panel opens beside the 3D view; **Done** leaves edit mode and the edits
+  stay. Removing the source leaves edit mode.
 - The editable surface is the source's polar: the imported grid for files,
-  the VPP grid for ORC, and the **polar segment** for tracks (§12.1).
+  the VPP grid for ORC, and the **polar segment** for tracks (§12.1), on
+  the project output grid. In edit mode a track's segment is drawn as its
+  surface with its cells as nodes; they are edited, never excluded (a
+  track's samples are).
 - Edit tools:
-  - drag a node vertically (BSP) with the mouse; Shift snaps to 0.05 kn;
-  - a **table editor** (TWA rows × TWS columns) beside the 3D view, with the
-    same cells; typing a value is an edit;
-  - scale a selection by a percentage;
-  - smooth a selection (3×3 kernel on the grid);
-  - reset a selection to the source value.
-- Edits are stored as `cell_overrides` on the overlay (invariant 1) and shown
-  with a marker in both the 3D view and the table. "Reset all edits" clears
-  them.
+  - drag a node (the **Drag** tool, offered in edit mode) along the BSP
+    axis as it appears on screen (straight up when that axis is seen end
+    on); Shift snaps to 0.05 kn. The value is kept to 0–60 kn, and one drag
+    is one undo entry;
+  - a **table editor** (TWA rows × TWS columns, knots) beside the 3D view,
+    with the same cells; typing a value (Enter or leaving the cell) is an
+    edit, one undo entry each; emptying an edited cell resets it; a value
+    typed into an empty cell fills it. Clicking a cell selects it (Shift
+    adds); the 3D selection and the table's are one. Tooltips give the
+    source's value, and for a track the cell's sample count and spread;
+  - scale a selection by a percentage (of the value as edited; empty cells
+    are left out);
+  - smooth a selection (3×3 binomial kernel, 1-2-1 × 1-2-1, over the
+    neighbours that have a value, every cell read from the grid as it was;
+    a hole stays a hole);
+  - reset a selection to the source value;
+  - for a track, choose its segment statistic (§12.1).
+  Scale, smooth and reset are one undo entry each.
+- Edits are stored as `cell_overrides` on the overlay (invariant 1), keyed
+  by the editable surface's axis values, sorted and one per cell; an
+  override whose cell is no longer on the grid (the output grid changed) is
+  kept but has nothing to apply to. They are shown with a marker in both
+  the 3D view (an edited node is a square) and the table (a highlighted
+  cell). "Reset all edits" clears them, and with none left the source reads
+  exactly as imported.
 - **Every edit updates the blend and every open view** (3D, compare, 2D polar
   plot) within the §13 budget. Edits drive a recompute in Rust; the UI never
-  computes a blend itself.
+  computes a blend itself. Rust keeps what it derives from each source (its
+  grid as edited, a track's placed and filtered samples and its segment)
+  in memory, keyed by per-source revisions that only the changes reaching
+  that source move, so an edit recomputes only the edited source (and,
+  from M14, the blend). Nothing derived is saved (invariant 2).
 
 ---
 
@@ -1146,14 +1185,20 @@ Every source can be edited on its own (D17):
 ### 12.1 Polar segment from a track
 
 - Samples that pass the filters and are not excluded are binned onto the
-  project output grid (§12.2), folding port and starboard.
-- Per cell: statistic of BSP, selectable per track — median, mean, 75th or
-  **90th percentile (default)**. A polar describes good sailing, not average
+  project output grid (§12.2), folding port and starboard. A sample goes to
+  the node nearest it on each axis: a node's bin runs halfway to each
+  neighbour, and past the first and last node by the same half-step as
+  beside them; a sample beyond that is left out, and one exactly halfway
+  goes to the upper node.
+- Per cell: statistic of BSP, selectable per track (in the edit panel,
+  undoable) — median, mean, 75th or **90th percentile (default)**.
+  Percentiles interpolate linearly between the two nearest ranks. A polar describes good sailing, not average
   sailing, so an upper percentile is the default (D18).
 - A cell needs at least **5 samples** (setting) to have a value. Cells below
   that are empty.
-- The segment keeps, per cell, its sample count and spread; these drive the
-  blend weight and appear in tooltips.
+- The segment keeps, per cell, its sample count and spread (the sample
+  standard deviation of the boat speeds), including cells below the
+  minimum; these drive the blend weight and appear in tooltips.
 
 ### 12.2 Output grid
 

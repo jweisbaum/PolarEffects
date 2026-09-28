@@ -301,8 +301,9 @@ pub(crate) fn count(value: usize) -> u32 {
 }
 
 impl TrackSummary {
-    /// The summary of a track source.
-    pub fn of(source: &Source, track: &Track, use_corrected: bool) -> Self {
+    /// The summary of a track source, from its samples as placed and
+    /// filtered (`crate::derived`).
+    pub fn of(source: &Source, track: &Track, placed: &crate::derived::TrackDerived) -> Self {
         let (origin, boat_name, event_title) = match &track.origin {
             TrackOrigin::Tracker {
                 event_title,
@@ -312,7 +313,6 @@ impl TrackSummary {
             TrackOrigin::File { name, boat_name } => ("file", boat_name.clone(), name.clone()),
         };
         let filters = &source.overlay.filters;
-        let out = pe_tracks::filtered_out(track, filters, use_corrected);
         let excluded = &source.overlay.excluded_samples;
         let (mut filtered, mut hand, mut used, mut with_wind) = (0, 0, 0, 0);
         let no_tide = track
@@ -324,12 +324,17 @@ impl TrackSummary {
                     .is_some_and(|d| d.has_tide == Some(false))
             })
             .count();
-        for (sample, out) in track.samples.iter().zip(&out) {
+        for ((sample, out), point) in track
+            .samples
+            .iter()
+            .zip(&placed.filtered)
+            .zip(&placed.points)
+        {
             let is_excluded = excluded.binary_search(&sample.id).is_ok();
             filtered += usize::from(*out);
             hand += usize::from(is_excluded);
             used += usize::from(!out && !is_excluded);
-            with_wind += usize::from(pe_tracks::polar_point(sample, use_corrected).is_some());
+            with_wind += usize::from(point.is_some());
         }
         Self {
             origin: origin.to_owned(),

@@ -49,7 +49,7 @@ const TRACK: TrackSummary = {
 };
 const SOURCE: SourceSummary = {
   id: 5, kind: "track", label: "Alpha", colour: "#e15759", visible: true, weight: 1, count: 120, used: 100,
-  polar_file: null, orc: null, track: TRACK,
+  polar_file: null, orc: null, track: TRACK, edits: 0,
 };
 const project = (sources: SourceSummary[]): ProjectSummary => ({
   id: 1, name: "P", path: null, dirty: false, revision: 1, boat_name: "", boat_notes: "", sources,

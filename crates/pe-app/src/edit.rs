@@ -36,9 +36,7 @@ pub fn undo(state: tauri::State<'_, AppState>) -> Result<ProjectSummary> {
 pub fn undo_last(state: &AppState) -> Result<ProjectSummary> {
     state.with_session(|session| {
         let open = session.require_open()?;
-        if open.history.undo(&mut open.project)?.is_some() {
-            open.touch();
-        }
+        open.undo()?;
         Ok(ProjectSummary::of(open))
     })
 }
@@ -53,9 +51,7 @@ pub fn redo(state: tauri::State<'_, AppState>) -> Result<ProjectSummary> {
 pub fn redo_next(state: &AppState) -> Result<ProjectSummary> {
     state.with_session(|session| {
         let open = session.require_open()?;
-        if open.history.redo(&mut open.project)?.is_some() {
-            open.touch();
-        }
+        open.redo()?;
         Ok(ProjectSummary::of(open))
     })
 }

@@ -6,6 +6,7 @@ import type { SourceSummary } from "../generated/SourceSummary";
 import { onReveal } from "../help/highlight";
 import { msg, useT } from "../i18n";
 import { api } from "../ipc";
+import { editSource } from "../polar/editFocus";
 import PALETTE from "./palette.json";
 
 /** A glyph and a name per kind of source. */
@@ -154,8 +155,11 @@ export default function SourceList({ project, onProject }: {
                 onBlur={() => endWeight(source)}
                 onChange={(event) => setWeight(source, Number(event.target.value))} />
               <span className="source-weight">{weight.toFixed(2)}</span>
-              <button className="small" disabled data-feature="sources:edit"
-                title={t("Edit this source in the 3D view. Arrives in a later version.")}>{t("Edit")}</button>
+              <button className="small" data-feature="sources:edit"
+                title={t("Edit this source's polar in the 3D view, with its table")}
+                onClick={() => editSource(source.id)}>
+                {t("Edit")}{source.edits > 0 && <span className="muted" title={t("{count} edits", { count: source.edits })}> ✎</span>}
+              </button>
               <button className="small" disabled data-feature="sources:compare"
                 title={t("Compare this source with another or with the blend. Arrives in a later version.")}>{t("Compare")}</button>
               <button className="small" data-feature="sources:remove"

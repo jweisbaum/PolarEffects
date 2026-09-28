@@ -49,6 +49,9 @@ pub struct OpenProject {
     /// before and after writing a snapshot outside the lock: a save in
     /// between makes the snapshot stale, and it is removed.
     pub saves: u64,
+    /// What is derived from each source, recomputed only when that source
+    /// changes; never saved (invariant 2).
+    pub derived: crate::derived::Derivations,
 }
 
 impl OpenProject {
@@ -62,6 +65,7 @@ impl OpenProject {
             dirty: true,
             revision: fresh_revision(),
             saves: 0,
+            derived: Default::default(),
         }
     }
 
@@ -74,29 +78,78 @@ impl OpenProject {
             dirty: false,
             revision: fresh_revision(),
             saves: 0,
+            derived: Default::default(),
         }
     }
 
-    /// Records a document change.
+    /// Records a document change the caller cannot place: everything
+    /// derived is recomputed.
     pub fn touch(&mut self) {
+        self.mark();
+        self.derived.invalidate_all();
+    }
+
+    /// Records that a track's samples were written outside a command (the
+    /// environment fetch): only that track's derived data is recomputed.
+    pub fn touch_samples(&mut self, source: u64) {
+        self.mark();
+        self.derived.samples_changed(source);
+    }
+
+    fn mark(&mut self) {
         self.revision = self.revision.wrapping_add(1);
         self.dirty = true;
     }
 
     /// Applies a command through the history and marks the change.
     pub fn apply(&mut self, command: Command) -> Result<()> {
+        let touches = crate::derived::touches(&command);
         self.history.push(&mut self.project, command)?;
-        self.touch();
+        self.derived.record(&touches);
+        self.mark();
         Ok(())
     }
 
     /// Applies a command that coalesces with the previous one of the same
-    /// gesture (a slider drag).
+    /// gesture (a slider or a node drag).
     pub fn apply_coalesced(&mut self, command: Command, key: &str) -> Result<()> {
+        let touches = crate::derived::touches(&command);
         self.history
             .push_coalesced(&mut self.project, command, key)?;
-        self.touch();
+        self.derived.record(&touches);
+        self.mark();
         Ok(())
+    }
+
+    /// Reverses the most recent change; whether there was one.
+    pub fn undo(&mut self) -> Result<bool> {
+        let touches = self
+            .history
+            .cursor()
+            .checked_sub(1)
+            .and_then(|at| self.history.entries().get(at))
+            .map(|entry| crate::derived::touches(&entry.command));
+        if self.history.undo(&mut self.project)?.is_none() {
+            return Ok(false);
+        }
+        self.derived.record(&touches.unwrap_or_default());
+        self.mark();
+        Ok(true)
+    }
+
+    /// Reapplies the most recently undone change; whether there was one.
+    pub fn redo(&mut self) -> Result<bool> {
+        let touches = self
+            .history
+            .entries()
+            .get(self.history.cursor())
+            .map(|entry| crate::derived::touches(&entry.command));
+        if self.history.redo(&mut self.project)?.is_none() {
+            return Ok(false);
+        }
+        self.derived.record(&touches.unwrap_or_default());
+        self.mark();
+        Ok(true)
     }
 }
 

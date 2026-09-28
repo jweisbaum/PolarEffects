@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import { place } from "./geometry3d";
-import { BLEND_SOURCE, FLAG_EXCLUDED, FLAG_FILTERED, type ScenePacket } from "./scenePacket";
-import { SHAPE_CROSS, SHAPE_DISC, SHAPE_RING } from "./scene3d";
+import { BLEND_SOURCE, FLAG_EDITED, FLAG_EXCLUDED, FLAG_FILTERED, type ScenePacket } from "./scenePacket";
+import { SHAPE_CROSS, SHAPE_DISC, SHAPE_RING, SHAPE_SQUARE } from "./scene3d";
 import {
-  availableModes, buildDots, buildGuides, buildSurfaces, combine, DEFAULT_TOGGLES, drawnOnly, exclusionTargets, hasFiltered, keysOf,
-  presetView, ramp, resolveKeys, sampleIdsOf, sceneBounds, summarise, surfaceGrid, ticks,
+  availableModes, buildDots, buildGuides, buildSurfaces, combine, DEFAULT_TOGGLES, drawnOnly, editCells, exclusionTargets,
+  FADED_OPACITY, focusIndex, hasFiltered, keysOf, nodesAtCells, presetView, ramp, resolveKeys, sampleIdsOf, sceneBounds, summarise,
+  surfaceGrid, ticks,
 } from "./view3d";
 
 /**
@@ -16,6 +17,7 @@ import {
 function packet(): ScenePacket {
   return {
     timeOrigin: 0,
+    samplesKey: 0,
     sources: [
       { id: 10, colour: "#ff0000", kind: "orc" },
       { id: 20, colour: "#00ff00", kind: "polar_file" },
@@ -221,5 +223,74 @@ describe("cameras and guides (spec.md 10.1)", () => {
     const cartesian = buildGuides(sceneBounds(packet(), "cartesian"), "cartesian", "kmh");
     expect(cartesian.segments.length).toBe(3 * 6);
     expect(cartesian.labels.map((l) => l.text)).toContain("180°");
+  });
+});
+
+describe("edit mode (spec.md 10.4)", () => {
+  /** The packet with node 0 edited and a segment node of the track (cell 3, 4). */
+  function editing(): ScenePacket {
+    const base = packet();
+    return {
+      ...base,
+      nodes: {
+        count: 4,
+        points: Float32Array.from([52, 6, 6, 90, 12, 8, 45, 10, 5, 90, 12, 7]),
+        source: Uint32Array.from([0, 0, 1, 2]),
+        cell: Uint32Array.from([1, 2 | (1 << 16), 0, 3 | (4 << 16)]),
+        flags: Uint32Array.from([FLAG_EDITED, FLAG_EXCLUDED | FLAG_EDITED, 0, FLAG_EDITED]),
+      },
+      surfaces: [
+        ...base.surfaces,
+        { source: 2, twa: Float32Array.from([90]), tws: Float32Array.from([12]), bsp: Float32Array.from([7]) },
+      ],
+    };
+  }
+
+  it("finds the edited source in the scene, or not when it is hidden", () => {
+    expect(focusIndex(packet(), 20)).toBe(1);
+    expect(focusIndex(packet(), 99)).toBe(-1);
+    expect(focusIndex(packet(), null)).toBe(-1);
+  });
+
+  it("draws edited nodes as squares, an excluded one still as a cross", () => {
+    const dots = buildDots(editing(), DEFAULT_TOGGLES, "source");
+    expect([...dots.shapes.subarray(0, 4)]).toEqual([SHAPE_SQUARE, SHAPE_CROSS, SHAPE_DISC, SHAPE_SQUARE]);
+  });
+
+  it("dims the other sources' dots, or leaves them out", () => {
+    const faded = buildDots(editing(), DEFAULT_TOGGLES, "source", { index: 0, hideOthers: false });
+    expect([...faded.refs]).toEqual([0, 1, 2, 3, 5]);
+    expect([...faded.colors.subarray(0, 3)]).toEqual([1, 0, 0]);
+    // The polar file's node (drawn third) is dimmed twice toward grey.
+    const dimmed = [...faded.colors.subarray(6, 9)];
+    expect(dimmed[1]).toBeLessThan(0.6);
+    expect(dimmed[0]).toBeGreaterThan(0.3);
+    const hidden = buildDots(editing(), DEFAULT_TOGGLES, "source", { index: 2, hideOthers: true });
+    expect([...hidden.refs]).toEqual([3, 5]);
+  });
+
+  it("makes the edited surface opaque and fades or hides the others", () => {
+    const faded = buildSurfaces(editing(), "#ffffff", { index: 2, hideOthers: false });
+    expect(faded.map((s) => [s.opaque, s.opacity])).toEqual([[false, FADED_OPACITY], [true, undefined]]);
+    const hidden = buildSurfaces(editing(), "#ffffff", { index: 2, hideOthers: true });
+    expect(hidden).toHaveLength(1);
+    expect(hidden[0]!.color).toBe("#0000ff");
+    // Not in edit mode, nothing changes.
+    expect(buildSurfaces(editing(), "#ffffff").map((s) => s.opaque)).toEqual([false, false]);
+  });
+
+  it("names the edited source's selected cells, and finds its nodes by cell", () => {
+    const scene = editing();
+    expect(editCells(scene, [0, 1, 2, 5], 0)).toEqual([{ twa_index: 1, tws_index: 0 }, { twa_index: 2, tws_index: 1 }]);
+    expect(editCells(scene, [3], 2)).toEqual([{ twa_index: 3, tws_index: 4 }]);
+    expect(nodesAtCells(scene, 0, new Set([2 | (1 << 16)]))).toEqual([1]);
+    expect(nodesAtCells(scene, 2, new Set([3 | (4 << 16), 1]))).toEqual([3]);
+  });
+
+  it("never offers a track's segment cells for exclusion", () => {
+    const scene = editing();
+    expect(exclusionTargets(scene, [3, 0])).toEqual({ nodes: [{ source_id: 10, twa_index: 1, tws_index: 0 }], samples: [] });
+    const summary = summarise(scene, [3]);
+    expect([summary.included, summary.excluded]).toEqual([0, 0]);
   });
 });

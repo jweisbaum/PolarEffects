@@ -6,23 +6,27 @@
 //! would be tens of megabytes of text to parse, where packed `f32` is copied
 //! straight into the GPU buffers (plan.md M7).
 //!
-//! # Wire layout, version 1
+//! # Wire layout, version 2
 //!
 //! The one place the layout is defined on the Rust side; the frontend's
 //! mirror is `ui/src/polar/scenePacket.ts`, and both are held to the same
-//! bytes by `ui/src/polar/fixtures/scene-v1.bin`. Every value is
-//! little-endian and 4 bytes wide except the time origin, and every section
-//! starts on a 4-byte boundary, so the frontend views each array in place.
+//! bytes by `ui/src/polar/fixtures/scene-v2.bin`. Every value is
+//! little-endian and 4 bytes wide except the time origin and the samples
+//! key, and every section starts on a 4-byte boundary, so the frontend views
+//! each array in place.
 //!
 //! ```text
-//! header, 8 × u32 (32 bytes)
+//! header, 12 × u32 (48 bytes)
 //!   0  magic       0x44334550 (the bytes "PE3D")
-//!   1  version     1
+//!   1  version     2
 //!   2  S           sources
 //!   3  N           polar nodes
 //!   4  M           samples
 //!   5  F           surfaces
 //!   6–7 time_origin i64, UTC epoch seconds: sample times are relative to it
+//!   8–9 samples_key u64: names the samples section (below)
+//!   10 samples_mode 0 full, 1 flags only
+//!   11 reserved, 0
 //! sources, S × 4 u32
 //!   id_lo, id_hi, colour 0x00RRGGBB, kind (0 ORC, 1 polar file, 2 track)
 //! nodes (structure of arrays)
@@ -30,7 +34,7 @@
 //!   u32 [N]      source, an index into the sources section
 //!   u32 [N]      cell: TWA index | TWS index << 16, in the source's own grid
 //!   u32 [N]      flags
-//! samples (structure of arrays)
+//! samples, full (structure of arrays)
 //!   f32 [M × 3]  TWA °, TWS kn, BSP kn
 //!   u32 [M]      source index
 //!   u32 [M × 2]  sample id, lo then hi
@@ -38,13 +42,27 @@
 //!   f32 [M]      current speed, knots (NaN: none)
 //!   f32 [M]      time, seconds since time_origin
 //!   u32 [M]      flags
+//! samples, flags only
+//!   u32 [M]      flags
 //! surfaces, F times
 //!   u32 source index (0xFFFFFFFF: the blend), u32 ni, u32 nj
 //!   f32 [ni] TWA axis, f32 [nj] TWS axis
 //!   f32 [ni × nj] BSP, TWA-major (i × nj + j), NaN for an empty cell
 //! ```
 //!
-//! Flags: bit 0 excluded (spec.md 10.3), bit 1 filtered out (spec.md 7.6).
+//! Flags: bit 0 excluded (spec.md 10.3), bit 1 filtered out (spec.md 7.6),
+//! bit 2 edited (a node whose cell holds an override, spec.md 10.4).
+//!
+//! **Flags-only scenes** keep an edit fast at 200,000 samples (spec.md 13,
+//! plan.md M13): equal samples keys mean the same visible sources in the
+//! same order with every sample where it was, so when the frontend names the
+//! key it holds and it is still current, only the samples' flags travel
+//! (0.8 MB rather than 8 MB) and the frontend keeps the rest of what it has.
+//!
+//! Nodes and surfaces are each polar source's grid **as edited** (its
+//! overrides written in), over its own axes; excluded nodes stay drawn, as
+//! crosses. In edit mode on a track (`focus`), the track's polar segment on
+//! the output grid joins them as its editable surface (spec.md 10.4).
 //!
 //! A sample is sent only once it has a place in the polar, which needs its
 //! wind (M9): a track without environment adds no dot rather than one at an
@@ -52,6 +70,7 @@
 //! exists (M14); the layout already carries it.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use pe_core::command::{
     EXCLUDE_DOTS_LABEL, EXCLUDE_NODES_LABEL, EXCLUDE_SAMPLES_LABEL, INCLUDE_DOTS_LABEL,
@@ -63,6 +82,7 @@ use serde::Deserialize;
 use ts_rs::TS;
 
 use crate::commands::AppState;
+use crate::derived::{Derivations, Derived};
 use crate::edit;
 use crate::error::{AppError, Result};
 use crate::projects::ProjectSummary;
@@ -70,15 +90,21 @@ use crate::projects::ProjectSummary;
 /// "PE3D" read as a little-endian u32.
 pub const SCENE_MAGIC: u32 = u32::from_le_bytes(*b"PE3D");
 /// The wire layout's version.
-pub const SCENE_VERSION: u32 = 1;
+pub const SCENE_VERSION: u32 = 2;
 /// Header length in bytes.
-pub const HEADER_BYTES: usize = 32;
+pub const HEADER_BYTES: usize = 48;
 /// The source index a blend surface carries.
 pub const BLEND_SOURCE: u32 = u32::MAX;
 /// Flag: excluded from the blend.
 pub const FLAG_EXCLUDED: u32 = 1;
 /// Flag: removed by the source's sample filters.
 pub const FLAG_FILTERED: u32 = 2;
+/// Flag: a node whose cell holds an edit.
+pub const FLAG_EDITED: u32 = 4;
+/// Samples mode: the whole samples section.
+pub const SAMPLES_FULL: u32 = 0;
+/// Samples mode: only the samples' flags.
+pub const SAMPLES_FLAGS_ONLY: u32 = 1;
 
 /// Kind codes in the sources section.
 pub const KIND_ORC: u32 = 0;
@@ -115,6 +141,8 @@ pub struct SceneNode {
     pub tws_index: u16,
     /// Excluded from the blend.
     pub excluded: bool,
+    /// Holds an edit (spec.md 10.4).
+    pub edited: bool,
 }
 
 /// One track sample.
@@ -168,6 +196,10 @@ pub struct Scene {
     pub samples: Vec<SceneSample>,
     /// Surfaces.
     pub surfaces: Vec<SceneSurface>,
+    /// Names the samples section (see the module documentation).
+    pub samples_key: u64,
+    /// Only the samples' flags are meaningful and packed.
+    pub flags_only: bool,
 }
 
 fn kind_code(kind: &SourceKind) -> u32 {
@@ -182,93 +214,141 @@ fn colour_code(source: &Source) -> u32 {
     u32::from_str_radix(source.colour.as_str().trim_start_matches('#'), 16).unwrap_or(0)
 }
 
-/// The scene for a project: every visible source (hidden ones leave every
-/// plot, D15), a node per grid cell with a value and a surface per polar
-/// source, both over the source's own axes — nothing is resampled or
-/// extrapolated, and an empty cell is a hole.
+/// The scene for a project, derived afresh: every visible source (hidden
+/// ones leave every plot, D15), a node per grid cell with a value and a
+/// surface per polar source, both over the source's own axes as edited —
+/// nothing is resampled or extrapolated, and an empty cell is a hole.
 pub fn scene_of(project: &Project) -> Scene {
-    let mut scene = Scene::default();
+    let mut derivations = Derivations::default();
+    let derived = derivations.visible(project);
+    scene_with(project, &derived, None, false)
+}
+
+/// The scene from each visible source's derived data. `focus` names the
+/// source in edit mode: a track's segment is added as its surface.
+/// `flags_only` leaves out everything of the samples but their flags.
+pub fn scene_with(
+    project: &Project,
+    derived: &BTreeMap<u64, Arc<Derived>>,
+    focus: Option<u64>,
+    flags_only: bool,
+) -> Scene {
+    let mut scene = Scene {
+        flags_only,
+        ..Scene::default()
+    };
     let mut times: Vec<i64> = Vec::new();
     for source in project.sources.iter().filter(|source| source.visible) {
+        let Some(data) = derived.get(&source.id.raw()) else {
+            continue;
+        };
         let index = scene.sources.len() as u32;
         scene.sources.push(SceneSource {
             id: source.id.raw(),
             colour: colour_code(source),
             kind: kind_code(&source.kind),
         });
-        if let Some(track) = source.track() {
-            let use_corrected = project.blend.use_corrected;
-            let filtered = pe_tracks::filtered_out(track, &source.overlay.filters, use_corrected);
+        if let (Some(track), Some(placed)) = (source.track(), data.track.as_ref()) {
             let excluded = &source.overlay.excluded_samples;
-            for (sample, filtered) in track.samples.iter().zip(filtered) {
-                let Some((twa, tws, bsp)) = pe_tracks::polar_point(sample, use_corrected) else {
+            for ((sample, point), filtered) in track
+                .samples
+                .iter()
+                .zip(&placed.points)
+                .zip(&placed.filtered)
+            {
+                let Some((twa, tws, bsp)) = *point else {
                     continue;
                 };
-                scene.samples.push(SceneSample {
-                    twa: twa as f32,
-                    tws: tws as f32,
-                    bsp: bsp as f32,
-                    source: index,
-                    id: sample.id.raw(),
-                    hs: sample.hs_m.map_or(f32::NAN, |v| v as f32),
-                    current: sample.current_speed.map_or(f32::NAN, |v| v as f32),
-                    // Made relative to the time origin below.
-                    time: 0.0,
-                    excluded: excluded.binary_search(&sample.id).is_ok(),
-                    filtered,
+                let excluded = excluded.binary_search(&sample.id).is_ok();
+                scene.samples.push(if flags_only {
+                    SceneSample {
+                        twa: 0.0,
+                        tws: 0.0,
+                        bsp: 0.0,
+                        source: index,
+                        id: 0,
+                        hs: 0.0,
+                        current: 0.0,
+                        time: 0.0,
+                        excluded,
+                        filtered: *filtered,
+                    }
+                } else {
+                    SceneSample {
+                        twa: twa as f32,
+                        tws: tws as f32,
+                        bsp: bsp as f32,
+                        source: index,
+                        id: sample.id.raw(),
+                        hs: sample.hs_m.map_or(f32::NAN, |v| v as f32),
+                        current: sample.current_speed.map_or(f32::NAN, |v| v as f32),
+                        // Made relative to the time origin below.
+                        time: 0.0,
+                        excluded,
+                        filtered: *filtered,
+                    }
                 });
                 times.push(sample.t);
             }
-            continue;
-        }
-        let Some(grid) = pe_polar::source_polar(source) else {
-            continue;
-        };
-        let (ni, nj) = (grid.twa.len(), grid.tws.len());
-        let mut bsp = vec![f32::NAN; ni * nj];
-        for (i, twa) in grid.twa.iter().enumerate() {
-            for (j, tws) in grid.tws.iter().enumerate() {
-                let Some(value) = grid.get(i, j) else {
-                    continue;
-                };
-                bsp[i * nj + j] = value as f32;
-                // Axes are at most 512 long (pe-polar's MAX_AXIS_VALUES), so
-                // an index always fits; a grid that broke that would lose
-                // its node, not the scene.
-                let (Ok(twa_index), Ok(tws_index)) = (u16::try_from(i), u16::try_from(j)) else {
-                    continue;
-                };
-                scene.nodes.push(SceneNode {
-                    twa: *twa as f32,
-                    tws: *tws as f32,
-                    bsp: value as f32,
-                    source: index,
-                    twa_index,
-                    tws_index,
-                    excluded: source.overlay.is_cell_excluded(*twa, *tws),
-                });
+            if focus != Some(source.id.raw()) {
+                continue;
             }
         }
-        scene.surfaces.push(SceneSurface {
-            source: index,
-            twa: grid.twa.iter().map(|v| *v as f32).collect(),
-            tws: grid.tws.iter().map(|v| *v as f32).collect(),
-            bsp,
-        });
+        add_grid(&mut scene, source, &data.edited, index);
     }
     // Sample times travel as f32 seconds from the earliest, which keeps
     // them to the second over about six months (2^24 s).
     scene.time_origin = times.iter().copied().min().unwrap_or(0);
-    for (sample, t) in scene.samples.iter_mut().zip(&times) {
-        sample.time = (t - scene.time_origin) as f32;
+    if !flags_only {
+        for (sample, t) in scene.samples.iter_mut().zip(&times) {
+            sample.time = (t - scene.time_origin) as f32;
+        }
     }
     // The blend surface joins here once it exists (M14): it is derived, and
     // nothing in this module invents one (invariant 2).
     scene
 }
 
-fn flags(excluded: bool, filtered: bool) -> u32 {
-    (if excluded { FLAG_EXCLUDED } else { 0 }) | (if filtered { FLAG_FILTERED } else { 0 })
+/// A source's grid as nodes and a surface.
+fn add_grid(scene: &mut Scene, source: &Source, grid: &pe_polar::Polar, index: u32) {
+    let (ni, nj) = (grid.twa.len(), grid.tws.len());
+    let mut bsp = vec![f32::NAN; ni * nj];
+    for (i, twa) in grid.twa.iter().enumerate() {
+        for (j, tws) in grid.tws.iter().enumerate() {
+            let Some(value) = grid.get(i, j) else {
+                continue;
+            };
+            bsp[i * nj + j] = value as f32;
+            // Axes are at most 512 long (pe-polar's MAX_AXIS_VALUES), so
+            // an index always fits; a grid that broke that would lose
+            // its node, not the scene.
+            let (Ok(twa_index), Ok(tws_index)) = (u16::try_from(i), u16::try_from(j)) else {
+                continue;
+            };
+            scene.nodes.push(SceneNode {
+                twa: *twa as f32,
+                tws: *tws as f32,
+                bsp: value as f32,
+                source: index,
+                twa_index,
+                tws_index,
+                excluded: source.overlay.is_cell_excluded(*twa, *tws),
+                edited: source.overlay.override_at(*twa, *tws).is_some(),
+            });
+        }
+    }
+    scene.surfaces.push(SceneSurface {
+        source: index,
+        twa: grid.twa.iter().map(|v| *v as f32).collect(),
+        tws: grid.tws.iter().map(|v| *v as f32).collect(),
+        bsp,
+    });
+}
+
+fn flags(excluded: bool, filtered: bool, edited: bool) -> u32 {
+    (if excluded { FLAG_EXCLUDED } else { 0 })
+        | (if filtered { FLAG_FILTERED } else { 0 })
+        | (if edited { FLAG_EDITED } else { 0 })
 }
 
 /// Packs a scene into the wire layout in the module documentation.
@@ -279,7 +359,8 @@ pub fn pack(scene: &Scene) -> Vec<u8> {
         .iter()
         .map(|s| 3 + s.twa.len() + s.tws.len() + s.bsp.len())
         .sum();
-    let words = 8 + scene.sources.len() * 4 + n * 6 + m * 10 + surface_words;
+    let per_sample = if scene.flags_only { 1 } else { 10 };
+    let words = 12 + scene.sources.len() * 4 + n * 6 + m * per_sample + surface_words;
     let mut out = Vec::with_capacity(words * 4);
     let u = |out: &mut Vec<u8>, value: u32| out.extend_from_slice(&value.to_le_bytes());
     let f = |out: &mut Vec<u8>, value: f32| out.extend_from_slice(&value.to_le_bytes());
@@ -291,6 +372,16 @@ pub fn pack(scene: &Scene) -> Vec<u8> {
     u(&mut out, m as u32);
     u(&mut out, scene.surfaces.len() as u32);
     out.extend_from_slice(&scene.time_origin.to_le_bytes());
+    out.extend_from_slice(&scene.samples_key.to_le_bytes());
+    u(
+        &mut out,
+        if scene.flags_only {
+            SAMPLES_FLAGS_ONLY
+        } else {
+            SAMPLES_FULL
+        },
+    );
+    u(&mut out, 0);
 
     for source in &scene.sources {
         u(&mut out, source.id as u32);
@@ -314,32 +405,15 @@ pub fn pack(scene: &Scene) -> Vec<u8> {
         );
     }
     for node in &scene.nodes {
-        u(&mut out, flags(node.excluded, false));
+        u(&mut out, flags(node.excluded, false, node.edited));
     }
 
-    for sample in &scene.samples {
-        f(&mut out, sample.twa);
-        f(&mut out, sample.tws);
-        f(&mut out, sample.bsp);
-    }
-    for sample in &scene.samples {
-        u(&mut out, sample.source);
-    }
-    for sample in &scene.samples {
-        u(&mut out, sample.id as u32);
-        u(&mut out, (sample.id >> 32) as u32);
-    }
-    for sample in &scene.samples {
-        f(&mut out, sample.hs);
-    }
-    for sample in &scene.samples {
-        f(&mut out, sample.current);
-    }
-    for sample in &scene.samples {
-        f(&mut out, sample.time);
-    }
-    for sample in &scene.samples {
-        u(&mut out, flags(sample.excluded, sample.filtered));
+    if scene.flags_only {
+        for sample in &scene.samples {
+            u(&mut out, flags(sample.excluded, sample.filtered, false));
+        }
+    } else {
+        pack_samples(&mut out, scene);
     }
 
     for surface in &scene.surfaces {
@@ -353,18 +427,67 @@ pub fn pack(scene: &Scene) -> Vec<u8> {
     out
 }
 
+/// The full samples section.
+fn pack_samples(out: &mut Vec<u8>, scene: &Scene) {
+    let mut u = |value: u32| out.extend_from_slice(&value.to_le_bytes());
+    let samples = &scene.samples;
+    for sample in samples {
+        for value in [sample.twa, sample.tws, sample.bsp] {
+            u(value.to_bits());
+        }
+    }
+    for sample in samples {
+        u(sample.source);
+    }
+    for sample in samples {
+        u(sample.id as u32);
+        u((sample.id >> 32) as u32);
+    }
+    for sample in samples {
+        u(sample.hs.to_bits());
+    }
+    for sample in samples {
+        u(sample.current.to_bits());
+    }
+    for sample in samples {
+        u(sample.time.to_bits());
+    }
+    for sample in samples {
+        u(flags(sample.excluded, sample.filtered, false));
+    }
+}
+
 /// The 3D view's scene for the open project, packed (see the module
-/// documentation for the layout).
+/// documentation for the layout). `focus` is the source in edit mode, if
+/// any; `samples_key` the key of the samples the frontend already holds, if
+/// any: when it is still current, only their flags are sent.
 #[tauri::command]
-pub fn polar_scene(state: tauri::State<'_, AppState>) -> Result<tauri::ipc::Response> {
-    scene_bytes(&state).map(tauri::ipc::Response::new)
+pub fn polar_scene(
+    state: tauri::State<'_, AppState>,
+    focus: Option<u64>,
+    samples_key: Option<u64>,
+) -> Result<tauri::ipc::Response> {
+    scene_bytes_for(&state, focus, samples_key).map(tauri::ipc::Response::new)
+}
+
+/// The whole scene, without a focus: [`polar_scene`] without a Tauri handle.
+pub fn scene_bytes(state: &AppState) -> Result<Vec<u8>> {
+    scene_bytes_for(state, None, None)
 }
 
 /// [`polar_scene`] without a Tauri handle.
-pub fn scene_bytes(state: &AppState) -> Result<Vec<u8>> {
+pub fn scene_bytes_for(
+    state: &AppState,
+    focus: Option<u64>,
+    samples_key: Option<u64>,
+) -> Result<Vec<u8>> {
     state.with_session(|session| {
         let open = session.require_open()?;
-        Ok(pack(&scene_of(&open.project)))
+        let key = open.derived.samples_key(&open.project);
+        let derived = open.derived.visible(&open.project);
+        let mut scene = scene_with(&open.project, &derived, focus, samples_key == Some(key));
+        scene.samples_key = key;
+        Ok(pack(&scene))
     })
 }
 
@@ -562,6 +685,8 @@ mod tests {
     fn fixture_scene() -> Scene {
         Scene {
             time_origin: 1_753_000_000,
+            samples_key: 0x0010_0304_0506_0708,
+            flags_only: false,
             sources: vec![
                 SceneSource {
                     id: 7,
@@ -583,6 +708,7 @@ mod tests {
                     twa_index: 1,
                     tws_index: 0,
                     excluded: false,
+                    edited: true,
                 },
                 SceneNode {
                     twa: 90.0,
@@ -592,6 +718,7 @@ mod tests {
                     twa_index: 2,
                     tws_index: 1,
                     excluded: true,
+                    edited: false,
                 },
             ],
             samples: vec![SceneSample {
@@ -635,80 +762,105 @@ mod tests {
     #[test]
     fn the_layout_is_the_documented_one() {
         let bytes = pack(&fixture_scene());
-        // 8 header + 2×4 sources + 2×6 nodes + 1×10 samples
-        // + (3 + 2 + 2 + 4) + (3 + 1 + 1 + 1) surfaces = 55 words.
-        assert_eq!(bytes.len(), 55 * 4);
+        // 12 header + 2×4 sources + 2×6 nodes + 1×10 samples
+        // + (3 + 2 + 2 + 4) + (3 + 1 + 1 + 1) surfaces = 59 words.
+        assert_eq!(bytes.len(), 59 * 4);
         assert_eq!(&bytes[0..4], b"PE3D");
         assert_eq!(
             (1..6).map(|i| word(&bytes, i)).collect::<Vec<_>>(),
-            [1, 2, 2, 1, 2]
+            [2, 2, 2, 1, 2]
         );
         assert_eq!(
             i64::from_le_bytes(bytes[24..32].try_into().unwrap()),
             1_753_000_000
         );
-        // Sources: words 8–15.
         assert_eq!(
-            (8..16).map(|i| word(&bytes, i)).collect::<Vec<_>>(),
+            (8..12).map(|i| word(&bytes, i)).collect::<Vec<_>>(),
+            [0x0506_0708, 0x0010_0304, SAMPLES_FULL, 0]
+        );
+        // Sources: words 12–19.
+        assert_eq!(
+            (12..20).map(|i| word(&bytes, i)).collect::<Vec<_>>(),
             [7, 0, 0x4e79a7, 0, 9, 3, 0xe15759, 2]
         );
-        // Node positions: words 16–21, then source 22–23, cell 24–25, flags 26–27.
+        // Node positions: words 20–25, then source 26–27, cell 28–29, flags 30–31.
         assert_eq!(
-            (16..22).map(|i| float(&bytes, i)).collect::<Vec<_>>(),
+            (20..26).map(|i| float(&bytes, i)).collect::<Vec<_>>(),
             [52.0, 6.0, 5.9, 90.0, 12.0, 8.4]
         );
         assert_eq!(
-            (22..28).map(|i| word(&bytes, i)).collect::<Vec<_>>(),
-            [0, 0, 1, 2 | (1 << 16), 0, FLAG_EXCLUDED]
+            (26..32).map(|i| word(&bytes, i)).collect::<Vec<_>>(),
+            [0, 0, 1, 2 | (1 << 16), FLAG_EDITED, FLAG_EXCLUDED]
         );
-        // Sample: position 28–30, source 31, id 32–33, hs 34, current 35,
-        // time 36, flags 37.
+        // Sample: position 32–34, source 35, id 36–37, hs 38, current 39,
+        // time 40, flags 41.
         assert_eq!(
-            (28..31).map(|i| float(&bytes, i)).collect::<Vec<_>>(),
+            (32..35).map(|i| float(&bytes, i)).collect::<Vec<_>>(),
             [135.0, 14.25, 9.5]
         );
         assert_eq!(
-            (31..34).map(|i| word(&bytes, i)).collect::<Vec<_>>(),
+            (35..38).map(|i| word(&bytes, i)).collect::<Vec<_>>(),
             [1, 5, 1]
         );
-        assert_eq!(float(&bytes, 34), 1.5);
-        assert!(float(&bytes, 35).is_nan());
-        assert_eq!(float(&bytes, 36), 600.0);
-        assert_eq!(word(&bytes, 37), FLAG_EXCLUDED | FLAG_FILTERED);
-        // First surface: header 38–40, axes 41–44, values 45–48.
+        assert_eq!(float(&bytes, 38), 1.5);
+        assert!(float(&bytes, 39).is_nan());
+        assert_eq!(float(&bytes, 40), 600.0);
+        assert_eq!(word(&bytes, 41), FLAG_EXCLUDED | FLAG_FILTERED);
+        // First surface: header 42–44, axes 45–48, values 49–52.
         assert_eq!(
-            (38..41).map(|i| word(&bytes, i)).collect::<Vec<_>>(),
+            (42..45).map(|i| word(&bytes, i)).collect::<Vec<_>>(),
             [0, 2, 2]
         );
         assert_eq!(
-            (41..48).map(|i| float(&bytes, i)).collect::<Vec<_>>(),
+            (45..52).map(|i| float(&bytes, i)).collect::<Vec<_>>(),
             [52.0, 90.0, 6.0, 12.0, 5.9, 7.3, 6.8]
         );
-        assert!(float(&bytes, 48).is_nan());
-        // The blend: 49–51, then its one-cell grid.
+        assert!(float(&bytes, 52).is_nan());
+        // The blend: 53–55, then its one-cell grid.
         assert_eq!(
-            (49..52).map(|i| word(&bytes, i)).collect::<Vec<_>>(),
+            (53..56).map(|i| word(&bytes, i)).collect::<Vec<_>>(),
             [u32::MAX, 1, 1]
         );
         assert_eq!(
-            (52..55).map(|i| float(&bytes, i)).collect::<Vec<_>>(),
+            (56..59).map(|i| float(&bytes, i)).collect::<Vec<_>>(),
             [45.0, 10.0, 6.0]
         );
     }
 
-    /// The same bytes the frontend's unpacking test reads, so the two sides
-    /// cannot drift apart. `PE_BLESS=1` rewrites the file after a deliberate
-    /// layout change (and the version must change with it).
+    /// A flags-only scene carries the samples' flags and nothing else of
+    /// them: one word per sample.
     #[test]
-    fn the_frontend_fixture_holds_these_bytes() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../ui/src/polar/fixtures/scene-v1.bin");
-        let bytes = pack(&fixture_scene());
-        if std::env::var_os("PE_BLESS").is_some() {
-            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            std::fs::write(&path, &bytes).unwrap();
+    fn a_flags_only_scene_packs_one_word_per_sample() {
+        let scene = Scene {
+            flags_only: true,
+            ..fixture_scene()
+        };
+        let bytes = pack(&scene);
+        assert_eq!(bytes.len(), (59 - 9) * 4);
+        assert_eq!(word(&bytes, 10), SAMPLES_FLAGS_ONLY);
+        assert_eq!(word(&bytes, 32), FLAG_EXCLUDED | FLAG_FILTERED);
+        assert_eq!(word(&bytes, 33), 0, "the first surface's source");
+    }
+
+    /// The same bytes the frontend's unpacking test reads, so the two sides
+    /// cannot drift apart. `PE_BLESS=1` rewrites the files after a
+    /// deliberate layout change (and the version must change with it).
+    #[test]
+    fn the_frontend_fixtures_hold_these_bytes() {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../ui/src/polar/fixtures");
+        let full = pack(&fixture_scene());
+        let flags = pack(&Scene {
+            flags_only: true,
+            ..fixture_scene()
+        });
+        for (name, bytes) in [("scene-v2.bin", full), ("scene-v2-flags.bin", flags)] {
+            let path = dir.join(name);
+            if std::env::var_os("PE_BLESS").is_some() {
+                std::fs::create_dir_all(&dir).unwrap();
+                std::fs::write(&path, &bytes).unwrap();
+            }
+            assert_eq!(std::fs::read(&path).unwrap(), bytes, "{name}");
         }
-        assert_eq!(std::fs::read(&path).unwrap(), bytes);
     }
 
     #[test]

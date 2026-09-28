@@ -20,6 +20,7 @@ import MapView from "./map/MapView";
 import LeftNav from "./panels/LeftNav";
 import PolarPlot from "./panels/PolarPlot";
 import PolarView from "./polar/PolarView";
+import { editFocus, editSource, onEditSource } from "./polar/editFocus";
 import RightPanel from "./panels/RightPanel";
 import { loadPanels, reveal, savePanels, togglePanel, type PanelState } from "./panels/layout";
 import { pickProjectToOpen, pickProjectToSave } from "./project/dialogs";
@@ -170,6 +171,29 @@ function Shell() {
   // which frames what was asked for.
   useEffect(() => onFocusMap(() => setStage("map")), []);
 
+  // Edit on a source opens it in the 3D stage (spec.md 8, 10.4). The
+  // search's `edit:open` step starts editing the first source, and
+  // `edit:open-track` the first track, so the edit tools are on screen to
+  // be found.
+  const firstSource = useRef<number | null>(null);
+  firstSource.current = project?.sources[0]?.id ?? null;
+  const firstTrack = useRef<number | null>(null);
+  firstTrack.current = project?.sources.find((s) => s.kind === "track")?.id ?? null;
+  useEffect(() => {
+    const offs = [
+      onEditSource(() => { setStage("3d"); setPlotFull(false); }),
+      onReveal("edit:open", () => {
+        setStage("3d");
+        if (editFocus() === null && firstSource.current !== null) editSource(firstSource.current);
+      }),
+      onReveal("edit:open-track", () => {
+        setStage("3d");
+        if (firstTrack.current !== null) editSource(firstTrack.current);
+      }),
+    ];
+    return () => { for (const off of offs) off(); };
+  }, []);
+
   const flash = useCallback((message: string) => {
     setStatus(message);
     reportError(null);
@@ -182,8 +206,10 @@ function Shell() {
     setRenaming(null);
     setCreating(null);
     setPlotFull(false);
-    // A selection names samples of the project it was made in.
+    // A selection names samples of the project it was made in, and so does
+    // the source being edited.
     resetSelection();
+    editSource(null);
     setProject(next);
   }, []);
 

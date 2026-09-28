@@ -10,6 +10,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { beginBusy } from "./busy";
 import { msg } from "./i18n/msg";
 import { unpackTracks, type TrackPacket } from "./map/trackPacket";
+import { unpackDots, type DotPacket } from "./panels/dotPacket";
 import { unpackScene, type ScenePacket } from "./polar/scenePacket";
 import type { AppErrorPayload } from "./generated/AppErrorPayload";
 import type { AppInfo } from "./generated/AppInfo";
@@ -19,6 +20,8 @@ import type { BoatInput } from "./generated/BoatInput";
 import type { ChunkCacheSettings } from "./generated/ChunkCacheSettings";
 import type { ChunkCacheStatus } from "./generated/ChunkCacheStatus";
 import type { CsvMappingInput } from "./generated/CsvMappingInput";
+import type { EditOp } from "./generated/EditOp";
+import type { EditSurface } from "./generated/EditSurface";
 import type { EnvEstimate } from "./generated/EnvEstimate";
 import type { EnvJobsStatus } from "./generated/EnvJobsStatus";
 import type { MapProjection } from "./generated/MapProjection";
@@ -26,6 +29,7 @@ import type { NetworkSettings } from "./generated/NetworkSettings";
 import type { OrcCatalogueInfo } from "./generated/OrcCatalogueInfo";
 import type { OrcFilters } from "./generated/OrcFilters";
 import type { OrcSearchResult } from "./generated/OrcSearchResult";
+import type { PolarCell } from "./generated/PolarCell";
 import type { PolarImportResult } from "./generated/PolarImportResult";
 import type { PolarNodeRef } from "./generated/PolarNodeRef";
 import type { PolarPlotResult } from "./generated/PolarPlotResult";
@@ -180,12 +184,20 @@ export const api = {
 
   /**
    * Every visible polar source's curve at `tws` (null for "all": one curve
-   * per source per wind speed it has), the domain those sources cover, the
-   * samples within the dot band of the slice (those with wind; filtered ones
-   * too when `showFiltered`) and the blend (null until it exists).
+   * per source per wind speed it has), read through its edits and
+   * exclusions, the domain those sources cover, and the blend (null until
+   * it exists).
    */
-  polarPlot: (tws: number | null, showFiltered = false) =>
-    call<PolarPlotResult>("polar_plot", { tws, showFiltered }),
+  polarPlot: (tws: number | null) => call<PolarPlotResult>("polar_plot", { tws }),
+  /**
+   * The samples within the dot band of `tws` (every one with wind for null;
+   * filtered ones too when `showFiltered`), packed as binary (layout in
+   * `panels/dotPacket.ts`).
+   */
+  polarPlotDots: async (tws: number | null, showFiltered = false): Promise<DotPacket> => {
+    const bytes = await call<ArrayBuffer | number[]>("polar_plot_dots", { tws, showFiltered });
+    return unpackDots(bytes instanceof ArrayBuffer ? bytes : new Uint8Array(bytes).buffer);
+  },
 
   // Tracks from files (spec.md 7.1, 7.3, 7.4, 7.6).
 
@@ -258,13 +270,26 @@ export const api = {
 
   /**
    * The 3D scene, packed as binary (layout in `polar/scenePacket.ts`): every
-   * visible polar source's nodes and surface, every sample dot, and which
-   * are excluded.
+   * visible polar source's nodes and surface as edited, every sample dot,
+   * and which are excluded or edited. `focus` is the source in edit mode (a
+   * track's segment joins the scene); with `held`, the scene already shown,
+   * only the samples' flags travel when no sample moved.
    */
-  polarScene: async (): Promise<ScenePacket> => {
-    const bytes = await call<ArrayBuffer | number[]>("polar_scene");
-    return unpackScene(bytes instanceof ArrayBuffer ? bytes : new Uint8Array(bytes).buffer);
+  polarScene: async (focus: number | null = null, held: ScenePacket | null = null): Promise<ScenePacket> => {
+    const bytes = await call<ArrayBuffer | number[]>("polar_scene", { focus, samplesKey: held?.samplesKey ?? null });
+    return unpackScene(bytes instanceof ArrayBuffer ? bytes : new Uint8Array(bytes).buffer, held ?? undefined);
   },
+  /** One source's editable surface (spec.md 10.4): its cells as imported or binned and as edited. */
+  polarEditSurface: (sourceId: number) => call<EditSurface>("polar_edit_surface", { sourceId }),
+  /**
+   * Edits cells of one source's surface as one undoable change; calls
+   * sharing a `gesture` name (a node drag) are one undo entry.
+   */
+  editPolar: (sourceId: number, op: EditOp, cells: PolarCell[], gesture: string | null = null) =>
+    call<ProjectSummary>("edit_polar", { sourceId, op, cells, gesture }),
+  /** Chooses a track's segment statistic: `median`, `mean`, `p75` or `p90` (undoable). */
+  setSegmentStatistic: (sourceId: number, statistic: string) =>
+    call<ProjectSummary>("set_segment_statistic", { sourceId, statistic }),
   /**
    * Excludes a selection from the blend (`excluded` true) or includes it
    * again, as one undoable change (spec.md 10.3): polar nodes by grid place,

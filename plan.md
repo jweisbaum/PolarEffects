@@ -562,7 +562,7 @@ fixture exactly; an unknown slug reads as no public event.
 
 ---
 
-### M13 — Polar segments and editing
+### M13 — Polar segments and editing · **complete**
 
 **Deliverables**
 
@@ -575,6 +575,50 @@ fixture exactly; an unknown slug reads as no public event.
 
 **Acceptance:** spec §13 edit-to-view budget; removing all overrides restores
 the source byte-for-byte (invariant 1).
+
+Built as specified (spec §10.4, §12.1, D22). `pe-polar::segment` bins a
+track's used samples onto the output grid (nearest node, half-step bins,
+beyond the outer half-steps left out, ties up; linear-rank percentiles;
+spread = sample standard deviation; count and spread kept for every cell);
+`pe-polar::edit` writes overrides onto a grid and computes scale and smooth
+(3×3 binomial kernel over present neighbours). `pe-core` gains
+`Command::EditCells { source, action, cells: [CellEdit { before, after }] }`
+— one command for every tool, `action` naming the history entry, drags
+coalescing via `Command::merge` — and `Command::SetSegmentStatistic`;
+`cell_overrides` are validated sorted, one per cell, 0–60 kn. Acceptance:
+`removing_every_edit_restores_the_source_byte_for_byte` (pe-core) and
+`every_tool_is_one_entry_and_reset_all_restores_the_source_byte_for_byte`
+(pe-app, through IPC) compare `.wpsproj` bytes. `pe-app/src/derived.rs`
+holds the derived cache (per-source revisions moved only by the commands
+that reach a source, never saved; untargeted changes invalidate all, the
+environment fetch names its track); the 3D scene, the 2D plot, the table and
+the project summary all read it. New IPC: `polar_edit_surface`,
+`edit_polar`, `set_segment_statistic`, `polar_plot_dots`; `polar_scene`
+takes `focus` and `samples_key`. Carried items: M6 — 2D curves read each
+source through its overlay (edits in, excluded nodes empty); M7 — scene
+layout v2 (48-byte header, samples key, flags-only mode; fixtures
+`scene-v2.bin`, `scene-v2-flags.bin`), and the frontend keeps the samples'
+dots when their flags are unchanged, rebuilding the nodes alone; M8 — 2D
+dots travel as the packed "PE2D" buffer (`dots-v1.bin`) and draw as squares
+beyond 20,000.
+
+*Measured 2026-09-28 on the development machine* (2019 MacBook Pro, Intel
+i9; `cargo test --release -p pe-app --test perf_edit -- --ignored`), 20
+polar sources and 20 tracks × 10,000 samples, Rust side of edit → every
+view (command + summary, flags-only 3D scene, 2D curves, 2D dots at a
+slice, table): a table edit on a polar source **25.8 ms** (scene 16.9 ms,
+0.91 MB); a drag step on a track segment **23.4 ms** (no re-binning); excluding
+1,000 samples of one track **36.1 ms** (that track re-binned). Cold full
+scene 64.4 ms, warm 34.3 ms, 8.1 MB. Debug build (pe-app at opt-level 0):
+61, 67 and 97 ms. Frontend (Node, 200k samples, warm): unpacking a
+flags-only scene 1.1 ms and rebuilding the dots 5 ms when the flags are
+unchanged (36 ms when every sample's dot is rebuilt). **Go** on this
+machine at under 100 ms; the IPC transfer, `setData` in WKWebView/WebView2
+and the reference machines are measured before release (M18). M8 carry, 50
+tracks × 10,000 fixes in "all" (release): gathering 500,000 dots 25 ms;
+JSON objects (the M8 shape) 197 ms and 66.6 MB against the packed buffer
+33 ms and 14.0 MB. The minimum samples per cell is used (5) but edited in
+Blend settings, which arrive in M14.
 
 ---
 
@@ -680,6 +724,7 @@ jieter/orc-data MIT), user guide.
 | D19 | Reanalysis sampling hourly by default, 3-hourly option; the pre-flight dialog preselects 3-hourly when the hourly download would exceed half the chunk-cache limit | Confirmed by M3: a 5-day race hourly is ≈ 1.2 GB and ≈ 40 s cold at 8 requests in flight, and a warm chunk is 3 ms. Hourly resolves wind shifts and tidal streams that 3-hourly smooths. A long race is different: the Vendée Globe hourly would be ≈ 19 GB, about the whole default cache, which is when 3-hourly is the better default |
 | D20 | Current tiers: regional tidal reanalysis → global merged (uo + utide, 2020-11+) → GlobCurrent (geostrophic + Ekman + FES2022 tide, 1993+; its 202411 metadata, checked 2026-09-28, Q7) | Only anonymous sources; GlobCurrent (FES2022) gives tides globally from 1993, not only NW Europe/IBI |
 | D21 | 2D polar plot (M6): "All" draws one curve per visible source per wind speed that source's grid has; curves are read at each source's own TWA points; the full-size view is a Map-stage overlay toggled by the shell, closed by its own button, Escape or a stage switch | Spec §9.2 named the slider's "all" state and the full-size overlay without saying what either draws or how the overlay opens and closes |
+| D22 | Polar edits and segments (M13): one `EditCells` command for every edit tool (overrides before/after per cell, the tool naming the undo entry, drags coalescing); segment bins are half-steps around each output-grid node with nothing beyond the outer half-steps; spread is the sample standard deviation; smooth is the 3×3 binomial kernel over neighbours with a value; views show sources as edited, and the 2D curves also leave excluded nodes out | Spec §10.4 and §12.1 named the tools, the statistic and "count and spread" without the binning edges, the spread measure, the kernel or how undo groups them |
 
 ## 6. Settled before coding started
 
