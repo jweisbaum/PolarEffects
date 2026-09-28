@@ -410,23 +410,20 @@ jieter/orc-data MIT), user guide.
 | D19 | Reanalysis sampling hourly by default, 3-hourly option | To be confirmed by M3 numbers |
 | D20 | Current tiers: regional tidal reanalysis → global merged (uo + utide, 2020-11+) → GlobCurrent without tides | Only anonymous sources; tides everywhere from 2020-11 and in NW Europe/IBI since 1993 |
 
-## 6. What to settle before coding starts
+## 6. Settled before coding started
 
-- **Q1 — Tides before November 2020 outside NW Europe/IBI.** Options:
-  (a) accept "no tide" for those samples (current plan); (b) FES2014 tidal
-  currents computed in Rust, with each user downloading the atlas using their
-  own free AVISO account; (c) ask AVISO for permission to ship a reduced
-  derived atlas. TPXO is academic-only; FES2022 and EOT20 have no currents.
-- **Q2 — Wind after 2023-01-10.** WeatherBench2 stops there. Use ARCO-ERA5
-  (same ERA5 data, proposed) or refuse wind for later races?
-- **Q3 — Stokes drift.** Default is circulation + tide, without Stokes drift.
-  Confirm.
-- **Q4 — Blend rule.** Weighted mean per cell with confidence from sample
-  count (spec §12.3). Confirm, or prefer an envelope (max of sources) or a
-  fitted smooth surface.
-- **Q5 — Linux ARM64.** Not requested; deferred. Confirm.
-- **Q6 — Terms of use** for scraping Geovoile and YellowBrick for a
-  distributed product.
+The user accepted the proposals below on 2026-09-27 ("all good").
+
+- **Q1 — Tides before November 2020 outside NW Europe/IBI:** accept "no
+  tide" for those samples, flagged and filterable. FES2014 stays deferred.
+- **Q2 — Wind after 2023-01-10:** ARCO-ERA5 supplies it (D12).
+- **Q3 — Stokes drift:** excluded by default (`uo + utide`), with a setting
+  to include it.
+- **Q4 — Blend rule:** weighted mean per cell with sample-count confidence
+  (spec §12.3).
+- **Q5 — Linux ARM64:** deferred.
+- **Q6 — Terms of use:** the user accepts the risk; imports stay
+  user-initiated, one event at a time, with polite concurrency.
 
 ---
 
