@@ -86,7 +86,7 @@ export const TOPICS: HelpTopic[] = [
   { id: "sources", group: "Sources", title: "Source list and polar plot",
     paragraphs: [
       "The right panel lists every source of the project — ORC polars, polar files and tracks — each with its colour, a show or hide switch and a blend weight. A hidden source is left out of the blend and of every plot.",
-      "Below the list, the 2D polar plot draws boat speed against true wind angle for one true wind speed, with the samples of the tracks as dots.",
+      "Below the list, the 2D polar plot draws boat speed against true wind angle: a curve per visible polar source at one true wind speed, or one curve per wind speed a source has when the slider is set to All, each in its source's colour, with the blend drawn thicker once it exists. Track samples within a knot of the slice will appear as dots. Hovering a curve or a dot shows its source, TWA, TWS and BSP. Full size opens the same plot as a large overlay on the map, closed with its own button, Escape or switching stage.",
     ],
     parameters: [
       ["Sources (section)", "Click the heading to fold or unfold the list."],
@@ -100,6 +100,8 @@ export const TOPICS: HelpTopic[] = [
       ["Edit / Compare", "Open the source in the 3D view, or compare it with another. Both arrive in later versions."],
       ["Remove", "Removes the source from the project. Undo puts it back."],
       ["Reorder (⠿)", "Drag a source by its handle, or focus the handle and press the up and down arrow keys. The order is only how the list is shown."],
+      ["All / wind speed slider", "All draws one curve per wind speed each visible source has; the slider picks one true wind speed instead."],
+      ["Full size", "Opens the polar plot as a large overlay on the map stage. Close it, press Escape, or switch stage to return."],
     ],
     related: ["workspace", "polar-3d", "compare"] },
   { id: "map", group: "Views", title: "The world map",

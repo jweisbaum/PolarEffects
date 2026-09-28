@@ -69,7 +69,7 @@ const topics: HelpTopic[] = [
   { id: "sources", group: "Quellen", title: "Quellenliste und Polardiagramm",
     paragraphs: [
       "Die rechte Seitenleiste listet alle Quellen des Projekts — ORC-Polaren, Polardateien und Tracks —, jede mit ihrer Farbe, einem Schalter zum Ein- und Ausblenden und einer Mischgewichtung. Eine ausgeblendete Quelle fließt weder in die Mischung noch in ein Diagramm ein.",
-      "Unter der Liste zeigt das 2D-Polardiagramm die Bootsgeschwindigkeit über dem wahren Windwinkel für eine wahre Windgeschwindigkeit, mit den Punkten der Tracks.",
+      "Unter der Liste zeigt das 2D-Polardiagramm die Bootsgeschwindigkeit über dem wahren Windwinkel: eine Kurve pro sichtbarer Polarquelle bei einer wahren Windgeschwindigkeit, oder eine Kurve pro Windgeschwindigkeit, die eine Quelle besitzt, wenn der Regler auf Alle steht, jede in der Farbe ihrer Quelle, wobei die Mischung dicker gezeichnet wird, sobald sie existiert. Track-Punkte innerhalb eines Knotens der gewählten Scheibe werden als Punkte erscheinen. Das Überfahren einer Kurve oder eines Punkts zeigt seine Quelle, TWA, TWS und BSP. Volle Größe öffnet dasselbe Diagramm groß über der Karte, geschlossen mit seiner eigenen Schaltfläche, Esc oder einem Wechsel der Ansicht.",
     ],
     parameters: [
       ["Quellen (Abschnitt)", "Klicken Sie auf die Überschrift, um die Liste ein- oder auszuklappen."],
@@ -83,6 +83,8 @@ const topics: HelpTopic[] = [
       ["Bearbeiten / Vergleichen", "Die Quelle in der 3D-Ansicht öffnen oder mit einer anderen vergleichen. Beides folgt in späteren Versionen."],
       ["Entfernen", "Entfernt die Quelle aus dem Projekt. Widerrufen stellt sie wieder her."],
       ["Neu ordnen (⠿)", "Ziehen Sie eine Quelle an ihrem Griff, oder fokussieren Sie den Griff und drücken Sie die Pfeiltasten nach oben und unten. Die Reihenfolge betrifft nur die Anzeige der Liste."],
+      ["Alle / Windgeschwindigkeitsregler", "Alle zeichnet eine Kurve pro Windgeschwindigkeit, die jede sichtbare Quelle besitzt; der Regler wählt stattdessen eine einzelne wahre Windgeschwindigkeit."],
+      ["Volle Größe", "Öffnet das Polardiagramm groß über der Kartenansicht. Schließen, Esc oder ein Wechsel der Ansicht führt zurück."],
     ],
     related: ["workspace", "polar-3d", "compare"] },
   { id: "map", group: "Ansichten", title: "Die Weltkarte",

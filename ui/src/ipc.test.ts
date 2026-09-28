@@ -103,6 +103,14 @@ describe("api", () => {
     expect(invoke).toHaveBeenLastCalledWith("quit_app", { discardUnsaved: true });
   });
 
+  it("names the polar plot command and passes null for \"all\"", async () => {
+    invoke.mockResolvedValue(null);
+    await api.polarPlot(12);
+    expect(invoke).toHaveBeenLastCalledWith("polar_plot", { tws: 12 });
+    await api.polarPlot(null);
+    expect(invoke).toHaveBeenLastCalledWith("polar_plot", { tws: null });
+  });
+
   it("hands the basemap over as an ArrayBuffer either way it arrives", async () => {
     invoke.mockResolvedValue([1, 2, 3]);
     const bytes = await api.basemap();

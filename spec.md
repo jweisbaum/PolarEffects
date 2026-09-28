@@ -759,11 +759,18 @@ mask texture, so no land triangle folds across the horizon.
 A classic 2D polar diagram in the right panel (and full-size as a Map stage
 overlay on demand):
 
-- A TWS slider (or "all") chooses the slice. Curves for every visible polar
-  source and the blend at that TWS; dots for every sample whose TWS is within
-  ±1 kn (configurable) of the slice.
+- A TWS slider (or "all") chooses the slice (D21). One value draws one curve
+  per visible polar source (tracks are not polar sources) and the blend, all
+  at that TWS; "all" draws one curve per visible source per wind speed that
+  source's own grid has, rather than a shared slice — the classic diagram of
+  several TWS curves at once. A curve is read at bilinear interpolation
+  (`pe-polar`, no extrapolation) across the source's own TWA axis; dots are
+  for every sample whose TWS is within ±1 kn (configurable) of the slice.
 - Everything uses source colours. The blend is drawn thicker.
 - Hover shows the source, TWA, TWS and BSP.
+- Full size opens the same plot as a large overlay owned by the Map stage
+  (D21): the panel's "Full size" button switches to the Map stage and opens
+  it; its own button, Escape, or switching stage again closes it.
 
 ---
 

@@ -22,6 +22,7 @@ import type { OrcCatalogueInfo } from "./generated/OrcCatalogueInfo";
 import type { OrcFilters } from "./generated/OrcFilters";
 import type { OrcSearchResult } from "./generated/OrcSearchResult";
 import type { PolarImportResult } from "./generated/PolarImportResult";
+import type { PolarPlotResult } from "./generated/PolarPlotResult";
 import type { Units } from "./generated/Units";
 import type { ProjectSummary } from "./generated/ProjectSummary";
 import type { RecentProject } from "./generated/RecentProject";
@@ -157,6 +158,16 @@ export const api = {
    * code; the others still import.
    */
   importPolarFiles: (paths: string[]) => call<PolarImportResult>("import_polar_files", { paths }),
+
+  // The 2D polar plot (spec.md 9.2).
+
+  /**
+   * Every visible polar source's curve at `tws` (null for "all": one curve
+   * per source per wind speed it has), the domain those sources cover, the
+   * samples near the slice (empty until tracks exist) and the blend (null
+   * until it exists).
+   */
+  polarPlot: (tws: number | null) => call<PolarPlotResult>("polar_plot", { tws }),
 
   // ORC polars (spec.md 5). The catalogue is built into the app.
 

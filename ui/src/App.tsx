@@ -15,6 +15,7 @@ import { msg, setLanguage, useT } from "./i18n";
 import { api, IpcError, QUIT_REQUESTED } from "./ipc";
 import MapView from "./map/MapView";
 import LeftNav from "./panels/LeftNav";
+import PolarPlot from "./panels/PolarPlot";
 import RightPanel from "./panels/RightPanel";
 import { loadPanels, reveal, savePanels, togglePanel, type PanelState } from "./panels/layout";
 import { pickProjectToOpen, pickProjectToSave } from "./project/dialogs";
@@ -66,6 +67,8 @@ function Shell() {
   const [renaming, setRenaming] = useState<string | null>(null);
   /** Which panels are open: the person's, remembered in `localStorage` (spec.md 3.2). */
   const [panels, setPanels] = useState<PanelState>(loadPanels);
+  /** The polar plot shown full size over the Map stage, on demand (spec.md 9.2). */
+  const [plotFull, setPlotFull] = useState(false);
 
   useLayoutEffect(() => applyTheme(settings?.theme), [settings?.theme]);
   // The settings file is the authority on the language (spec.md 3.5).
@@ -113,6 +116,7 @@ function Shell() {
       onReveal("stage:map", () => setStage("map")),
       onReveal("stage:3d", () => setStage("3d")),
       onReveal("stage:compare", () => setStage("compare")),
+      onReveal("overlay:plot", () => { setStage("map"); setPlotFull(true); }),
       onReveal("settings:", () => setShowSettings(true)),
     ];
     return () => { for (const off of offs) off(); };
@@ -129,6 +133,7 @@ function Shell() {
     reportError(null);
     setRenaming(null);
     setCreating(null);
+    setPlotFull(false);
     setProject(next);
   }, []);
 
@@ -251,6 +256,14 @@ function Shell() {
     return () => { void pending.then((off) => off?.()); };
   }, []);
 
+  // Escape closes the full-size polar plot overlay, like every other overlay.
+  useEffect(() => {
+    if (!plotFull) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setPlotFull(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [plotFull]);
+
   // Standard shortcuts (spec.md 3.2).
   const modal = creating !== null || askUnsaved !== null || showSettings;
   useEffect(() => {
@@ -347,7 +360,7 @@ function Shell() {
           </button>
         )}
         <span className="spacer" />
-        <StageSwitcher stage={stage} onStage={setStage} />
+        <StageSwitcher stage={stage} onStage={(next) => { setStage(next); if (next !== "map") setPlotFull(false); }} />
         <span className="spacer" />
         <HelpMenu />
         <button className="settings" onClick={() => setShowSettings(true)} data-feature="shell:settings"
@@ -367,8 +380,18 @@ function Shell() {
             body={msg("The 3D view of a polar and its samples arrives in a later version.")} />}
           {stage === "compare" && <Placeholder title={msg("Compare")}
             body={msg("Comparing two polars arrives in a later version.")} />}
+          {stage === "map" && plotFull && (
+            <div className="polar-plot-overlay" role="dialog" aria-label={t("Polar plot")}>
+              <PolarPlot project={project} variant="overlay" onClose={() => setPlotFull(false)} />
+            </div>
+          )}
         </main>
-        {panels.right && <aside className="sidebar right"><RightPanel project={project} onProject={setProject} panels={panels} onToggle={toggle} /></aside>}
+        {panels.right && (
+          <aside className="sidebar right">
+            <RightPanel project={project} onProject={setProject} panels={panels} onToggle={toggle}
+              onFullSizePlot={() => { setStage("map"); setPlotFull(true); }} />
+          </aside>
+        )}
         <DockToggle side="left" open={panels.left}
           labels={[msg("Show the navigation"), msg("Hide the navigation")]} onToggle={() => toggle("left")} />
         <DockToggle side="right" open={panels.right}

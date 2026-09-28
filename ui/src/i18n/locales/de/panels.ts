@@ -172,6 +172,28 @@ const catalogue: Record<string, string> = {
   "add": "hinzufügen",
   "Remove ORC polar": "ORC-Polare entfernen",
   "Remove an ORC polar from the project. Undo puts it back.": "Eine ORC-Polare aus dem Projekt entfernen. Widerrufen stellt sie wieder her.",
+  // The 2D polar plot (spec.md 9.2).
+  "Show every wind speed a source has, instead of one slice": "Jede Windgeschwindigkeit zeigen, die eine Quelle hat, statt einer einzelnen Scheibe",
+  "Show every wind speed a source has, instead of one slice.": "Jede Windgeschwindigkeit zeigen, die eine Quelle hat, statt einer einzelnen Scheibe.",
+  "All wind speeds": "Alle Windgeschwindigkeiten",
+  "All": "Alle",
+  "Wind speed": "Windgeschwindigkeit",
+  "Wind speed slice": "Windgeschwindigkeits-Scheibe",
+  "The true wind speed the plot slices at": "Die wahre Windgeschwindigkeit, bei der das Diagramm schneidet",
+  "The true wind speed the polar plot slices at.": "Die wahre Windgeschwindigkeit, bei der das Polardiagramm schneidet.",
+  "{tws} kn": "{tws} kn",
+  "Full size": "Volle Größe",
+  "Full-size polar plot": "Polardiagramm in voller Größe",
+  "Open the polar plot full size over the map": "Das Polardiagramm groß über der Karte öffnen",
+  "Open the polar plot full size over the map.": "Das Polardiagramm groß über der Karte öffnen.",
+  "Close the full-size polar plot": "Das große Polardiagramm schließen",
+  "Close the full-size polar plot and return to the map.": "Das große Polardiagramm schließen und zur Karte zurückkehren.",
+  "TWA {twa}°, TWS {tws} kn, BSP {bsp} kn": "TWA {twa}°, TWS {tws} kn, BSP {bsp} kn",
+  "No source has data at this wind speed.": "Keine Quelle hat Daten bei dieser Windgeschwindigkeit.",
+  "all": "alle",
+  "wind speed": "windgeschwindigkeit",
+  "overlay": "Überlagerung",
+  "map": "Karte",
 };
 
 export default catalogue;

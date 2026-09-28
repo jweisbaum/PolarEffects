@@ -69,7 +69,7 @@ const topics: HelpTopic[] = [
   { id: "sources", group: "Sources", title: "Liste des sources et diagramme polaire",
     paragraphs: [
       "Le panneau de droite liste toutes les sources du projet — polaires ORC, fichiers de polaires et traces —, chacune avec sa couleur, un interrupteur pour l’afficher ou la masquer et un poids de fusion. Une source masquée est exclue de la fusion et de tous les graphiques.",
-      "Sous la liste, le diagramme polaire 2D trace la vitesse du bateau en fonction de l’angle du vent réel pour une vitesse de vent réel, avec les points des traces.",
+      "Sous la liste, le diagramme polaire 2D trace la vitesse du bateau en fonction de l’angle du vent réel : une courbe par source de polaire visible à une vitesse de vent réel, ou une courbe par vitesse de vent que possède une source quand le curseur est sur Toutes, chacune dans la couleur de sa source, la fusion étant tracée plus épaisse une fois qu’elle existe. Les points des traces à moins d’un nœud de la tranche choisie apparaîtront comme des points. Survoler une courbe ou un point affiche sa source, le TWA, le TWS et le BSP. Taille réelle ouvre le même diagramme en grand par-dessus la carte, que l’on referme avec son propre bouton, Échap, ou en changeant de vue.",
     ],
     parameters: [
       ["Sources (section)", "Cliquez sur le titre pour replier ou déplier la liste."],
@@ -83,6 +83,8 @@ const topics: HelpTopic[] = [
       ["Modifier / Comparer", "Ouvrir la source dans la vue 3D, ou la comparer à une autre. Les deux arrivent dans des versions ultérieures."],
       ["Retirer", "Retire la source du projet. Annuler la remet."],
       ["Réordonner (⠿)", "Faites glisser une source par sa poignée, ou placez le focus sur la poignée et appuyez sur les flèches haut et bas. L’ordre ne change que l’affichage de la liste."],
+      ["Toutes / curseur de vitesse de vent", "Toutes trace une courbe par vitesse de vent que possède chaque source visible ; le curseur choisit une seule vitesse de vent réel."],
+      ["Taille réelle", "Ouvre le diagramme polaire en grand par-dessus la vue carte. Le refermer, appuyer sur Échap, ou changer de vue y ramène."],
     ],
     related: ["workspace", "polar-3d", "compare"] },
   { id: "map", group: "Vues", title: "La carte du monde",

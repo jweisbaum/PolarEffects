@@ -239,10 +239,23 @@ must report records it drops and why.
 
 ---
 
-### M6 — 2D polar plot
+### M6 — 2D polar plot · **complete**
 
 **Deliverables:** the right-panel polar plot (spec §9.2) with TWS slider,
 source curves, blend placeholder, hover.
+
+Built as specified, with three points settled that the brief left open (D21):
+"All" draws one curve per visible polar source per wind speed that source's
+own grid has (the classic multi-curve diagram), rather than one shared slice;
+curve points are read at each source's own TWA axis (equivalent to a finer
+sweep, since interpolation is piecewise-linear in TWA, but cheaper and exact
+at every known angle); and the Map-stage overlay is a toggle owned by the
+shell (`App.tsx`), opened by the panel's "Full size" button or the
+`overlay:plot` reveal step, closed by its own button, Escape, or switching
+stage. `polar_plot(tws: number | null)` returns curves, the TWS domain,
+`dots` (always empty; the shape is final for M8/M9) and `blend` (always
+`None`; the hook for M14). Tracks are not polar sources, so they never
+contribute a curve, only future dots.
 
 ---
 
@@ -456,6 +469,7 @@ jieter/orc-data MIT), user guide.
 | D18 | Track segment cell statistic defaults to the 90th percentile, minimum 5 samples | Polars describe good sailing; the mean undershoots |
 | D19 | Reanalysis sampling hourly by default, 3-hourly option; the pre-flight dialog preselects 3-hourly when the hourly download would exceed half the chunk-cache limit | Confirmed by M3: a 5-day race hourly is ≈ 1.2 GB and ≈ 40 s cold at 8 requests in flight, and a warm chunk is 3 ms. Hourly resolves wind shifts and tidal streams that 3-hourly smooths. A long race is different: the Vendée Globe hourly would be ≈ 19 GB, about the whole default cache, which is when 3-hourly is the better default |
 | D20 | Current tiers: regional tidal reanalysis → global merged (uo + utide, 2020-11+) → GlobCurrent without tides | Only anonymous sources; tides everywhere from 2020-11 and in NW Europe/IBI since 1993 |
+| D21 | 2D polar plot (M6): "All" draws one curve per visible source per wind speed that source's grid has; curves are read at each source's own TWA points; the full-size view is a Map-stage overlay toggled by the shell, closed by its own button, Escape or a stage switch | Spec §9.2 named the slider's "all" state and the full-size overlay without saying what either draws or how the overlay opens and closes |
 
 ## 6. Settled before coding started
 

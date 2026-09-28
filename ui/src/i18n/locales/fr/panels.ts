@@ -172,6 +172,28 @@ const catalogue: Record<string, string> = {
   "add": "ajouter",
   "Remove ORC polar": "Retirer une polaire ORC",
   "Remove an ORC polar from the project. Undo puts it back.": "Retirer une polaire ORC du projet. Annuler la remet.",
+  // The 2D polar plot (spec.md 9.2).
+  "Show every wind speed a source has, instead of one slice": "Afficher toutes les vitesses de vent qu’une source possède, au lieu d’une seule tranche",
+  "Show every wind speed a source has, instead of one slice.": "Afficher toutes les vitesses de vent qu’une source possède, au lieu d’une seule tranche.",
+  "All wind speeds": "Toutes les vitesses de vent",
+  "All": "Toutes",
+  "Wind speed": "Vitesse du vent",
+  "Wind speed slice": "Tranche de vitesse de vent",
+  "The true wind speed the plot slices at": "La vitesse de vent réel à laquelle le diagramme découpe",
+  "The true wind speed the polar plot slices at.": "La vitesse de vent réel à laquelle le diagramme polaire découpe.",
+  "{tws} kn": "{tws} kn",
+  "Full size": "Taille réelle",
+  "Full-size polar plot": "Diagramme polaire en taille réelle",
+  "Open the polar plot full size over the map": "Ouvrir le diagramme polaire en grand par-dessus la carte",
+  "Open the polar plot full size over the map.": "Ouvrir le diagramme polaire en grand par-dessus la carte.",
+  "Close the full-size polar plot": "Fermer le diagramme polaire en grand",
+  "Close the full-size polar plot and return to the map.": "Fermer le diagramme polaire en grand et revenir à la carte.",
+  "TWA {twa}°, TWS {tws} kn, BSP {bsp} kn": "TWA {twa}°, TWS {tws} kn, BSP {bsp} kn",
+  "No source has data at this wind speed.": "Aucune source n’a de données à cette vitesse de vent.",
+  "all": "tous",
+  "wind speed": "vitesse du vent",
+  "overlay": "recouvrement",
+  "map": "carte",
 };
 
 export default catalogue;
