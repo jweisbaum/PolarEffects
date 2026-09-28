@@ -34,6 +34,14 @@ stop: number | null,
  */
 fallback: boolean,
 /**
+ * For one leg of a race sailed in legs: which, from 1.
+ */
+leg: number | null,
+/**
+ * And how many legs the race has.
+ */
+legs: number | null,
+/**
  * Whether this came from the session's memory rather than a download.
  */
 cached: boolean,

@@ -14,7 +14,6 @@ const catalogue: Record<string, string> = {
   "positions": "positions",
   "YellowBrick import": "Import YellowBrick",
   "Geovoile import": "Import Geovoile",
-  "Import boats from a Geovoile race. Arrives in a later version.": "Importer les bateaux d’une course Geovoile. Arrive dans une version ultérieure.",
   "Blue Water Tracks import": "Import Blue Water Tracks",
   "Import boats from Blue Water Tracks. Arrives in a later version.": "Importer des bateaux depuis Blue Water Tracks. Arrive dans une version ultérieure.",
   "Show track on the map": "Montrer la trace sur la carte",
@@ -398,6 +397,18 @@ const catalogue: Record<string, string> = {
   "Retired": "Abandon",
   "Did not start": "Non partant",
   "Did not finish": "N’a pas fini",
+  "The tracker's data is in a version PolarEffects does not read. The tracker may have changed its format.": "Les données de la balise sont dans une version que PolarEffects ne lit pas. La balise a peut-être changé de format.",
+  "This is an older tracker (Flash, or Geovoile before about 2016), which PolarEffects does not read.": "C’est une ancienne balise (Flash, ou Geovoile d’avant 2016 environ), que PolarEffects ne lit pas.",
+  "Import boats from a Geovoile race (2016 on): paste its viewer address, one leg at a time for a race in legs, and pick boats from the whole fleet.": "Importer des bateaux d’une course Geovoile (depuis 2016) : collez son adresse de visualisation, une étape à la fois pour une course en étapes, et choisissez des bateaux dans toute la flotte.",
+  "leg": "étape",
+  "Choose the leg": "Choisir l’étape",
+  "In the tracker dialog, for a Geovoile race sailed in legs: each leg is its own event; choose another to download it.": "Dans la boîte de la balise, pour une course Geovoile en étapes : chaque étape est un événement à part ; choisissez-en une autre pour la télécharger.",
+  "Leg": "Étape",
+  "This race is sailed in legs; each leg is its own event. Choose another to download it": "Cette course se court en étapes ; chaque étape est un événement à part. Choisissez-en une autre pour la télécharger",
+  "Leg {leg} of {legs}": "Étape {leg} sur {legs}",
+  "Import boats from a Geovoile race: paste its viewer address": "Importer des bateaux d’une course Geovoile : collez son adresse de visualisation",
+  "The race's Geovoile viewer address, such as vendeeglobe.geovoile.com/2016/tracker/; add ?leg=2 for the second leg": "L’adresse de visualisation Geovoile de la course, comme vendeeglobe.geovoile.com/2016/tracker/ ; ajoutez ?leg=2 pour la deuxième étape",
+  "The race's Blue Water Tracks address": "L’adresse Blue Water Tracks de la course",
 };
 
 export default catalogue;

@@ -12,7 +12,7 @@ import { loadBasemap } from "../map/basemap";
 import type { Basemap } from "../map/format";
 import { mapColour } from "../settings/themes";
 import { dateRange, formatBytes } from "./trackImport";
-import { boatStatusText, filterBoats, TRACKER_NAMES, type TrackerId } from "./trackerImport";
+import { addressHint, boatStatusText, filterBoats, legAddress, NO_RETRY, TRACKER_NAMES, type TrackerId } from "./trackerImport";
 import { coastPath, frameOf, linePath, lodFor, VIEW_H, VIEW_W } from "./trackerPreview";
 
 type Phase =
@@ -72,11 +72,11 @@ export default function TrackerImportDialog({ tracker, onDone, onCancel }: {
     return () => { void pending.then((off) => off?.()); };
   }, [downloading]);
 
-  const download = async (refresh: boolean) => {
-    if (url.trim() === "") return;
+  const download = async (refresh: boolean, address = url) => {
+    if (address.trim() === "") return;
     setPhase({ kind: "downloading", progress: null });
     try {
-      const event = await api.trackerEvent(tracker, url.trim(), refresh);
+      const event = await api.trackerEvent(tracker, address.trim(), refresh);
       if (!live.current) return;
       setChosen(new Set());
       setQuery("");
@@ -86,7 +86,7 @@ export default function TrackerImportDialog({ tracker, onDone, onCancel }: {
       const kind = (error as { kind?: string }).kind ?? "";
       if (kind === "cancelled") { setPhase({ kind: "address" }); return; }
       const shown = describeError(error);
-      setPhase({ kind: "failed", text: shown.text, detail: shown.detail, retry: kind !== "tracker-address" });
+      setPhase({ kind: "failed", text: shown.text, detail: shown.detail, retry: !NO_RETRY.has(kind) });
     }
   };
 
@@ -102,10 +102,19 @@ export default function TrackerImportDialog({ tracker, onDone, onCancel }: {
     }
   };
 
+  /** Another leg of the event shown: its address, downloaded (or recalled) at once. */
+  const openLeg = (event: TrackerEventView, leg: number) => {
+    const address = legAddress(event.url, leg);
+    setUrl(address);
+    void download(false, address);
+  };
+
   const title = t("Import from {tracker}", { tracker: TRACKER_NAMES[tracker] });
   const event = phase.kind === "event" ? phase.event : null;
+  // A stray click on the backdrop must not throw away a download or an
+  // import under way; Cancel download and Escape still end them.
   return (
-    <div className="modal-backdrop" onClick={close}>
+    <div className="modal-backdrop" onClick={() => { if (!downloading && !busy) close(); }}>
       <div className="modal tracker-import" role="dialog" aria-label={title} onClick={(e) => e.stopPropagation()}>
         <h2>{title}</h2>
         <form className="tracker-address" onSubmit={(e) => { e.preventDefault(); void download(false); }}>
@@ -113,7 +122,7 @@ export default function TrackerImportDialog({ tracker, onDone, onCancel }: {
             {t("Event address")}
             <input data-feature="tracker-import:url" value={url} autoFocus disabled={downloading}
               placeholder={t("Paste the race's tracker link or key")}
-              title={t("The event's address, such as a yb.tl link, or its race key")}
+              title={addressHint(tracker)}
               onChange={(e) => setUrl(e.target.value)} />
           </label>
           <button type="submit" data-feature="tracker-import:open" disabled={downloading || url.trim() === ""}
@@ -152,7 +161,7 @@ export default function TrackerImportDialog({ tracker, onDone, onCancel }: {
         )}
         {event && (
           <EventView event={event} query={query} onQuery={setQuery} chosen={chosen} onChosen={setChosen}
-            onRefresh={() => void download(true)} />
+            onRefresh={() => void download(true, event.url)} onLeg={(leg) => openLeg(event, leg)} />
         )}
         <div className="modal-actions">
           <button onClick={close} title={t("Import nothing")}>{t("Cancel")}</button>
@@ -169,13 +178,14 @@ export default function TrackerImportDialog({ tracker, onDone, onCancel }: {
   );
 }
 
-function EventView({ event, query, onQuery, chosen, onChosen, onRefresh }: {
+function EventView({ event, query, onQuery, chosen, onChosen, onRefresh, onLeg }: {
   event: TrackerEventView;
   query: string;
   onQuery: (query: string) => void;
   chosen: Set<string>;
   onChosen: (chosen: Set<string>) => void;
   onRefresh: () => void;
+  onLeg: (leg: number) => void;
 }) {
   const t = useT();
   const shown = useMemo(() => filterBoats(event.boats, query), [event.boats, query]);
@@ -199,6 +209,18 @@ function EventView({ event, query, onQuery, chosen, onChosen, onRefresh }: {
         <strong>{event.title || event.key}</strong>
         <span className="muted">{dateRange(event.start, event.stop)}</span>
         <span className="muted">{t("{count} boats", { count: event.boats.length })}</span>
+        {event.leg !== null && event.legs !== null && (
+          <label className="tracker-leg">
+            {t("Leg")}
+            <select data-feature="tracker-import:leg" value={event.leg}
+              title={t("This race is sailed in legs; each leg is its own event. Choose another to download it")}
+              onChange={(e) => onLeg(Number(e.target.value))}>
+              {Array.from({ length: event.legs }, (_, k) => k + 1).map((n) => (
+                <option key={n} value={n}>{t("Leg {leg} of {legs}", { leg: n, legs: event.legs ?? n })}</option>
+              ))}
+            </select>
+          </label>
+        )}
         {event.cached && (
           <button className="small" data-feature="tracker-import:refresh" onClick={onRefresh}
             title={t("Kept from earlier in this session; download it again for newer positions")}>

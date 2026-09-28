@@ -14,7 +14,6 @@ const catalogue: Record<string, string> = {
   "positions": "Positionen",
   "YellowBrick import": "YellowBrick-Import",
   "Geovoile import": "Geovoile-Import",
-  "Import boats from a Geovoile race. Arrives in a later version.": "Boote einer Geovoile-Regatta importieren. Folgt in einer späteren Version.",
   "Blue Water Tracks import": "Blue-Water-Tracks-Import",
   "Import boats from Blue Water Tracks. Arrives in a later version.": "Boote aus Blue Water Tracks importieren. Folgt in einer späteren Version.",
   "Show track on the map": "Track auf der Karte zeigen",
@@ -398,6 +397,18 @@ const catalogue: Record<string, string> = {
   "Retired": "Aufgegeben",
   "Did not start": "Nicht gestartet",
   "Did not finish": "Nicht beendet",
+  "The tracker's data is in a version PolarEffects does not read. The tracker may have changed its format.": "Die Daten des Trackers liegen in einer Version vor, die PolarEffects nicht liest. Der Tracker hat vielleicht sein Format geändert.",
+  "This is an older tracker (Flash, or Geovoile before about 2016), which PolarEffects does not read.": "Das ist ein älterer Tracker (Flash oder Geovoile vor etwa 2016), den PolarEffects nicht liest.",
+  "Import boats from a Geovoile race (2016 on): paste its viewer address, one leg at a time for a race in legs, and pick boats from the whole fleet.": "Boote einer Geovoile-Regatta (ab 2016) importieren: Viewer-Adresse einfügen, bei einer Regatta in Etappen Etappe für Etappe, und Boote aus der ganzen Flotte wählen.",
+  "leg": "Etappe",
+  "Choose the leg": "Etappe wählen",
+  "In the tracker dialog, for a Geovoile race sailed in legs: each leg is its own event; choose another to download it.": "Im Tracker-Dialog, für eine Geovoile-Regatta in Etappen: Jede Etappe ist eine eigene Veranstaltung; wählen Sie eine andere, um sie herunterzuladen.",
+  "Leg": "Etappe",
+  "This race is sailed in legs; each leg is its own event. Choose another to download it": "Diese Regatta wird in Etappen gesegelt; jede Etappe ist eine eigene Veranstaltung. Wählen Sie eine andere, um sie herunterzuladen",
+  "Leg {leg} of {legs}": "Etappe {leg} von {legs}",
+  "Import boats from a Geovoile race: paste its viewer address": "Boote einer Geovoile-Regatta importieren: Viewer-Adresse einfügen",
+  "The race's Geovoile viewer address, such as vendeeglobe.geovoile.com/2016/tracker/; add ?leg=2 for the second leg": "Die Geovoile-Viewer-Adresse der Regatta, etwa vendeeglobe.geovoile.com/2016/tracker/; ?leg=2 anhängen für die zweite Etappe",
+  "The race's Blue Water Tracks address": "Die Blue-Water-Tracks-Adresse der Regatta",
 };
 
 export default catalogue;

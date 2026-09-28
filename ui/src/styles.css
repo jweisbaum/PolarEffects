@@ -815,6 +815,7 @@ button.source-label:hover { border-color: var(--border); background: var(--raise
 .tracker-progress p { margin: 0; }
 .tracker-import .import-failures { display: flex; gap: 8px; align-items: center; }
 .tracker-event-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.tracker-leg { display: inline-flex; gap: 6px; align-items: baseline; }
 .tracker-preview { width: 100%; max-height: 240px; border: 1px solid var(--border); border-radius: 6px; }
 .tracker-preview-line { fill: none; stroke: var(--muted); stroke-width: 0.8; opacity: 0.55; }
 .tracker-preview-line.chosen { stroke: var(--accent); stroke-width: 2; opacity: 1; }

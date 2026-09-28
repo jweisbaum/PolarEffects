@@ -563,11 +563,17 @@ In detail (M10):
   even while the tracker has not answered; nothing is kept from a cancelled
   or failed download. Requests follow §7.7's rules: a 5xx or 429 answer, a
   timeout or a dropped connection is retried three times (0.5, 1, 2 s),
-  anything else fails at once, and a body over 256 MB is refused. A failure
+  anything else fails at once, and a body over 256 MB is refused. A
+  redirect is followed only to the same host or, over HTTPS, to another
+  allow-listed tracker host (invariant 4); any other is a failure. The
+  fraction only grows: a tracker with a fallback counts the fallback's
+  step from the start and marks it done when it is not needed. A failure
   is shown in the dialog in the interface language with Retry (which
   downloads again); an address the tracker does not serve has no Retry.
-- The session keeps the last four events downloaded. Reopening one says it
-  was kept and offers Download again for newer positions.
+- The session keeps the events downloaded, the most recent first, up to
+  two million positions in all (about 110 MB; the Fastnet 2025 is 714,380
+  positions, about 40 MB); the latest is always kept. Reopening one says
+  it was kept and offers Download again for newer positions.
 - Import adds one track source per ticked boat, labelled with the boat's
   name, as one undo entry, and opens the environment fetch pre-flight as a
   file import does (§7.5). The track's origin records the tracker, the
@@ -627,6 +633,54 @@ In detail (M10):
   are used as `cog`/`sog` when non-zero.
 - Only the modern `tracker/` generation (about 2016 on) is supported. Flash
   (`.hwz`) and 2012–2015 HTML trackers are refused with a clear message.
+
+In detail (M11):
+
+- The address is `https://<sub>.geovoile.com/<root>/tracker/` or `/viewer/`
+  (scheme optional, `tracker/` optional, a trailing page name ignored), the
+  root one or more plain path segments, and `?leg=<n>` (1–99) choosing a
+  leg. The host is compared exactly (a subdomain of `geovoile.com`, no
+  user name, no port), so look-alikes are refused before any request. The
+  event's key is `<host><root>[?leg=<n>]` and its canonical address the
+  viewer page, `https://<host><root>tracker/[?leg=<n>]`.
+- One download is five requests: the viewer page (with `?leg=<n>` when
+  asked), the versions, the config, the tracks and the reports. The page
+  gives `rooturl`, `resourcesurl`, `versionsurl`, `nblegs`, `numleg` and the
+  seeds, which may be spread over several `data:image/png` sources (Route
+  du Rhum 2018). Every resource address is resolved against the page and
+  must be HTTPS on a Geovoile host, so a `resourcesurl` or `versionsurl`
+  pointing elsewhere is refused before it is requested. The versions file
+  is read as the viewer reads it (`…/versions/v<now rounded to 5 s>`, or
+  `versionsurl`); a version it does not name, or an empty versions file
+  (Route du Rhum 2018 and 2022), is 0 — the number is only a cache-buster.
+- A race in legs: a pasted address without a leg opens the leg the page
+  shows (its current one), and the event records that leg. The dialog then
+  offers every leg (Leg n of N); choosing one downloads it. A leg beyond
+  `nblegs` is "no public event". The title is the config's name, with
+  `(n/N)` for a leg.
+- The config gives each boat's name, sail number and class (`boatclass`,
+  shown as its division) and each class's run, whose start is the boat's
+  start (else the config's `date`). The model is not given.
+- The reports (`columns` then `history[].lines`, fields found by column
+  name because their order differs between editions) give each boat's
+  latest status (RAC and STA racing, ARV finished, RET retired; others as
+  written), its official arrival (`arrivals`) or the time it was hidden
+  (`hidden`), which ends its time window (else the event's end, the last
+  position of any boat), and per report its heading and speed. Each report
+  describes the fix nearest to it within 60 s; a fix takes the nearest
+  report, and its heading and speed are used as `cog` and `sog` when
+  non-zero (heading 0–360, speed under 100 kn). A reports file that does
+  not load or decode leaves these to be derived; a cancel or a tracker
+  that keeps failing still ends the download.
+- Refusals: a page with no `rooturl` that is a web page is an older
+  tracker ("Flash, or Geovoile before about 2016"), as is an address
+  naming a `.hwz`/`.swf` file; a 404 or a page that is not HTML (the
+  Vendée Globe 2024 answers "Not available") is "no public event"; a
+  resource that does not decode with the page's seeds to the expected XML
+  or JSON, or whose first or any fix is not a plausible time (2000–2100)
+  and place, is "unsupported Geovoile version". None of these offers Retry.
+- The viewer's `live` resource (the newest positions of a race under way)
+  is not read: the tracks file is what a finished race needs.
 
 **Blue Water Tracks** (host `api.bluewatertracks.com`):
 
@@ -843,7 +897,9 @@ Filtered-out samples stay in the project and appear dimmed in the plots when
 
 Scraping, reanalysis fetches and GRIB exports are **jobs**: they run on a
 worker pool, show progress in the status bar and the track list, and can be
-cancelled. A cancelled or failed fetch keeps whatever samples completed
+cancelled. The one exception is a tracker event's download, whose progress
+and Cancel show in the tracker dialog that started it (§7.2), since nothing
+else can go on in the dialog meanwhile. A cancelled or failed fetch keeps whatever samples completed
 (status "partial") and can be resumed with Refetch. Jobs for tracks from the
 same event share the chunk cache, so the second boat of a race costs almost
 nothing.
@@ -876,7 +932,8 @@ The environment fetch in detail (M9):
 - Reads: a transient failure (a 5xx or 429 answer, a timeout, a dropped
   connection) is retried three times, pausing 0.5, 1 and 2 s; anything else
   fails at once. A retry pause ends at once on Cancel. A body over 64 MB is
-  refused. A cached chunk that arrived but fails to decode is removed from
+  refused. A redirect is followed only to the same host or, over HTTPS, to
+  another archive host (invariant 4). A cached chunk that arrived but fails to decode is removed from
   the cache and fetched once more; a failed read is not. Opened archives
   are kept for the session, so only the first track pays their metadata
   requests.

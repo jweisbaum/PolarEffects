@@ -37,6 +37,8 @@ function lineFor(kind: string): string | null {
     case "tracker-unavailable": return t("The tracker is not answering right now. Try again in a moment.");
     case "tracker-no-event": return t("The tracker has no public event at this address.");
     case "tracker-decode": return t("The tracker's data could not be read.");
+    case "tracker-unsupported": return t("The tracker's data is in a version PolarEffects does not read. The tracker may have changed its format.");
+    case "tracker-legacy": return t("This is an older tracker (Flash, or Geovoile before about 2016), which PolarEffects does not read.");
     case "tracker-network": return t("The tracker could not be reached or refused the request.");
     case "cancelled": return t("Cancelled.");
     default: return null;

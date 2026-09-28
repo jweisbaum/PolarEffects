@@ -15,6 +15,24 @@ export const TRACKER_NAMES: Record<TrackerId, string> = {
   bluewater: "Blue Water Tracks",
 };
 
+/** Error kinds a Retry cannot change: the address, or a format this build does not read. */
+export const NO_RETRY = new Set(["tracker-address", "tracker-legacy", "tracker-unsupported"]);
+
+/** What the address box's tooltip says for each tracker. */
+export function addressHint(tracker: TrackerId): string {
+  switch (tracker) {
+    case "yellowbrick": return t("The event's address, such as a yb.tl link, or its race key");
+    case "geovoile": return t("The race's Geovoile viewer address, such as vendeeglobe.geovoile.com/2016/tracker/; add ?leg=2 for the second leg");
+    case "bluewater": return t("The race's Blue Water Tracks address");
+  }
+}
+
+/** The address of another leg of a race in legs: the event's address with its `leg` set. */
+export function legAddress(url: string, leg: number): string {
+  const [base] = url.split("?");
+  return `${base}?leg=${leg}`;
+}
+
 /**
  * The boats whose name, sail number, model or division contains every word
  * of the query, whatever the case and accents; all of them for an empty one.

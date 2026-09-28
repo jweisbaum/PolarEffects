@@ -24,8 +24,8 @@ import { dateRange, describeImportLine, describeTrackFailure, envStatusText, fro
 
 /**
  * The Tracks section of the left navigation (spec.md 7.1): the tracker
- * buttons (YellowBrick opens the tracker dialog, spec.md 7.2; Geovoile and
- * Blue Water arrive in later versions), File… for GeoJSON and CSV, the result of the last import, and every track with its colour, boat,
+ * buttons (YellowBrick and Geovoile open the tracker dialog, spec.md 7.2;
+ * Blue Water arrives in a later version), File… for GeoJSON and CSV, the result of the last import, and every track with its colour, boat,
  * event, dates, samples used, environment status and actions. Each track
  * unfolds to its sample filters and heading and speed derivation (spec.md
  * 7.4, 7.6), every change one undo.
@@ -81,7 +81,10 @@ export default function Tracks({ project, onProject }: {
           title={t("Import boats from a YellowBrick race: paste its link or race key")}>
           {t("YellowBrick…")}
         </button>
-        <button data-feature="tracks:geovoile" disabled title={later}>{t("Geovoile…")}</button>
+        <button data-feature="tracks:geovoile" onClick={() => setTracker("geovoile")}
+          title={t("Import boats from a Geovoile race: paste its viewer address")}>
+          {t("Geovoile…")}
+        </button>
         <button data-feature="tracks:bluewater" disabled title={later}>{t("Blue Water…")}</button>
         <button data-feature="tracks:import-file" onClick={() => void chooseFiles()}
           title={t("Import GeoJSON and CSV tracks; several files at once")}>

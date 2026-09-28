@@ -463,7 +463,7 @@ Appendix B's note stands.
 
 ---
 
-### M11 — Geovoile
+### M11 — Geovoile · **complete**
 
 **Deliverables:** `pe-trackers::geovoile`: viewer HTML parsing (rooturl,
 resourcesurl, seeds), versions file (JS object literal parser), hwx decoder,
@@ -476,6 +476,45 @@ to the boat count and first/last fix recorded by hand from the live viewer.
 **Risks:** Geovoile changes its format between editions. The decoder must
 fail with "unsupported Geovoile version" rather than produce garbage: check
 that the output parses and the first fix is a plausible time and position.
+
+*Done 2026-09-28.* The `Geovoile` client resolves a viewer address with no
+network (exact `*.geovoile.com` host, no user name or port, root segments,
+`?leg=<n>`), then reads the page, versions, config, tracks and reports
+(five progress steps). Every resource address from the page
+(`resourcesurl`, `versionsurl`) is resolved against it and must be HTTPS
+on a Geovoile host before it is requested. Reports are parsed by column
+name (the 2016 and 2025 orders differ); each gives its heading and speed
+(when non-zero) to the fix nearest it within 60 s, the latest status, and
+the arrival or hidden time as the boat's finish. The config gives each
+boat's class (the division) and its run's start. Legacy pages (no
+`rooturl`: 2012–2015 HTML, Flash) are a new `TrackerError::Legacy`, shown
+"older tracker" with no Retry; a format change stays "unsupported Geovoile
+version" (its own error kind now, also without Retry). Both network crates
+build their clients with a redirect policy: same host, or HTTPS to an
+allow-listed host (tests end to end through local servers). M10 carries:
+the tracker dialog ignores backdrop clicks while downloading or importing;
+YellowBrick counts its KML step from the start, so progress never goes
+back (asserted in the fixture and pe-app tests); the session keeps events
+up to 2,000,000 positions rather than four events; spec §7.7 says the
+tracker download's progress is in its dialog. The dialog offers a leg
+picker for a race in legs.
+
+*Fixtures and acceptance* (2026-09-28): five sites of four editions
+decode to the boat count, total fixes and the first configured boat's
+first and last fix — Vendée Globe 2016 (29 boats, 107,459 fixes; Appendix
+A's seeds, its page answers 500), Route du Rhum 2018 (26, 28,038; seeds
+split over two images, empty versions file), New York Vendée 2024 (28,
+64,453), Solitaire du Figaro 2024 leg 1 of 3 (45, 21,990) and 24 Heures
+Ultim 2025 (14, 8013). The references are the independent Python decoder's,
+checked against each race's facts (start ports and times, official
+arrivals in the reports: every arrived boat's last fix is after its
+arrival, the tracks running on into port). They were not read off the
+live viewers by eye: no browser in this environment. The Route du Rhum
+2014 page is recorded as the refused generation. *Live*
+(`PE_TEST_LIVE=1`): New York Vendée 2024 28 boats, 64,453 fixes (10,223
+with official speed) in 0.7 s; Solitaire 2024 leg 1 45 boats, 21,990 fixes
+in 0.6 s. The Vendée Globe 2024 tracker answers "Not available" at
+`vendeeglobe.geovoile.com/2024/tracker/` (refused as no public event).
 
 ---
 
@@ -636,11 +675,14 @@ The user accepted the proposals below on 2026-09-27 ("all good").
 ## Appendix A — Geovoile hwx decoding
 
 Verified on 24hultim 2025 and Vendée Globe 2016 (2026-09-27), whose
-resources are committed fixtures. A 2024 site was verified during research
-only; a committed 2024 fixture is pending and must be recorded before M11.
+resources are committed fixtures, and in M11 (2026-09-28) on Route du Rhum
+2018, New York Vendée 2024 and Solitaire du Figaro 2024 leg 1, also
+committed.
 
 - The seeds are four 24-bit constants in the first base64 `/C/…` segment of a
-  `data:image/png` source in the viewer HTML. They differ per site (2022–2025
+  `data:image/png` source in the viewer HTML (the segments may be spread
+  over several such sources: Route du Rhum 2018 has the constants in one
+  and the keystream in the next). They differ per site (2022–2025
   sites: `0x7BC495, 0x4557FA, 0xD56AAF, 0xFF8040`; VG2016:
   `0x88FE88, 0xFE88AA, 0xEECC80, 0xA0A0F0`), so always parse them.
 - Keystream (all arithmetic masked to 24 bits):

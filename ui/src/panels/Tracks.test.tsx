@@ -20,6 +20,7 @@ class Rejection { constructor(readonly error: unknown) {} }
 const record = (name: string) => (...args: unknown[]) => {
   calls.push([name, args]);
   const response = responses[name];
+  if (response instanceof Promise) return response;
   return response instanceof Rejection ? Promise.reject(response.error) : Promise.resolve(response);
 };
 const responses: Record<string, unknown> = {};
@@ -93,9 +94,10 @@ it("lists a track with its boat, event, dates, samples used and environment stat
   expect(text).toContain("Environment: not fetched");
   await click(q('[data-feature="tracks:show-on-map"]'));
   expect(focus).toHaveBeenCalledWith({ kind: "track", sourceId: 5 });
-  // YellowBrick imports; the other trackers are there and say they come later.
+  // YellowBrick and Geovoile import; Blue Water is there and says it comes later.
   expect((q('[data-feature="tracks:yellowbrick"]') as HTMLButtonElement).disabled).toBe(false);
-  expect((q('[data-feature="tracks:geovoile"]') as HTMLButtonElement).disabled).toBe(true);
+  expect((q('[data-feature="tracks:geovoile"]') as HTMLButtonElement).disabled).toBe(false);
+  expect((q('[data-feature="tracks:bluewater"]') as HTMLButtonElement).disabled).toBe(true);
 });
 
 it("edits the filters and the derivation through their commands", async () => {
@@ -263,7 +265,7 @@ const boat = (id: string, name: string, sail: string, division: string, fixes: n
 });
 const EVENT = {
   tracker: "yellowbrick", key: "rmsr2024", url: "yb.tl/rmsr2024", title: "Rolex Middle Sea Race 2024",
-  start: 1_729_209_600, stop: 1_729_897_200, fallback: false, cached: false,
+  start: 1_729_209_600, stop: 1_729_897_200, fallback: false, leg: null, legs: null, cached: false,
   boats: [boat("1", "12 NACIRA 69", "ITA17498", "IRC Class 2", 1689), boat("2", "Afazik Impulse", "FRA 9967", "ORC 3", 1692),
     boat("4", "Alquimia", "ESP 1", "IRC Class 4", 0)],
 };
@@ -332,4 +334,71 @@ it("says a tracker is not answering and retries", async () => {
   await settle();
   expect(calls.filter(([n]) => n === "trackerEvent").at(-1)?.[1]).toEqual(["yellowbrick", "nosuchrace", true]);
   expect(q("[role=dialog]")!.textContent).toContain("Rolex Middle Sea Race 2024");
+});
+
+const typeAddress = async (text: string) => {
+  const url = q('[data-feature="tracker-import:url"]') as HTMLInputElement;
+  await act(async () => {
+    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    set.call(url, text);
+    url.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+};
+
+it("offers the other legs of a Geovoile race in legs and downloads the one chosen", async () => {
+  const leg = (n: number) => ({
+    ...EVENT, tracker: "geovoile", key: `lasolitaire.geovoile.com/2024/?leg=${n}`,
+    url: `lasolitaire.geovoile.com/2024/tracker/?leg=${n}`, title: `Solitaire du Figaro (${n}/3)`, leg: n, legs: 3,
+  });
+  responses.trackerEvent = leg(1);
+  await act(async () => root.render(<Tracks project={project([])} onProject={() => undefined} />));
+  await click(q('[data-feature="tracks:geovoile"]'));
+  await typeAddress("lasolitaire.geovoile.com/2024/tracker/?leg=1");
+  await click(q('[data-feature="tracker-import:open"]'));
+  await settle();
+  const select = q('[data-feature="tracker-import:leg"]') as HTMLSelectElement;
+  expect([...select.options].map((o) => o.textContent)).toEqual(["Leg 1 of 3", "Leg 2 of 3", "Leg 3 of 3"]);
+  expect(select.value).toBe("1");
+  responses.trackerEvent = leg(2);
+  await act(async () => {
+    select.value = "2";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await settle();
+  expect(calls.filter(([n]) => n === "trackerEvent").at(-1)?.[1])
+    .toEqual(["geovoile", "lasolitaire.geovoile.com/2024/tracker/?leg=2", false]);
+  expect(q("[role=dialog]")!.textContent).toContain("Solitaire du Figaro (2/3)");
+  // A race in one leg has no leg choice.
+  responses.trackerEvent = EVENT;
+  await typeAddress("yb.tl/rmsr2024");
+  await click(q('[data-feature="tracker-import:open"]'));
+  await settle();
+  expect(q('[data-feature="tracker-import:leg"]')).toBeNull();
+});
+
+it("keeps the dialog open on a backdrop click while an event downloads", async () => {
+  responses.trackerEvent = new Promise(() => undefined);
+  await act(async () => root.render(<Tracks project={project([])} onProject={() => undefined} />));
+  await click(q('[data-feature="tracks:geovoile"]'));
+  await typeAddress("vendeeglobe.geovoile.com/2016/tracker/");
+  await click(q('[data-feature="tracker-import:open"]'));
+  await click(q(".modal-backdrop"));
+  expect(q("[role=dialog]")).not.toBeNull();
+  expect(calls.some(([n]) => n === "cancelTrackerEvent")).toBe(false);
+  // Cancel download still ends it.
+  expect(q('[data-feature="tracker-import:cancel-download"]')).not.toBeNull();
+});
+
+it("refuses an older Geovoile tracker clearly, without a Retry", async () => {
+  responses.trackerEvent = new Rejection({ kind: "tracker-legacy", message: "this is an older Geovoile tracker" });
+  await act(async () => root.render(<Tracks project={project([])} onProject={() => undefined} />));
+  await click(q('[data-feature="tracks:geovoile"]'));
+  await typeAddress("routedurhum.geovoile.com/2014/");
+  await click(q('[data-feature="tracker-import:open"]'));
+  await settle();
+  expect(q("[role=alert]")!.textContent).toContain("This is an older tracker (Flash, or Geovoile before about 2016)");
+  expect(q('[data-feature="tracker-import:retry"]')).toBeNull();
+  // Once the dialog is idle again, a backdrop click closes it.
+  await click(q(".modal-backdrop"));
+  expect(q("[role=dialog]")).toBeNull();
 });

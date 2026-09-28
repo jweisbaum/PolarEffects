@@ -175,7 +175,9 @@ with an undo inverse test. Run `npm run bindings`.
 through the shared `Fetcher`, whose boats and fixes the dialog then lists),
 and a line in `event::client`. The dialog, session cache and import in
 `pe-app/src/trackers.rs` and `TrackerImportDialog.tsx` are shared. Add its hosts to the `pe-trackers` allow-list in
-`tools/check-offline.sh`. Decoders get fixture tests from a recorded response
+`tools/check-offline.sh` and to `net::allowed_host` (which also bounds
+redirects); any address taken from a response is checked against it before
+it is requested. Decoders get fixture tests from a recorded response
 in `crates/pe-trackers/tests/fixtures/`. No live request in the default suite.
 
 **Adding a reanalysis variable.** Add it to `pe-env`'s variable table with
@@ -206,7 +208,9 @@ and, in CI, ecCodes.
 - Blosc is decoded by our own pure-Rust decoder over `lz4_flex`; never pull
   `blosc-src` or any other C library.
 - Geovoile hwx seeds differ per site. Parse them from the viewer HTML; never
-  hard-code one set.
+  hard-code one set. They may be spread over several `data:image/png`
+  sources (Route du Rhum 2018), and some sites answer an empty versions
+  file (a version is only a cache-buster; 0 serves).
 - The ARCO-ERA5 time axis is preallocated past today. Coverage comes from
   the root `.zattrs` (`valid_time_start`, `valid_time_stop`,
   `valid_time_stop_era5t`), and a 404 chunk means missing, not an error.

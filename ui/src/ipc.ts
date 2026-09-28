@@ -204,7 +204,8 @@ export const api = {
    * Resolves a pasted event address and downloads every boat's full track,
    * or recalls the event from this session unless `refresh`. Fails with
    * kind "tracker-address", "tracker-unavailable", "tracker-no-event",
-   * "tracker-decode", "tracker-network" or "cancelled".
+   * "tracker-decode", "tracker-unsupported", "tracker-legacy",
+   * "tracker-network" or "cancelled".
    */
   trackerEvent: (tracker: "yellowbrick" | "geovoile" | "bluewater", url: string, refresh = false) =>
     call<TrackerEventView>("tracker_event", { tracker, url, refresh }),
