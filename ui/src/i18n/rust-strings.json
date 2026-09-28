@@ -10,5 +10,7 @@
   "Reorder sources",
   "Import polar file",
   "Import polar files",
-  "Add ORC polar"
+  "Add ORC polar",
+  "Exclude polar nodes",
+  "Include polar nodes"
 ]

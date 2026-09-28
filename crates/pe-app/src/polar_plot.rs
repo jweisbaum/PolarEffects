@@ -10,7 +10,7 @@
 //! is a hook returning `None` until the blend itself lands (M14) — nothing
 //! here fabricates one.
 
-use pe_core::source::{Source, SourceKind};
+use pe_core::source::Source;
 use pe_polar::Polar;
 use serde::Serialize;
 use ts_rs::TS;
@@ -88,11 +88,7 @@ pub struct PolarPlotResult {
 /// a polar source (spec.md 9.2: "every visible polar source"); its samples
 /// are dots, not curves.
 fn source_grid(source: &Source) -> Option<Polar> {
-    match &source.kind {
-        SourceKind::Orc { record } => Some(pe_polar::vpp_to_polar(&record.vpp)),
-        SourceKind::PolarFile { polar, .. } => Some(polar.clone()),
-        SourceKind::Track { .. } => None,
-    }
+    pe_polar::source_polar(source)
 }
 
 /// One curve of `grid` at `tws`, read at every one of the grid's own TWA
@@ -181,6 +177,7 @@ pub fn plot(state: &AppState, tws: Option<f64>) -> Result<PolarPlotResult> {
 #[cfg(test)]
 mod tests {
     use pe_core::polar::{PolarFileFormat, PolarGrid};
+    use pe_core::source::SourceKind;
     use pe_core::{Colour, Command, SourceId};
 
     use super::*;

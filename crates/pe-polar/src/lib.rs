@@ -15,6 +15,7 @@
 pub mod format;
 pub mod grid;
 pub mod orc;
+pub mod source;
 
 mod build;
 mod expedition;
@@ -24,6 +25,7 @@ pub use format::{PolarError, Reason, detect, read, read_as, write};
 pub use grid::{cell_count, fold_twa, interpolate, resample};
 pub use orc::vpp_to_polar;
 pub use pe_core::polar::{PolarFileFormat, PolarGrid as Polar};
+pub use source::{blend_input, source_polar};
 
 /// The fastest a boat or the wind may be in an imported polar, knots
 /// (spec.md 6). Anything faster is a format error, not a polar.

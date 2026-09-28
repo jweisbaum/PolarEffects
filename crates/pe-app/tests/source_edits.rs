@@ -227,6 +227,15 @@ fn every_history_label_is_listed_for_translation() {
             after: String::new(),
         },
         Command::MoveSource { from: 0, to: 1 },
+        // A batch of exclusions over several sources reuses these labels.
+        Command::ExcludeCells {
+            source: id,
+            cells: Vec::new(),
+        },
+        Command::IncludeCells {
+            source: id,
+            cells: Vec::new(),
+        },
     ];
     let mut labels: Vec<String> = commands.iter().map(Command::label).collect();
     // Batches carry their own label; these are every one Rust builds.

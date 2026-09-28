@@ -5,6 +5,8 @@
 //! filters — is stored beside it, and removing every overlay gives the source
 //! back exactly (invariant 1).
 
+use std::cmp::Ordering;
+
 use serde::{Deserialize, Serialize};
 
 use crate::canonical;
@@ -131,6 +133,7 @@ impl Source {
     /// Checks the source's own rules.
     pub fn validate(&self) -> Result<()> {
         validate_weight(self.weight)?;
+        validate_cells(&self.overlay.excluded_cells, &self.label)?;
         match &self.kind {
             SourceKind::Orc { record } => {
                 let vpp = &record.vpp;
@@ -168,6 +171,24 @@ pub fn validate_weight(weight: f64) -> Result<()> {
             "weight {weight} is outside 0..={MAX_WEIGHT}"
         )))
     }
+}
+
+/// Checks an `excluded_cells` list: every cell on the axes' ranges, and the
+/// list strictly in [`CellRef::order`]. The commands that write it keep it
+/// that way, which is what makes their undo exact (spec.md 4.6).
+pub fn validate_cells(cells: &[CellRef], label: &str) -> Result<()> {
+    for cell in cells {
+        cell.validate()?;
+    }
+    if cells
+        .windows(2)
+        .any(|pair| pair[0].order(&pair[1]) != Ordering::Less)
+    {
+        return Err(CoreError::Invalid(format!(
+            "the excluded polar nodes of {label} are not in order, or one is listed twice"
+        )));
+    }
+    Ok(())
 }
 
 /// What a source is.
@@ -221,6 +242,15 @@ pub struct Overlay {
 }
 
 impl Overlay {
+    /// Whether the polar node at (`twa`, `tws`) is excluded from the blend
+    /// (spec.md 10.3).
+    pub fn is_cell_excluded(&self, twa: f64, tws: f64) -> bool {
+        let probe = CellRef { twa, tws };
+        self.excluded_cells
+            .binary_search_by(|cell| cell.order(&probe))
+            .is_ok()
+    }
+
     /// Whether the overlay changes nothing.
     pub fn is_empty(&self) -> bool {
         self.cell_overrides.is_empty()
@@ -253,6 +283,31 @@ pub struct CellRef {
     /// TWS, knots.
     #[serde(with = "canonical::knots_field")]
     pub tws: f64,
+}
+
+impl CellRef {
+    /// The order an overlay keeps its cells in: by TWA, then by TWS.
+    pub fn order(&self, other: &Self) -> Ordering {
+        self.twa
+            .total_cmp(&other.twa)
+            .then(self.tws.total_cmp(&other.tws))
+    }
+
+    /// Checks the cell is on the polar's axes' ranges.
+    pub fn validate(&self) -> Result<()> {
+        if self.twa.is_finite()
+            && (0.0..=180.0).contains(&self.twa)
+            && self.tws.is_finite()
+            && self.tws >= 0.0
+        {
+            Ok(())
+        } else {
+            Err(CoreError::Invalid(format!(
+                "({}°, {} kn) is not a polar node",
+                self.twa, self.tws
+            )))
+        }
+    }
 }
 
 /// A closed range; either end may be open.

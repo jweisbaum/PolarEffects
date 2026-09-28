@@ -13,6 +13,7 @@ use pe_app::error::AppErrorPayload;
 use pe_app::orc::{OrcCatalogueInfo, OrcFilters, OrcHit, OrcSearchResult, OrcThumbCurve};
 use pe_app::polar_files::{PolarImportFailure, PolarImportResult};
 use pe_app::polar_plot::{PolarCurve, PolarCurvePoint, PolarPlotResult, PolarSampleDot};
+use pe_app::polar3d::PolarNodeRef;
 use pe_app::projects::{
     BoatInput, OrcSourceSummary, PolarFileSummary, ProjectSummary, RecentProject, SourceSummary,
 };
@@ -43,6 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     PolarCurve::export_all(&cfg)?;
     PolarSampleDot::export_all(&cfg)?;
     PolarPlotResult::export_all(&cfg)?;
+    PolarNodeRef::export_all(&cfg)?;
     OrcSourceSummary::export_all(&cfg)?;
     OrcCatalogueInfo::export_all(&cfg)?;
     OrcFilters::export_all(&cfg)?;

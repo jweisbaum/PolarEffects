@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{CoreError, Result};
 use crate::id::SourceId;
 use crate::project::Project;
-use crate::source::{Colour, Source, validate_weight};
+use crate::source::{CellRef, Colour, Source, SourceKind, validate_weight};
 
 /// A reversible change to a project.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -85,6 +85,23 @@ pub enum Command {
         from: usize,
         /// Index after the move.
         to: usize,
+    },
+    /// Excludes polar nodes of one ORC or file source from the blend
+    /// (spec.md 10.3). `cells` are exactly the nodes this changes: none may
+    /// already be excluded, so undo removes exactly them.
+    ExcludeCells {
+        /// Target source.
+        source: SourceId,
+        /// The nodes excluded, each once.
+        cells: Vec<CellRef>,
+    },
+    /// Includes excluded polar nodes again (spec.md 10.3); the inverse of
+    /// [`Command::ExcludeCells`]. Every cell must currently be excluded.
+    IncludeCells {
+        /// Target source.
+        source: SourceId,
+        /// The nodes included, each once.
+        cells: Vec<CellRef>,
     },
     /// Several commands as one history entry, e.g. a multi-file import.
     Batch {
@@ -232,6 +249,24 @@ impl Command {
                 project.sources.insert(to, moved);
                 Ok(())
             }
+            Self::ExcludeCells { source, cells } => {
+                let target = polar_source_mut(project, *source)?;
+                let list = &mut target.overlay.excluded_cells;
+                if forward {
+                    add_cells(list, cells)
+                } else {
+                    remove_cells(list, cells)
+                }
+            }
+            Self::IncludeCells { source, cells } => {
+                let target = polar_source_mut(project, *source)?;
+                let list = &mut target.overlay.excluded_cells;
+                if forward {
+                    remove_cells(list, cells)
+                } else {
+                    add_cells(list, cells)
+                }
+            }
             Self::Batch { commands, .. } => {
                 if forward {
                     for (done, command) in commands.iter_mut().enumerate() {
@@ -305,10 +340,89 @@ impl Command {
             Self::SetSourceWeight { .. } => "Change source weight",
             Self::SetSourceLabel { .. } => "Rename source",
             Self::MoveSource { .. } => "Reorder sources",
+            Self::ExcludeCells { .. } => EXCLUDE_NODES_LABEL,
+            Self::IncludeCells { .. } => INCLUDE_NODES_LABEL,
             Self::Batch { label, .. } => return label.clone(),
         }
         .to_owned()
     }
+}
+
+/// The history label of an exclusion, also used for a batch of them over
+/// several sources.
+pub const EXCLUDE_NODES_LABEL: &str = "Exclude polar nodes";
+/// The history label of an inclusion.
+pub const INCLUDE_NODES_LABEL: &str = "Include polar nodes";
+
+/// A source whose polar nodes can be excluded: an ORC or file polar. A
+/// track's positions are excluded one sample at a time instead (spec.md 10.3).
+fn polar_source_mut(project: &mut Project, id: SourceId) -> Result<&mut Source> {
+    let source = source_mut(project, id)?;
+    if matches!(source.kind, SourceKind::Track { .. }) {
+        return Err(CoreError::Invalid(format!(
+            "{} is a track; its positions are excluded sample by sample, not as polar nodes",
+            source.label
+        )));
+    }
+    Ok(source)
+}
+
+/// Checks `cells` is a non-empty set of valid cells, each named once.
+fn check_cells(cells: &[CellRef]) -> Result<()> {
+    if cells.is_empty() {
+        return Err(CoreError::Invalid(
+            "an exclusion names at least one polar node".to_owned(),
+        ));
+    }
+    let mut sorted: Vec<&CellRef> = cells.iter().collect();
+    sorted.sort_by(|a, b| a.order(b));
+    for cell in &sorted {
+        cell.validate()?;
+    }
+    if sorted
+        .windows(2)
+        .any(|pair| pair[0].order(pair[1]) == std::cmp::Ordering::Equal)
+    {
+        return Err(CoreError::Invalid(
+            "an exclusion names the same polar node twice".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+/// Adds `cells` to a sorted list, keeping it sorted; refuses (changing
+/// nothing) if any is already there.
+fn add_cells(list: &mut Vec<CellRef>, cells: &[CellRef]) -> Result<()> {
+    check_cells(cells)?;
+    if cells
+        .iter()
+        .any(|cell| list.binary_search_by(|held| held.order(cell)).is_ok())
+    {
+        return Err(stale("the excluded polar nodes"));
+    }
+    for cell in cells {
+        let at = list.partition_point(|held| held.order(cell) == std::cmp::Ordering::Less);
+        list.insert(at, cell.clone());
+    }
+    Ok(())
+}
+
+/// Removes `cells` from a sorted list; refuses (changing nothing) if any is
+/// not there.
+fn remove_cells(list: &mut Vec<CellRef>, cells: &[CellRef]) -> Result<()> {
+    check_cells(cells)?;
+    if cells
+        .iter()
+        .any(|cell| list.binary_search_by(|held| held.order(cell)).is_err())
+    {
+        return Err(stale("the excluded polar nodes"));
+    }
+    list.retain(|held| {
+        !cells
+            .iter()
+            .any(|cell| held.order(cell) == std::cmp::Ordering::Equal)
+    });
+    Ok(())
 }
 
 fn insert(project: &mut Project, index: usize, source: &Source) -> Result<()> {
@@ -340,7 +454,6 @@ mod tests {
     use super::*;
     use crate::fixtures;
     use crate::polar::{PolarFileFormat, PolarGrid};
-    use crate::source::SourceKind;
 
     /// Every variant, by name. The match has no wildcard, so a new variant
     /// does not compile until it is named here — and then
@@ -355,10 +468,16 @@ mod tests {
             Command::SetSourceWeight { .. } => "SetSourceWeight",
             Command::SetSourceLabel { .. } => "SetSourceLabel",
             Command::MoveSource { .. } => "MoveSource",
+            Command::ExcludeCells { .. } => "ExcludeCells",
+            Command::IncludeCells { .. } => "IncludeCells",
             Command::Batch { .. } => "Batch",
         }
     }
-    const VARIANTS: usize = 9;
+    const VARIANTS: usize = 11;
+
+    fn cell(twa: f64, tws: f64) -> CellRef {
+        CellRef { twa, tws }
+    }
 
     fn new_polar(project: &mut Project) -> Source {
         let id = project.allocate_source_id();
@@ -378,6 +497,8 @@ mod tests {
     /// One example of every command, each built against `project`.
     fn every_command(project: &mut Project) -> Vec<Command> {
         let first = project.sources[0].id;
+        // A node already excluded, for the inclusion to include.
+        project.sources[1].overlay.excluded_cells = vec![cell(0.0, 6.0), cell(45.0, 12.0)];
         let track = project.sources[2].clone();
         let added = new_polar(project);
         let also = new_polar(project);
@@ -415,6 +536,14 @@ mod tests {
                 after: "Sister ship".to_owned(),
             },
             Command::MoveSource { from: 0, to: 2 },
+            Command::ExcludeCells {
+                source: first,
+                cells: vec![cell(150.0, 6.0), cell(52.0, 12.0)],
+            },
+            Command::IncludeCells {
+                source: project.sources[1].id,
+                cells: vec![cell(45.0, 12.0)],
+            },
             Command::Batch {
                 label: "Import polar files".to_owned(),
                 commands: vec![
@@ -596,5 +725,121 @@ mod tests {
             after: 0.5,
         }));
         assert!(!first.merge(&Command::MoveSource { from: 0, to: 1 }));
+    }
+
+    /// Excluding keeps the list sorted whatever order the nodes came in, and
+    /// the inclusion of some of them is undone back to the same list.
+    #[test]
+    fn exclusions_keep_their_order_and_include_undoes_exactly() {
+        let mut project = fixtures::project();
+        let original = project.clone();
+        let orc = project.sources[0].id;
+        let mut exclude = Command::ExcludeCells {
+            source: orc,
+            cells: vec![cell(150.0, 6.0), cell(52.0, 12.0), cell(52.0, 6.0)],
+        };
+        exclude.apply(&mut project).unwrap();
+        assert_eq!(
+            project.sources[0].overlay.excluded_cells,
+            vec![cell(52.0, 6.0), cell(52.0, 12.0), cell(150.0, 6.0)]
+        );
+        assert!(project.sources[0].overlay.is_cell_excluded(52.0, 12.0));
+        assert!(!project.sources[0].overlay.is_cell_excluded(90.0, 12.0));
+        project.validate().unwrap();
+
+        let excluded = project.clone();
+        let mut include = Command::IncludeCells {
+            source: orc,
+            cells: vec![cell(52.0, 12.0)],
+        };
+        include.apply(&mut project).unwrap();
+        assert_eq!(
+            project.sources[0].overlay.excluded_cells,
+            vec![cell(52.0, 6.0), cell(150.0, 6.0)]
+        );
+        include.undo(&mut project).unwrap();
+        assert_eq!(project, excluded);
+
+        // Undoing the exclusion gives the source back exactly (invariant 1).
+        exclude.undo(&mut project).unwrap();
+        assert_eq!(project, original);
+        assert!(project.sources[0].overlay.is_empty());
+    }
+
+    #[test]
+    fn a_node_excluded_twice_or_included_while_not_excluded_is_refused() {
+        let mut project = fixtures::project();
+        let orc = project.sources[0].id;
+        Command::ExcludeCells {
+            source: orc,
+            cells: vec![cell(90.0, 6.0)],
+        }
+        .apply(&mut project)
+        .unwrap();
+        let before = project.clone();
+
+        let mut again = Command::ExcludeCells {
+            source: orc,
+            cells: vec![cell(52.0, 6.0), cell(90.0, 6.0)],
+        };
+        assert!(matches!(
+            again.apply(&mut project),
+            Err(CoreError::Stale(_))
+        ));
+        let mut absent = Command::IncludeCells {
+            source: orc,
+            cells: vec![cell(90.0, 6.0), cell(90.0, 12.0)],
+        };
+        assert!(matches!(
+            absent.apply(&mut project),
+            Err(CoreError::Stale(_))
+        ));
+        // A refusal changes nothing, not even the nodes it could have taken.
+        assert_eq!(project, before);
+
+        for cells in [
+            vec![],
+            vec![cell(52.0, 12.0), cell(52.0, 12.0)],
+            vec![cell(181.0, 12.0)],
+            vec![cell(f64::NAN, 12.0)],
+            vec![cell(52.0, -1.0)],
+        ] {
+            let mut bad = Command::ExcludeCells { source: orc, cells };
+            assert!(matches!(
+                bad.apply(&mut project),
+                Err(CoreError::Invalid(_))
+            ));
+        }
+        let mut track = Command::ExcludeCells {
+            source: project.sources[2].id,
+            cells: vec![cell(90.0, 12.0)],
+        };
+        assert!(matches!(
+            track.apply(&mut project),
+            Err(CoreError::Invalid(_))
+        ));
+        assert_eq!(project, before);
+    }
+
+    /// Exclusions survive a save and reload byte for byte, and a list out of
+    /// order is refused rather than silently reordered.
+    #[test]
+    fn exclusions_round_trip_through_a_project_file() {
+        let mut project = fixtures::project();
+        Command::ExcludeCells {
+            source: project.sources[1].id,
+            cells: vec![cell(90.0, 6.0), cell(45.0, 6.0), cell(45.0, 12.0)],
+        }
+        .apply(&mut project)
+        .unwrap();
+        let bytes = crate::io::to_bytes(&project).unwrap();
+        let loaded = crate::io::from_bytes(&bytes).unwrap();
+        assert_eq!(loaded, project);
+        assert_eq!(crate::io::to_bytes(&loaded).unwrap(), bytes);
+
+        let mut unsorted = project.clone();
+        unsorted.sources[1].overlay.excluded_cells.swap(0, 2);
+        assert!(unsorted.validate().is_err());
+        assert!(crate::io::to_bytes(&unsorted).is_err());
     }
 }
