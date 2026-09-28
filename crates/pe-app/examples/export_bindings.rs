@@ -11,7 +11,7 @@ use pe_app::autosave::RecoveredProject;
 use pe_app::commands::AppInfo;
 use pe_app::error::AppErrorPayload;
 use pe_app::projects::{BoatInput, ProjectSummary, RecentProject, SourceSummary};
-use pe_app::settings::AutosaveMode;
+use pe_app::settings::{AutosaveMode, ChunkCacheStatus, Settings};
 use ts_rs::{Config, TS};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -35,6 +35,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     BoatInput::export_all(&cfg)?;
     RecoveredProject::export_all(&cfg)?;
     AutosaveMode::export_all(&cfg)?;
+    Settings::export_all(&cfg)?;
+    ChunkCacheStatus::export_all(&cfg)?;
 
     // Keep generated files deterministic and free of ts-rs's trailing spaces.
     for entry in std::fs::read_dir(&out_dir)? {

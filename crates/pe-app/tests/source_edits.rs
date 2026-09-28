@@ -1,0 +1,168 @@
+#![allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    reason = "test code; clippy's allow-in-tests does not reach tests/"
+)]
+//! The source-list edits exposed over IPC (spec.md 8), driven through the
+//! same functions the Tauri commands call. The list UI arrives in later
+//! milestones; the commands are here so it only adds a view.
+
+mod common;
+
+use common::TempRoot;
+use pe_app::commands::AppState;
+use pe_app::error::AppError;
+use pe_app::{edit, projects};
+use pe_core::polar::{PolarFileFormat, PolarGrid};
+use pe_core::{Colour, Command, Source, SourceKind};
+
+/// A project with three polar-file sources, ids 1–3, saved so it is clean.
+fn project_with_sources(root: &TempRoot) -> AppState {
+    let app = root.state();
+    projects::create(&app, "Sources".to_owned(), None, false).expect("create");
+    app.with_session(|session| {
+        let open = session.require_open()?;
+        for label in ["A", "B", "C"] {
+            let id = open.project.allocate_source_id();
+            let colour = open.project.next_palette_colour();
+            let source = Source::new(
+                id,
+                label,
+                colour,
+                SourceKind::PolarFile {
+                    format: PolarFileFormat::Expedition,
+                    file_name: format!("{label}.txt"),
+                    polar: PolarGrid::empty(vec![40.0, 90.0], vec![10.0]),
+                },
+            );
+            let index = open.project.sources.len();
+            open.apply(Command::AddSource {
+                index,
+                source: Box::new(source),
+            })?;
+        }
+        // The imports are the fixture, not part of what is under test.
+        open.history = pe_core::History::default();
+        Ok(())
+    })
+    .expect("add sources");
+    projects::save_as(&app, root.file("s.wpsproj")).expect("save");
+    app
+}
+
+fn labels(summary: &projects::ProjectSummary) -> Vec<&str> {
+    summary.sources.iter().map(|s| s.label.as_str()).collect()
+}
+
+fn ids(app: &AppState) -> Vec<u64> {
+    projects::summary(app)
+        .unwrap()
+        .unwrap()
+        .sources
+        .iter()
+        .map(|s| s.id)
+        .collect()
+}
+
+#[test]
+fn each_edit_changes_the_source_marks_dirty_and_undoes() {
+    let root = TempRoot::new("source-edits");
+    let app = project_with_sources(&root);
+    let id = ids(&app)[1];
+    let original = projects::summary(&app).unwrap().unwrap();
+    assert!(!original.dirty);
+
+    let s = edit::source_colour_set(&app, id, "#ABCDEF").unwrap();
+    assert_eq!(s.sources[1].colour, "#abcdef");
+    assert!(s.dirty);
+    assert_eq!(s.undo_label.as_deref(), Some("Change source colour"));
+
+    let s = edit::source_visible_set(&app, id, false).unwrap();
+    assert!(!s.sources[1].visible);
+    assert_eq!(s.undo_label.as_deref(), Some("Hide source"));
+
+    let s = edit::source_weight_set(&app, id, 1.5, None).unwrap();
+    assert_eq!(s.sources[1].weight, 1.5);
+
+    let s = edit::source_label_set(&app, id, "  Sister ship ".to_owned()).unwrap();
+    assert_eq!(s.sources[1].label, "Sister ship");
+
+    let s = edit::source_move(&app, id, 0).unwrap();
+    assert_eq!(labels(&s), ["Sister ship", "A", "C"]);
+
+    let s = edit::source_remove(&app, id).unwrap();
+    assert_eq!(labels(&s), ["A", "C"]);
+
+    // Six entries; undoing all of them gives back the saved list exactly.
+    for _ in 0..6 {
+        edit::undo_last(&app).unwrap();
+    }
+    let back = projects::summary(&app).unwrap().unwrap();
+    assert_eq!(back.sources, original.sources);
+    assert!(!back.can_undo);
+}
+
+#[test]
+fn a_change_to_the_same_value_records_nothing() {
+    let root = TempRoot::new("source-noop");
+    let app = project_with_sources(&root);
+    let first = ids(&app)[0];
+    let colour = projects::summary(&app).unwrap().unwrap().sources[0]
+        .colour
+        .clone();
+    let s = edit::source_colour_set(&app, first, &colour).unwrap();
+    let s2 = edit::source_visible_set(&app, first, true).unwrap();
+    let s3 = edit::source_move(&app, first, 0).unwrap();
+    for summary in [s, s2, s3] {
+        assert!(!summary.dirty);
+        assert!(!summary.can_undo);
+    }
+}
+
+#[test]
+fn a_weight_drag_is_one_undo_entry() {
+    let root = TempRoot::new("source-drag");
+    let app = project_with_sources(&root);
+    let id = ids(&app)[0];
+    for weight in [1.1, 1.2, 1.3, 1.4] {
+        edit::source_weight_set(&app, id, weight, Some("drag-1")).unwrap();
+    }
+    let s = edit::undo_last(&app).unwrap();
+    assert_eq!(s.sources[0].weight, 1.0);
+    assert!(!s.can_undo, "the whole drag was one entry");
+}
+
+#[test]
+fn bad_arguments_are_refused_and_change_nothing() {
+    let root = TempRoot::new("source-bad");
+    let app = project_with_sources(&root);
+    let id = ids(&app)[0];
+    assert!(matches!(
+        edit::source_colour_set(&app, id, "red"),
+        Err(AppError::Core(_))
+    ));
+    assert!(edit::source_weight_set(&app, id, 2.5, None).is_err());
+    assert!(edit::source_weight_set(&app, id, f64::NAN, None).is_err());
+    assert!(matches!(
+        edit::source_label_set(&app, id, "   ".to_owned()),
+        Err(AppError::BadOption { .. })
+    ));
+    assert!(edit::source_move(&app, id, 3).is_err());
+    assert!(edit::source_remove(&app, 999).is_err());
+    let s = projects::summary(&app).unwrap().unwrap();
+    assert!(!s.dirty);
+    assert_eq!(
+        Colour::parse(&s.sources[0].colour).unwrap().as_str(),
+        s.sources[0].colour
+    );
+}
+
+#[test]
+fn edits_need_an_open_project() {
+    let root = TempRoot::new("source-none");
+    let app = root.state();
+    assert!(matches!(
+        edit::source_visible_set(&app, 1, false),
+        Err(AppError::NoProjectOpen)
+    ));
+}

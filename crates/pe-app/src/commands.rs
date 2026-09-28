@@ -19,6 +19,9 @@ pub struct AppState {
     pub paths: AppPaths,
     /// The open project and the settings.
     pub session: std::sync::Mutex<Session>,
+    /// Set once the user has answered the unsaved-changes guard for quitting
+    /// (spec.md 3.3); from then on nothing stops the exit.
+    pub exit_allowed: std::sync::atomic::AtomicBool,
 }
 
 impl AppState {
@@ -28,6 +31,7 @@ impl AppState {
         Self {
             paths,
             session: std::sync::Mutex::new(session),
+            exit_allowed: std::sync::atomic::AtomicBool::new(false),
         }
     }
 

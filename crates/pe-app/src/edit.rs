@@ -4,7 +4,7 @@
 //! history, which bumps the revision and sets `dirty` (spec.md 3.3). Later
 //! milestones add their edits here.
 
-use pe_core::Command;
+use pe_core::{Colour, Command, SourceId};
 
 use crate::commands::AppState;
 use crate::error::{AppError, Result};
@@ -79,6 +79,173 @@ pub fn rename(state: &AppState, name: String) -> Result<ProjectSummary> {
         Ok((project.name != name).then(|| Command::RenameProject {
             before: project.name.clone(),
             after: name,
+        }))
+    })
+}
+
+/// The open project's source with `id`, or a `core` error naming it.
+fn source_of(project: &pe_core::Project, id: u64) -> Result<&pe_core::Source> {
+    project
+        .source(SourceId(id))
+        .ok_or(AppError::Core(pe_core::CoreError::MissingSource(id)))
+}
+
+/// Changes a source's colour (spec.md 8). `colour` is `#rrggbb`.
+#[tauri::command]
+pub fn set_source_colour(
+    state: tauri::State<'_, AppState>,
+    id: u64,
+    colour: String,
+) -> Result<ProjectSummary> {
+    source_colour_set(&state, id, &colour)
+}
+
+/// [`set_source_colour`] without a Tauri handle.
+pub fn source_colour_set(state: &AppState, id: u64, colour: &str) -> Result<ProjectSummary> {
+    let after = Colour::parse(colour)?;
+    apply(state, |project| {
+        let before = source_of(project, id)?.colour.clone();
+        Ok((before != after).then_some(Command::SetSourceColour {
+            source: SourceId(id),
+            before,
+            after,
+        }))
+    })
+}
+
+/// Shows or hides a source. Hidden sources leave the blend and every plot
+/// (spec.md 8, D15).
+#[tauri::command]
+pub fn set_source_visible(
+    state: tauri::State<'_, AppState>,
+    id: u64,
+    visible: bool,
+) -> Result<ProjectSummary> {
+    source_visible_set(&state, id, visible)
+}
+
+/// [`set_source_visible`] without a Tauri handle.
+pub fn source_visible_set(state: &AppState, id: u64, visible: bool) -> Result<ProjectSummary> {
+    apply(state, |project| {
+        let before = source_of(project, id)?.visible;
+        Ok((before != visible).then_some(Command::SetSourceVisible {
+            source: SourceId(id),
+            before,
+            after: visible,
+        }))
+    })
+}
+
+/// Changes a source's blend weight, 0–2. `gesture` names a slider drag: every
+/// call carrying the same name, one after another, is one undo entry.
+#[tauri::command]
+pub fn set_source_weight(
+    state: tauri::State<'_, AppState>,
+    id: u64,
+    weight: f64,
+    gesture: Option<String>,
+) -> Result<ProjectSummary> {
+    source_weight_set(&state, id, weight, gesture.as_deref())
+}
+
+/// [`set_source_weight`] without a Tauri handle.
+pub fn source_weight_set(
+    state: &AppState,
+    id: u64,
+    weight: f64,
+    gesture: Option<&str>,
+) -> Result<ProjectSummary> {
+    pe_core::source::validate_weight(weight)?;
+    state.with_session(|session| {
+        let open = session.require_open()?;
+        let before = source_of(&open.project, id)?.weight;
+        if before != weight {
+            let command = Command::SetSourceWeight {
+                source: SourceId(id),
+                before,
+                after: weight,
+            };
+            match gesture {
+                Some(key) => open.apply_coalesced(command, &format!("weight:{id}:{key}"))?,
+                None => open.apply(command)?,
+            }
+        }
+        Ok(ProjectSummary::of(open))
+    })
+}
+
+/// Renames a source.
+#[tauri::command]
+pub fn set_source_label(
+    state: tauri::State<'_, AppState>,
+    id: u64,
+    label: String,
+) -> Result<ProjectSummary> {
+    source_label_set(&state, id, label)
+}
+
+/// [`set_source_label`] without a Tauri handle.
+pub fn source_label_set(state: &AppState, id: u64, label: String) -> Result<ProjectSummary> {
+    let label = label.trim().to_owned();
+    if label.is_empty() {
+        return Err(AppError::BadOption {
+            field: "Source label",
+            value: label,
+        });
+    }
+    apply(state, |project| {
+        let before = source_of(project, id)?.label.clone();
+        Ok((before != label).then_some(Command::SetSourceLabel {
+            source: SourceId(id),
+            before,
+            after: label,
+        }))
+    })
+}
+
+/// Moves a source to position `to` in the list (display order only).
+#[tauri::command]
+pub fn move_source(
+    state: tauri::State<'_, AppState>,
+    id: u64,
+    to: usize,
+) -> Result<ProjectSummary> {
+    source_move(&state, id, to)
+}
+
+/// [`move_source`] without a Tauri handle.
+pub fn source_move(state: &AppState, id: u64, to: usize) -> Result<ProjectSummary> {
+    apply(state, |project| {
+        let from = project
+            .source_index(SourceId(id))
+            .ok_or(AppError::Core(pe_core::CoreError::MissingSource(id)))?;
+        let len = project.sources.len();
+        if to >= len {
+            return Err(AppError::Core(pe_core::CoreError::IndexOutOfBounds {
+                index: to,
+                len,
+            }));
+        }
+        Ok((from != to).then_some(Command::MoveSource { from, to }))
+    })
+}
+
+/// Removes a source (undoable: undo puts it back, overlays and all).
+#[tauri::command]
+pub fn remove_source(state: tauri::State<'_, AppState>, id: u64) -> Result<ProjectSummary> {
+    source_remove(&state, id)
+}
+
+/// [`remove_source`] without a Tauri handle.
+pub fn source_remove(state: &AppState, id: u64) -> Result<ProjectSummary> {
+    apply(state, |project| {
+        let index = project
+            .source_index(SourceId(id))
+            .ok_or(AppError::Core(pe_core::CoreError::MissingSource(id)))?;
+        let source = project.sources[index].clone();
+        Ok(Some(Command::RemoveSource {
+            index,
+            source: Box::new(source),
         }))
     })
 }
