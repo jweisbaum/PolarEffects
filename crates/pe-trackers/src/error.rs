@@ -54,6 +54,16 @@ pub enum TrackerError {
         why: String,
     },
 
+    /// An older tracker generation this build does not read: a Flash
+    /// Geovoile tracker (`.hwz`) or one of its 2012–2015 HTML trackers.
+    #[error("this is an older {tracker} tracker, which is not supported: {why}")]
+    Legacy {
+        /// Which tracker.
+        tracker: &'static str,
+        /// What was recognised.
+        why: String,
+    },
+
     /// The response decoded but is not in a format generation this build
     /// understands (a Flash-era Geovoile tracker, a changed encoding).
     #[error("unsupported {tracker} version: {why}")]

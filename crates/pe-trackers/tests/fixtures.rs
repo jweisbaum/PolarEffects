@@ -22,13 +22,22 @@
 //!   reports resources of `24hultim.geovoile.com/2025/tracker/`.
 //! - `geovoile/routedurhum2022/viewer.html`: the viewer page only, for the
 //!   seed parser.
-//! - `geovoile/vendeeglobe2016/`: the versions, config and tracks resources
-//!   of `vendeeglobe.geovoile.com/2016/tracker/`. Its viewer page answers HTTP
-//!   500 as of 2026-09-28, so its seeds are the ones recorded in plan.md
-//!   Appendix A during research.
+//! - `geovoile/vendeeglobe2016/`: the versions, config, tracks and (M11)
+//!   reports resources of `vendeeglobe.geovoile.com/2016/tracker/`. Its
+//!   viewer page answers HTTP 500 as of 2026-09-28, so its seeds are the ones
+//!   recorded in plan.md Appendix A during research.
+//! - M11 (2026-09-28): `24hultim2025/versions.txt`;
+//!   `routedurhum2018/` (viewer, an empty versions file as served, config,
+//!   tracks); `newyorkvendee2024/` and `lasolitaire2024-leg1/` (viewer,
+//!   versions, config, tracks; the Solitaire's page and resources are leg 1
+//!   of 3, `…/2024/tracker/?leg=1` and `resources/leg1/…`);
+//!   `routedurhum2014/viewer.html`, the 2012–2015 generation's page, which
+//!   is refused.
 //!
 //! Reference values come from the Python reference decoder written during
-//! research (an independent implementation of Appendix A) and from facts
+//! research (an independent implementation of Appendix A, used again in
+//! M11 for the new sites, the reports and the report-to-fix matching), from
+//! each site's own official arrival times in its reports, and from facts
 //! about the races: the Fastnet started from Cowes on 2025-07-26 and
 //! finishes at Cherbourg; the 24 Heures Ultim started at Lorient on
 //! 2025-09-27; the Vendée Globe 2016 started at Les Sables-d'Olonne on
@@ -243,9 +252,14 @@ fn serve(routes: Vec<(&'static str, &'static str, Vec<u8>)>) -> String {
             let n = stream.read(&mut buf).unwrap_or(0);
             let request = String::from_utf8_lossy(&buf[..n]).into_owned();
             let path = request.split_whitespace().nth(1).unwrap_or("").to_owned();
+            // A route ending in `*` matches every path it starts (the
+            // Geovoile versions file's cache-busting number).
             let (status, body) = routes
                 .iter()
-                .find(|(p, _, _)| *p == path)
+                .find(|(p, _, _)| {
+                    p.strip_suffix('*')
+                        .map_or(*p == path, |prefix| path.starts_with(prefix))
+                })
                 .map_or(("404 Not Found", Vec::new()), |(_, s, b)| (*s, b.clone()));
             let head = format!(
                 "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -279,9 +293,15 @@ fn fetch_rmsr(
     let fetcher = Fetcher::new("YellowBrick", Duration::from_secs(10), Arc::default())
         .expect("a client")
         .with_backoff(Duration::from_millis(1));
-    let mut last = 0.0;
-    let out = client.fetch(&event, &fetcher, &mut |p| last = p.fraction());
+    let mut seen = Vec::new();
+    let out = client.fetch(&event, &fetcher, &mut |p| seen.push(p.fraction()));
+    // Never backwards, the fallback included (M10 review).
+    assert!(
+        seen.windows(2).all(|w| w[0] <= w[1]),
+        "progress goes back: {seen:?}"
+    );
     if out.is_ok() {
+        let last = seen.last().copied().unwrap_or_default();
         assert!((last - 1.0).abs() < 1e-9, "progress ends at 1, got {last}");
     }
     out
@@ -505,4 +525,493 @@ fn a_truncated_hwx_is_an_error_naming_the_byte() {
     let bytes = fixture("geovoile/24hultim2025/tracks.hwx");
     let err = geovoile::decode_hwx(&bytes[..bytes.len() / 2], MODERN).expect_err("truncated");
     assert!(err.to_string().contains("byte"), "{err}");
+}
+
+// --- Geovoile sites of five years (M11 acceptance) ---------------------------
+
+/// Decodes one site's config and tracks with the seeds its own viewer page
+/// carries (Appendix A's for the Vendée Globe 2016, whose page is gone).
+fn site(dir: &str, seeds: Option<Seeds>) -> (geovoile::Config, Vec<geovoile::Track>) {
+    let seeds = seeds.unwrap_or_else(|| {
+        geovoile::seeds_from_html(&fixture_text(&format!("geovoile/{dir}/viewer.html")))
+            .expect("seeds")
+    });
+    let xml = geovoile::decode_text(&fixture(&format!("geovoile/{dir}/config.hwx")), seeds, true)
+        .expect("config");
+    let json = geovoile::decode_text(
+        &fixture(&format!("geovoile/{dir}/tracks.hwx")),
+        seeds,
+        false,
+    )
+    .expect("tracks");
+    (
+        geovoile::parse_config(&xml).expect("config parses"),
+        geovoile::parse_tracks(&json).expect("tracks parse"),
+    )
+}
+
+/// Boat count, total fixes, and the first configured boat's first and last
+/// fix, per site. The references are the independent Python decoder's; the
+/// facts are the races' (each first fix is at its start line or harbour,
+/// each last one at the finish port).
+#[test]
+fn five_sites_of_four_generations_decode_to_the_reference() {
+    type Fixed = (i64, f64, f64);
+    struct Case {
+        dir: &'static str,
+        seeds: Option<Seeds>,
+        name: &'static str,
+        boats: usize,
+        fixes: usize,
+        first_boat: &'static str,
+        count: usize,
+        first: Fixed,
+        last: Fixed,
+    }
+    let cases = [
+        // Les Sables-d'Olonne 2016-11-06T12:02Z, back there 2017-02-23.
+        Case {
+            dir: "vendeeglobe2016",
+            seeds: Some(VG2016),
+            name: "Vendée Globe 2016",
+            boats: 29,
+            fixes: 107_459,
+            first_boat: "One Planet One Ocean",
+            count: 5574,
+            first: (1_478_433_720, 46.424_02, -1.785_05),
+            last: (1_487_869_560, 46.502_6, -1.788_7),
+        },
+        // Saint-Malo 2018-11-04 to Pointe-à-Pitre.
+        Case {
+            dir: "routedurhum2018",
+            seeds: None,
+            name: "Route du Rhum 2018",
+            boats: 26,
+            fixes: 28_038,
+            first_boat: "Trimaran MACIF",
+            count: 1099,
+            first: (1_541_329_200, 48.786_89, -1.875_94),
+            last: (1_542_544_203, 16.206_96, -61.506_41),
+        },
+        // New York 2024-05-29 to Les Sables-d'Olonne.
+        Case {
+            dir: "newyorkvendee2024",
+            seeds: None,
+            name: "New York Vendée 2024",
+            boats: 28,
+            fixes: 64_453,
+            first_boat: "Be Water Positive",
+            count: 2485,
+            first: (1_716_908_400, 41.490_95, -71.324_25),
+            last: (1_718_303_400, 46.503, -1.788_73),
+        },
+        // Leg 1, Rouen 2024-08-25T13:30Z to Gijón.
+        Case {
+            dir: "lasolitaire2024-leg1",
+            seeds: None,
+            name: "Solitaire du Figaro",
+            boats: 45,
+            fixes: 21_990,
+            first_boat: "Actual",
+            count: 491,
+            first: (1_724_592_600, 49.527_28, 0.008_92),
+            last: (1_724_994_000, 43.546_93, -5.668_27),
+        },
+        // Lorient to Lorient, 2025-09-27.
+        Case {
+            dir: "24hultim2025",
+            seeds: None,
+            name: "24H Ultim",
+            boats: 14,
+            fixes: 8013,
+            first_boat: "Actual Ultim 4",
+            count: 601,
+            first: (1_758_966_938, 47.693_63, -3.452_9),
+            last: (1_759_073_046, 47.546_81, -3.380_45),
+        },
+    ];
+    for case in cases {
+        let dir = case.dir;
+        let (config, tracks) = site(dir, case.seeds);
+        assert_eq!(config.name, case.name, "{dir}");
+        assert_eq!(config.boats.len(), case.boats, "{dir}");
+        assert_eq!(tracks.len(), case.boats, "{dir}: one track per boat");
+        assert_eq!(
+            tracks.iter().map(|t| t.fixes.len()).sum::<usize>(),
+            case.fixes,
+            "{dir}"
+        );
+        let boat = &config.boats[0];
+        assert_eq!(boat.name, case.first_boat, "{dir}");
+        let track = tracks.iter().find(|t| t.id == boat.id).expect("its track");
+        assert_eq!(track.fixes.len(), case.count, "{dir}");
+        let at = |f: &pe_core::track::Fix| (f.t, f.lat, f.lon);
+        assert_eq!(at(&track.fixes[0]), case.first, "{dir} first");
+        assert_eq!(
+            at(track.fixes.last().expect("fixes")),
+            case.last,
+            "{dir} last"
+        );
+    }
+}
+
+/// The page parameters of the newer sites, including the Solitaire's legs.
+#[test]
+fn viewer_pages_of_2018_2024_give_their_parameters() {
+    let v = geovoile::parse_viewer(&fixture_text("geovoile/lasolitaire2024-leg1/viewer.html"))
+        .expect("parses");
+    assert_eq!((v.root_url.as_str(), v.legs, v.leg), ("/2024/", 3, 1));
+    assert_eq!(
+        v.resource_path("tracks", 5),
+        "/2024/tracker/resources/leg1/tracks/v5"
+    );
+    let v = geovoile::parse_viewer(&fixture_text("geovoile/newyorkvendee2024/viewer.html"))
+        .expect("parses");
+    assert_eq!(v.title, "New York - Vendée 2024");
+    assert_eq!((v.legs, v.resources_url.as_str()), (1, ""));
+    let v = geovoile::parse_viewer(&fixture_text("geovoile/routedurhum2018/viewer.html"))
+        .expect("parses");
+    assert_eq!(v.root_url, "/2018/");
+    // The 2018 page carries the same seeds as 2022–2025.
+    assert_eq!(v.seeds, MODERN);
+}
+
+/// The Solitaire's leg 1 config: the leg, the class and the start of its
+/// run, which becomes each boat's start.
+#[test]
+fn a_leg_config_gives_its_leg_classes_and_runs() {
+    let (config, _) = site("lasolitaire2024-leg1", None);
+    assert_eq!(config.leg, Some(geovoile::Leg { num: 1, total: 3 }));
+    assert!(!config.classes.is_empty());
+    let boat = &config.boats[0];
+    let class = config
+        .classes
+        .iter()
+        .find(|c| Some(c.id) == boat.class)
+        .expect("its class");
+    let run = config
+        .runs
+        .iter()
+        .find(|r| Some(r.id) == class.run)
+        .expect("its run");
+    assert_eq!(run.start.as_deref(), Some("2024-08-25T13:30:00Z"));
+    // The Route du Rhum 2022's six classes (its config is not a fixture;
+    // the 2018 one has the same shape).
+    let (config, _) = site("routedurhum2018", None);
+    assert!(config.boats.iter().all(|b| b.class.is_some()));
+}
+
+/// The 2016 reports: their own column order, the official arrivals (Armel
+/// Le Cléac'h first, 2017-01-19T15:37:46Z) and the hidden (retired) boats.
+#[test]
+fn the_vendee_globe_2016_reports_parse_by_column_name() {
+    let json = geovoile::decode_text(
+        &fixture("geovoile/vendeeglobe2016/reports.hwx"),
+        VG2016,
+        false,
+    )
+    .expect("reports");
+    let reports = geovoile::parse_reports(&json).expect("parses");
+    assert_eq!(reports.lines.len(), 21_779);
+    assert_eq!(reports.arrivals.len(), 18);
+    assert_eq!(reports.arrivals[&3], 1_484_840_266);
+    assert_eq!(reports.hidden.len(), 8);
+    assert!(reports.lines.windows(2).all(|w| w[0].t <= w[1].t));
+}
+
+/// A local server holding one Geovoile site's recorded responses.
+fn geovoile_site(
+    page_path: &'static str,
+    page: Vec<u8>,
+    root: &'static str,
+    resources: Vec<(&'static str, &'static str, Vec<u8>)>,
+) -> String {
+    let mut routes = vec![(page_path, "200 OK", page)];
+    let _ = root;
+    routes.extend(resources);
+    serve(routes)
+}
+
+fn fetch_geovoile(
+    host: &str,
+    input: &str,
+) -> (pe_trackers::Result<pe_trackers::TrackerEvent>, Vec<f64>) {
+    let client = geovoile::Geovoile::at(host);
+    let event = client.resolve(input).expect("resolves");
+    let fetcher = Fetcher::new("Geovoile", Duration::from_secs(10), Arc::default())
+        .expect("a client")
+        .with_backoff(Duration::from_millis(1));
+    let mut seen = Vec::new();
+    let out = client.fetch(&event, &fetcher, &mut |p| seen.push(p.fraction()));
+    assert!(
+        seen.windows(2).all(|w| w[0] <= w[1]),
+        "progress goes back: {seen:?}"
+    );
+    (out, seen)
+}
+
+fn ultim_routes(page: Vec<u8>) -> String {
+    geovoile_site(
+        "/2025/tracker/",
+        page,
+        "/2025/",
+        vec![
+            (
+                "/2025/tracker/resources/versions/v*",
+                "200 OK",
+                fixture("geovoile/24hultim2025/versions.txt"),
+            ),
+            (
+                "/2025/tracker/resources/config/v20251006074618",
+                "200 OK",
+                fixture("geovoile/24hultim2025/config.hwx"),
+            ),
+            (
+                "/2025/tracker/resources/tracks/v20250928152939",
+                "200 OK",
+                fixture("geovoile/24hultim2025/tracks.hwx"),
+            ),
+            (
+                "/2025/tracker/resources/reports/v20250928152939",
+                "200 OK",
+                fixture("geovoile/24hultim2025/reports.hwx"),
+            ),
+        ],
+    )
+}
+
+/// The whole 24 Heures Ultim 2025 through the client from its recorded
+/// responses: the reports' official heading and speed on the fixes they
+/// describe, their statuses and finish times.
+#[test]
+fn a_geovoile_event_downloads_through_the_client() {
+    let host = ultim_routes(fixture("geovoile/24hultim2025/viewer.html"));
+    let (event, seen) = fetch_geovoile(&host, "https://24hultim.geovoile.com/2025/tracker/");
+    let event = event.expect("fetches");
+    assert!((seen.last().copied().unwrap_or_default() - 1.0).abs() < 1e-9);
+    assert_eq!(event.title, "24H Ultim");
+    assert_eq!(
+        event.event.url,
+        "https://24hultim.geovoile.com/2025/tracker/"
+    );
+    assert_eq!(event.event.key, "24hultim.geovoile.com/2025/");
+    assert_eq!(event.leg, None);
+    // The config's start, 2025-09-27T10:00Z.
+    assert_eq!(event.start, Some(1_758_967_200));
+    assert_eq!(event.boats.len(), 14);
+    assert_eq!(event.boats[0].name, "Actual Ultim 4");
+    assert_eq!(event.boats[0].status.as_deref(), Some("DNF"));
+    assert_eq!(event.boats[0].start, Some(1_758_967_200));
+    assert_eq!(
+        event.boats[0].finish, event.stop,
+        "no arrival: the event's end"
+    );
+    let boat = event.boat("4").expect("boat 4");
+    assert_eq!(boat.status.as_deref(), Some("FINISHED"));
+    // Its official arrival, 2025-09-28T06:32:52Z.
+    assert_eq!(boat.finish, Some(1_759_041_172));
+    assert_eq!(
+        event.boat("12").and_then(|b| b.status.as_deref()),
+        Some("RETIRED")
+    );
+    // The Python reference: 292 of boat 4's 470 fixes have a report within
+    // 60 s; 246 of those have a heading and a speed.
+    assert_eq!(boat.fixes.len(), 470);
+    assert_eq!(boat.fixes.iter().filter(|f| f.cog.is_some()).count(), 246);
+    assert_eq!(boat.fixes.iter().filter(|f| f.sog.is_some()).count(), 246);
+    let fix = boat
+        .fixes
+        .iter()
+        .find(|f| f.t == 1_759_002_902)
+        .expect("a fix near the 19:55Z report");
+    assert_eq!((fix.cog, fix.sog), (Some(56.0), Some(25.5)));
+}
+
+/// Leg 1 of the Solitaire du Figaro 2024 (three legs), asked for by
+/// `?leg=1`; its reports are not served, so heading and speed are left to
+/// be derived.
+#[test]
+fn one_leg_of_a_race_in_legs_downloads() {
+    let host = geovoile_site(
+        "/2024/tracker/?leg=1",
+        fixture("geovoile/lasolitaire2024-leg1/viewer.html"),
+        "/2024/",
+        vec![
+            (
+                "/2024/tracker/resources/leg1/versions/v*",
+                "200 OK",
+                fixture("geovoile/lasolitaire2024-leg1/versions.txt"),
+            ),
+            (
+                "/2024/tracker/resources/leg1/config/v20240829093141",
+                "200 OK",
+                fixture("geovoile/lasolitaire2024-leg1/config.hwx"),
+            ),
+            (
+                "/2024/tracker/resources/leg1/tracks/v20240830050344",
+                "200 OK",
+                fixture("geovoile/lasolitaire2024-leg1/tracks.hwx"),
+            ),
+        ],
+    );
+    let (event, seen) = fetch_geovoile(&host, "lasolitaire.geovoile.com/2024/viewer/?leg=1");
+    let event = event.expect("fetches");
+    assert_eq!(seen.last().copied(), Some(1.0), "done without the reports");
+    assert_eq!(event.leg, Some((1, 3)));
+    assert_eq!(event.title, "Solitaire du Figaro (1/3)");
+    assert_eq!(
+        event.event.url,
+        "https://lasolitaire.geovoile.com/2024/tracker/?leg=1"
+    );
+    assert_eq!(event.boats.len(), 45);
+    assert_eq!(event.boats[0].start, Some(1_724_592_600));
+    assert!(event.boats[0].division.is_some());
+    assert!(
+        event
+            .boats
+            .iter()
+            .flat_map(|b| &b.fixes)
+            .all(|f| f.cog.is_none() && f.sog.is_none())
+    );
+}
+
+/// The Route du Rhum 2018 answers an empty versions file: version 0 serves.
+#[test]
+fn an_empty_versions_file_reads_version_zero() {
+    let host = geovoile_site(
+        "/2018/tracker/",
+        fixture("geovoile/routedurhum2018/viewer.html"),
+        "/2018/",
+        vec![
+            ("/2018/tracker/resources/versions/v*", "200 OK", Vec::new()),
+            (
+                "/2018/tracker/resources/config/v0",
+                "200 OK",
+                fixture("geovoile/routedurhum2018/config.hwx"),
+            ),
+            (
+                "/2018/tracker/resources/tracks/v0",
+                "200 OK",
+                fixture("geovoile/routedurhum2018/tracks.hwx"),
+            ),
+        ],
+    );
+    let (event, _) = fetch_geovoile(&host, "https://routedurhum.geovoile.com/2018/tracker/");
+    let event = event.expect("fetches");
+    assert_eq!(event.title, "Route du Rhum 2018");
+    assert_eq!(event.boats.len(), 26);
+    // 2018-11-04T13:00Z, the start.
+    assert_eq!(event.start, Some(1_541_336_400));
+}
+
+/// The 2012–2015 generation's page, a page that is not a viewer, and a 404
+/// are refused clearly, before any resource is read.
+#[test]
+fn older_and_missing_trackers_are_refused_clearly() {
+    let host = geovoile_site(
+        "/2014/tracker/",
+        fixture("geovoile/routedurhum2014/viewer.html"),
+        "/2014/",
+        vec![("/2024/tracker/", "200 OK", b"Not available".to_vec())],
+    );
+    let (err, _) = fetch_geovoile(&host, "routedurhum.geovoile.com/2014/tracker/");
+    let err = err.expect_err("2014");
+    assert!(matches!(err, TrackerError::Legacy { .. }), "{err:?}");
+    let (err, _) = fetch_geovoile(&host, "vendeeglobe.geovoile.com/2024/tracker/");
+    assert!(
+        matches!(err, Err(TrackerError::NoSuchEvent { .. })),
+        "{err:?}"
+    );
+    let (err, _) = fetch_geovoile(&host, "vendeeglobe.geovoile.com/2020/tracker/");
+    assert!(
+        matches!(err, Err(TrackerError::NoSuchEvent { .. })),
+        "{err:?}"
+    );
+}
+
+/// `resourcesurl` comes from the page, so it is checked against the
+/// allow-list before any request: another host, a look-alike, a user name
+/// or plain HTTP is refused; a Geovoile host is read (M3 deferred item).
+#[test]
+fn a_resources_host_off_the_allow_list_is_refused() {
+    let page = fixture_text("geovoile/24hultim2025/viewer.html");
+    assert!(page.contains("resourcesurl :''"));
+    for bad in [
+        "https://evil.invalid/r/",
+        "https://static.geovoile.com.evil.invalid/r/",
+        // A user name before a Geovoile host (built so the offline check
+        // reads the host as written).
+        &format!("{}x@static.geovoile.com/r/", "https://"),
+        "http://static.geovoile.com/r/",
+        "//evil.invalid/r/",
+    ] {
+        let tampered = page.replace("resourcesurl :''", &format!("resourcesurl :'{bad}'"));
+        let host = ultim_routes(tampered.into_bytes());
+        let (err, _) = fetch_geovoile(&host, "https://24hultim.geovoile.com/2025/tracker/");
+        let err = err.expect_err(bad);
+        assert!(
+            matches!(err, TrackerError::Unsupported { .. })
+                && err.to_string().contains("not a Geovoile address"),
+            "{bad}: {err}"
+        );
+    }
+    // A static host that is Geovoile's: the viewer's `tracker_<type>.hwx`.
+    let tampered = page.replace(
+        "resourcesurl :''",
+        "resourcesurl :'https://static.geovoile.com/24h/'",
+    );
+    let host = geovoile_site(
+        "/2025/tracker/",
+        tampered.into_bytes(),
+        "/2025/",
+        vec![
+            (
+                "/24h/tracker_versions.hwx*",
+                "200 OK",
+                fixture("geovoile/24hultim2025/versions.txt"),
+            ),
+            (
+                "/24h/tracker_config.hwx?v=20251006074618",
+                "200 OK",
+                fixture("geovoile/24hultim2025/config.hwx"),
+            ),
+            (
+                "/24h/tracker_tracks.hwx?v=20250928152939",
+                "200 OK",
+                fixture("geovoile/24hultim2025/tracks.hwx"),
+            ),
+        ],
+    );
+    let (event, _) = fetch_geovoile(&host, "https://24hultim.geovoile.com/2025/tracker/");
+    assert_eq!(event.expect("fetches").boats.len(), 14);
+}
+
+/// Resources that do not decode with the page's seeds (here the 2016
+/// site's config served by the 2025 site) are an unsupported version, never
+/// garbage boats.
+#[test]
+fn resources_that_do_not_match_the_seeds_are_an_unsupported_version() {
+    let host = geovoile_site(
+        "/2025/tracker/",
+        fixture("geovoile/24hultim2025/viewer.html"),
+        "/2025/",
+        vec![
+            (
+                "/2025/tracker/resources/versions/v*",
+                "200 OK",
+                fixture("geovoile/24hultim2025/versions.txt"),
+            ),
+            (
+                "/2025/tracker/resources/config/v20251006074618",
+                "200 OK",
+                fixture("geovoile/vendeeglobe2016/config.hwx"),
+            ),
+        ],
+    );
+    let (err, _) = fetch_geovoile(&host, "https://24hultim.geovoile.com/2025/tracker/");
+    let err = err.expect_err("wrong seeds");
+    assert!(
+        err.to_string().contains("unsupported Geovoile version"),
+        "{err}"
+    );
 }

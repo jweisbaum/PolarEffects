@@ -1,0 +1,800 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>New York - Vendée 2024</title>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="viewport" content="initial-scale=1.0,width=device-width,user-scalable=0,minimum-scale=1.0, maximum-scale=1.0"/>
+  <script>
+			var _paq = window._paq = window._paq || [];
+			/ tracker methods like "setCustomDimension" should be called before "trackPageView" /
+			_paq.push(['trackPageView']);
+			_paq.push(['enableLinkTracking']);
+			(function() {
+				var u="//matomo.saemvendee.org/";
+				_paq.push(['setTrackerUrl', u+'matomo.php']);
+				_paq.push(['setSiteId', '6']);
+				var d=document, g=d.createElement('script'), s=d.getElementsByTagName('script')[0];
+				g.async=true; g.src=u+'matomo.js'; s.parentNode.insertBefore(g,s);
+			})();
+		</script><script src="/2024/assets/javascript/jquery/jquery.3.7.1.js?v=63850961214"></script>
+<script src="/2024/assets/javascript/hws/hws.js?v=63911437535"></script>
+<script src="/2024/assets/javascript/hws/sig.js?v=63883524124"></script>
+<script src="/2024/viewer.js?v=63884128958"></script>
+<script src="/2024/custom/viewer_extra.js?v=63853974660"></script>
+<link rel="stylesheet" type="text/css" href="/2024/assets/css/reset.css?v=63866571891" />
+<link rel="stylesheet" type="text/css" href="/2024/viewer_struct.css?v=63911437556" />
+<link rel="stylesheet" type="text/css" href="/2024/custom/viewer_skin.css?v=63880474544" />
+<link rel="stylesheet" type="text/css" href="/2024/shared/design/viewer_design.css?v=63852595783" />
+<link rel="stylesheet" type="text/css" href="/2024/custom/viewer_extra.css?v=63870292236" />
+<link rel="stylesheet" type="text/css" href="/2024/viewer_struct_media.css?v=63882035283" />
+<link rel="stylesheet" type="text/css" href="/2024/custom/viewer_extra_media.css?v=63870292236" />
+<link rel="stylesheet" type="text/css" href="/2024/custom/viewer_version_main.css?v=63852562797" />
+
+	<script>
+		$(window).on("load", function() {
+			µ.init({ rooturl :'/2024/' });
+			sig.init({ zoommax :800, map:{ projection :'Mercator', area :{left:-110,top:65,width:120,height:50}, file :'shared/shapes/shapes.hwx?v=1720771796' }, bathy:{ area :{left:-180,top:75,width:360,height:150}, file :'assets/bathy/world_75s75n180w180e.png?v=1715364991', size :{width:900,height:581} }, leaflet:{ provider :'Esri.WorldStreetMap', path :'assets/javascript/leaflet/', }, forecasts:{ url :'shared/forecasts/', step :3, amplitude :96 } });
+			tracker.init({ versionsurl :'', resourcesurl :'', photourl :'custom/photos/', photoversion :1716887278, trackertype :"RACE", delay :0, numleg :1, nblegs :1, boatId :'0', zoomlevel :'none', zoomextrapoint :[], zoomcentered :false, months :["jan","fev","mar","avr","mai","juin","juil","aout","sep","oct","nov","dec","janvier","février","mars","avril","mai","juin","juillet","août","septembre","octobre","novembre","décembre"], days :["dim","lun","mar","mer","jeu","ven","sam","dimanche","lundi","mardi","mercredi","jeudi","vendredi","samedi"], frameok :true, withgeoblog :true, activebuttons :['route'] });
+			;
+		});
+	</script>
+</head>
+<body class="OFF RACE MONOCLASS REAL FINISH MONOLEG" rel="fr">
+	<header></header>
+	<main>
+		<aside class="left"></aside>
+		<div id="viewer">
+			<div id="sig">
+				<div id="bathymetry"></div>
+				<div id="weathercolors"></div>
+				<div id="leaflet"></div>
+				<canvas id="streamlines"></canvas>
+				<div id="map">
+					<svg width="200%" height="100%">
+						<defs>
+							<radialGradient id="sphericalbkggradient">
+								<stop offset="0%" class="sphericalbkggradient_center"/>
+								<stop offset="100%" class="sphericalbkggradient_ext"/>
+							</radialGradient>
+							<radialGradient id="halogradient">
+								<stop offset="92%" stop-color="#FFFFFF" stop-opacity="0"></stop>
+								<stop offset="95%" stop-color="#FFFFFF" stop-opacity="0.1"></stop>
+								<stop offset="97%" stop-color="#FFFFFF" stop-opacity="0.35"></stop>
+								<stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"></stop>
+							</radialGradient>
+							
+
+						</defs>
+						<g id="layout" class="noclass">
+							<g id="orthoLayer"></g>
+							<g id="areasLayer"></g>
+							<g id="prmslLayer"></g>
+							<g id="groundLayer"></g>
+							<g id="gridLayer"></g>
+							<g id="tracksLayer"></g>
+							<g id="tracksSTMLayer"></g>
+							<g id="routingsLayer"></g>
+							<g id="miscLayer"></g>
+							<g id="referencesLayer"></g>
+							<g id="splittimesLayer"></g>
+							<g id="gatesLayer"></g>
+							<g id="poiLayer"></g>
+							<g id="windLayer"></g>
+							<g id="vrLayer"></g>
+							<g id="boatsLayer"></g>
+							
+							<g id="mediaLayer" ></g>
+							<g id="infosLayer"></g>
+							<g id="daynightLayer"></g>
+							<g id="ruleLayer"></g>
+						</g>
+						<g id="svgmodels">
+							
+		<g id="svgmodel_geomedia" class="geomedia">
+			<path stroke="#FAD647" stroke-width="1.5" d="M0 0 v-12"/>
+			<circle stroke="none" fill="#FAD647" cx="0" cy="-24" r="15"/>
+			<circle stroke="none" fill="#FAD647" cx="0" cy="0" r="3"/>
+			<g transform="translate(0 -24) rotate(-4.872)">
+				<g class="face type0" stroke="#1A1349" stroke-width="1.5" fill="none">
+					<rect width="18" height="14" x="-9" y="-7" rx="2" ry="2" />
+					<path transform="translate(-9 4) rotate(45)" d="M0 0v-7a2 2 0 0 1 2 -2h7"/>
+					<path transform="translate(2 2) rotate(45)" d="M0 0v-3a2 2 0 0 1 2 -2h3"/>
+					<path stroke-linecap="round" stroke-width="2" d="M3 -3h0"/>
+				</g>
+				<g class="face type1" stroke="#1A1349" stroke-width="2" fill="none">
+					<g transform="translate(2 2) scale(0.7)">
+						<g>
+							<rect width="18" height="14" x="-9" y="-7" rx="2" ry="2" />
+							<path d="M-12 1h-2a2 2 0 0 1 -2 -2v-10a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v1"/>
+							<path transform="translate(-9 4) rotate(45)" d="M0 0v-7a2 2 0 0 1 2 -2h7"/>
+							<path transform="translate(2 2) rotate(45)" d="M0 0v-3a2 2 0 0 1 2 -2h3"/>
+							<path stroke-linecap="round" stroke-width="3" d="M3 -3h0"/>
+						</g>
+					</g>
+				</g>
+				<g class="face type2 video">
+					<circle cx="0" cy="0" r="10"  fill="#1A1349" stroke="none" />
+					<path fill="none" stroke="#FAD647" stroke-width="2" stroke-linejoin="round" d="M4.5 0l-7 -4v8z"/>
+				</g>
+				<g class="face type2 sound" transform="translate(0 9)">
+					<path stroke="#1A1349" stroke-width="1.5" fill="none" stroke-linecap="round" d="M0 0m-3 0h6 m-3 0v-2m-7-7 a7 7 0 0 0 14 0m-11 0a4 4 0 0 0 8 0v-6a4 4 0 0 0 -8 0z m3 -1h2m0-2h-2m0-2h2"/>
+				</g>
+			</g>
+		</g>
+		
+		<g id="svgmodel_geoinfo" class="geoinfo">
+			<path class="pin" d="M0 0 q14 -13 14 -24 a14 14 0 0 0 -28 0 q0 11 14 24 z" />
+			<circle class="disk" cx="0" cy="-23" r="11" />
+			<path class="letter" stroke-width="3" d="M0 -30v3m0 2v9" />
+		</g>
+		
+		<g id="svgmodel_splittime">
+			<circle fill="transparent" stroke-width="1.5" cx="0" cy="0" r="9" />
+			<path fill="none" stroke-width="2.5" d="M-3-13h6 M0-13v3" />
+			<path fill="none" stroke-width="3" transform="rotate(45 0 2)" d="M0-12v3" />
+			<path fill="none" stroke-width="1.5" d="M0 5v3 M-7 2h3" />
+			<path stroke="none" d="M0-6v7h7a 7 7 0 0 0 -7-7" />
+		</g>
+		
+	
+			<g id="svgmodel_boat_hull_1"><path d="M0-13q-4.5 10-4 25q4 1 8 0q0.5-15-4-25z" /></g>
+			
+			<g id="svgmodel_boat_hull_1_colors"><path d="M0 -13 q-4.5 10 -4 25 q4 1 8 0 q0.5 -15-4-25 z" /><path d="M0 -5 q-3 6 -2.5 14 h5 q0.5 -8 -2.5 -14z" /><path d="M0 0 q-2 0 -2.5 9.2 h5 q-0.5 -9.2 -2.5 -9.2z" /></g>
+			
+			<g id="svgmodel_boat_hull_2"><path d="M-4.192-5.4C-4.292-5.8-4.814-13.613-5.7-16c-0.9,2.4-0.897,5.532-1.297,9.432c-0.5,4.9-0.431,10.241-0.031,15.641
+				C-6.428,9.672-6.5,10-5.7,10c0.7,0,0.908-0.3,1.408-0.9c0.1-0.9,0.2-2.7,0.2-3.6h8.296c0,0.9,0.1,2.7,0.1,3.6
+				C4.904,9.7,5,10,5.8,10c0.6,0,0.796-0.271,1.296-0.872c0.5-5.4,0.625-10.729,0.126-15.529c-0.4-4-0.622-7.2-1.422-9.6
+				C4.731-13.585,4.304-5.4,4.304-5.4h-8.489H-4.192z M4.111-3.3c-0.1,1.2-0.1,5.4-0.1,6.6h-7.896c0-1.2,0-5.4-0.1-6.6H4.111z" /><path fill-opacity="0.5" d="M-5.6,4.469h11v-9h-11z"/></g>
+			
+			<g id="svgmodel_boat_hull_3"><rect x="-7" y="-11" width="14" height="23" fill="transparent"/>
+				<g><path d="M0 -13q1 1 1.5 11.8l4.6 -0.5q0.2 -8 1 -9.5q1 0 1 12q0 5 -0.2 10q0 1 -0.9 1q-0.9 0  -0.9 -1v-3.4q-1.5 2.5 -4.1 3q0 0.5 -0.2 1l-1 1.5 h-1.6 l-1-1.5q-0.2 -0.5 -0.2 -1q-2.6 -0.5 -4.1 -3v3.4q0 1 -0.9 1q-0.9 0 -0.9 -1q-0.2 -5 -0.2 -10q0 -12 1 -12q0.8 1.5 1 9.5l4.6 0.5q0.5 -10.8 1.5 -11.8z M0 0m-1.6 0.4l-4.5 -0.6v6l4.3 -1.6zM0 0m1.6 0.4l0.2 3.8l4.3 1.6v-6z M0 0m-1.9 6.3l-2.5 0.9q1.2 1.6 2.4 1.6zM0 0m1.9 6.3l0.1 2.5q1.2 0 2.4 -1.6z" /></g></g>
+			
+			<g id="svgmodel_boat_hull_3_colors"><rect x="-7" y="-11" width="14" height="23" fill="transparent"/>
+				<g><path d="M0 -13 q2 4 2.5 11.8 l3.6 -0.5 q0.2 -8 1.2 -9.5 q1 0 1.2 12 q0 5 -0.2 10 q0 1  -1.1 1 q-0.9 0  -1.1 -1 v-3.7 q-1 2.5 -3.1 3.3 q0 1 -1.7 2.5 h-2.6 q-1.7 -1.5 -1.7 -2.5 q-2.1 -1 -3.1 -3.3 v3.7 q0 1 -1.1 1 q-0.9 0 -1.1 -1 q-0.2 -5 -0.2 -10 q0 -12 1.2 -12 q0.8 1.5 1.2 9.5 l3.6 0.5 q0.5 -7.8 2.5 -11.8 z M0 0 m-2.6 0.4 l-3.5 -0.6 v5.5 l3.3 -1.6 z M0 0 m2.6 0.4 l0.2 3.3 l3.3 1.6 v-5.5 z M0 0 m-2.8 5.2 l-2.3 1.2 q0.7 2 2.1 2.3 z M0 0 m2.8 5.2 l0.2 3.5 q0.5 -0.3 2.1 -2.3 z" /><path d="M0 -6 q-1.5 2 -2 14h4 q-0.5 -12 -2 -14z" /><path d=" M0 1 q-2 2 -2 8q0 2 2 2q2 0 2 -2q0 -6 -2 -8" /></g></g>
+			
+			<g id="svgmodel_boat_hull_4"><path d="M0-13q-2.8 6-3.6 13.7l-4.5-0.1q-1.2 0.2-1.6 2.5q0.6-0.3 2-0.3l3.9 0.1q-0.5 5-0.2 9q4 1 8 0q0.3-5-0.2-9l3.9-0.1q1.4 0 2 0.3q-0.4-2.3-1.6-2.5l-4.5 0.1q-0.8-7.7-3.6-13.7z" /></g>
+			
+			<g id="svgmodel_boat_hull_4_colors"><path class="c4" d="M0 0.7 l-8.1 -0.1 q-1.2 0.2 -1.6 2.5 q0.6 -0.3 2 -0.3 l 7.7 0.2 l 7.7 -0.2 q1.4 0 2 0.3 q-0.4 -2.3 -1.6 -2.5 l-4.5 0.1z" /><path class="c1" d="M0 -13 q-4.5 10 -4 25 q4 1 8 0 q0.5 -15-4-25 zz" /><path class="c2" d="M0 -5 q-3 6 -2.5 14 h5 q0.5 -8 -2.5 -14z" /><path class="c3" d="M0 0 q-2 0 -2.5 9.2 h5 q-0.5 -9.2 -2.5 -9.2z" /></g>
+			
+			<g id="svgmodel_boat_hull_5"><path d="M0 -11 q-4.5 0 -4 23 q4 1 8 0 q0.5 -23 -4 -23 z" /></g>
+			
+			<g id="svgmodel_boat_hull_5_colors"><path d="M0 -11 q-4.5 0 -4 23 q4 1 8 0 q0.5 -23 -4 -23 z" /><path d="M0 -4 q-3 0 -2.5 13 h5 q0.5 -13 -2.5 -13z" /><path d="M0 0 q-2 0 -2.5 9 h5 q-0.5 -9 -2.5 -9z" /></g>
+		
+						</g>
+					</svg>
+				</div>
+				<div id="gridlines"><svg><path d="" /><g></g></svg></div>
+				<div id="ruleTip" class="tip" rel="nm"></div>
+				<div id="forecasttip" class="tip"><div class="icon"></div><div class="origin"></div><div class="value"></div></div>
+				<div id="plotTip" class="tip" rel="Jour"></div>
+				<div id="maintip" class="tip" rel=""><div class="title"></div><div class="message"></div></div>
+				<div id="coords"><div class="lat"></div><div class="lng"></div></div>
+				<div id="tools">
+					<div id="zoom">
+						<div class="button plus"><div class="face"><svg viewBox="-13 -13 26 26"><path fill="none" stroke-width="2" d="M-7 0 h14 M0-7v14"/></svg></div></div>
+						<div id="bt_target" class="iconbutton" legend="Centrer sur le bateau actif" data="1,0">
+  <div class="icon">
+    <svg viewBox="-13 -13 26 26">
+      <circle stroke="none" cx="0" cy="0" r="3" />
+      <path fill="none" stroke-width="2" d="M-10 0h4 M10 0 h-4 M0 10v-4 M0-10v4" />
+    </svg>
+  </div>
+</div>
+						<div class="button minus"><div class="face"><svg viewBox="-13 -13 26 26"><path fill="none" stroke-width="2" d="M-7 0 h14"/></svg></div></div>
+					</div>
+					<div id="bt_fullscreen" class="iconbutton" data="1,0">
+  <div class="icon">
+    <svg viewBox="0 0 26 26">
+      <path fill="none" stroke-linejoin="round" stroke-width="2" d="M10 5h-3a2 2  0 0 0 -2 2v3m0 6v3a2 2 0 0 0 2 2h3m6 0h3a2 2 0 0 0 2 -2v-3m0-6v-3a2 2 0 0 0 -2 -2h-3" />
+    </svg>
+  </div>
+</div><div id="bt_ruler" class="iconbutton" data="1,0">
+  <div class="icon">
+    <svg viewBox="-13 -13 26 26">
+      <path fill="none" transform="rotate(-45)" d="M0 0m-10.5 -4.5h21v9h-21zm3 0v6m3 -2v-4m3 0v4m3 0v-4m3 0v4m3 2v-6"></path>
+    </svg>
+  </div>
+</div>
+				</div>
+				<div id="boatcard">
+					<article>
+						<div class="identity" rel="race">
+				<div class="photo">{target.data.getPhotosHtml('')}</div>
+				<div class="names">
+					<p>{'reverse'=='' 				? target.boat.name : target.data.getSailorsHtml('<span class="nat #nationality#"><big>#fname#</big> <small>#lname#</small></span>')}</p>
+					<p>{'reverse'=='reverse' 	? target.boat.name : target.data.getSailorsHtml('<span class="nat #nationality#"><big>#fname#</big> <small>#lname#</small></span>')}</p>
+				</div>
+        </div>
+						<div class="infos" rel="STA"><div class="group standby"><p class="date"><span class="var">Départ</span><span class="value">{µ.toDate(target.data.boatClass.run.date,"FR:dddd dd mmmm ' à ' HH:MM 'FR'")}</span></p><p class="separator"><span class="var">Distance totale</span><span class="value">{µ.toNumber(target.data.line.dtf," ¤1¤.")}</span> nm</p></div><div class="group livepos"><table><tr class="posistion"><th class="var">Position</td><td class="value">{µ.toDate(target.boat.track.currentLocation.timecode*1000,"FR:HH:MM")}</td><td class="unit">FR</td></tr><tr class="heading"><th class="var">Cap</th><td class="value">{target.boat.track.currentLocation.heading}</td><td class="unit">°</td></tr><tr class="speed"><th class="var">Vitesse</th><td class="value">{µ.toNumber(target.boat.track.currentLocation.getSpeed()," ¤1¤.")}</td><td class="unit">nds</td></tr></table></div></div>
+<div class="infos" rel="ARV"><div class="group arrival"><p class="date"><span class="var">Arrivée</span><span class="value">{µ.toDate(target.boat.arrival.date,"FR:dd/mm/yyyy ' à ' HH:MM:ss 'FR'")}</span></p><br/><p class="time"><span class="var">Temps de course</span><span class="value">{µ.toRacetime(target.boat.arrival.racetime, "[0]j [1]h [2]min [3]s¤[0]h [1]min [2]s¤[0]min [1]s¤[0]s¤¤N/A")}</span></p><p class="time {target.boat.arrival.penalty>0 ? '' : 'off'}"><span class="var">Pénalité</span><span class="value">{µ.toRacetime(Math.abs(target.boat.arrival.penalty), "[0]j [1]h [2]min [3]s¤[0]h [1]min [2]s¤[0]min [1]s¤[0]s¤¤N/A")}</span></p><p class="time {target.boat.arrival.penalty<0 ? '' : 'off'}"><span class="var">Bonification</span><span class="value">{µ.toRacetime(Math.abs(target.boat.arrival.penalty), "[0]j [1]h [2]min [3]s¤[0]h [1]min [2]s¤[0]min [1]s¤[0]s¤¤N/A")}</span></p><p class="time {target.boat.arrival.penalty!=0 ? '' : 'off'}"><span class="var">Temps officiel</span><span class="value">{µ.toRacetime(target.boat.arrival.jury, "[0]j [1]h [2]min [3]s¤[0]h [1]min [2]s¤[0]min [1]s¤[0]s¤¤N/A")}</span></p><p class="time gap{µ.toNumberSign(target.boat.arrival.gapToFirst,'¤zero¤')}"><span class="var">Écart au premier</span><span class="value">{µ.toRacetime(target.boat.arrival.gapToFirst, "[0]j [1]h [2]min [3]s¤[0]h [1]min [2]s¤[0]min [1]s¤[0]s¤¤N/A")}</span></p><p class="time gap{µ.toNumberSign(target.boat.arrival.gapToPrevious-target.boat.arrival.gapToFirst,'¤zero¤')}"><span class="var">Écart au précédent</span><span class="value">{µ.toRacetime(target.boat.arrival.gapToPrevious, "[0]j [1]h [2]min [3]s¤[0]h [1]min [2]s¤[0]min [1]s¤[0]s¤¤N/A")}</span></p><br/><p><span class="var">Sur l'orthodromie</span><span class="value">{µ.toNumber(target.boat.arrival.orthoDistance, " ¤1¤.")} nm / {µ.toNumber(target.boat.arrival.orthoSpeed, " ¤1¤.")} nds</span></p><p><span class="var">Sur le fond</span><span class="value">{µ.toNumber(target.boat.arrival.overgroundDistance, " ¤1¤.")} nm / {µ.toNumber(target.boat.arrival.overgroundSpeed, " ¤1¤.")} nds</span></p></div></div>
+<div class="infos" rel="RAC"><table class="dist"><tr class="hour"><th>Heure retenue</th><td colspan="3"><b class="{µ.toNumberSign(target.data.line.retard,'latedate¤¤')}">{µ.toDate(target.data.line.date,"FR:HH:MM' FR'")}</dfn><tt> retard</tt></b></td></tr><tr><th>Distance</th><td class="lbl">... parcourue</td><td class="val unitnm">{µ.toNumber(target.data.boatClass.run.length - target.data.line.dtf," ¤1¤.")}</td><td class="val unitkm">{µ.toNumber((target.data.boatClass.run.length - target.data.line.dtf)*1.852," ¤1¤.")}</td><td class="unitnm">nm</td><td class="unitkm">km</td></tr><tr><td></td><td class="lbl">... restante</td><td class="val unitnm">{µ.toNumber(target.data.line.dtf," ¤1¤.")}</td><td class="val unitkm">{µ.toNumber(target.data.line.dtf*1.852," ¤1¤.")}</td><td class="unitnm">nm</td><td class="unitkm">km</td></tr><tr class="dtls {target.data.line.rank==1 ? 'off' : ''}"><td></td><td class="lbl">... au premier</td><td class="val unitnm dtlprogress {µ.toNumberSign(target.data.line.dtlProgress,'neg¤eq¤pos')}">{µ.toNumber(Math.abs(target.data.line.dtl)," ¤1¤.")}</td><td class="val unitkm dtlprogress {µ.toNumberSign(target.data.line.dtlProgress,'neg¤eq¤pos')}">{µ.toNumber(Math.abs(target.data.line.dtl*1.852)," ¤1¤.")}</td><td class="unitnm">nm</td><td class="unitkm">km</td></tr></table><div class="group speeds"><table><thead><tr><th></th><td></td><td class="over4h">Sur 4h</td><td class="over24h">Sur 24h</td></tr></thead><tbody><tr class="head"><th class="var">Cap</th><td class="value">{target.data.line.heading}</td><td class="value over4h">{target.data.line.heading4h}</td><td class="value over24h">{target.data.line.heading24h}</td><td class="unit">°</td></tr><tr class="speed"><th class="var">Vitesse</th><td class="value">{µ.toNumber(target.data.line.speed," ¤1¤.")}</td><td class="value over4h">{µ.toNumber(target.data.line.dist4h/240*60," ¤1¤.")}</td><td class="value over24h">{µ.toNumber(target.data.line.dist24h/1440*60," ¤1¤.")}</td><td class="unit">nds</td></tr><tr class="overg"><th class="var"><b>sur le fond</b></th><td></td><td class="value over4h"><b>{µ.toNumber(target.data.line.dog4h/240*60," ¤1¤.")}</b></td><td class="value over24h"><b>{µ.toNumber(target.data.line.dog24h/1440*60," ¤1¤.")}</b></td><td class="unit"><b>nds</b></td></tr><tr class="vmg"><th class="var">VMC</td><td class="value vmg {µ.toNumberSign(target.data.line.vmg, 'neg¤¤')}">{µ.toNumber(target.data.line.vmg," ¤1¤.")}</td><td class="value vmg over4h {µ.toNumberSign(target.data.line.vmg4h, 'neg¤¤')}">{µ.toNumber(target.data.line.vmg4h," ¤1¤.")}</td><td class="value vmg over24h {µ.toNumberSign(target.data.line.vmg24h, 'neg¤¤')}">{µ.toNumber(target.data.line.vmg24h," ¤1¤.")}</td><td class="unit">nds</td></tr><tr class="distance"><th class="var">Distance</th><td></td><td class="value over4h">{µ.toNumber(target.data.line.dist4h," ¤1¤.")}</td><td class="value over24h">{µ.toNumber(target.data.line.dist24h," ¤1¤.")}</td><td class="unit">nm</td></tr><tr class="overg"><th class="var"><b>sur le fond</b></th><td></td><td class="value over4h"><b>{µ.toNumber(target.data.line.dog4h," ¤1¤.")}</b></td><td class="value over24h"><b>{µ.toNumber(target.data.line.dog24h," ¤1¤.")}</b></td><td class="unit"><b>nm</b></td></tr></tbody></table></div></div>
+<div class="infos" rel="PIT"><div class="group otherstatus"><p>PIT</p></div></div>
+<div class="infos" rel="STM"><div class="group otherstatus"><p>Mode furtif</p></div></div>
+<div class="infos" rel="NL"><div class="group otherstatus"><p>Non localisé</p></div></div>
+<div class="infos" rel="SUS"><div class="group otherstatus"><p>SUS</p></div></div>
+<div class="infos" rel="NYS"><div class="group otherstatus"><p>NYS</p></div></div>
+<div class="infos" rel="DNS"><div class="group otherstatus"><p>DNS</p></div></div>
+<div class="infos" rel="DNC"><div class="group otherstatus"><p>DNC</p></div></div>
+<div class="infos" rel="DNF"><div class="group location"><table><tr class="date"><td class="var">Heure retenue</td><td class="value {µ.toNumberSign(target.data.line.retard,'latedate¤¤')}">{µ.toDate(target.data.line.date,"FR:HH:MM")}</td><td class="unit">FR</td></tr><tr class="dtf"><td class="var">Dist. au but</td><td class="value">{µ.toNumber(target.data.line.dtf," ¤1¤.")}</td><td class="unit">nm</td></tr><tr class="dtl {target.data.line.dtl==0 ? 'off' : ''}"><td class="var">Dist. au premier</td><td class="value">+{µ.toNumber(target.data.line.dtl," ¤1¤.")}</td><td class="unit">nm</td><td class="value dtlprogress {µ.toNumberSign(target.data.line.dtlProgress,'neg¤eq¤pos')}">{µ.toNumber(Math.abs(target.data.line.dtlProgress)," ¤1¤.")}</td><td class="unit {µ.toNumberSign(target.data.line.dtlProgress,'neg¤eq¤pos')}">nm</td></tr></table></div><div class="group speeds"><table><thead><tr><th></th><td></td><td class="over4h">Sur 4h</td><td class="over24h">Sur 24h</td></tr></thead><tbody><tr class="head"><th class="var">Cap</th><td class="value">{target.data.line.heading}</td><td class="value over4h">{target.data.line.heading4h}</td><td class="value over24h">{target.data.line.heading24h}</td><td class="unit">°</td></tr><tr class="speed"><th class="var">Vitesse</th><td class="value">{µ.toNumber(target.data.line.speed," ¤1¤.")}</td><td class="value over4h">{µ.toNumber(target.data.line.dist4h/240*60," ¤1¤.")}</td><td class="value over24h">{µ.toNumber(target.data.line.dist24h/1440*60," ¤1¤.")}</td><td class="unit">nds</td></tr><tr class="overg"><th class="var"><b>sur le fond</b></th><td></td><td class="value over4h"><b>{µ.toNumber(target.data.line.dog4h/240*60," ¤1¤.")}</b></td><td class="value over24h"><b>{µ.toNumber(target.data.line.dog24h/1440*60," ¤1¤.")}</b></td><td class="unit"><b>nds</b></td></tr><tr class="vmg"><th class="var">VMC</td><td class="value vmg {µ.toNumberSign(target.data.line.vmg, 'neg¤¤')}">{µ.toNumber(target.data.line.vmg," ¤1¤.")}</td><td class="value vmg over4h {µ.toNumberSign(target.data.line.vmg4h, 'neg¤¤')}">{µ.toNumber(target.data.line.vmg4h," ¤1¤.")}</td><td class="value vmg over24h {µ.toNumberSign(target.data.line.vmg24h, 'neg¤¤')}">{µ.toNumber(target.data.line.vmg24h," ¤1¤.")}</td><td class="unit">nds</td></tr><tr class="distance"><th class="var">Distance</th><td></td><td class="value over4h">{µ.toNumber(target.data.line.dist4h," ¤1¤.")}</td><td class="value over24h">{µ.toNumber(target.data.line.dist24h," ¤1¤.")}</td><td class="unit">nm</td></tr><tr class="overg"><th class="var"><b>sur le fond</b></th><td></td><td class="value over4h"><b>{µ.toNumber(target.data.line.dog4h," ¤1¤.")}</b></td><td class="value over24h"><b>{µ.toNumber(target.data.line.dog24h," ¤1¤.")}</b></td><td class="unit"><b>nm</b></td></tr></tbody></table></div></div>
+<div class="infos" rel="DSQ"><div class="group otherstatus"><p>DSQ</p></div></div>
+<div class="infos" rel="CNS"><div class="group otherstatus"><p>CNS</p></div></div>
+<div class="infos" rel="RET"><p>Abandon</p></div>
+<div class="infos" rel="STMOUT"><div class="group otherstatus"><p>Mode furtif</p></div></div>
+
+			<div class="rank {(target.data.line.progress==undefined || target.data.line.progress==0? 'eq' : target.data.line.progress>0 ? 'up' : 'down')}" rel="race"><div class="val">{("00"+ target.data.line.rank).slice(-2)}</div><div class="progress"></div></div>
+			
+						<div class="cross"><svg><path transform="rotate(45 7 7)" d="M14,10V7h-4V3H7v4H3v3h4v4h3v-4H14z"/></svg></div>
+					</article>
+				</div>
+				<div id="geoblog">
+					<svg class="arrow"><path d="" /></svg>
+					<header>
+						<div class="infos">
+							<p class="position" rel="FR:yyyy.mm.dd HH:MM &#39;FR&#39;"></p>
+							<p class="title"></p>
+							<p class="hat"></p>
+						</div>
+						<div class="cross"><svg><g transform="rotate(45) translate(6 -8)"><path d="M14,10V7h-4V3H7v4H3v3h4v4h3v-4H14z"/></g></svg></div>
+					</header>
+					<article rel="https://www.youtube.com/embed/#id#">
+						<div class="nav left"><svg viewBox="-20 -20 40 40"><path d="M8 -8h4v20h-20v-4h16v-16z"/></svg></div>
+						<div class="nav right"><svg viewBox="-20 -20 40 40"><path d="M8 -8h4v20h-20v-4h16v-16z"/></svg></div>
+					</article>
+					<footer></footer>
+					<div class="resize"><svg viewBox="-28 -28 28 28"><path d="M-7 -3L-3 -7M-13 -3L-3 -13M-19 -3L-3 -19"/></svg></div>
+				</div>
+				<div id="infopoint">
+					<svg class="arrow"><path d="" /></svg>
+					<article>
+						<h1></h1>
+						<div class="content"></div>
+						<div class="cross"><svg><g transform="rotate(45) translate(6 -8)"><path d="M14,10V7h-4V3H7v4H3v3h4v4h3v-4H14z"/></g></svg></div>
+					</article>
+				</div>
+				<div id="zoomwindow"></div>
+				
+			</div>
+			<div id="graphics" rel="all" data-unit="">
+				<div class="variables">
+					<span><input type="radio" name="varname" value="dtl" checked="1" />DTL</span>
+				<span><input type="radio" name="varname" value="dist24h" />Vitesse sur 24h</span>
+				<span><input type="radio" name="varname" value="rank" />Rang</span>
+				</div>
+				<div class="drawing"></div>
+				<div class="legend"></div>
+			</div>
+			<div id="forecasts">
+				<div class="variables"></div>
+				<div class="scroll">
+					<div class="cursor"></div>
+					<div class="hours"></div>
+					<div class="wait"></div>
+				</div>
+				<div class="params">
+					<div class="options">
+						<div class="option anim">
+							<div class="onoff on"></div>
+							<label>Particules</label>
+						</div>
+						
+					</div>
+					<legend></legend>
+				</div>
+				<div class="advert">
+					<a href='http://www.dice-engineering.com/' target='_blank'>D-ICE</a>
+					<span class="at">Prévision</span>
+					<span class="currentdate" rel="FR:&#39;du &#39;dd/mm&#39; &#224; &#39;HH:MM &#39;FR&#39;"></span>
+				</div>
+			</div>
+			<div id="subtitle"></div>
+			<div id="vr"><a href="https://www.virtualregatta.com/fr/offshore-jeu/?openrace" target="_blank">
+  <svg viewBox="0 0 120 60">
+    <g transform="translate(6 -266)">
+      <path class="color" d="M21.73,312.951l2.587,9.008h-7.97l-2.56-8.975h-1.341l-1.903,8.976H2.715l4.983-23.527 h16.405c1.539-0.043,3.025,0.559,4.101,1.659c1.079,1.081,1.668,2.555,1.633,4.081c0,0.459-0.047,0.916-0.14,1.364l-0.071,0.376 c-0.408,1.846-1.416,3.504-2.867,4.716c-1.4,1.269-3.155,2.077-5.03,2.316 M20.581,304.046h-6.229l-0.705,3.308h6.204 c0.535-0.008,1.042-0.237,1.399-0.636c0.388-0.362,0.613-0.867,0.623-1.397c0.084-0.62-0.352-1.191-0.972-1.275 c-0.106-0.015-0.214-0.014-0.32,0.003" />
+      <path d="M34.112,313.456c-0.818,0.023-1.608-0.297-2.178-0.884 c-0.569-0.573-0.881-1.353-0.863-2.16c0-0.245,0.025-0.491,0.076-0.731l1.051-4.973c0.236-1.059,0.836-2,1.696-2.661 c0.803-0.706,1.83-1.104,2.899-1.122h4.944c1.641-0.047,3.008,1.246,3.054,2.887c0.001,0.047,0.001,0.095,0.001,0.143 c0,0.252-0.026,0.504-0.076,0.75l-0.038,0.188c-0.235,1.057-0.83,1.996-1.683,2.66c-0.802,0.707-1.829,1.105-2.898,1.121h-4.569 l-0.2,0.912c-0.008,0.054-0.013,0.107-0.013,0.162c-0.004,0.189,0.068,0.372,0.2,0.507c0.131,0.136,0.313,0.21,0.501,0.204h7.473 l-0.625,2.994L34.112,313.456z M39.858,303.922H37.42c-0.504,0.02-0.936,0.366-1.064,0.854l-0.188,0.911h3.305 c0.579-0.032,1.042-0.493,1.076-1.072c0.047-0.333-0.185-0.642-0.518-0.688c-0.057-0.009-0.114-0.009-0.17,0" />
+      <path d="M53.274,315.97h-8.75l0.639-2.992h7.499c0.241-0.01,0.47-0.107,0.645-0.275 c0.196-0.156,0.334-0.374,0.394-0.617l0.201-0.943h-4.556c-1.659,0.035-3.032-1.281-3.067-2.939c0-0.043,0-0.084,0-0.127 c0.001-0.248,0.03-0.496,0.087-0.738l0.55-2.604c0.239-1.061,0.839-2.006,1.699-2.672c0.8-0.712,1.828-1.114,2.899-1.134h8.737 l-2.391,11.232c-0.242,1.059-0.841,2.001-1.697,2.67c-0.793,0.714-1.817,1.118-2.884,1.142 M55.431,303.923h-3.305 c-0.245,0.005-0.48,0.097-0.663,0.259c-0.196,0.151-0.333,0.367-0.388,0.609l-0.525,2.478c-0.008,0.055-0.013,0.109-0.014,0.164 c-0.004,0.189,0.068,0.373,0.2,0.51c0.13,0.137,0.312,0.212,0.501,0.207h3.305L55.431,303.923z" />
+      <path d="M63.595,313.456c-1.649,0.045-3.022-1.256-3.067-2.904c-0.001-0.048-0.001-0.096,0-0.144 c0-0.249,0.025-0.497,0.075-0.741l0.038-0.188c0.235-1.062,0.836-2.006,1.697-2.669c0.802-0.707,1.829-1.105,2.898-1.125h4.559 l0.201-0.91c0.008-0.057,0.012-0.115,0.012-0.172c0.041-0.334-0.197-0.639-0.531-0.68c-0.052-0.006-0.105-0.006-0.158,0.002h-7.487 l0.624-2.997h8.762c1.641-0.041,3.006,1.256,3.047,2.897c0.001,0.045,0.001,0.089,0,0.133c0,0.247-0.029,0.492-0.088,0.732 l-1.853,8.77L63.595,313.456z M69.152,308.677h-3.292c-0.287,0.002-0.561,0.121-0.757,0.331c-0.208,0.192-0.328,0.461-0.332,0.743 c-0.051,0.342,0.183,0.659,0.524,0.711c0.059,0.01,0.119,0.01,0.179,0.002h3.303L69.152,308.677z" />
+      <path d="M78.263,313.456c-0.806,0.021-1.584-0.299-2.141-0.883 c-0.565-0.579-0.873-1.361-0.853-2.171c0-0.248,0.025-0.495,0.076-0.739l2.389-11.226h4.119l-0.513,2.391h4.632l-0.639,2.993 h-4.632l-1.219,5.76c-0.016,0.053-0.025,0.107-0.025,0.163c-0.004,0.19,0.068,0.374,0.201,0.509c0.129,0.137,0.311,0.213,0.5,0.208 h3.76l-0.639,2.994L78.263,313.456z" />
+      <path d="M89.264,313.456c-0.807,0.021-1.584-0.299-2.141-0.883 c-0.565-0.579-0.873-1.361-0.854-2.171c0-0.248,0.025-0.495,0.074-0.739l2.392-11.226h4.118l-0.513,2.391h4.632l-0.639,2.993 h-4.632l-1.219,5.76c-0.015,0.053-0.023,0.107-0.024,0.163c-0.005,0.19,0.067,0.374,0.2,0.509c0.13,0.138,0.312,0.213,0.501,0.208 h3.76l-0.638,2.994L89.264,313.456z" />
+      <path d="M100.337,313.456c-1.65,0.043-3.023-1.26-3.067-2.909c-0.001-0.046-0.001-0.093,0-0.139 c0-0.249,0.026-0.497,0.076-0.741l0.037-0.188c0.236-1.061,0.837-2.005,1.697-2.669c0.802-0.708,1.829-1.107,2.899-1.127h4.557 l0.2-0.911c0.008-0.057,0.013-0.114,0.013-0.172c0.041-0.334-0.197-0.638-0.531-0.679c-0.053-0.007-0.105-0.006-0.158,0.001h-7.485 l0.625-2.993h8.763c1.642-0.04,3.006,1.258,3.047,2.9c0.001,0.043,0.001,0.087,0,0.131c0,0.246-0.03,0.492-0.089,0.73l-1.852,8.771 L100.337,313.456z M105.895,308.677h-3.292c-0.288,0.001-0.562,0.121-0.758,0.331c-0.208,0.191-0.328,0.46-0.332,0.743 c-0.052,0.342,0.183,0.659,0.523,0.711c0.059,0.01,0.119,0.01,0.179,0.002h3.305L105.895,308.677z" />
+      <path class="color" d="M14.916,271.474l-3.81,15.71c-0.09,0.423-0.909,1.584-1.316,1.584H9.647 c-0.407,0-1.225-1.162-1.317-1.584l-3.901-18.643H-3.91l3.928,19.592c0.393,1.828,2.297,6.838,9.63,6.838 c7.334,0,9.378-5.01,9.771-6.838l3.831-16.659H14.916z" />
+      <path d="M20.405,294.971l2.656-12.527h3.894l-2.657,12.527H20.405z" />
+      <path d="M23.382,280.847l0.707-3.344h3.894l-0.708,3.344H23.382z" />
+      <path d="M33.8,285.438c-0.245,0.004-0.479,0.096-0.663,0.258 c-0.196,0.149-0.329,0.367-0.375,0.609l-1.853,8.67h-4.118l1.865-8.77c0.239-1.041,0.832-1.969,1.677-2.623 c0.78-0.706,1.789-1.108,2.84-1.135h5.025l-0.625,2.994L33.8,285.438z" />
+      <path d="M41.493,294.97c-0.806,0.023-1.584-0.297-2.141-0.881 c-0.565-0.58-0.873-1.363-0.853-2.172c-0.001-0.248,0.024-0.496,0.074-0.739l2.391-11.225h4.118l-0.513,2.391h4.632l-0.639,2.993 H43.93l-1.219,5.761c-0.016,0.052-0.024,0.106-0.025,0.162c-0.005,0.189,0.067,0.374,0.2,0.509c0.13,0.139,0.312,0.214,0.501,0.209 h3.761l-0.639,2.992H41.493z" />
+      <path d="M52.517,294.972c-0.817,0.024-1.607-0.296-2.177-0.883 c-0.57-0.572-0.882-1.354-0.864-2.161c0-0.245,0.025-0.491,0.076-0.731l1.853-8.758h4.181l-1.853,8.655 c-0.007,0.054-0.011,0.108-0.011,0.163c-0.004,0.189,0.068,0.371,0.2,0.506c0.13,0.137,0.313,0.211,0.501,0.207h3.305l2.028-9.535 h4.167l-2.654,12.527L52.517,294.972z" />
+      <path d="M67.282,294.972c-1.648,0.045-3.021-1.254-3.067-2.902c-0.001-0.049-0.001-0.097,0-0.146 c0-0.249,0.025-0.497,0.075-0.741l0.038-0.188c0.237-1.06,0.836-2.003,1.696-2.667c0.802-0.707,1.83-1.105,2.899-1.125h4.557 l0.2-0.911c0.008-0.058,0.012-0.115,0.012-0.173c0.04-0.334-0.198-0.639-0.533-0.678c-0.052-0.007-0.104-0.006-0.156,0.001h-7.485 l0.625-2.994h8.762c1.643-0.038,3.004,1.264,3.042,2.906c0.001,0.042,0.001,0.083,0,0.126c0,0.246-0.028,0.491-0.086,0.73 l-1.854,8.77L67.282,294.972z M72.839,290.192h-3.291c-0.288,0.002-0.562,0.122-0.757,0.332c-0.208,0.191-0.328,0.46-0.332,0.742 c-0.052,0.342,0.183,0.659,0.523,0.711c0.059,0.01,0.12,0.01,0.179,0.002h3.305L72.839,290.192z" />
+      <path d="M81.912,294.972c-0.809,0.021-1.589-0.299-2.148-0.883 c-0.565-0.575-0.873-1.355-0.854-2.161c0-0.247,0.03-0.492,0.088-0.731l1.852-8.758h4.131l-1.839,8.655 c-0.017,0.058-0.025,0.116-0.025,0.176c-0.003,0.185,0.07,0.362,0.201,0.493c0.126,0.135,0.304,0.209,0.488,0.207h5.032 l-0.626,2.992L81.912,294.972z" />
+    </g>
+  </svg>
+</a></div>
+			<div id="blockmark">
+				
+			</div>
+			<div id="dates">
+					<div id="startdate"><em>Départ</em> le<br/>mercredi <em>29 mai 2024</em> à <em> 20h00 FR</em></div>
+					<div id="reportdate" rel="FR:&#39;&lt;em&gt;Classement&lt;/em&gt; du&lt;br/&gt;&#39;dddd&#39; &lt;em&gt;&#39;dd mmmm yyyy&#39;&lt;/em&gt; &#224; &lt;em&gt;&#39; HH&#39;h&#39;MM &#39;FR&lt;/em&gt;&#39;"></div>
+					<div id="frequency"><div class ="range">Mise à jour toutes les  heures</div></div>
+			</div>
+			<div id="display">
+				<div class="detect"></div>
+				<div class="content"><div class="group group_030"><label><span>Course</span></label><div class="button references"><label>Routes références</label><div id="bt_references" class="iconbutton" data="1,1"><div class="icon"><svg viewBox="0 0 26 26"><g transform="rotate(-45 13 13)"><path fill="none" stroke-width="1" d="M2 13l3 2m1.5 1l2 1.3m1.5 1l3 2l3-2m1.5-1l2-1.3m1.5 -1l3 -2" /><circle stroke="none" cx="2" cy="13" r="2" /><circle stroke="none" cx="24" cy="13" r="2" /><circle stroke="none" cx="13" cy="20" r="2" /></g></svg></div></div></div></div></div>
+				<div class="preferences"><label>Sauvegarder<br/> mes préférences</label><div><div class="onoff"></div></div></div>
+				<div class="button"><svg viewBox="0 0 31 20" class="open">
+  <path d="M2 12.2227L15.5 18.556L29 12.2227" stroke="#1A1349" stroke-width="1.5" stroke-linecap="square" />
+  <path d="M2 8.00035L15.5 14.3337L29 8.00035L15.5 1.66699L2 8.00035Z" stroke="#1A1349" stroke-width="1.5" stroke-linecap="square" />
+</svg><svg viewBox="16 3 70 70" class="close">
+  <path fill="#1A1349" stroke="none" d="M17.9727 29.667L21.2334 18.333H24.3916L25.2598 29.667H22.7578L22.6348 27.377H21.1309L20.5498 29.667H17.9727ZM21.5137 25.7979H22.5664L22.4912 21.5391L21.5137 25.7979ZM26.3945 29.667L27.584 18.333H32.6289L32.4375 20.165H30.1201L29.8467 22.8037H31.9111L31.7129 24.6973H29.6484L29.1289 29.667H26.3945ZM32.6289 29.667L33.8184 18.333H38.8633L38.6719 20.165H36.3545L36.0811 22.8037H38.1455L37.9473 24.6973H35.8828L35.3633 29.667H32.6289ZM38.877 29.667L40.0664 18.333H42.7871L41.5977 29.667H38.877ZM46.5879 29.8379C45.9408 29.8379 45.3984 29.7536 44.9609 29.585C44.5234 29.4118 44.1908 29.1566 43.9629 28.8193C43.735 28.4821 43.5846 28.0879 43.5117 27.6367C43.4753 27.3997 43.4548 27.14 43.4502 26.8574C43.4502 26.6022 43.4661 26.3311 43.498 26.0439L43.9287 21.9629C43.9925 21.3477 44.1064 20.8145 44.2705 20.3633C44.4391 19.9121 44.6738 19.5179 44.9746 19.1807C45.2754 18.8434 45.6605 18.5905 46.1299 18.4219C46.6038 18.2487 47.1644 18.1621 47.8115 18.1621C48.445 18.1621 48.9759 18.2419 49.4043 18.4014C49.8372 18.5609 50.1631 18.7933 50.3818 19.0986C50.6006 19.3994 50.7441 19.7412 50.8125 20.124C50.8535 20.3428 50.874 20.5798 50.874 20.835C50.874 21.0264 50.8626 21.2269 50.8398 21.4365L50.7305 22.4482H48.0439L48.1738 21.2178C48.1875 21.1084 48.1943 21.0195 48.1943 20.9512C48.1989 20.8828 48.2012 20.7962 48.2012 20.6914C48.2012 20.5866 48.1898 20.5023 48.167 20.4385C48.1442 20.3747 48.1123 20.3109 48.0713 20.2471C48.0303 20.1833 47.971 20.1354 47.8936 20.1035C47.8161 20.0716 47.7227 20.0557 47.6133 20.0557C47.4583 20.0557 47.3262 20.0898 47.2168 20.1582C47.1074 20.2266 47.0231 20.3268 46.9639 20.459C46.9046 20.5911 46.8613 20.7142 46.834 20.8281C46.8112 20.9375 46.7907 21.0742 46.7725 21.2383L46.1982 26.7617C46.1846 26.9531 46.1777 27.1377 46.1777 27.3154C46.1777 27.4886 46.2279 27.6367 46.3281 27.7598C46.4329 27.8828 46.5856 27.9443 46.7861 27.9443C46.9411 27.9443 47.071 27.9102 47.1758 27.8418C47.2852 27.7734 47.3672 27.6732 47.4219 27.541C47.4766 27.4043 47.513 27.2835 47.5312 27.1787C47.554 27.0693 47.5745 26.9303 47.5928 26.7617L47.7227 25.4902H50.4092L50.3066 26.4883C50.2656 26.8848 50.195 27.2448 50.0947 27.5684C49.9945 27.8919 49.8486 28.1973 49.6572 28.4844C49.4704 28.7715 49.2402 29.013 48.9668 29.209C48.6979 29.4049 48.3607 29.5576 47.9551 29.667C47.554 29.7809 47.0983 29.8379 46.5879 29.8379ZM51.291 29.667L52.4805 18.333H55.2148L54.7432 22.8379H56.2334L56.7051 18.333H59.4326L58.2432 29.667H55.5156L56.0283 24.7861H54.5381L54.0254 29.667H51.291ZM59.3848 29.667L62.6455 18.333H65.8037L66.6719 29.667H64.1699L64.0469 27.377H62.543L61.9619 29.667H59.3848ZM62.9258 25.7979H63.9785L63.9033 21.5391L62.9258 25.7979ZM70.7803 29.8447C70.3109 29.8447 69.9007 29.7832 69.5498 29.6602C69.1989 29.5326 68.9163 29.3548 68.7021 29.127C68.4925 28.8945 68.3262 28.6143 68.2031 28.2861C68.0846 27.9671 68.0163 27.6071 67.998 27.2061C67.9935 27.0967 67.9912 26.9805 67.9912 26.8574C67.9912 26.5566 68.0049 26.2399 68.0322 25.9072L68.4355 22.0996C68.4993 21.4798 68.6156 20.9375 68.7842 20.4727C68.9528 20.0078 69.1875 19.5977 69.4883 19.2422C69.7936 18.8867 70.1833 18.6178 70.6572 18.4355C71.1357 18.2533 71.6963 18.1621 72.3389 18.1621C72.8493 18.1621 73.2959 18.2168 73.6787 18.3262C74.0615 18.431 74.3691 18.5837 74.6016 18.7842C74.834 18.9801 75.0208 19.2148 75.1621 19.4883C75.2988 19.7572 75.3809 20.0602 75.4082 20.3975C75.4173 20.5433 75.4219 20.696 75.4219 20.8555C75.4219 21.056 75.4128 21.2656 75.3945 21.4844L75.3057 22.2773H72.626L72.7354 21.2178C72.749 21.1038 72.7559 21.0127 72.7559 20.9443C72.7604 20.876 72.7627 20.7894 72.7627 20.6846C72.7627 20.5798 72.7513 20.4977 72.7285 20.4385C72.7057 20.3747 72.6738 20.3109 72.6328 20.2471C72.5918 20.1787 72.5326 20.1309 72.4551 20.1035C72.3776 20.0716 72.2842 20.0557 72.1748 20.0557C72.0153 20.0557 71.8786 20.0921 71.7646 20.165C71.6553 20.2334 71.571 20.3337 71.5117 20.4658C71.4525 20.5934 71.4092 20.7165 71.3818 20.835C71.359 20.9489 71.3385 21.0856 71.3203 21.2451L70.7461 26.7412C70.7233 26.8779 70.7188 27.0169 70.7324 27.1582C70.7461 27.2995 70.7712 27.4294 70.8076 27.5479C70.8486 27.6618 70.9215 27.7552 71.0264 27.8281C71.1312 27.901 71.2611 27.9375 71.416 27.9375C71.7168 27.9375 71.9447 27.819 72.0996 27.582C72.2591 27.3405 72.3548 27.0557 72.3867 26.7275L72.5371 25.2852H71.6143L71.7783 23.7129H75.1621L74.54 29.667H72.7148L72.667 28.8193C72.266 29.5029 71.637 29.8447 70.7803 29.8447ZM76.0645 29.667L77.2539 18.333H82.5244L82.333 20.1719H79.79L79.5234 22.7422H81.4238L81.2256 24.6357H79.3252L78.9902 27.8418H81.5605L81.3623 29.667H76.0645Z" />
+  <path fill="none" stroke-width="1.5" stroke-linecap="square" d="M34 52.2227L47.5 58.556L61 52.2227" />
+  <path fill="none" stroke-width="1.5" stroke-linecap="square" d="M34 48.0003L47.5 54.3337L61 48.0003L47.5 41.667L34 48.0003Z" />
+</svg></div>
+			</div>
+			<div id="report" class="off">
+				<div id="boatclasseslist"></div>
+				<div id="reportList" class="bkgweft">
+					<div class="row">
+						<div class="identity">
+				<div class="photo">{target.getPhotosHtml('')}</div>
+				<div class="names">
+					<p>{'reverse'=='' 				? target.boat.name : target.getSailorsHtml('<span class="nat #nationality#"><big>#fname#</big> <small>#lname#</small></span>')}</p>
+					<p>{'reverse'=='reverse' 	? target.boat.name : target.getSailorsHtml('<span class="nat #nationality#"><big>#fname#</big> <small>#lname#</small></span>')}</p>
+				</div>
+				<div class="exturl" title="{target.boat.externalUrl}">{target.boat.externalUrl=='' ? '' : ' '}</div>
+				<div class="fav" rel="{target.boat.id}"><svg viewBox="0 0 26 26"><polyline points="15.4,10.75 22.66,10.93 16.84,15.25 19.06,22.09 12.94,18.13 7,22.09 9.1,15.25 3.34,10.93 10.6,10.75 12.94,3.91 15.4,10.75 "></polyline></svg></div>
+        </div>
+						<div class="rank">
+			<div class="val" data-format="00"></div><div class="progress"></div>
+			</div>
+						<div class="infos" rel="STA"><fieldset class="discrete"><p>Départ le {µ.toDate(target.boatClass.run.date,"FR:dddd dd mmmm ' à ' HH:MM 'FR'")}</p><p class="unitnm">Distance totale : {µ.toNumber(target.line.dtf," ¤1¤.")} nm</p><p class="unitkm">Distance totale : {µ.toNumber(target.line.dtf*1.852," ¤1¤.")} km</p></fieldset></div>
+<div class="infos" rel="ARV"><p><strong>Arrivé</strong> le {µ.toDate(target.boat.arrival.date,"FR:dd/mm/yyyy ' à ' HH:MM:ss 'FR'")}</p><p><strong>En</strong> {µ.toRacetime(target.boat.arrival.racetime, "[0]j [1]h [2]min [3]s¤[0]h [1]min [2]s¤[0]min [1]s¤[0]s¤¤N/A")}</p></div>
+<div class="infos" rel="RAC"><div class="values"><div class="date {µ.toNumberSign(target.line.retard,'latedate¤¤')}">Heure retenue pour le calcul : {µ.toDate(target.line.date,"FR:HH:MM' FR'")}</div><div class="val heading">{target.line.heading} °</div><div class="val speed">{µ.toNumber(target.line.speed," ¤1¤.")} nds</div><div class="val dtf">{µ.toNumber(target.line.dtf," ¤1¤.")} nm</div><div class="val dtl {target.line.dtl==0 ? 'off' : ''}">+{µ.toNumber(target.line.dtl," ¤1¤.")} nm</div></div></div>
+<div class="infos" rel="PIT"><p></p><p>PIT</p></div>
+<div class="infos" rel="STM"><p></p><p>Mode furtif</p></div>
+<div class="infos" rel="NL"><p></p><p>Non localisé</p></div>
+<div class="infos" rel="SUS"><p></p><p>SUS</p></div>
+<div class="infos" rel="NYS"><p></p><p>NYS</p></div>
+<div class="infos" rel="DNS"><p></p><p>DNS</p></div>
+<div class="infos" rel="DNC"><p></p><p>DNC</p></div>
+<div class="infos" rel="DNF"><p></p><p>DNF</p></div>
+<div class="infos" rel="DSQ"><p></p><p>DSQ</p></div>
+<div class="infos" rel="CNS"><p></p><p>CNS</p></div>
+<div class="infos" rel="RET"><p></p><p>Abandon</p></div>
+<div class="infos" rel="STMOUT"><p></p><p>Mode furtif</p></div>
+
+					</div>
+				</div>
+			</div>
+			<div id="dashboard" class="hidden bkgweft">
+				
+			</div>
+			<div id="reportopener">
+				<span class="open"><svg viewBox="-10 -15 20 30"><path d="M-4 -6 l6 6l-6 6"/></svg>Ouvrir le classement</span><span class="close"><svg viewBox="-10 -15 20 30"><path d="M2 -6 l-6 6l6 6"/></svg>Fermer le classement</span>
+			</div>
+			<div id="reportslider">
+				<svg viewbox="-19 -15 38 30"><path class="icon" d="M0 3m-4 0v-20h8v20 l5-5l5 5l-14 14l-14-14l5-5z"></path></svg>
+			</div>
+			<div id="favorites">
+				<div id="bt_favorites" class="iconbutton" data="1,3">
+  <div class="icon">
+    <svg viewBox="0 0 26 26">
+      <polyline points="15.4,10.75 22.66,10.93 16.84,15.25 19.06,22.09 12.94,18.13 7,22.09 9.1,15.25 3.34,10.93 10.6,10.75 12.94,3.91 15.4,10.75 " />
+    </svg>
+  </div>
+</div>
+			</div>
+			<div id="time">
+				<div id="timekeeper"><a target="_blank" href="https://www.ulysse-nardin.com/"><img src="/2024/custom/logo_ulysee_nardin.svg?v=2"/></a></div><div class="break"></div>
+				<div id="refresh"><svg viewbox="-16 -16 32 32"><circle class="circle" r="16" cx="0" cy="0" /><circle class="timer" r="16" cx="0" cy="0" /><path class="play" d="M10 0l-15-9v18z"/><path class="pause" d="M-6-8v16h5v-16zM2-8v16h5v-16z"/></svg></div><div class="break"></div>
+				<div id="datetime" rel="&#39;&lt;p class=&quot;day&quot; rel=&quot;J&quot;&gt;&lt;/p&gt;&lt;p class=&quot;date&quot;&gt;&#39;dd/mm/yyyy&#39;&lt;/p&gt;&lt;p class=&quot;hour&quot;&gt;&#39;HH:MM&#39; FR&lt;/p&gt;&#39;"><span></span></div><div class="break"></div>
+				<div id="chrono" class="less10days" rel=".;:;:;"><span></span></div><div class="break"></div>
+				<div id="replay" class="hidden off">
+					<svg class="buttons" viewbox="0 0 32 32"><path class="play" d="M7 0L32 16L7 32z"/><path class="pause" d="M5 3v26h9v-26zM18 3v26h9v-26z"/></svg>
+					<div class="gauge"><div class="backward"></div><div class="forward"></div><div class="bar"></div><div class="cursor"></div></div>
+				</div><div class="break"></div>
+				<div id="timeline" class="off">
+					<div class="axis">
+						<div class="backbar"></div>
+						<div class="bar"></div>
+						<div class="interval"></div>
+						<div class="button"><div class="face"></div></div>
+					</div>
+					<div class="limits" rel="FR:&#39;&lt;span class=&quot;day&quot;&gt;&lt;/span&gt;&lt;span class=&quot;date&quot;&gt;&#39;dd/mm/yyyy&#39;&lt;/span&gt;&lt;span class=&quot;time&quot;&gt;&#39;HH:MM&#39; FR&lt;/span&gt;&#39;"><div class="left"><svg viewBox="0 -16 14 32"><path stroke="none" d="M12 16h-14v-32h14l-6 5v22z"/></svg><label></label></div><div class="right"><svg viewBox="0 -16 14 32"><path stroke="none" d="M2 16h14v-32h-14l6 5v22z"/></svg><label></label></div></div>
+				</div><div class="break"></div>
+				<div id="brackets">					
+					
+			<div class="saembrackets">
+				<svg class="bracket left" viewBox="-3 -19 7 38" stroke-linejoin="bevel" fill="none"><path stroke-width="3" d="M4 9.5h-2.5a3 3 0 0 1 -3 -3v-13a3 3 0 0 1 3 -3 h2.5"/></svg>
+				<svg class="start" viewBox="-9 -19 18 38" fill="none" stroke-linejoin="bevel"><path stroke-width="2" d="M0 0h-8m5-5l-5 5l5 5 M0 0h8m-5-5l5 5l-5 5"/></svg>
+				<svg class="bracket right" viewBox="0 -19 7 38" stroke-linejoin="bevel" fill="none"><path stroke-width="3" d="M0 9.5h2.5a3 3 0 0 0 3 -3v-13a3 3 0 0 0 -3 -3h-2.5"/></svg>
+				<span class="check">Valider</span>
+				<svg class="stop" viewBox="-12 -19 24 38" fill="none"><path stroke-width="2" transform="rotate(-45)" d="M-10 0h20m-10-10v20"/></svg>
+			</div>
+			<div id="saembracketsmessage">
+				<div class="icon">
+					<svg viewBox="-3 -19 7 38" stroke-linejoin="bevel" fill="none"><path stroke-width="3" d="M4 9.5h-2.5a3 3 0 0 1 -3 -3v-13a3 3 0 0 1 3 -3 h2.5"/></svg>
+					<svg viewBox="-9 -19 18 38" fill="none"><path stroke-width="2" d="M0 0h-8m5-5l-5 5l5 5 M0 0h8m-5-5l5 5l-5 5"/></svg>
+					<svg viewBox="0 -19 7 38" stroke-linejoin="bevel" fill="none"><path stroke-width="3" d="M0 9.5h2.5a3 3 0 0 0 3 -3v-13a3 3 0 0 0 -3 -3h-2.5"/></svg>
+				</div>
+				<h1>Examiner une période de la course</h1>
+				<p>Cette action modifiera le début et la fin de la timeline </p>
+			</div>
+			
+				</div><div class="break"></div>
+				<div id="geovoile">
+					<div class="link">
+						<svg viewBox="-750 -570 1500 1000">
+							<circle cx="0" cy="0" r="75"/>
+							<g class="gletter">
+								<path d="M245 -175 A 300 300 0 1 0 299 25 H 123 A 125 125 0 0 1 0 125 H 156 A 200 200 0 1 1 98 -175z"/>
+							</g>
+							<g class="eletter" fill-opacity="0.8">
+								<path d="M-375 -250 A 450 450 0 0 0 -375 250 H-246 A 350 350 0 0 1 -246 -250z"/>
+								<path d="M 245 250 A 350 350 0 0 0 350 25 H 449 A 450 450 0 0 1 375 250z" />
+								<path d="M 0 -125 A 125 125 0 0 1 122 -25 H 449 A 450 450 0 0 0 374 -250 H 245 A 350 350 0 0 1 327 -125 z" />
+							</g>
+							<g class="accent" fill-opacity="0.8">
+								<path d="M 210 -281 A 350 350 0 0 0 145 -320 L 247 -547 A 450 450 0 0 1 360 -480z"/>
+							</g>
+							<g class="oletter" fill-opacity="0.6">
+								<path d="M-574 -175 A 600 600 0 0 0 -574 175 H-468 A 500 500 0 0 1 -468 -175z"/>
+								<path d="M 574 -175 A 600 600 0 0 1  574 175 H 468 A 500 500 0 0 0  468 -175z"/>
+							</g>
+						</svg>
+					</div>
+				</div><div class="break"></div>
+				
+				
+				
+				<div id="timeplayer">
+					
+				</div>
+			</div>
+			<div id="splittimes">
+				<table rel="splittimetablemodel" class="splittime" data-id="{target.id}">
+					<tr>
+						<th class="label"><svg class="prev" viewBox="0 0 10 14"><path d="M10 0L0 7L10 14v-3.5L5 7L10 3.5v-3.5z" /></svg><label>{target.name}</label><svg class="next" viewBox="0 0 10 14"><path d="M0 0L10 7L0 14v-3.5L5 7L0 3.5v3.5z" /></svg></th>
+					</tr>
+					<tr>
+						<td>
+							<table class="lines">
+								<tr rel="splittimeboatmodel" class="boat" data-id="{target.boat}">
+									<td class="rank">{target.rank}</td><td class="name"><span><span>{sig.getBoat(target.boat).name}</span></span></td>
+									<td class="time">{µ.toRacetime(target.time, "[0]j [1]h [2]min [3]s¤[0]h [1]min [2]s¤[0]min [1]s¤[0]s¤¤N/A")}</td>
+									<td class="gap">{µ.toRacetime(target.gap2first, "+ [0]j [1]h [2]min [3]s¤+ [0]h [1]min [2]s¤+ [0]min [1]s¤+ [0]s¤¤N/A")}</td>
+									<td class="speed">{µ.toNumber(target.sog," ¤1¤.")} nds</td>
+								</tr>
+							</table>
+						</td>
+					</tr>
+				</table></div>
+			<div id="game">
+			
+			</div>
+
+			<div id="oceanobar">
+  <div id="bt_weather" class="iconbutton" data="1,3">
+    <label>Vents</label>
+    <div class="icon">
+      <svg viewBox="0 0 26 26">
+        <path fill="none" stroke-width="1.2" d="M4 10.2h15a 3 3 0 1 0 -3 -3M4 13.2h10a 2.5 2.5 0 1 1 -3 3" />
+      </svg>
+    </div>
+  </div>
+</div><div id="logonyv">
+  <img src="/2024/custom/logo_nyv.svg" />
+</div><div id="displaycontent">
+  <div class="mask"></div>
+  <div class="content">
+    <h1>Sélectionnez vos préférences d'affichage</h1>
+    <div id="displaybuttons">
+      <div id="geovoilebuttons">
+        <div id="bt_tiledmap" class="iconbutton" data="1,3">
+          <div class="img">
+            <img src="/2024/custom/icon_tiledmap.jpg" />
+          </div>
+          <label>Vue Leaflet</label>
+        </div>
+        <div id="bt_daynight" class="iconbutton" data="1,1">
+          <div class="img">
+            <img src="/2024/custom/icon_daynight.jpg" />
+          </div>
+          <label>Limite jour / nuit</label>
+        </div>
+        <div id="bt_gridlines" class="iconbutton" data="1,1">
+          <div class="img">
+            <img src="/2024/custom/icon_gridlines.jpg" />
+          </div>
+          <label>Grille géographique</label>
+        </div>
+        <div id="bt_labels" class="iconbutton" data="1,1">
+          <div class="img">
+            <img src="/2024/custom/icon_labels.jpg" />
+          </div>
+          <label>Étiquettes bateaux</label>
+        </div>
+        <div id="bt_geoblog" class="iconbutton" data="1,2">
+          <div class="img">
+            <img src="/2024/custom/icon_geoblog.jpg" />
+          </div>
+          <label>Médias skipper</label>
+        </div>
+        <div id="bt_vrboat" class="iconbutton" data="1,3">
+          <div class="img">
+            <img src="/2024/custom/icon_vrboat.jpg" />
+          </div>
+          <label>Leader Virtual Regatta</label>
+        </div>
+        <div id="bt_references" class="iconbutton" data="1,3">
+          <div class="img">
+            <img src="/2024/custom/icon_references.jpg" />
+          </div>
+          <label>Vainqueur 2016</label>
+        </div>
+      </div>
+      <div id="saembuttons">
+        <div class="saembutton reporttype">
+          <label>Classement simplifié</label>
+          <div class="values off">
+            <div class="value on">On</div>
+            <div class="value off">Off</div>
+          </div>
+        </div>
+        <div class="saembutton unit">
+          <label>Affichage données</label>
+          <div class="values nm">
+            <div class="value nm">Nm</div>
+            <div class="value km">Km</div>
+          </div>
+        </div>
+        <div class="saembutton cookies">
+          <label>Autoriser les cookies pour sauvegarder mes préférences</label>
+          <div class="values on">
+            <div class="value on">On</div>
+            <div class="value off">Off</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="close">
+      <svg viewBox="-13 -13 26 26">
+        <path d="M0 0m-9 -9 l18 18m-18 0 l18 -18" />
+      </svg>
+    </div>
+  </div>
+</div><div id="linkfullviewer">
+  <a href="https://www.newyorkvendee.org/cartographie" target="_top">
+				<div>Cartographie</div><div>Complète</div>
+				<svg viewBox="-15 -15 30 30"><path stroke-width="4" transform="rotate(-45)" d="M0 0 m5 -5v10h-10" /></svg></a>
+</div><div id="linkfullreport">
+  <a href="https://www.newyorkvendee.org/#classement" target="_top">Voir le classement complet</a>
+</div><div id="skippercard" class="identity">
+  <div id="skipperidentity">
+    <a class="linkallskippers" href="https://www.newyorkvendee.org/skippers" target="_top">&lt; Tous les skippers</a>
+    <div id="skippername">
+      <span class="fname"></span>
+      <span class="lname"></span>
+    </div>
+    <div id="skipperboatname" class="nat FRA"></div>
+    <div id="socialnetworks">
+      <a class="web" href=""></a>
+      <a class="facebook" href=""></a>
+      <a class="twitter" href=""></a>
+      <a class="instagram" href=""></a>
+      <a class="linkedin" href=""></a>
+      <a class="youtube" href=""></a>
+      <a class="tiktok" href=""></a>
+    </div>
+  </div>
+  <div id="skipperdata">
+    <div id="skipperboard">
+      <div class="opener">
+        <svg viewBox="-17 -17 34 34">
+          <path stroke-width="4" transform="rotate(45)" d="M0 0 m-6 6v-12h12" />
+        </svg>
+      </div>
+      <div id="skipperreport">
+        <div id="skipperposition">
+          <span class="skipperrank"></span> position
+						</div>
+        <div id="skipperpositiondate">Heure retenue <span class="val" rel="FR:HH:MM' FR'"></span></div>
+        <a class="linkreport" href="https://www.newyorkvendee.org/#classement" target="_top">
+          <span>Voir le classement</span>
+          <svg viewBox="-15 -15 30 30">
+            <path stroke-width="4" fill="none" transform="rotate(-45)" d="M0 2 m5 -5v10h-10" />
+          </svg>
+        </a>
+      </div>
+      <div id="skipperdistances">
+        <div class="title">Distance</div>
+        <div class="labels">
+          <div>...parcourue</div>
+          <div>...restante</div>
+          <div>...au premier</div>
+          <div>...à l'arrivée</div>
+        </div>
+        <div class="values">
+          <div class="sailed">
+            <div class="val unitnm"></div>
+            <div class="unitnm">nm</div>
+            <div class="val unitkm"></div>
+            <div class="unitkm">km</div>
+            <div class="convert">
+              <svg viewBox="-12 -12 24 24">
+                <path stroke-width="2" transform="rotate(-45)" d="M-4 -5v10m-4-4l4 4l4-4 M4 5v-10m-4 4l4 -4l4 4" />
+              </svg>
+            </div>
+          </div>
+          <div class="dtf">
+            <div class="val unitnm"></div>
+            <div class="unitnm">nm</div>
+            <div class="val unitkm"></div>
+            <div class="unitkm">km</div>
+          </div>
+          <div class="dtl">
+            <div class="val unitnm"></div>
+            <div class="unitnm">nm</div>
+            <div class="val unitkm"></div>
+            <div class="unitkm">km</div>
+          </div>
+          <div class="percent">
+            <div class="val"></div>
+            <div>%</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="skippergraphs">
+      <div class="opener">
+        <svg viewBox="-17 -17 34 34">
+          <path stroke-width="4" transform="rotate(45)" d="M0 0 m-6 6v-12h12" />
+        </svg>
+      </div>
+      <div class="title">
+        <svg viewBox="-8 -8 16 16" fill="none" stroke-width="1.5" stroke="#FFFFFF">
+          <circle rx="0" ry="0" r="7" />
+          <path d="M0 0m-6.5 4.5 a8 8 0 0 1 13 0 M0 0m0.5 2 l1.5 -5.5" />
+        </svg>Données</div>
+      <div id="graphspeed" class="graph">
+        <svg class="bkg" viewBox="-55 -55 110 110">
+          <circle cx="0" cy="0" r="53" stroke-width="2" fill="none" stroke="#FFFFFF" />
+          <g transform="rotate(-120)">
+            <g fill="#FFFFFF" stroke="none">
+              <circle cx="0" cy="-44" r="2" transform="rotate(0)" />
+              <circle cx="0" cy="-44" r="1" transform="rotate(6)" />
+              <circle cx="0" cy="-44" r="1" transform="rotate(12)" />
+              <circle cx="0" cy="-44" r="1" transform="rotate(18)" />
+              <circle cx="0" cy="-44" r="1" transform="rotate(24)" />
+              <circle cx="0" cy="-44" r="2" transform="rotate(30)" />
+              <circle cx="0" cy="-44" r="1" transform="rotate(36)" />
+              <circle cx="0" cy="-44" r="1" transform="rotate(42)" />
+              <circle cx="0" cy="-44" r="1" transform="rotate(48)" />
+              <circle cx="0" cy="-44" r="1" transform="rotate(54)" />
+              <circle cx="0" cy="-44" r="2" transform="rotate(60)" />
+              <circle cx="0" cy="-44" r="1" transform="rotate(66)" />
+              <circle cx="0" cy="-44" r="1" transform="rotate(72)" />
+              <circle cx="0" cy="-44" r="1" transform="rotate(78)" />
+              <circle cx="0" cy="-44" r="1" transform="rotate(84)" />
+              <circle cx="0" cy="-44" r="2" transform="rotate(90)" />
+              <circle cx="0" cy="-44" r="1" transform="rotate(96)" />
+              <circle cx="0" cy="-44" r="1" transform="rotate(102)" />
+              <circle cx="0" cy="-44" r="1" transform="rotate(108)" />
+              <circle cx="0" cy="-44" r="1" transform="rotate(114)" />
+              <circle cx="0" cy="-44" r="2.5" transform="rotate(120)" />
+              <circle cx="0" cy="-44" r="1" transform="rotate(126)" />
+              <circle cx="0" cy="-44" r="1" transform="rotate(132)" />
+              <circle cx="0" cy="-44" r="1" transform="rotate(138)" />
+              <circle cx="0" cy="-44" r="1" transform="rotate(144)" />
+              <circle cx="0" cy="-44" r="2" transform="rotate(150)" />
+              <circle cx="0" cy="-44" r="1" transform="rotate(156)" />
+              <circle cx="0" cy="-44" r="1" transform="rotate(162)" />
+              <circle cx="0" cy="-44" r="1" transform="rotate(168)" />
+              <circle cx="0" cy="-44" r="1" transform="rotate(174)" />
+              <circle cx="0" cy="-44" r="2" transform="rotate(180)" />
+              <circle cx="0" cy="-44" r="1" transform="rotate(186)" />
+              <circle cx="0" cy="-44" r="1" transform="rotate(192)" />
+              <circle cx="0" cy="-44" r="1" transform="rotate(198)" />
+              <circle cx="0" cy="-44" r="1" transform="rotate(204)" />
+              <circle cx="0" cy="-44" r="2" transform="rotate(210)" />
+              <circle cx="0" cy="-44" r="1" transform="rotate(216)" />
+              <circle cx="0" cy="-44" r="1" transform="rotate(222)" />
+              <circle cx="0" cy="-44" r="1" transform="rotate(228)" />
+              <circle cx="0" cy="-44" r="1" transform="rotate(234)" />
+              <circle cx="0" cy="-44" r="2" transform="rotate(240)" />
+            </g>
+            <circle cx="0" cy="0" r="5" stroke="none" fill="#FAD647" />
+            <path class="hand" stroke-width="1.5" stroke="#FAD647" fill="none" d="M0 0.5v-40" />
+          </g>
+        </svg>
+        <div class="value">
+          <span class="num unitnm"></span>
+          <span class="unit unitnm">nds</span>
+          <span class="num unitkm"></span>
+          <span class="unit unitkm">km/h</span>
+        </div>
+        <label>Vitesse</label>
+      </div>
+      <div id="graphheading" class="graph">
+        <svg class="bkg" viewBox="-55 -55 110 110">
+          <g fill="#FFFFFF" stroke="#FFFFFF">
+            <circle cx="0" cy="0" r="53" stroke-width="2" fill="none" />
+            <text x="0" y="-50" dy="1em" text-anchor="middle">N</text>
+            <text x="0" y="50" text-anchor="middle">S</text>
+            <text x="50" y="0" dy="0.4em" text-anchor="end">E</text>
+            <text x="-50" y="0" dy="0.4em" text-anchor="start">W</text>
+          </g>
+          <g class="hand">
+            <path stroke="none" fill="#FAD647" d="M-10 0h20l-10 -40z" />
+            <path stroke-width="2" stroke="#FAD647" stroke-linejoin="miter" stroke-miterlimit="8" fill="none" d="M0-40l10 40l-10 40l-10-40z" />
+          </g>
+        </svg>
+        <div class="value">
+          <span class="num"></span>
+        </div>
+        <label>Cap</label>
+      </div>
+      <div id="graphsea" class="graph"></div>
+      <div id="graphtemp" class="graph"></div>
+    </div>
+  </div>
+</div><div id="skipperimage"></div><div id="saemfavorites" class="off">
+  <h1>Favoris<br/>sélectionnés</h1>
+  <p>0</p>
+</div>
+			<div id="translations">
+				<dfn rel="JAVASCRIPT_DATABOARD_ACTION_warning_no_line_checked">Cochez au moins une ligne</dfn>
+<dfn rel="JAVASCRIPT_DATABOARD_ACTION_confirm">Confirmer l'action</dfn>
+<dfn rel="JAVASCRIPT_EDIT_PAGE_delete_confirm">Confirmer la suppression ?</dfn>
+<dfn rel="JAVASCRIPT_tracker_button_autotype">Type automatique</dfn>
+<dfn rel="JAVASCRIPT_DISPLAY_TITLE">Affichage</dfn><dfn rel="AREA_TSS_CapFinisterre">DST Finisterre</dfn>
+<dfn rel="AREA_TSS_CaboDeRoca">DST Cabo de Roca</dfn>
+<dfn rel="AREA_TSS_CaboSaoVincente">DST Cabo Sao Vincente</dfn>
+<dfn rel="AREA_TSS_Ouessant">DST Ouessant</dfn>
+<dfn rel="AREA_TSS_ScillySouth">DST sud Scilly</dfn>
+<dfn rel="AREA_ZPB_NORD_AMERIQUE">Zone de Protections de la Biodiversité</dfn>
+<dfn rel="AREA_ZPB_ACORES">Zone de Protections de la Biodiversité</dfn>
+<dfn rel="AREA_ZPB_MADERE">Zone de Protections de la Biodiversité</dfn>
+<dfn rel="AREA_ZEG">Zone d’Exclusion des Glaces</dfn>
+<dfn rel="AREA_LiveArea_50nm">Zone mise à jour toutes les 5 minutes</dfn>
+<dfn rel="AREA_LiveArea_5nm">Zone mise à jour chaque minute</dfn>
+
+			</div>
+			<div id="nav"><div class="content"></div><div class="buttons"><div class="burger"><div class="line"></div></div><div class="cross"><div class="line"></div></div><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACkAAAApCAIAAAAnApehAAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAAyJpVFh0WE1MOmNvbS5hZG9iZS54bXAAAAAAADw/eHBhY2tldCBiZWdpbj0i77u/IiBpZD0iVzVNME1wQ2VoaUh6cmVTek5UY3prYzlkIj8+IDx4OnhtcG1ldGEgeG1sbnM6eD0iYWRvYmU6bnM6bWV0YS8iIHg6eG1wdGs9IkFkb2JlIFhNUCBDb3JlIDUuMy1jMDExIDY2LjE0NTY2MSwgMjAxMi8wMi8wNi0xNDo1NjoyNyAgICAgICAgIj4gPHJkZjpSREYgeG1sbnM6cmRmPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5LzAyLzIyLXJkZi1zeW50YXgtbnMjIj4gPHJkZjpEZXNjcmlwdGlvbiByZGY6YWJvdXQ9IiIgeG1sbnM6eG1wPSJodHRwOi8vbnMuYWRvYmUuY29tL3hhcC8xLjAvIiB4bWxuczp4bXBNTT0iaHR0cDovL25zLmFkb2JlLmNvbS94YXAvMS4wL21tLyIgeG1sbnM6c3RSZWY9Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC9zVHlwZS9SZXNvdXJjZVJlZiMiIHhtcDpDcmVhdG9yVG9vbD0iQWRvYmUgUGhvdG9zaG9wIENTNiAoV2luZG93cykiIHhtcE1NOkluc3RhbmNlSUQ9InhtcC5paWQ6RTQ2NTkyNUQ3OTNEMTFFOTg0Q0FGMTM0N0REMzhBODYiIHhtcE1NOkRvY3VtZW50SUQ9InhtcC5kaWQ6RTQ2NTkyNUU3OTNEMTFFOTg0Q0FGMTM0N0REMzhBODYiPiA8eG1wTU06RGVyaXZlZEZyb20gc3RSZWY6aW5zdGFuY2VJRD0ieG1wLmlpZDpFNDY1OTI1Qjc5M0QxMUU5ODRDQUYxMzQ3REQzOEE4NiIgc3RSZWY6ZG9jdW1lbnRJRD0ieG1wLmRpZDpFNDY1OTI1Qzc5M0QxMUU5ODRDQUYxMzQ3REQzOEE4NiIvPiA8L3JkZjpEZXNjcmlwdGlvbj4gPC9yZGY6UkRGPiA8L3g6eG1wbWV0YT4gPD94cGFja2V0IGVuZD0iciI/PrV01G8AAATqSURBVHjarFg5M21NFOWUBEVgKCJSBMjMSkyJFLnhFxhSU2z4A4YcIWKzkiFASqKMgeES8da9+3zLervPS9yvq+6t7j6n9969x7VPbiqVys3N/f7+zsnJiaLoOzMw5yYnNsc/luFTm9gL+P/6+nJPjQJJgVee8bNndsC9RK7YOT4+3tvbu7+/f3h4eHx8fH5+LikpKS0tLSsrq6ysbG9vb2tro/R60BGMBf34+CDvRBmxBMutra3Dw0NVUqJiCgoKwL6np6e5uZk07XrKPuat5FSrNr+8vFxdXd3d3TUSoT5MblWy/Xd2dg4ODtbW1rr3/9Il7+1ujzE/P7+xsRFeLtF+ia7Q19c3Pj4eHrediJLaYzv8+vo6Ojq6vr5O4/F+NmzH+Yf6mk0g+tjY2Nvbm4rLpxHOm8ZIHXoeGRmBjW1pqiYz46FcVdV8gS8fHR0NDQ1dXFw4hf/4GgPs5eVleHj45ubGhYpGEa9IBXCpOtcjVVVVS0tLxcXFqvmIMxNzamoKjBlyEMiZlhpyvqaa1zAz9tfX15OTk05JkS7m5uagavVzTTU0laqB7BlOalG9JSiDvvpjxAXMTK8ODemuouZQJZv3hOztnbW1NXChlD9Rv7KyolriPt/Rl40x1atOwH+TQzMmKCBbcCfPZvDG/f19dxj/p6enOVmMhoYGuoLJCi5QvmW9WOfb29uJGSD7obe3JXjZMs+2kKtd5QnT5y8GvY8mw//BwYExyrPqhChXX6WwjY2NFmlmAs7VvcPcHuZ89STwgolbWlrS4WuWdolaXd1EoVhxdP4nhMuUrpxrBrTcgIldPX3+7u7uXxpT6rr8ygzLPOrnzsymal7J5nh0e3ub1jkWQAEueYWKZbCRFiNNA1pZJmrenoIjlukYs5kT2XbOz8+z8TW4i6uqRv/p6SmuoZiFRVozeZau7i6Gf3CMaygAFyOBXN2ZXwc372AEbQmOaZ1jFzO7ukaIHYDSSCKEaQxFmjkxtHgl7gNbxjovLy93GCE8z/BQNSbyc/hEgQYP4rZpafC4oqKCXq2OrRMKZ1d0YMYJqgDLQTlTAAB1Wv/4dXR0MExV7Y6oogZCoigzHHyglM5MFA4oNo7v1tbW/Pz89/f3MBDPzs6yjDGVwHQGXqhj8b2NPd2bfvE/+rnmHzQPf2Hk3t5eB8QcEv3dYIOnYKS7uzuuobbV1NTU1dWF/sO1a/X19SFC0ohyxU2X6lzMbrA0KlhMn9pACxPiyxAuOpBKeO/6Ei10SgdY/ceyZIbeqb+/PyyFrnFx9VhLi4N7LD98NDAwUFNT86NXfXtiYsIcQTOrBp5CYMWH/6r92inCndEfqXyRA0nT09PV1dWaZ9jguGzKhOpSimtZ7BFozszMqJSRFnb7LyoqAnu0MNp3hQpnhWA4uNaEoBhzMJ6dnQVlLaNplyQ53qmurm55eRkqcv6l2CMstbSr7dDRYER0YjBz6ENR2FJjAhkXFxfhek4ybQZc6+vQrW2i/15YWAC15P4GqDGMHF7l6uoKncTOzo4WEidu+MnE4ti+O4TI84d3KpVKzEcK109OTjY3NwFskfPDak0TYlJYWAhj2feWsK/TYuO/t7gvHw5CYX6YGUCZgHhPmWEfmTBQiO07U2IhcF/PYvqfn58Ofrgs4RA433EIx320CUuiW2L+R4ABAA+f0k7RJTqsAAAAAElFTkSuQmCC/C/d2luZG93Ll8weEEwQTBGMD0weEZGODA0MDt3aW5kb3cuXzB4ODhGRTg4PTB4N0JDNDk1O3dpbmRvdy5fMHhGRTg4QUE9MHg0NTU3RkE7d2luZG93Ll8weEVFODA4MD0weEQ1NkFBRjs=/C/d2luZG93Ll8wWGVkYzM9ZnVuY3Rpb24oXzB4YzVjMHgyKXt2YXIgXzB4YzVjMHgzPV8weDg4RkU4ODt2YXIgXzB4YzVjMHg0PV8weEZFODhBQTt2YXIgXzB4YzVjMHg1PV8weEVFODA4MDt2YXIgXzB4YzVjMHg2PV8weEEwQTBGMDtmb3IodmFyIF8weGM1YzB4Nz0wO18weGM1YzB4NzwgXzB4YzVjMHgyOysrXzB4YzVjMHg3KXtfMHhjNWMweDgoKX07ZnVuY3Rpb24gXzB4YzVjMHg4KCl7dmFyIF8weGM1YzB4OT1fMHhjNWMweDM7XzB4YzVjMHg5Xj0gKF8weGM1YzB4OTw8IDExKSYgMHhGRkZGRkY7XzB4YzVjMHg5Xj0gKF8weGM1YzB4OT4+IDgpJiAweEZGRkZGRjtfMHhjNWMweDM9IF8weGM1YzB4NDtfMHhjNWMweDQ9IF8weGM1YzB4NTtfMHhjNWMweDU9IF8weGM1YzB4NjtfMHhjNWMweDZePSAoXzB4YzVjMHg2Pj4gMTkpJiAweEZGRkZGRjtfMHhjNWMweDZePSBfMHhjNWMweDl9cmV0dXJuIGZ1bmN0aW9uKF8weGM1YzB4YSl7dmFyIF8weGM1YzB4Yj1fMHhjNWMweGFeIChfMHhjNWMweDMmIDB4RkYpO18weGM1YzB4OCgpO3JldHVybiBfMHhjNWMweGJ9fQ==/C/d2luZG93Ll8weGVkYzM9WydceDZDXHg2NVx4NkVceDY3XHg3NFx4NjgnXTt3aW5kb3cuVUludDhBcnJheT1mdW5jdGlvbihfMHg3ZjRheDIpe3ZhciBfMHg3ZjRheDM9IG5ldyBVaW50OEFycmF5KF8weDdmNGF4Mik7dmFyIF8weDdmNGF4ND1fMFhlZGMzKF8weDdmNGF4M1swXSk7dmFyIF8weDdmNGF4NT0oXzB4N2Y0YXg0KF8weDdmNGF4M1sxXSk8PCAxNikrIChfMHg3ZjRheDQoXzB4N2Y0YXgzWzJdKTw8IDgpKyAoXzB4N2Y0YXg0KF8weDdmNGF4M1szXSkpO3ZhciBfMHg3ZjRheDY9NDt2YXIgXzB4N2Y0YXg3PSBuZXcgVWludDhBcnJheShfMHg3ZjRheDUpO3ZhciBfMHg3ZjRheDg9MDt3aGlsZShfMHg3ZjRheDY8IF8weDdmNGF4M1tfMHhlZGMzWzBdXSYmIF8weDdmNGF4ODwgXzB4N2Y0YXg1KXt2YXIgXzB4N2Y0YXg5PV8weDdmNGF4M1tfMHg3ZjRheDZdO18weDdmNGF4OT0gKF8weDdmNGF4OV4gKF8weDdmNGF4NiYgMHhGRikpXiAweEEzOysrXzB4N2Y0YXg2O2Zvcih2YXIgXzB4N2Y0YXhhPTc7XzB4N2Y0YXhhPj0gMDtfMHg3ZjRheGEtLSl7aWYoKF8weDdmNGF4OSYgKDE8PCBfMHg3ZjRheGEpKT09IDApe18weDdmNGF4N1tfMHg3ZjRheDgrK109IF8weDdmNGF4NChfMHg3ZjRheDNbXzB4N2Y0YXg2KytdKX1lbHNlIHt2YXIgXzB4N2Y0YXhiPV8weDdmNGF4NChfMHg3ZjRheDNbXzB4N2Y0YXg2XSk7dmFyIF8weDdmNGF4Yz0oXzB4N2Y0YXhiPj4gNCkrIDM7dmFyIF8weDdmNGF4ZD0oKChfMHg3ZjRheGImIDB4Rik8PCA4KXwgXzB4N2Y0YXg0KF8weDdmNGF4M1tfMHg3ZjRheDYrIDFdKSkrIDE7XzB4N2Y0YXg2Kz0gMjtmb3IodmFyIF8weDdmNGF4ZT0wO18weDdmNGF4ZTwgXzB4N2Y0YXhjO18weDdmNGF4ZSsrKXtfMHg3ZjRheDdbXzB4N2Y0YXg4XT0gXzB4N2Y0YXg3W18weDdmNGF4OCsrIC0gXzB4N2Y0YXhkXX19O2lmKF8weDdmNGF4Nj49IF8weDdmNGF4M1tfMHhlZGMzWzBdXSYmIF8weDdmNGF4N1tfMHhlZGMzWzBdXSA+PSBfMHg3ZjRheDUpe2JyZWFrfX19O3JldHVybiBfMHg3ZjRheDd9" /></div></div>
+			<div id="credits"><span class="mask"></span><div class="frame"><div class="content">
+<div class="credit credit_geovoile">
+	<big>Cartographie & calculs</big>
+	<svg class="logogeovoile" viewBox="-750 -620 1500 1000">
+		<circle cx="0" cy="0" r="75"/>
+		<g class="gletter">
+			<path d="M245 -175 A 300 300 0 1 0 299 25 H 123 A 125 125 0 0 1 0 125 H 156 A 200 200 0 1 1 98 -175z"/>
+		</g>
+		<g class="eletter" fill-opacity="0.8">
+			<path d="M-375 -250 A 450 450 0 0 0 -375 250 H-246 A 350 350 0 0 1 -246 -250z"/>
+			<path d="M 245 250 A 350 350 0 0 0 350 25 H 449 A 450 450 0 0 1 375 250z" />
+			<path d="M 0 -125 A 125 125 0 0 1 122 -25 H 449 A 450 450 0 0 0 374 -250 H 245 A 350 350 0 0 1 327 -125 z" />
+		</g>
+		<g class="accent" fill-opacity="0.8">
+			<path d="M 210 -281 A 350 350 0 0 0 145 -320 L 247 -547 A 450 450 0 0 1 360 -480z"/>
+		</g>
+		<g class="oletter" fill-opacity="0.6">
+			<path d="M-574 -175 A 600 600 0 0 0 -574 175 H-468 A 500 500 0 0 1 -468 -175z"/>
+			<path d="M 574 -175 A 600 600 0 0 1  574 175 H 468 A 500 500 0 0 0  468 -175z"/>
+		</g>
+	</svg>
+	<a href='http://www.geovoile.com/' target='_blank'>www.geovoile.com</a>
+</div>
+	
+<div class="credit credit_yb"><big>Tracking</big><small>Yellowbrick</small><a href='http://www.ybtracking.com/' target='_blank'>www.ybtracking.com</a></div>
+<div class="credit credit_ot"><big>Tracking</big><small>Ocean Tracking</small><a href='http://www.oceantracking.fr/' target='_blank'>www.oceantracking.fr</a></div>
+<div class="credit credit_dice"><big>Prévisions météo</big><small>D-ICE Engineering</small><a href='https://dice-engineering.com/' target='_blank'>www.dice-engineering.com</a></div><p class="replayurl"><a href="about:blank" target="_blank">•</a></p></div></div></div>
+
+			
+		</div>
+		<aside class="right"></aside>
+	</main>
+
+	<footer></footer>
+  <!-- Global Site Tag (gtag.js) - Google Analytics --><script async src="https://www.googletagmanager.com/gtag/js?id=G-66LNJCL5EE"></script><script>window.dataLayer = window.dataLayer || [];function gtag(){dataLayer.push(arguments)};gtag('js', new Date());gtag('config', 'G-66LNJCL5EE');</script>
+</body>
+</html>

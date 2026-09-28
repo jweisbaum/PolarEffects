@@ -10,9 +10,9 @@
 //! address to an event (no network), then download the whole event — its
 //! title, dates and every boat's full track — as one [`event::TrackerEvent`],
 //! through one [`http::Fetcher`] that caps bodies, retries transient
-//! failures and stops on cancel. YellowBrick is complete (M10); Geovoile's
-//! hwx decoder is here from M3 and its client follows in M11, Blue Water
-//! Tracks in M12.
+//! failures, stops on cancel and follows redirects only within the
+//! allow-list ([`net::redirect_allowed`]). YellowBrick (M10) and Geovoile
+//! (M11) are complete; Blue Water Tracks follows in M12.
 
 pub mod error;
 pub mod event;

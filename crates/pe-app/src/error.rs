@@ -131,8 +131,9 @@ impl AppError {
                 pe_trackers::TrackerError::Unavailable { .. } => "tracker-unavailable",
                 pe_trackers::TrackerError::NoSuchEvent { .. } => "tracker-no-event",
                 pe_trackers::TrackerError::Cancelled => "cancelled",
-                pe_trackers::TrackerError::Decode { .. }
-                | pe_trackers::TrackerError::Unsupported { .. } => "tracker-decode",
+                pe_trackers::TrackerError::Decode { .. } => "tracker-decode",
+                pe_trackers::TrackerError::Unsupported { .. } => "tracker-unsupported",
+                pe_trackers::TrackerError::Legacy { .. } => "tracker-legacy",
                 pe_trackers::TrackerError::Network(_) => "tracker-network",
             },
             Self::Internal(_) => "internal",

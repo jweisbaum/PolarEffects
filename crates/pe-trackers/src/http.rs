@@ -64,6 +64,19 @@ fn transient_error(err: &reqwest::Error) -> bool {
     err.is_timeout() || err.is_connect() || err.is_request() || err.is_body() || err.is_decode()
 }
 
+/// An error with its causes, which is where reqwest keeps the reason (a
+/// refused redirect, a TLS failure).
+fn chain(err: &dyn std::error::Error) -> String {
+    let mut text = err.to_string();
+    let mut source = err.source();
+    while let Some(cause) = source {
+        text.push_str(": ");
+        text.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    text
+}
+
 /// One failed attempt.
 enum Failure {
     Transient(String),
@@ -188,7 +201,7 @@ impl Fetcher {
             request = request.timeout(timeout);
         }
         let response = request.send().map_err(|e| {
-            let why = format!("{} could not be reached: {e}", self.tracker);
+            let why = format!("{} could not be reached: {}", self.tracker, chain(&e));
             if transient_error(&e) {
                 Failure::Transient(why)
             } else {
@@ -346,6 +359,51 @@ mod tests {
         let err = fetcher().get(&url, &mut |_, _| {}).expect_err("refused");
         assert!(err.to_string().contains("limit"), "{err}");
         assert_eq!(server.join().expect("server"), 1);
+    }
+
+    /// A redirect is followed on the same host; one to a host off the
+    /// allow-list is refused at once, not requested and not retried.
+    #[test]
+    fn redirects_off_the_allow_list_are_refused() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("binds");
+        let port = listener.local_addr().expect("an address").port();
+        let server = std::thread::spawn(move || {
+            let mut served = 0;
+            for _ in 0..3 {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    break;
+                };
+                let mut buf = [0u8; 4096];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                let request = String::from_utf8_lossy(&buf[..n]).into_owned();
+                let path = request.split_whitespace().nth(1).unwrap_or("").to_owned();
+                let location = match path.as_str() {
+                    "/same" => Some(format!("http://127.0.0.1:{port}/target")),
+                    "/away" => Some("https://yb.tl.evil.invalid/x".to_owned()),
+                    _ => None,
+                };
+                let reply = match location {
+                    Some(to) => format!(
+                        "HTTP/1.1 302 Found\r\nLocation: {to}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    ),
+                    None => reply("200 OK", "ok"),
+                };
+                let _ = stream.write_all(reply.as_bytes());
+                served += 1;
+            }
+            served
+        });
+        let fetcher = fetcher();
+        let body = fetcher
+            .get(&format!("http://127.0.0.1:{port}/same"), &mut |_, _| {})
+            .expect("followed");
+        assert_eq!(body, b"ok");
+        let err = fetcher
+            .get(&format!("http://127.0.0.1:{port}/away"), &mut |_, _| {})
+            .expect_err("refused");
+        assert!(matches!(err, TrackerError::Network(_)), "{err:?}");
+        assert!(err.to_string().contains("not an allowed host"), "{err}");
+        assert_eq!(server.join().expect("server"), 3, "no retry of the refusal");
     }
 
     /// A cancel ends a retry pause (here 30 s) at once.

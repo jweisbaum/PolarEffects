@@ -108,3 +108,48 @@ fn yellowbrick_unknown_key() {
         "{err:?}"
     );
 }
+
+/// Geovoile end to end: New York Vendée 2024 (the fixture's figures) and
+/// leg 1 of the Solitaire du Figaro 2024.
+#[test]
+#[ignore = "network; run with PE_TEST_LIVE=1"]
+fn geovoile_2024_sites() {
+    if !live() {
+        return;
+    }
+    let client = pe_trackers::geovoile::Geovoile::default();
+    for (input, boats, fixes) in [
+        (
+            "https://newyorkvendee.geovoile.com/2024/tracker/",
+            28,
+            64_453,
+        ),
+        (
+            "https://lasolitaire.geovoile.com/2024/tracker/?leg=1",
+            45,
+            21_990,
+        ),
+    ] {
+        let start = Instant::now();
+        let event = client.resolve(input).expect("resolves");
+        let mut last = 0.0;
+        let event = client
+            .fetch(&event, &fetcher(), &mut |p| last = p.fraction())
+            .expect("fetches");
+        let count: usize = event.boats.iter().map(|b| b.fixes.len()).sum();
+        let official = event
+            .boats
+            .iter()
+            .flat_map(|b| &b.fixes)
+            .filter(|f| f.sog.is_some())
+            .count();
+        println!(
+            "M11 | Geovoile {input}: {} boats, {count} fixes ({official} with official speed), {:.2} s",
+            event.boats.len(),
+            start.elapsed().as_secs_f64()
+        );
+        assert_eq!(event.boats.len(), boats);
+        assert_eq!(count, fixes);
+        assert!((last - 1.0).abs() < 1e-9, "progress ends at 1, got {last}");
+    }
+}

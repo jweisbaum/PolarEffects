@@ -492,6 +492,7 @@ fn event_of(
         stop: setup.stop,
         boats,
         positions_from,
+        leg: None,
     }
 }
 
@@ -553,12 +554,16 @@ impl TrackerClient for YellowBrick {
                 input: key.to_owned(),
             });
         }
-        let step = |step: u32, steps: u32| {
+        // Three steps from the start: the setup, the binary, and the KML
+        // fallback, reported done at once when the binary decodes, so the
+        // fraction never goes back when the fallback is needed.
+        let step = |step: u32| {
             move |bytes: u64, total: Option<u64>| Progress {
                 step,
-                steps,
+                steps: 3,
                 bytes,
                 total,
+                fallback: step == 2,
             }
         };
         let no_such = || TrackerError::NoSuchEvent {
@@ -566,7 +571,7 @@ impl TrackerClient for YellowBrick {
             key: key.to_owned(),
         };
 
-        let at = step(0, 2);
+        let at = step(0);
         let bytes = fetcher.get(
             &format!("{}/JSON/{key}/RaceSetup", self.cdn),
             &mut |b, t| {
@@ -578,7 +583,7 @@ impl TrackerClient for YellowBrick {
         }
         let setup = parse_race_setup(&bytes)?;
 
-        let at = step(1, 2);
+        let at = step(1);
         let binary = fetcher
             .get(
                 &format!("{}/BIN/{key}/AllPositions3", self.cdn),
@@ -598,6 +603,13 @@ impl TrackerClient for YellowBrick {
             });
         let failure = match binary {
             Ok(all) => {
+                progress(Progress {
+                    step: 2,
+                    steps: 3,
+                    bytes: 1,
+                    total: Some(1),
+                    fallback: false,
+                });
                 let mut by_id: std::collections::BTreeMap<u16, TeamTrack> =
                     all.teams.into_iter().map(|t| (t.id, t)).collect();
                 return Ok(event_of(
@@ -618,7 +630,7 @@ impl TrackerClient for YellowBrick {
 
         // The fallback (spec.md 7.2): the same teams as a KML, by name.
         fetcher.check()?;
-        let at = step(2, 3);
+        let at = step(2);
         let bytes = fetcher
             .get_with_timeout(
                 &format!("{}/{key}.kml", self.site),

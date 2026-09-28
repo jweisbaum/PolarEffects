@@ -38,7 +38,80 @@ fn tls_config() -> Result<rustls::ClientConfig> {
     Ok(config)
 }
 
-/// A blocking client with the given per-request timeout.
+/// The most redirects one request follows.
+const MAX_REDIRECTS: usize = 10;
+
+/// The YellowBrick and Blue Water Tracks hosts (spec.md 7.2). Geovoile's
+/// are every subdomain of `geovoile.com`, see [`is_geovoile_host`].
+const HOSTS: [&str; 5] = [
+    "yb.tl",
+    "www.yb.tl",
+    "cf.yb.tl",
+    "app.yb.tl",
+    "api.bluewatertracks.com",
+];
+
+/// Whether `host` is `geovoile.com` or one of its subdomains, compared
+/// exactly: `geovoile.com.example.invalid` and `xgeovoile.com` are not.
+pub fn is_geovoile_host(host: &str) -> bool {
+    let host = host.to_ascii_lowercase();
+    if host == "geovoile.com" {
+        return true;
+    }
+    host.strip_suffix(".geovoile.com").is_some_and(|sub| {
+        sub.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        })
+    })
+}
+
+/// Whether `host` is one of the trackers' allow-listed hosts (invariant 4).
+pub fn allowed_host(host: &str) -> bool {
+    let lower = host.to_ascii_lowercase();
+    HOSTS.contains(&lower.as_str()) || is_geovoile_host(&lower)
+}
+
+/// Whether a redirect from `from` to `to` may be followed: never to a
+/// userinfo URL or from HTTPS down to HTTP; to the same host, or over HTTPS
+/// to an allow-listed one. Anything else would let a tracker (or whoever
+/// answers for it) send the app to a host invariant 4 does not allow.
+pub fn redirect_allowed(from: Option<&reqwest::Url>, to: &reqwest::Url) -> bool {
+    let Some(host) = to.host_str() else {
+        return false;
+    };
+    if !to.username().is_empty() || to.password().is_some() {
+        return false;
+    }
+    let secure = to.scheme() == "https";
+    if !secure && (to.scheme() != "http" || from.is_some_and(|f| f.scheme() == "https")) {
+        return false;
+    }
+    let same_host = from
+        .and_then(reqwest::Url::host_str)
+        .is_some_and(|h| h.eq_ignore_ascii_case(host));
+    same_host || (secure && allowed_host(host))
+}
+
+fn redirect_policy() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        if attempt.previous().len() > MAX_REDIRECTS {
+            return attempt.error("too many redirects");
+        }
+        if redirect_allowed(attempt.previous().last(), attempt.url()) {
+            attempt.follow()
+        } else {
+            let to = attempt.url().host_str().unwrap_or("").to_owned();
+            attempt.error(format!(
+                "a redirect to {to:?}, which is not an allowed host"
+            ))
+        }
+    })
+}
+
+/// A blocking client with the given per-request timeout, following
+/// redirects only as [`redirect_allowed`] says.
 ///
 /// # Errors
 /// [`TrackerError::Network`] if TLS or the client cannot be set up.
@@ -47,6 +120,7 @@ pub fn client(timeout: Duration) -> Result<reqwest::blocking::Client> {
         .tls_backend_preconfigured(tls_config()?)
         .timeout(timeout)
         .user_agent(USER_AGENT)
+        .redirect(redirect_policy())
         .build()
         .map_err(|e| TrackerError::Network(format!("no HTTP client: {e}")))
 }
@@ -60,5 +134,69 @@ mod tests {
     #[test]
     fn a_client_builds_on_the_ring_provider() {
         assert!(client(DEFAULT_TIMEOUT).is_ok());
+    }
+
+    fn url(text: &str) -> reqwest::Url {
+        reqwest::Url::parse(text).expect(text)
+    }
+
+    #[test]
+    fn geovoile_hosts_are_matched_exactly() {
+        for host in [
+            "geovoile.com",
+            "vendeeglobe.geovoile.com",
+            "a.b-c.GEOVOILE.com",
+        ] {
+            assert!(is_geovoile_host(host), "{host}");
+        }
+        for host in [
+            "xgeovoile.com",
+            "geovoile.com.example.invalid",
+            ".geovoile.com",
+            "a..geovoile.com",
+            "a_b.geovoile.com",
+            "geovoile.co",
+        ] {
+            assert!(!is_geovoile_host(host), "{host}");
+        }
+        assert!(allowed_host("cf.yb.tl") && allowed_host("API.bluewatertracks.com"));
+        assert!(!allowed_host("yb.tl.example.invalid") && !allowed_host("evil.invalid"));
+    }
+
+    #[test]
+    fn redirects_stay_on_the_host_or_the_allow_list() {
+        let from = url("https://cf.yb.tl/JSON/x/RaceSetup");
+        // Same host, another allow-listed host.
+        assert!(redirect_allowed(
+            Some(&from),
+            &url("https://cf.yb.tl/other")
+        ));
+        assert!(redirect_allowed(Some(&from), &url("https://yb.tl/x")));
+        assert!(redirect_allowed(
+            Some(&from),
+            &url("https://static.geovoile.com/r/")
+        ));
+        // Elsewhere, look-alikes, userinfo, and a downgrade to HTTP.
+        for to in [
+            "https://evil.invalid/x",
+            "https://yb.tl.evil.invalid/x",
+            "https://geovoile.com.evil.invalid/x",
+            &format!("{}user@yb.tl/x", "https://"),
+            "https://yb.tl:pw@evil.invalid/x",
+            "http://cf.yb.tl/x",
+            "ftp://cf.yb.tl/x",
+        ] {
+            assert!(!redirect_allowed(Some(&from), &url(to)), "{to}");
+        }
+        // Plain HTTP on the same host (a local test server) is followed.
+        let local = url("http://127.0.0.1:8080/a");
+        assert!(redirect_allowed(
+            Some(&local),
+            &url("http://127.0.0.1:8080/b")
+        ));
+        assert!(!redirect_allowed(
+            Some(&local),
+            &url("http://evil.invalid/b")
+        ));
     }
 }

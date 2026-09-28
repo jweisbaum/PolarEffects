@@ -72,6 +72,8 @@ pub struct TrackerEvent {
     pub boats: Vec<TrackerBoat>,
     /// Which format the positions came from.
     pub positions_from: PositionsFrom,
+    /// For one leg of a race sailed in legs: `(leg, legs)`, from 1.
+    pub leg: Option<(u32, u32)>,
 }
 
 impl TrackerEvent {
@@ -92,16 +94,22 @@ impl TrackerEvent {
 }
 
 /// How far a download is, for the job's progress (spec.md 7.7).
+///
+/// A download's steps are fixed when it starts, so the fraction only ever
+/// grows: a tracker with a fallback counts the fallback's step from the
+/// start and, when it is not needed, reports that step done at the end.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Progress {
     /// Which step: 0-based.
     pub step: u32,
-    /// How many steps the download has (a fallback adds one).
+    /// How many steps the download has, a possible fallback's included.
     pub steps: u32,
     /// Bytes of this step's response read so far.
     pub bytes: u64,
     /// The response's announced length, when the server gave one.
     pub total: Option<u64>,
+    /// Whether this step reads the fallback format (YellowBrick's KML).
+    pub fallback: bool,
 }
 
 impl Progress {
@@ -147,7 +155,8 @@ pub trait TrackerClient: Send + Sync {
 pub fn client(tracker: Tracker) -> Option<Box<dyn TrackerClient>> {
     match tracker {
         Tracker::YellowBrick => Some(Box::new(crate::yellowbrick::YellowBrick::default())),
-        Tracker::Geovoile | Tracker::BlueWaterTracks => None,
+        Tracker::Geovoile => Some(Box::new(crate::geovoile::Geovoile::default())),
+        Tracker::BlueWaterTracks => None,
     }
 }
 
@@ -171,6 +180,7 @@ mod tests {
             steps: 2,
             bytes,
             total,
+            fallback: false,
         };
         assert_eq!(p(0, 0, None).fraction(), 0.0);
         assert_eq!(p(0, 50, Some(100)).fraction(), 0.25);

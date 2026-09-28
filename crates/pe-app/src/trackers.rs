@@ -4,8 +4,9 @@
 //! Two calls, as the dialog needs. [`tracker_event`] resolves the pasted
 //! address and downloads **every** boat's full track as a job with
 //! progress (`tracker://progress`) and Cancel ([`cancel_tracker_event`]);
-//! the event is kept in memory, so asking again, or importing a second boat
-//! later in the session, downloads nothing. [`import_tracker_boats`] then
+//! the event is kept in memory (up to [`KEPT_FIXES`] positions in all), so
+//! asking again, or importing a second boat later in the session, downloads
+//! nothing. [`import_tracker_boats`] then
 //! builds one track source per chosen boat as one undoable change, exactly
 //! as a file import does, with the boat's start and finish as the default
 //! time window (spec.md 7.6).
@@ -30,9 +31,11 @@ use crate::tracks::{Pending, TrackImportFailure, TrackImportResult, add_tracks, 
 /// The event carrying [`TrackerProgress`] while an event downloads.
 pub const PROGRESS_EVENT: &str = "tracker://progress";
 
-/// How many downloaded events the session keeps; the oldest goes first.
-/// The Fastnet 2025 (444 boats, 714,380 positions) is about 30 MB in memory.
-pub const KEPT_EVENTS: usize = 4;
+/// How many positions the downloaded events the session keeps may hold in
+/// all; the oldest event goes first, and the latest is always kept. A
+/// position is 56 bytes in memory, so the Fastnet 2025 (444 boats, 714,380
+/// positions) is about 40 MB, and the cap about 110 MB.
+pub const KEPT_FIXES: usize = 2_000_000;
 
 /// How many points of each boat the dialog's map preview gets.
 pub const PREVIEW_POINTS: usize = 64;
@@ -63,8 +66,11 @@ impl TrackerSession {
                 !(e.event.tracker == event.event.tracker && e.event.key == event.event.key)
             });
             events.push(event);
-            let excess = events.len().saturating_sub(KEPT_EVENTS);
-            events.drain(..excess);
+            let fixes = |e: &TrackerEvent| e.boats.iter().map(|b| b.fixes.len()).sum::<usize>();
+            let mut total: usize = events.iter().map(|e| fixes(e)).sum();
+            while events.len() > 1 && total > KEPT_FIXES {
+                total -= fixes(&events.remove(0));
+            }
         }
     }
 
@@ -164,6 +170,10 @@ pub struct TrackerEventView {
     pub stop: Option<i64>,
     /// Whether the positions came from the fallback format.
     pub fallback: bool,
+    /// For one leg of a race sailed in legs: which, from 1.
+    pub leg: Option<u32>,
+    /// And how many legs the race has.
+    pub legs: Option<u32>,
     /// Whether this came from the session's memory rather than a download.
     pub cached: bool,
     /// Every boat.
@@ -199,6 +209,8 @@ impl TrackerEventView {
             start: event.start,
             stop: event.stop,
             fallback: event.positions_from == PositionsFrom::Fallback,
+            leg: event.leg.map(|(leg, _)| leg),
+            legs: event.leg.map(|(_, legs)| legs),
             cached,
             boats: event
                 .boats
@@ -285,7 +297,7 @@ pub fn download_with(
                     on_progress(TrackerProgress {
                         fraction: p.fraction(),
                         bytes: p.bytes as f64,
-                        fallback: p.steps > 2 && p.step >= 2,
+                        fallback: p.fallback,
                     });
                 }
             }
@@ -477,5 +489,61 @@ mod tests {
             assert_eq!(tracker_of(tracker_name(t)).expect("known"), t);
         }
         assert!(tracker_of("nope").is_err());
+    }
+
+    fn event(key: &str, fixes: usize) -> Arc<TrackerEvent> {
+        let fix = pe_core::track::Fix {
+            t: 0,
+            lat: 0.0,
+            lon: 0.0,
+            cog: None,
+            sog: None,
+        };
+        Arc::new(TrackerEvent {
+            event: pe_trackers::EventRef {
+                tracker: Tracker::YellowBrick,
+                key: key.to_owned(),
+                url: String::new(),
+            },
+            title: String::new(),
+            start: None,
+            stop: None,
+            boats: vec![pe_trackers::TrackerBoat {
+                id: "1".to_owned(),
+                name: String::new(),
+                sail: None,
+                model: None,
+                division: None,
+                status: None,
+                start: None,
+                finish: None,
+                fixes: vec![fix; fixes],
+            }],
+            positions_from: PositionsFrom::Primary,
+            leg: None,
+        })
+    }
+
+    /// The session keeps events up to a total number of positions, not a
+    /// number of events: many small events stay, a huge one alone stays.
+    #[test]
+    fn the_session_cache_is_capped_by_positions() {
+        let session = TrackerSession::default();
+        for k in 0..10 {
+            session.keep(event(&format!("small{k}"), 1000));
+        }
+        assert!(
+            session.cached(Tracker::YellowBrick, "small0").is_some(),
+            "ten small events fit"
+        );
+        session.keep(event("big", KEPT_FIXES - 5000));
+        assert!(session.cached(Tracker::YellowBrick, "small4").is_none());
+        assert!(session.cached(Tracker::YellowBrick, "small5").is_some());
+        assert!(session.cached(Tracker::YellowBrick, "big").is_some());
+        // Over the cap on its own: kept, everything older dropped.
+        session.keep(event("huge", KEPT_FIXES + 1));
+        assert!(session.cached(Tracker::YellowBrick, "huge").is_some());
+        assert!(session.cached(Tracker::YellowBrick, "big").is_none());
+        assert!(session.cached(Tracker::YellowBrick, "small9").is_none());
     }
 }

@@ -263,3 +263,117 @@ fn cancel_ends_a_download_that_is_waiting_on_the_network() {
         "a cancelled download is not kept"
     );
 }
+
+/// Serves the 24 Heures Ultim 2025 recordings (Geovoile); a route ending in
+/// `*` matches every path it starts.
+fn serve_geovoile() -> String {
+    let file = |name: &str| {
+        std::fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../pe-trackers/tests/fixtures/geovoile/24hultim2025")
+                .join(name),
+        )
+        .expect(name)
+    };
+    let routes: Vec<(&str, Vec<u8>)> = vec![
+        ("/2025/tracker/", file("viewer.html")),
+        ("/2025/tracker/resources/versions/v*", file("versions.txt")),
+        (
+            "/2025/tracker/resources/config/v20251006074618",
+            file("config.hwx"),
+        ),
+        (
+            "/2025/tracker/resources/tracks/v20250928152939",
+            file("tracks.hwx"),
+        ),
+        (
+            "/2025/tracker/resources/reports/v20250928152939",
+            file("reports.hwx"),
+        ),
+    ];
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { break };
+            let mut buf = vec![0u8; 8192];
+            let n = stream.read(&mut buf).unwrap_or(0);
+            let request = String::from_utf8_lossy(&buf[..n]).into_owned();
+            let path = request.split_whitespace().nth(1).unwrap_or("").to_owned();
+            let (status, body) = routes
+                .iter()
+                .find(|(p, _)| {
+                    p.strip_suffix('*')
+                        .map_or(*p == path, |prefix| path.starts_with(prefix))
+                })
+                .map_or(("404 Not Found", Vec::new()), |(_, b)| {
+                    ("200 OK", b.clone())
+                });
+            let head = format!(
+                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(head.as_bytes());
+            let _ = stream.write_all(&body);
+        }
+    });
+    format!("http://127.0.0.1:{port}")
+}
+
+/// A Geovoile event through the shared dialog flow (M11): the reports'
+/// official heading and speed are used as given, the boat's arrival ends
+/// its time window, and the origin records the canonical viewer address.
+#[test]
+fn a_geovoile_event_imports_with_official_heading_and_speed() {
+    let root = TempRoot::new("trackers-geovoile");
+    let app = project(&root);
+    let host = serve_geovoile();
+    let mut fractions = Vec::new();
+    let view = trackers::download_with(
+        &app,
+        Arc::new(pe_trackers::geovoile::Geovoile::at(&host)),
+        "24hultim.geovoile.com/2025/tracker/",
+        false,
+        |p| fractions.push(p.fraction),
+    )
+    .unwrap();
+    assert!(fractions.windows(2).all(|w| w[0] <= w[1]), "{fractions:?}");
+    assert_eq!(view.tracker, "geovoile");
+    assert_eq!(view.key, "24hultim.geovoile.com/2025/");
+    assert_eq!(view.title, "24H Ultim");
+    assert_eq!((view.leg, view.legs), (None, None));
+    assert_eq!(view.boats.len(), 14);
+    let result =
+        trackers::import_boats(&app, Tracker::Geovoile, &view.key, &["4".to_owned()]).unwrap();
+    assert_eq!(result.imported.len(), 1);
+    // 246 of its 470 fixes carry the reports' heading (see pe-trackers'
+    // fixture test); the rest are derived.
+    assert_eq!(result.imported[0].heading_given, 246);
+    let track = result.project.sources[0].track.as_ref().unwrap();
+    assert_eq!(track.event_title, "24H Ultim");
+    // The start of its run and its official arrival.
+    assert_eq!(track.filters.time_start, Some(1_758_967_200));
+    assert_eq!(track.filters.time_end, Some(1_759_041_172));
+    app.with_session(|session| {
+        let open = session.require_open()?;
+        let TrackOrigin::Tracker {
+            tracker,
+            event_url,
+            division,
+            ..
+        } = &open.project.sources[0].track().unwrap().origin
+        else {
+            panic!("a tracker origin");
+        };
+        assert_eq!(*tracker, Tracker::Geovoile);
+        assert_eq!(
+            *event_url,
+            pe_trackers::geovoile::site("24hultim.geovoile.com/2025/tracker/")
+                .unwrap()
+                .url()
+        );
+        assert!(division.is_some());
+        Ok(())
+    })
+    .unwrap();
+}
