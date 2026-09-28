@@ -9,6 +9,7 @@ members = [
     "crates/pe-env",
     "crates/pe-grib",
     "crates/pe-app",
+    "tools/orc-catalogue-builder",
 ]
 
 [workspace.package]

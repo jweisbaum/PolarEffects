@@ -1,0 +1,15 @@
+[package]
+name = "orc-catalogue-builder"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Builds PolarEffects' embedded ORC catalogue from a jieter/orc-data checkout."
+publish = false
+
+[dependencies]
+pe-orc = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

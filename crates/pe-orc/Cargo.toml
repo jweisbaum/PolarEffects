@@ -8,6 +8,12 @@ description = "PolarEffects embedded ORC catalogue and its search index."
 
 [dependencies]
 pe-core = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+# The catalogue's encoding (spec.md 5.1): postcard for the records, LZ4 over
+# them. Both pure Rust.
+postcard = { version = "1.1", default-features = false, features = ["alloc"] }
+lz4_flex = { version = "0.14", default-features = false, features = ["std"] }
 
 [lints]
 workspace = true

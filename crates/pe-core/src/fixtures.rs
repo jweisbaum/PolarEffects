@@ -26,7 +26,7 @@ pub fn orc_record() -> OrcRecord {
         builder: None,
         designer: Some("Farr".to_owned()),
         year: Some(1998),
-        certificate_year: 2024,
+        certificate_year: Some(2024),
         size: OrcSize {
             loa: Some(12.41),
             beam: Some(4.0),

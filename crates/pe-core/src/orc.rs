@@ -35,8 +35,11 @@ pub struct OrcRecord {
     /// Year built.
     #[serde(default)]
     pub year: Option<i32>,
-    /// Year of the certificate the VPP comes from.
-    pub certificate_year: i32,
+    /// Year of the certificate the VPP comes from. orc-data does not state
+    /// it; the catalogue builder infers it from the VPP's wind-speed axis and
+    /// the yearly lists (spec.md 5.1), and leaves it empty when it cannot.
+    #[serde(default)]
+    pub certificate_year: Option<i32>,
     /// Size fields.
     #[serde(default)]
     pub size: OrcSize,
