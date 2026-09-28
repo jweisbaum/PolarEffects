@@ -51,6 +51,9 @@ function IntegerField({ value, min, max, onCommit, ...rest }: {
     onKeyDown={(event) => { if (event.key === "Enter") commit(); }} />;
 }
 
+/** The dot bands offered, knots either side of the plot's wind speed (spec.md 9.2). */
+const PLOT_BANDS = [0.25, 0.5, 1, 1.5, 2, 3, 5];
+
 export default function SettingsDialog({ settings, onSettings, onClose }: {
   settings: AppSettings;
   onSettings: (settings: AppSettings) => void;
@@ -151,6 +154,16 @@ export default function SettingsDialog({ settings, onSettings, onClose }: {
               onChange={(e) => units({ distance: e.target.value as Units["distance"] })}>
               <option value="nm">{t("nm — nautical miles")}</option>
               <option value="km">{t("km — kilometres")}</option>
+            </select>
+          </label>
+          <label className="settings-field">
+            {t("Polar plot dot band")}
+            <select data-feature="settings:plot-band" value={String(settings.plot_tws_band_kn)}
+              title={t("How far from the polar plot's wind speed a track sample may be and still be drawn")}
+              onChange={(e) => save(api.setPlotBand(Number(e.target.value)))}>
+              {PLOT_BANDS.map((band) => (
+                <option key={band} value={String(band)}>{t("{band} kn either side", { band })}</option>
+              ))}
             </select>
           </label>
         </section>

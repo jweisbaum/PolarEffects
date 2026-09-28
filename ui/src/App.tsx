@@ -31,6 +31,7 @@ import SettingsDialog from "./settings/SettingsDialog";
 import { applyTheme } from "./settings/themes";
 import Placeholder from "./stage/Placeholder";
 import StageSwitcher, { type Stage } from "./stage/StageSwitcher";
+import { onFocusMap, resetSelection } from "./selection";
 
 /**
  * Application shell (spec.md 3). The help window wraps everything so F1 and
@@ -123,6 +124,10 @@ function Shell() {
     return () => { for (const off of offs) off(); };
   }, []);
 
+  // "Show on map" from a polar view or the track list switches to the map,
+  // which frames what was asked for.
+  useEffect(() => onFocusMap(() => setStage("map")), []);
+
   const flash = useCallback((message: string) => {
     setStatus(message);
     reportError(null);
@@ -135,6 +140,8 @@ function Shell() {
     setRenaming(null);
     setCreating(null);
     setPlotFull(false);
+    // A selection names samples of the project it was made in.
+    resetSelection();
     setProject(next);
   }, []);
 
@@ -376,7 +383,7 @@ function Shell() {
       } as CSSProperties}>
         {panels.left && <aside className="sidebar left"><LeftNav project={project} onProject={setProject} panels={panels} onToggle={toggle} /></aside>}
         <main className="centre-stage" aria-label={t("Stage")}>
-          {stage === "map" && <MapView settings={settings} onSettings={setSettings} />}
+          {stage === "map" && <MapView project={project} settings={settings} onSettings={setSettings} />}
           {stage === "3d" && <PolarView project={project} settings={settings} onProject={setProject} />}
           {stage === "compare" && <Placeholder title={msg("Compare")}
             body={msg("Comparing two polars arrives in a later version.")} />}

@@ -44,16 +44,25 @@ HTMLElement.prototype.scrollIntoView = () => undefined;
 /** An imported Adrena polar, as the source list and Polar files section show it. */
 const POLAR: SourceSummary = {
   id: 7, kind: "polar_file", label: "boat.pol", colour: "#4e79a7", visible: true, weight: 1, count: 71, used: null,
-  polar_file: { format: "adrena", file_name: "boat.pol", twa: [0, 42.5, 180], tws: [6, 8, 20] }, orc: null,
+  polar_file: { format: "adrena", file_name: "boat.pol", twa: [0, 42.5, 180], tws: [6, 8, 20] }, orc: null, track: null,
 };
 const TRACK: SourceSummary = {
   id: 8, kind: "track", label: "Fastnet 2025", colour: "#f28e2b", visible: false, weight: 0.5, count: 120, used: 100,
-  polar_file: null, orc: null,
+  polar_file: null, orc: null, track: null,
+};
+/** A visible track with its summary, as the Tracks section lists it. */
+const TRACKED: SourceSummary = {
+  ...TRACK, id: 10, visible: true, track: {
+    origin: "file", boat_name: "Alpha", event_title: "race.geojson", start: 1_753_531_200, end: 1_753_617_600,
+    samples: 120, filtered: 20, excluded: 0, used: 100, with_wind: 0, env_status: "not_fetched", max_gap_s: 10_800,
+    prefer: "given", environment_filters: false,
+    filters: { time_start: null, time_end: null, min_bsp: 1, max_bsp: null, max_heading_change: 30, heading_origin: "any", speed_origin: "any" },
+  },
 };
 /** An ORC certificate, as the source list and the ORC polars section show it. */
 const ORC: SourceSummary = {
   id: 9, kind: "orc", label: "Eratosthenes", colour: "#e15759", visible: true, weight: 1, count: 70, used: null,
-  polar_file: null, orc: { sail_no: "GBR 1124", model: "Swan 112", year: 1999, certificate_year: 2023 },
+  polar_file: null, orc: { sail_no: "GBR 1124", model: "Swan 112", year: 1999, certificate_year: 2023 }, track: null,
 };
 /** A search result for it. */
 const HIT: OrcHit = {
@@ -101,6 +110,13 @@ function backend() {
         // An empty scene: the header alone (layout in polar/scenePacket.ts).
         const header = new ArrayBuffer(32);
         new DataView(header).setUint32(0, 0x44334550, true);
+        new DataView(header).setUint32(4, 1, true);
+        return header;
+      }
+      case "map_tracks": {
+        // No tracks: the header alone (layout in map/trackPacket.ts).
+        const header = new ArrayBuffer(16);
+        new DataView(header).setUint32(0, 0x544d4550, true);
         new DataView(header).setUint32(4, 1, true);
         return header;
       }
@@ -169,7 +185,7 @@ beforeEach(() => {
     recent_projects: [], autosave: "recovery", language: "en", theme: "harbour",
     units: { speed: "kn", wave_height: "m", distance: "nm" },
     chunk_cache: { location: "", size_limit_gb: 20 }, network: { concurrency: 8, timeout_s: 60 },
-    projection: "equirectangular",
+    projection: "equirectangular", plot_tws_band_kn: 1,
   };
   dialog.open.mockReset().mockResolvedValue(null);
   dialog.save.mockReset().mockResolvedValue(null);
@@ -506,8 +522,8 @@ describe("finding every control (plan.md M2 acceptance)", () => {
       for (const entry of windowFeatures) {
         foldEverything();
         // Sources, so that the source list's row controls and each
-        // section's Remove are on screen.
-        project = summary(false, "/p.wpsproj", [POLAR, ORC]);
+        // section's Remove (and a track's filters) are on screen.
+        project = summary(false, "/p.wpsproj", [POLAR, ORC, TRACKED]);
         await mount();
         // The map and 3D stages are hidden behind the Compare stage, to be revealed.
         await click(feature("stage:compare"));

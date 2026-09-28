@@ -9,6 +9,10 @@ const features: Feature[] = [
     keywords: [msg("globe"), msg("orthographic"), msg("equirectangular"), msg("flat map")], topic: "map", reveal: map },
   { id: "map:fit", label: msg("Fit the world"), description: msg("Show the whole world again."),
     keywords: [msg("zoom out"), msg("reset view"), msg("whole world")], topic: "map", reveal: map },
+  { id: "map:fit-tracks", label: msg("Fit the tracks"), description: msg("Frame every visible track on the map."),
+    keywords: [msg("zoom"), msg("tracks"), msg("race")], topic: "map", reveal: map },
+  { id: "map:clear-selection", label: msg("Clear the map selection"), description: msg("Select no track positions; Shift-drag a box on the map to select some."),
+    keywords: [msg("deselect"), msg("selection"), "Esc"], topic: "map", reveal: map },
 ];
 
 export default features;

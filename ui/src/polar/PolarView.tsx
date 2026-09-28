@@ -6,14 +6,15 @@ import type { ProjectSummary } from "../generated/ProjectSummary";
 import { setHint } from "../hint";
 import { msg, useT } from "../i18n";
 import { api } from "../ipc";
+import { focusMap, selectSamples, useSampleSelection } from "../selection";
 import { onThemeChange } from "../settings/themes";
 import type { Layout } from "./geometry3d";
 import { PolarScene } from "./scene3d";
 import { emptyScene, type ScenePacket } from "./scenePacket";
 import {
-  availableModes, buildDots, buildGuides, buildSurfaces, combine, DEFAULT_TOGGLES, dotKey, exclusionTargets,
-  hasFiltered, presetView, range, resolveKeys, sceneBounds, SPEED_FACTOR, SPEED_SYMBOL, summarise,
-  type CameraPreset, type ColourMode, type GuideLabel, type Toggles,
+  availableModes, buildDots, buildGuides, buildSurfaces, combine, DEFAULT_TOGGLES, drawnOnly, emptyKeys, exclusionTargets,
+  hasFiltered, keysOf, presetView, range, resolveKeys, sampleIdsOf, sceneBounds, SPEED_FACTOR, SPEED_SYMBOL, summarise,
+  type CameraPreset, type ColourMode, type GuideLabel, type SelectionKeys, type Toggles,
 } from "./view3d";
 
 type Tool = "rotate" | "lasso" | "box";
@@ -68,7 +69,8 @@ export default function PolarView({ project, settings, onProject }: {
   const gesture = useRef<{ x: number; y: number; path: number[] } | null>(null);
   const request = useRef(0);
   const fitted = useRef(false);
-  const selectionKeys = useRef<Set<string>>(new Set());
+  const selectionKeys = useRef<SelectionKeys>(emptyKeys());
+  const shared = useSampleSelection();
 
   const [unavailable, setUnavailable] = useState<string | null>(null);
   const [packet, setPacket] = useState<ScenePacket>(emptyScene);
@@ -135,6 +137,9 @@ export default function PolarView({ project, settings, onProject }: {
     };
   }, [draw]);
 
+  // A new project is framed afresh when its first dots arrive.
+  useEffect(() => { fitted.current = false; }, [project.id]);
+
   // Refetches on every document change (`revision` moves with every command,
   // undo and redo included) and on switching project.
   useEffect(() => {
@@ -144,10 +149,14 @@ export default function PolarView({ project, settings, onProject }: {
       .catch((error: unknown) => { if (request.current === id) reportFailure(error); });
   }, [project.id, project.revision]);
 
-  /** Sets the selection, remembering it by stable keys for the next refetch. */
+  /**
+   * Sets the selection, remembering it by stable keys for the next refetch,
+   * and shares its samples with the map (spec.md 9.1).
+   */
   const select = useCallback((next: number[]) => {
-    selectionKeys.current = new Set(next.map((g) => dotKey(packet, g)));
+    selectionKeys.current = keysOf(packet, next);
     setSelection(next);
+    selectSamples(sampleIdsOf(packet, next), "3d");
   }, [packet]);
 
   // A refetched scene keeps the selection: dots are matched by source and
@@ -156,12 +165,26 @@ export default function PolarView({ project, settings, onProject }: {
     setSelection(resolveKeys(packet, selectionKeys.current));
   }, [packet]);
 
-  const dots = useMemo(() => buildDots(packet, toggles, mode), [packet, toggles, mode]);
+  // A selection made on the map (or elsewhere) selects those samples here.
+  useEffect(() => {
+    if (shared.origin === "3d" || shared.origin === null) return;
+    selectionKeys.current = { nodes: new Map(), samples: new Set(shared.ids) };
+    setSelection(resolveKeys(packet, selectionKeys.current));
+    // Only a new shared selection re-selects; a refetch keeps its own.
+  }, [shared.version]);
+
   const bounds = useMemo(() => sceneBounds(packet, layout), [packet, layout]);
   const modes = useMemo(() => availableModes(packet), [packet]);
   const filteredExist = useMemo(() => hasFiltered(packet), [packet]);
   // A mode whose data has gone (the tracks were removed) falls back to source colours.
   const shownMode: ColourMode = modes[mode] ? mode : "source";
+  const dots = useMemo(() => buildDots(packet, toggles, shownMode), [packet, toggles, shownMode]);
+  // Only what is drawn is counted and acted on: a dot the toggles hide
+  // cannot be seen to be selected.
+  const acting = useMemo(
+    () => drawnOnly(selection, dots.refs, packet.nodes.count + packet.samples.count),
+    [selection, dots, packet],
+  );
 
   useEffect(() => {
     const current = scene.current;
@@ -253,11 +276,11 @@ export default function PolarView({ project, settings, onProject }: {
     if (tool === "box") select(combine(selection, toGlobal(current.box(g.x, g.y, x, y)), add));
   };
 
-  const summary = useMemo(() => summarise(packet, selection), [packet, selection]);
+  const summary = useMemo(() => summarise(packet, acting), [packet, acting]);
   const labelOf = useMemo(() => new Map(project.sources.map((s) => [s.id, s])), [project.sources]);
 
   const exclude = (excluded: boolean) => {
-    const targets = exclusionTargets(packet, selection);
+    const targets = exclusionTargets(packet, acting);
     api.setExcluded(targets.nodes, targets.samples, excluded).then(onProject).catch(reportFailure);
   };
 
@@ -266,8 +289,8 @@ export default function PolarView({ project, settings, onProject }: {
   const speed = (knots: number) => `${(knots * factor).toFixed(1)} ${symbol}`;
   const legendRange = shownMode === "source" ? null
     : range(shownMode === "hs" ? packet.samples.hs : shownMode === "current" ? packet.samples.current : packet.samples.time);
-  const unavailableModeTip = msg("Colouring by wave height, current or time needs track samples, which arrive with tracks and their environment");
-  const noFilteredTip = msg("No sample is filtered out yet; filters arrive with tracks");
+  const unavailableModeTip = msg("Colouring by wave height, current or time needs track samples with their wind, which arrives with the environment fetch");
+  const noFilteredTip = msg("No sample with wind is filtered out");
   const empty = packet.nodes.count === 0 && packet.samples.count === 0;
 
   return (
@@ -371,7 +394,7 @@ export default function PolarView({ project, settings, onProject }: {
                   return (
                     <li key={entry.sourceId}>
                       <span className="swatch" style={{ background: source?.colour }} />
-                      {t("{label}: {count}", { label: source?.label ?? "?", count: entry.count })}
+                      {t("{label}: {count}", { label: source?.label ?? t("Unknown source"), count: entry.count })}
                     </li>
                   );
                 })}
@@ -387,8 +410,9 @@ export default function PolarView({ project, settings, onProject }: {
               title={t("Put the selected dots back into the blend (undoable)")} onClick={() => exclude(false)}>
               {t("Include")}
             </button>
-            <button className="small" data-feature="view3d:show-on-map" disabled
-              title={t("Show the selected samples on the map. Arrives with tracks.")}>
+            <button className="small" data-feature="view3d:show-on-map" disabled={summary.samples === 0}
+              title={t("Show the selected samples on the map")}
+              onClick={() => { selectSamples(sampleIdsOf(packet, acting), "3d"); focusMap({ kind: "selection" }); }}>
               {t("Show on map")}
             </button>
             <button className="small" data-feature="view3d:clear-selection" disabled={summary.count === 0}

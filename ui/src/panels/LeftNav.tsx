@@ -4,12 +4,12 @@ import type { PanelState } from "./layout";
 import OrcPolars from "./OrcPolars";
 import PolarFiles from "./PolarFiles";
 import Section from "./Section";
+import Tracks from "./Tracks";
 
 /**
  * The left navigation (spec.md 3.2): ORC polars (§5), Polar files (§6) and
- * Tracks (§7), in that order, each foldable. Tracks arrive with the
- * milestones that build them (M8–M12); for now that section says what it is
- * for.
+ * Tracks (§7), in that order, each foldable. Tracks import from files now;
+ * the tracker imports arrive with M10–M12.
  */
 export default function LeftNav({ project, onProject, panels, onToggle }: {
   project: ProjectSummary;
@@ -30,7 +30,7 @@ export default function LeftNav({ project, onProject, panels, onToggle }: {
       </Section>
       <Section feature="nav:tracks" title={t("Tracks")} tooltip={t("Import race tracks from trackers and files")}
         open={panels.tracks} onToggle={() => onToggle("tracks")}>
-        <p className="muted placeholder">{t("No tracks in this project yet.")}</p>
+        <Tracks project={project} onProject={onProject} />
       </Section>
     </nav>
   );

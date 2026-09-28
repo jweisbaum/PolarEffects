@@ -275,6 +275,32 @@ button.icon-button { padding: 0 5px; line-height: 16px; font-size: 11px; }
 .polar-file-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .polar-file-label, .polar-file-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .polar-file-meta { font-size: 11px; }
+.track-list { list-style: none; margin: 0; padding: 0; }
+.track-item { padding: 3px 0; border-bottom: 1px solid var(--border-subtle, transparent); }
+.track-row { display: flex; align-items: center; gap: 6px; }
+.track-details { padding: 4px 0 6px 18px; font-size: 12px; }
+.track-filters { border: 1px solid var(--border); border-radius: 6px; margin: 0 0 6px; padding: 4px 8px 6px; display: grid; gap: 4px; }
+.track-filters legend { font-size: 11px; padding: 0 4px; }
+.track-filters p { margin: 0; font-size: 11px; }
+.track-field { display: grid; grid-template-columns: 1fr 9.5rem; align-items: center; gap: 6px; font-size: 12px; }
+.track-field input, .track-field select { min-width: 0; }
+.track-env-filters { border: 1px dashed var(--border); border-radius: 6px; margin: 0; padding: 2px 6px 4px; font-size: 11px; }
+.track-import-summary { list-style: none; margin: 0 0 6px; padding: 4px 6px; font-size: 11px; }
+.track-import-summary li { padding: 1px 0; overflow-wrap: anywhere; }
+.track-import { width: min(860px, 94vw); max-height: 88vh; display: flex; flex-direction: column; }
+.track-import-files { overflow: auto; flex: 1; display: grid; gap: 10px; margin-bottom: 10px; }
+.track-import-file { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+.track-import-file h3 { margin: 0 0 6px; font-size: 13px; }
+.track-import-mapping { display: flex; flex-wrap: wrap; gap: 8px 12px; font-size: 12px; margin-bottom: 6px; }
+.track-import-mapping label { display: flex; flex-direction: column; gap: 2px; }
+.track-import-preview { overflow: auto; max-height: 220px; font-size: 11px; }
+.track-import-preview table { border-collapse: collapse; }
+.track-import-preview th, .track-import-preview td { border: 1px solid var(--border); padding: 2px 6px; white-space: nowrap; text-align: left; }
+.track-import-preview th.mapped { background: var(--active); }
+.track-import-role { display: block; font-weight: normal; font-size: 10px; color: var(--accent); }
+.track-import-preview p { margin: 4px 0 0; }
+.track-import-boats { border: 1px solid var(--border); border-radius: 6px; display: grid; gap: 2px; font-size: 12px; }
+.track-import-boats label { display: flex; gap: 6px; align-items: center; }
 
 /* ORC polars (spec.md 5) */
 .orc-search { width: 100%; box-sizing: border-box; padding: 3px 6px; }
@@ -335,7 +361,7 @@ button.source-label:hover { border-color: var(--border); background: var(--raise
 /* The 2D polar plot (spec.md 9.2) */
 .polar-plot { display: flex; flex-direction: column; gap: 6px; min-height: 0; }
 .polar-plot-controls { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.polar-plot-all { display: flex; align-items: center; gap: 3px; font-size: 11px; white-space: nowrap; }
+.polar-plot-all, .polar-plot-filtered { display: flex; align-items: center; gap: 3px; font-size: 11px; white-space: nowrap; }
 .polar-plot-controls input[type="range"] { flex: 1; min-width: 60px; }
 .polar-plot-tws-value { font-size: 11px; width: 48px; text-align: right; font-variant-numeric: tabular-nums; }
 .polar-plot-canvas-wrap { position: relative; flex: 1; min-height: 0; aspect-ratio: 1; }
@@ -406,6 +432,17 @@ button.source-label:hover { border-color: var(--border); background: var(--raise
   font-size: 12px;
 }
 .map-unavailable { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; }
+.map-stage { outline: none; }
+.map-box {
+  position: absolute;
+  pointer-events: none;
+  border: 1px dashed var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.map-tooltip { font-size: 12px; min-width: 180px; }
+.map-tooltip table { border-collapse: collapse; }
+.map-tooltip th { text-align: left; font-weight: normal; color: var(--muted); padding-right: 8px; }
+.map-selection { align-self: center; }
 
 /* --- 3D polar ---------------------------------------------------------- */
 

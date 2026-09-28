@@ -9,6 +9,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 import { beginBusy } from "./busy";
 import { msg } from "./i18n/msg";
+import { unpackTracks, type TrackPacket } from "./map/trackPacket";
 import { unpackScene, type ScenePacket } from "./polar/scenePacket";
 import type { AppErrorPayload } from "./generated/AppErrorPayload";
 import type { AppInfo } from "./generated/AppInfo";
@@ -17,6 +18,7 @@ import type { AutosaveMode } from "./generated/AutosaveMode";
 import type { BoatInput } from "./generated/BoatInput";
 import type { ChunkCacheSettings } from "./generated/ChunkCacheSettings";
 import type { ChunkCacheStatus } from "./generated/ChunkCacheStatus";
+import type { CsvMappingInput } from "./generated/CsvMappingInput";
 import type { MapProjection } from "./generated/MapProjection";
 import type { NetworkSettings } from "./generated/NetworkSettings";
 import type { OrcCatalogueInfo } from "./generated/OrcCatalogueInfo";
@@ -29,6 +31,11 @@ import type { Units } from "./generated/Units";
 import type { ProjectSummary } from "./generated/ProjectSummary";
 import type { RecentProject } from "./generated/RecentProject";
 import type { RecoveredProject } from "./generated/RecoveredProject";
+import type { SampleDetails } from "./generated/SampleDetails";
+import type { TrackFileInspection } from "./generated/TrackFileInspection";
+import type { TrackFileRequest } from "./generated/TrackFileRequest";
+import type { TrackFilters } from "./generated/TrackFilters";
+import type { TrackImportResult } from "./generated/TrackImportResult";
 
 /** An error raised by a Rust command, carrying its machine-readable kind. */
 export class IpcError extends Error {
@@ -62,6 +69,9 @@ const LONG_RUNNING: Readonly<Record<string, string>> = {
   chunk_cache_status: msg("Measuring the cache"),
   clear_chunk_cache: msg("Clearing the cache"),
   import_polar_files: msg("Importing polar files"),
+  inspect_track_files: msg("Reading track files"),
+  inspect_csv_track: msg("Reading track files"),
+  import_track_files: msg("Importing tracks"),
   orc_catalogue_info: msg("Loading the ORC catalogue"),
 };
 
@@ -166,10 +176,35 @@ export const api = {
   /**
    * Every visible polar source's curve at `tws` (null for "all": one curve
    * per source per wind speed it has), the domain those sources cover, the
-   * samples near the slice (empty until tracks exist) and the blend (null
-   * until it exists).
+   * samples within the dot band of the slice (those with wind; filtered ones
+   * too when `showFiltered`) and the blend (null until it exists).
    */
-  polarPlot: (tws: number | null) => call<PolarPlotResult>("polar_plot", { tws }),
+  polarPlot: (tws: number | null, showFiltered = false) =>
+    call<PolarPlotResult>("polar_plot", { tws, showFiltered }),
+
+  // Tracks from files (spec.md 7.1, 7.3, 7.4, 7.6).
+
+  /** Reads chosen files and says what each holds: boats, or a CSV preview and guessed mapping. */
+  inspectTrackFiles: (paths: string[]) => call<TrackFileInspection[]>("inspect_track_files", { paths }),
+  /** Re-reads one CSV with the user's column mapping. */
+  inspectCsvTrack: (path: string, mapping: CsvMappingInput) =>
+    call<TrackFileInspection>("inspect_csv_track", { path, mapping }),
+  /** Imports the chosen boats of each file, one source per boat, as one undoable change. */
+  importTrackFiles: (files: TrackFileRequest[]) => call<TrackImportResult>("import_track_files", { files }),
+  /** Changes a track's time window, boat-speed band, manoeuvre threshold and origin filters (undoable). */
+  setTrackFilters: (id: number, filters: TrackFilters) =>
+    call<ProjectSummary>("set_track_filters", { id, filters }),
+  /** Changes a track's maximum gap and given-or-derived preference (undoable). */
+  setTrackDerivation: (id: number, maxGapS: number, prefer: "given" | "derived") =>
+    call<ProjectSummary>("set_track_derivation", { id, maxGapS, prefer }),
+  /** One sample's time, position, motion and environment, for the map's hover. */
+  sampleDetails: (sourceId: number, sampleId: number) =>
+    call<SampleDetails>("sample_details", { sourceId, sampleId }),
+  /** Every visible track for the map, packed as binary (layout in `map/trackPacket.ts`). */
+  mapTracks: async (): Promise<TrackPacket> => {
+    const bytes = await call<ArrayBuffer | number[]>("map_tracks");
+    return unpackTracks(bytes instanceof ArrayBuffer ? bytes : new Uint8Array(bytes).buffer);
+  },
 
   // The 3D polar view (spec.md 10).
 
@@ -184,8 +219,8 @@ export const api = {
   },
   /**
    * Excludes a selection from the blend (`excluded` true) or includes it
-   * again, as one undoable change (spec.md 10.3). Sample ids are accepted
-   * and ignored until tracks have samples.
+   * again, as one undoable change (spec.md 10.3): polar nodes by grid place,
+   * track samples by id.
    */
   setExcluded: (nodes: PolarNodeRef[], samples: number[], excluded: boolean) =>
     call<ProjectSummary>("set_excluded", { nodes, samples, excluded }),
@@ -221,6 +256,8 @@ export const api = {
   setNetwork: (network: NetworkSettings) => call<AppSettings>("set_network", { network }),
   /** Sets the map projection. */
   setProjection: (projection: MapProjection) => call<AppSettings>("set_projection", { projection }),
+  /** Sets how far from the 2D plot's wind speed a sample dot may be, knots either side. */
+  setPlotBand: (bandKn: number) => call<AppSettings>("set_plot_band", { bandKn }),
   /** Where the chunk cache is and how big it is. */
   chunkCacheStatus: () => call<ChunkCacheStatus>("chunk_cache_status"),
   /** Empties the chunk cache (lossless: samples live in projects). */

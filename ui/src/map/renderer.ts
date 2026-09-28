@@ -3,8 +3,11 @@
  * Natural Earth land and coastlines, embedded, no tiles — in the two
  * projections PolarEffects offers.
  *
- * Draw order, bottom to top: sea, land, graticule, coastlines. Later
- * milestones draw tracks above the coastlines.
+ * Draw order, bottom to top: sea, land, graticule, coastlines, tracks (in
+ * their source colours, filtered fixes dimmed), the selected fixes and the
+ * hovered one. Tracks are one line list over every fix, drawn in one call;
+ * their longitudes are unwrapped along each track, so the flat map draws
+ * them in one more 360° copy either side than the basemap needs.
  *
  * The flat map draws the land triangles directly, once per 360° copy that is
  * in view, so panning across the antimeridian is seamless. The globe cannot:
@@ -111,6 +114,66 @@ void main() {
   outColor = mix(uVoid, mix(uSea, uLand, land), inside);
 }`;
 
+const TRACK_VERT = `#version 300 es
+precision highp float;
+layout(location = 0) in vec2 aLonLat;
+layout(location = 1) in vec4 aColor;
+uniform vec3 uCamera;
+uniform vec2 uViewport;
+uniform int uProjection;
+uniform float uLonOffset;
+uniform float uPointSize;
+out float vHorizon;
+out vec4 vColor;
+const float DEG = 0.017453292519943295;
+void main() {
+  vColor = aColor;
+  vHorizon = 1.0;
+  gl_PointSize = uPointSize;
+  vec2 screen;
+  if (uProjection == 0) {
+    screen = vec2(
+      uViewport.x * 0.5 + (aLonLat.x + uLonOffset - uCamera.x) * uCamera.z,
+      uViewport.y * 0.5 - (aLonLat.y - uCamera.y) * uCamera.z);
+  } else {
+    float lam = (aLonLat.x - uCamera.x) * DEG;
+    float phi = aLonLat.y * DEG;
+    float phi0 = uCamera.y * DEG;
+    vHorizon = sin(phi0) * sin(phi) + cos(phi0) * cos(phi) * cos(lam);
+    float r = uCamera.z / DEG;
+    screen = vec2(
+      uViewport.x * 0.5 + r * cos(phi) * sin(lam),
+      uViewport.y * 0.5 - r * (cos(phi0) * sin(phi) - sin(phi0) * cos(phi) * cos(lam)));
+  }
+  gl_Position = vec4(screen.x / uViewport.x * 2.0 - 1.0, 1.0 - screen.y / uViewport.y * 2.0, 0.0, 1.0);
+}`;
+
+const TRACK_FRAG = `#version 300 es
+precision highp float;
+uniform int uRound;
+in float vHorizon;
+in vec4 vColor;
+out vec4 outColor;
+void main() {
+  if (vHorizon < 0.0) discard;
+  if (uRound == 1 && length(gl_PointCoord - vec2(0.5)) > 0.5) discard;
+  outColor = vColor;
+}`;
+
+/** What the track layer draws, as `trackLayer.ts` builds it. */
+export interface TrackBuffers {
+  vertices: Float32Array;
+  colours: Float32Array;
+  indices: Uint32Array;
+}
+
+/** Highlighted fixes: (lon, lat) pairs, one colour, one size. */
+export interface Highlight {
+  points: Float32Array;
+  colour: [number, number, number, number];
+  size: number;
+}
+
 interface Program {
   program: WebGLProgram;
   uniforms: Record<string, WebGLUniformLocation | null>;
@@ -182,9 +245,13 @@ export class MapRenderer {
   private readonly quad: Geo;
   private readonly mask: WebGLTexture;
   private readonly markers: number[];
+  private readonly track: Program;
+  private tracks: Geo | null = null;
+  private highlights: { geo: Geo; size: number }[] = [];
 
   constructor(gl: WebGL2RenderingContext, basemap: Basemap) {
     this.gl = gl;
+    this.track = link(gl, TRACK_VERT, TRACK_FRAG, ["uCamera", "uViewport", "uProjection", "uLonOffset", "uPointSize", "uRound"]);
     this.geo = link(gl, GEO_VERT, GEO_FRAG, ["uCamera", "uViewport", "uProjection", "uLonOffset", "uColor"]);
     this.globe = link(gl, GLOBE_VERT, GLOBE_FRAG, ["uCamera", "uViewport", "uMask", "uSea", "uLand", "uVoid"]);
     for (const lod of basemap.lods) {
@@ -220,6 +287,59 @@ export class MapRenderer {
     }
     gl.bindVertexArray(null);
     return { vao, buffers, count: indices ? indices.length : vertices.length / 2, indexed: indices !== undefined };
+  }
+
+  /** A buffer set of (lon, lat) and RGBA per vertex, with optional line indices. */
+  private colouredBuffers(vertices: Float32Array, colours: Float32Array, indices?: Uint32Array): Geo {
+    const gl = this.gl;
+    const vao = gl.createVertexArray();
+    const vbo = gl.createBuffer();
+    const cbo = gl.createBuffer();
+    if (!vao || !vbo || !cbo) throw new Error("could not allocate track buffers");
+    gl.bindVertexArray(vao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+    gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, cbo);
+    gl.bufferData(gl.ARRAY_BUFFER, colours, gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(1);
+    gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 0, 0);
+    const buffers = [vbo, cbo];
+    if (indices) {
+      const ibo = gl.createBuffer();
+      if (!ibo) throw new Error("could not allocate track buffers");
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
+      buffers.push(ibo);
+    }
+    gl.bindVertexArray(null);
+    return { vao, buffers, count: indices ? indices.length : vertices.length / 2, indexed: indices !== undefined };
+  }
+
+  private free(geo: Geo | null) {
+    if (!geo) return;
+    this.gl.deleteVertexArray(geo.vao);
+    for (const buffer of geo.buffers) this.gl.deleteBuffer(buffer);
+  }
+
+  /** Replaces the tracks drawn; the old buffers are freed. */
+  setTracks(tracks: TrackBuffers | null): void {
+    this.free(this.tracks);
+    this.tracks = tracks && tracks.indices.length > 0
+      ? this.colouredBuffers(tracks.vertices, tracks.colours, tracks.indices)
+      : null;
+  }
+
+  /** Replaces the highlighted fixes (the selection, the hovered fix), drawn above the tracks in order. */
+  setHighlights(highlights: Highlight[]): void {
+    for (const h of this.highlights) this.free(h.geo);
+    this.highlights = highlights.filter((h) => h.points.length > 0).map((h) => {
+      const n = h.points.length / 2;
+      const colours = new Float32Array(n * 4);
+      for (let k = 0; k < n; k++) colours.set(h.colour, k * 4);
+      return { geo: this.colouredBuffers(h.points, colours), size: h.size };
+    });
   }
 
   private draw(geo: Geo, mode: number) {
@@ -273,10 +393,37 @@ export class MapRenderer {
     }
     this.land.clear();
     this.coast.clear();
+    this.setTracks(null);
+    this.setHighlights([]);
+    gl.deleteProgram(this.track.program);
     gl.deleteTexture(this.mask);
     gl.deleteProgram(this.geo.program);
     gl.deleteProgram(this.globe.program);
     gl.getExtension("WEBGL_lose_context")?.loseContext();
+  }
+
+  /** Tracks and highlights, in one projection, for the given 360° copies of the flat map. */
+  private drawTracks(mode: number, camera: Camera, view: Viewport, pixelRatio: number, offsets: number[]) {
+    if (!this.tracks && this.highlights.length === 0) return;
+    const gl = this.gl;
+    const u = this.track.uniforms;
+    gl.useProgram(this.track.program);
+    gl.uniform3f(u.uCamera ?? null, camera.lon, camera.lat, camera.scale);
+    gl.uniform2f(u.uViewport ?? null, view.width, view.height);
+    gl.uniform1i(u.uProjection ?? null, mode);
+    for (const offset of offsets) {
+      gl.uniform1f(u.uLonOffset ?? null, offset);
+      if (this.tracks) {
+        gl.uniform1i(u.uRound ?? null, 0);
+        gl.uniform1f(u.uPointSize ?? null, 1);
+        this.draw(this.tracks, gl.LINES);
+      }
+      gl.uniform1i(u.uRound ?? null, 1);
+      for (const h of this.highlights) {
+        gl.uniform1f(u.uPointSize ?? null, h.size * pixelRatio);
+        this.draw(h.geo, gl.POINTS);
+      }
+    }
   }
 
   /** Draws one frame. `view` is in CSS pixels; `pixelRatio` maps it to the canvas. */
@@ -312,6 +459,11 @@ export class MapRenderer {
         colour(colours.coast);
         if (coast) this.draw(coast, gl.LINES);
       }
+      // Unwrapped track longitudes reach up to a turn past ±180°, so one
+      // more copy either side.
+      const copies = copiesInView(camera, view);
+      const trackOffsets = [copies[0]! - 360, ...copies, copies[copies.length - 1]! + 360];
+      this.drawTracks(0, camera, view, pixelRatio, trackOffsets);
       return;
     }
 
@@ -332,5 +484,6 @@ export class MapRenderer {
     this.draw(this.grid, gl.LINES);
     colour(colours.coast);
     if (coast) this.draw(coast, gl.LINES);
+    this.drawTracks(1, camera, view, pixelRatio, [0]);
   }
 }

@@ -69,7 +69,7 @@ describe("niceTicks", () => {
 describe("maxBoatSpeed", () => {
   it("is the highest BSP across every curve and dot", () => {
     const curves = [curve("A", "#111", 10, [[40, 5], [90, 8]]), curve("B", "#222", 10, [[40, 3]])];
-    const dots: PolarSampleDot[] = [{ source_id: 1, twa: 90, tws: 10, bsp: 12 }];
+    const dots: PolarSampleDot[] = [{ source_id: 1, sample_id: 1, twa: 90, tws: 10, bsp: 12, filtered: false, excluded: false }];
     expect(maxBoatSpeed(curves, dots)).toBe(12);
     expect(maxBoatSpeed([], [])).toBe(0);
   });
@@ -93,7 +93,7 @@ describe("nearestPoint", () => {
   });
 
   it("looks a dot's source up by id for its label and colour", () => {
-    const dots: PolarSampleDot[] = [{ source_id: 7, twa: 40, tws: 10, bsp: 6 }];
+    const dots: PolarSampleDot[] = [{ source_id: 7, sample_id: 1, twa: 40, tws: 10, bsp: 6, filtered: false, excluded: false }];
     const styles = new Map([[7, { label: "Track", colour: "#e15759" }]]);
     const { x, y } = project(40, 6, layout);
     const hit = nearestPoint([], dots, styles, x, y, layout, 5);
@@ -101,7 +101,7 @@ describe("nearestPoint", () => {
   });
 
   it("ignores a dot whose source is not in the lookup", () => {
-    const dots: PolarSampleDot[] = [{ source_id: 99, twa: 40, tws: 10, bsp: 6 }];
+    const dots: PolarSampleDot[] = [{ source_id: 99, sample_id: 1, twa: 40, tws: 10, bsp: 6, filtered: false, excluded: false }];
     const { x, y } = project(40, 6, layout);
     expect(nearestPoint([], dots, new Map(), x, y, layout, 5)).toBeNull();
   });

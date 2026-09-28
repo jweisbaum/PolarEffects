@@ -106,9 +106,9 @@ describe("api", () => {
   it("names the polar plot command and passes null for \"all\"", async () => {
     invoke.mockResolvedValue(null);
     await api.polarPlot(12);
-    expect(invoke).toHaveBeenLastCalledWith("polar_plot", { tws: 12 });
+    expect(invoke).toHaveBeenLastCalledWith("polar_plot", { tws: 12, showFiltered: false });
     await api.polarPlot(null);
-    expect(invoke).toHaveBeenLastCalledWith("polar_plot", { tws: null });
+    expect(invoke).toHaveBeenLastCalledWith("polar_plot", { tws: null, showFiltered: false });
   });
 
   it("unpacks the 3D scene from raw bytes and names the exclusion command's arguments", async () => {

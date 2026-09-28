@@ -6,6 +6,7 @@ import type { PolarPlotResult } from "../generated/PolarPlotResult";
 import type { ProjectSummary } from "../generated/ProjectSummary";
 import { useT } from "../i18n";
 import { api } from "../ipc";
+import { useSampleSelection } from "../selection";
 import { onThemeChange } from "../settings/themes";
 import {
   ANGLE_TICKS, fitLayout, maxBoatSpeed, nearestPoint, niceTicks, project as projectPoint,
@@ -31,9 +32,12 @@ function strokeCurve(ctx: CanvasRenderingContext2D, curve: PolarCurve, layout: R
 
 /**
  * Draws the plot: radial BSP rings and angular TWA spokes, every curve in
- * its source colour, the blend thicker, dots, and the hovered point.
+ * its source colour, the blend thicker, sample dots in their track's colour
+ * (filtered ones dimmed, excluded ones hollow, selected ones ringed), and
+ * the hovered point.
  */
-function draw(canvas: HTMLCanvasElement, result: PolarPlotResult | null, hover: Hover | null) {
+function draw(canvas: HTMLCanvasElement, result: PolarPlotResult | null, hover: Hover | null,
+  colours: ReadonlyMap<number, SourceStyle>, selected: ReadonlySet<number>) {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
   const dpr = window.devicePixelRatio || 1;
@@ -87,10 +91,30 @@ function draw(canvas: HTMLCanvasElement, result: PolarPlotResult | null, hover: 
 
   for (const dot of dots) {
     const { x, y } = projectPoint(dot.twa, dot.bsp, layout);
-    ctx.fillStyle = line;
+    const colour = colours.get(dot.source_id)?.colour ?? line;
+    ctx.globalAlpha = dot.filtered ? 0.3 : 0.85;
     ctx.beginPath();
-    ctx.arc(x, y, 2, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.arc(x, y, 2.5, 0, Math.PI * 2);
+    if (dot.excluded) {
+      ctx.strokeStyle = colour;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    } else {
+      ctx.fillStyle = colour;
+      ctx.fill();
+    }
+  }
+  ctx.globalAlpha = 1;
+  if (selected.size > 0) {
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = 1.5;
+    for (const dot of dots) {
+      if (!selected.has(dot.sample_id)) continue;
+      const { x, y } = projectPoint(dot.twa, dot.bsp, layout);
+      ctx.beginPath();
+      ctx.arc(x, y, 4.5, 0, Math.PI * 2);
+      ctx.stroke();
+    }
   }
 
   if (hover) {
@@ -128,12 +152,15 @@ export default function PolarPlot({ project, variant, onFullSize, onClose }: {
   const [result, setResult] = useState<PolarPlotResult | null>(null);
   const [tws, setTws] = useState<number | null>(null);
   const [hover, setHover] = useState<Hover | null>(null);
+  const [showFiltered, setShowFiltered] = useState(false);
   const request = useRef(0);
+  const selection = useSampleSelection();
 
   const visibleCount = useMemo(
-    () => project.sources.filter((source) => source.visible && source.kind !== "track").length,
+    () => project.sources.filter((source) => source.visible).length,
     [project.sources],
   );
+  const tracksShown = project.sources.some((source) => source.visible && source.kind === "track");
 
   // Refetches on `project.revision`, which every edit bumps — a source's
   // colour, visibility, weight or label, undo and redo, adding or removing a
@@ -141,10 +168,10 @@ export default function PolarPlot({ project, variant, onFullSize, onClose }: {
   // stale plot at the same revision number. `tws` refetches the slice.
   useEffect(() => {
     const id = ++request.current;
-    void api.polarPlot(tws)
+    void api.polarPlot(tws, showFiltered)
       .then((next) => { if (request.current === id) setResult(next); })
       .catch((err) => { if (request.current === id) reportFailure(err); });
-  }, [project.id, project.revision, tws]);
+  }, [project.id, project.revision, tws, showFiltered]);
 
   const sourcesById = useMemo(() => {
     const map = new Map<number, SourceStyle>();
@@ -153,8 +180,8 @@ export default function PolarPlot({ project, variant, onFullSize, onClose }: {
   }, [project.sources]);
 
   const redraw = useCallback(() => {
-    if (canvas.current) draw(canvas.current, result, hover);
-  }, [result, hover]);
+    if (canvas.current) draw(canvas.current, result, hover, sourcesById, selection.ids);
+  }, [result, hover, sourcesById, selection]);
 
   useEffect(redraw, [redraw]);
 
@@ -198,9 +225,16 @@ export default function PolarPlot({ project, variant, onFullSize, onClose }: {
           value={sliderValue} disabled={tws === null || !hasDomain}
           aria-label={t("Wind speed")} title={t("The true wind speed the plot slices at")}
           onChange={(event) => setTws(Number(event.target.value))} />
-        <span className="polar-plot-tws-value">
+        <span className="polar-plot-tws-value"
+          title={tracksShown && tws !== null ? t("Sample dots within {band} kn of this wind speed (Settings)", { band: result?.band_kn ?? 1 }) : undefined}>
           {tws === null ? t("All") : t("{tws} kn", { tws: tws.toFixed(1) })}
         </span>
+        <label className="polar-plot-filtered"
+          title={tracksShown ? t("Also draw the samples the filters take out, dimmed") : t("No visible track has samples to filter")}>
+          <input type="checkbox" data-feature="plot:show-filtered" checked={showFiltered} disabled={!tracksShown}
+            onChange={(event) => setShowFiltered(event.target.checked)} />
+          {t("Filtered")}
+        </label>
         {variant === "panel" && (
           <button className="small" data-feature="plot:full-size" onClick={onFullSize}
             title={t("Open the polar plot full size over the map")}>

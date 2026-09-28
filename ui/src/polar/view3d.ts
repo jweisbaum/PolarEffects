@@ -311,20 +311,73 @@ export function buildGuides(bounds: Bounds, layout: Layout, unit: SpeedUnit): Gu
 
 // -------------------------------------------------------------- selection
 
-/** A stable name for a dot that survives a refetch: a node by its source and cell, a sample by its id. */
-export function dotKey(packet: ScenePacket, global: number): string {
-  const { nodes, samples } = packet;
-  if (global < nodes.count) return `n:${packet.sources[nodes.source[global]!]?.id}:${nodes.cell[global]}`;
-  return `s:${sampleId(samples.ids, global - nodes.count)}`;
+/**
+ * Stable names for selected dots that survive a refetch: a node by its
+ * source and grid cell, a sample by its id. Numbers in maps and sets, not
+ * strings: re-finding a selection runs over every dot on every edit, and at
+ * 200,000 dots building a string per dot costs tens of milliseconds.
+ */
+export interface SelectionKeys {
+  /** Source id → cells (TWA index | TWS index << 16). */
+  nodes: Map<number, Set<number>>;
+  samples: Set<number>;
 }
 
-/** The global indices of `keys` in a (new) packet; keys no longer there drop out. */
-export function resolveKeys(packet: ScenePacket, keys: ReadonlySet<string>): number[] {
-  if (keys.size === 0) return [];
+export function emptyKeys(): SelectionKeys {
+  return { nodes: new Map(), samples: new Set() };
+}
+
+/** The keys of some dots, by global index. */
+export function keysOf(packet: ScenePacket, globals: readonly number[]): SelectionKeys {
+  const keys = emptyKeys();
+  const { nodes, samples } = packet;
+  for (const g of globals) {
+    if (g < nodes.count) {
+      const id = packet.sources[nodes.source[g]!]!.id;
+      let cells = keys.nodes.get(id);
+      if (!cells) keys.nodes.set(id, (cells = new Set()));
+      cells.add(nodes.cell[g]!);
+    } else if (g - nodes.count < samples.count) {
+      keys.samples.add(sampleId(samples.ids, g - nodes.count));
+    }
+  }
+  return keys;
+}
+
+/** The global indices of `keys` in a (new) packet, in order; keys no longer there drop out. */
+export function resolveKeys(packet: ScenePacket, keys: SelectionKeys): number[] {
   const out: number[] = [];
-  const total = packet.nodes.count + packet.samples.count;
-  for (let g = 0; g < total; g++) if (keys.has(dotKey(packet, g))) out.push(g);
+  const { nodes, samples } = packet;
+  if (keys.nodes.size > 0) {
+    const bySource = packet.sources.map((s) => keys.nodes.get(s.id));
+    for (let k = 0; k < nodes.count; k++) if (bySource[nodes.source[k]!]?.has(nodes.cell[k]!)) out.push(k);
+  }
+  if (keys.samples.size > 0) {
+    for (let k = 0; k < samples.count; k++) if (keys.samples.has(sampleId(samples.ids, k))) out.push(nodes.count + k);
+  }
   return out;
+}
+
+/** The sample ids among some dots. */
+export function sampleIdsOf(packet: ScenePacket, globals: readonly number[]): number[] {
+  const out: number[] = [];
+  for (const g of globals) {
+    const k = g - packet.nodes.count;
+    if (k >= 0 && k < packet.samples.count) out.push(sampleId(packet.samples.ids, k));
+  }
+  return out;
+}
+
+/**
+ * The part of a selection that is drawn. A dot the toggles hide (samples
+ * off, or a filtered sample while "show filtered" is off) must not be
+ * counted or excluded by an action the person cannot see it take part in.
+ */
+export function drawnOnly(selection: readonly number[], refs: Uint32Array, total: number): number[] {
+  if (selection.length === 0) return [];
+  const drawn = new Uint8Array(total);
+  for (let d = 0; d < refs.length; d++) drawn[refs[d]!] = 1;
+  return selection.filter((g) => drawn[g] === 1);
 }
 
 /** What the selection panel shows (spec.md 10.3). Means are in knots and degrees. */

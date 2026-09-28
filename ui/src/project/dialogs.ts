@@ -60,3 +60,23 @@ export async function pickPolarFiles(): Promise<string[]> {
   if (Array.isArray(chosen)) return chosen.filter((path): path is string => typeof path === "string");
   return typeof chosen === "string" ? [chosen] : [];
 }
+
+/**
+ * Asks for track files to import (spec.md 7.3): GeoJSON or CSV, several at
+ * once. Returns the chosen paths; empty if the user cancelled.
+ */
+export async function pickTrackFiles(): Promise<string[]> {
+  const chosen = await whileChoosing(msg("Choosing track files"), () =>
+    open({
+      multiple: true,
+      directory: false,
+      title: t("Import tracks"),
+      filters: [
+        { name: t("Track files"), extensions: ["geojson", "json", "csv", "txt", "tsv"] },
+        { name: t("All files"), extensions: ["*"] },
+      ],
+    }),
+  );
+  if (Array.isArray(chosen)) return chosen.filter((path): path is string => typeof path === "string");
+  return typeof chosen === "string" ? [chosen] : [];
+}

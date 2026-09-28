@@ -15,6 +15,8 @@ const features: Feature[] = [
     keywords: ["TWS", msg("all")], topic: "sources", reveal: inPanel },
   { id: "plot:tws", label: msg("Wind speed slice"), description: msg("The true wind speed the polar plot slices at."),
     keywords: ["TWS", msg("slider"), msg("wind speed")], topic: "sources", reveal: inPanel },
+  { id: "plot:show-filtered", label: msg("Show filtered samples in the plot"), description: msg("Also draw the samples the filters take out, dimmed."),
+    keywords: [msg("filters"), msg("dots"), msg("dimmed")], topic: "sources", reveal: inPanel },
   { id: "plot:full-size", label: msg("Full-size polar plot"), description: msg("Open the polar plot full size over the map."),
     keywords: [msg("polar diagram"), msg("overlay"), msg("map")], topic: "sources", reveal: inPanel },
   { id: "plot:close", label: msg("Close the full-size polar plot"), description: msg("Close the full-size polar plot and return to the map."),

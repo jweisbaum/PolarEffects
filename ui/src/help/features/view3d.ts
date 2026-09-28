@@ -37,7 +37,7 @@ const features: Feature[] = [
     keywords: [msg("remove"), msg("outlier"), msg("selection")], topic, reveal: onStage },
   { id: "view3d:include", label: msg("Include in the blend"), description: msg("Put excluded dots back into the blend."),
     keywords: [msg("restore"), msg("selection")], topic, reveal: onStage },
-  { id: "view3d:show-on-map", label: msg("Show selection on the map"), description: msg("Highlight the selected samples on the map. Arrives with tracks."),
+  { id: "view3d:show-on-map", label: msg("Show selection on the map"), description: msg("Highlight the selected samples on the map and frame them."),
     keywords: [msg("map"), msg("selection")], topic, reveal: onStage },
   { id: "view3d:clear-selection", label: msg("Clear the selection"), description: msg("Select nothing in the 3D view."),
     keywords: [msg("deselect"), "Esc"], topic, reveal: onStage },

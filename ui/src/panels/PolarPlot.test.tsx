@@ -18,7 +18,7 @@ let root: Root;
 
 const source = (overrides: Partial<SourceSummary> = {}): SourceSummary => ({
   id: 1, kind: "polar_file", label: "A", colour: "#4e79a7", visible: true, weight: 1,
-  count: 4, used: null, polar_file: null, orc: null, ...overrides,
+  count: 4, used: null, polar_file: null, orc: null, track: null, ...overrides,
 });
 
 const project = (overrides: Partial<ProjectSummary> = {}): ProjectSummary => ({
@@ -28,7 +28,7 @@ const project = (overrides: Partial<ProjectSummary> = {}): ProjectSummary => ({
 });
 
 const result = (overrides: Partial<PolarPlotResult> = {}): PolarPlotResult => ({
-  tws_min: 6, tws_max: 20, curves: [], dots: [], blend: null, ...overrides,
+  tws_min: 6, tws_max: 20, curves: [], dots: [], blend: null, band_kn: 1, ...overrides,
 });
 
 async function render(...args: Parameters<typeof PolarPlot>) {

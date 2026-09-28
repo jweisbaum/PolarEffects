@@ -4,8 +4,8 @@ import { place } from "./geometry3d";
 import { BLEND_SOURCE, FLAG_EXCLUDED, FLAG_FILTERED, type ScenePacket } from "./scenePacket";
 import { SHAPE_CROSS, SHAPE_DISC, SHAPE_RING } from "./scene3d";
 import {
-  availableModes, buildDots, buildGuides, buildSurfaces, combine, DEFAULT_TOGGLES, dotKey, exclusionTargets, hasFiltered,
-  presetView, ramp, resolveKeys, sceneBounds, summarise, surfaceGrid, ticks,
+  availableModes, buildDots, buildGuides, buildSurfaces, combine, DEFAULT_TOGGLES, drawnOnly, exclusionTargets, hasFiltered, keysOf,
+  presetView, ramp, resolveKeys, sampleIdsOf, sceneBounds, summarise, surfaceGrid, ticks,
 } from "./view3d";
 
 /**
@@ -132,8 +132,9 @@ describe("the selection (spec.md 10.3)", () => {
 
   it("survives a refetch that reorders the dots", () => {
     const before = packet();
-    const keys = new Set([1, 4].map((g) => dotKey(before, g)));
-    expect([...keys]).toEqual([`n:10:${2 | (1 << 16)}`, `s:${2 ** 32 + 6}`]);
+    const keys = keysOf(before, [1, 4]);
+    expect([...keys.nodes.get(10)!]).toEqual([2 | (1 << 16)]);
+    expect([...keys.samples]).toEqual([2 ** 32 + 6]);
     const after = packet();
     // The first node is gone (its source hidden): everything shifts down one.
     after.nodes = {
@@ -141,6 +142,43 @@ describe("the selection (spec.md 10.3)", () => {
       cell: after.nodes.cell.slice(1), flags: after.nodes.flags.slice(1),
     };
     expect(resolveKeys(after, keys)).toEqual([0, 3]);
+  });
+});
+
+describe("what the selection acts on", () => {
+  it("leaves out dots the toggles hide", () => {
+    // Sample 3 (global) is filtered and hidden by default; node 0 is drawn.
+    const dots = buildDots(packet(), DEFAULT_TOGGLES, "source");
+    expect(drawnOnly([0, 3, 4], dots.refs, 5)).toEqual([0, 4]);
+    const noSamples = buildDots(packet(), { ...DEFAULT_TOGGLES, samples: false }, "source");
+    expect(drawnOnly([0, 3, 4], noSamples.refs, 5)).toEqual([0]);
+    expect(drawnOnly([], dots.refs, 5)).toEqual([]);
+  });
+
+  it("names the samples among the selected dots", () => {
+    expect(sampleIdsOf(packet(), [0, 3, 4])).toEqual([5, 2 ** 32 + 6]);
+  });
+
+  it("re-finds 200,000 selected samples quickly", () => {
+    const count = 200_000;
+    const big: ScenePacket = {
+      ...packet(),
+      nodes: { count: 0, points: new Float32Array(), source: new Uint32Array(), cell: new Uint32Array(), flags: new Uint32Array() },
+      samples: {
+        count, points: new Float32Array(count * 3), source: new Uint32Array(count),
+        ids: Uint32Array.from({ length: count * 2 }, (_, i) => (i % 2 === 0 ? i / 2 : 0)),
+        hs: new Float32Array(count), current: new Float32Array(count), time: new Float32Array(count), flags: new Uint32Array(count),
+      },
+    };
+    const all = Array.from({ length: count }, (_, k) => k);
+    const started = performance.now();
+    const keys = keysOf(big, all);
+    const again = resolveKeys(big, keys);
+    const elapsed = performance.now() - started;
+    expect(again.length).toBe(count);
+    // Measured about 15 ms on the development machine; the bound only
+    // catches a return to building a string per dot.
+    expect(elapsed).toBeLessThan(250);
   });
 });
 

@@ -15,7 +15,6 @@ const catalogue: Record<string, string> = {
   "Orthographic": "Orthografisch",
   "The map needs WebGL2, which this system does not offer.": "Die Karte braucht WebGL2, das dieses System nicht bietet.",
   "The map could not be drawn.": "Die Karte konnte nicht gezeichnet werden.",
-  "Drag to move the map; scroll to zoom.": "Ziehen verschiebt die Karte; Scrollen zoomt.",
   "How the round Earth is drawn flat": "Wie die runde Erde flach gezeichnet wird",
   "Show the whole world": "Die ganze Welt zeigen",
 };

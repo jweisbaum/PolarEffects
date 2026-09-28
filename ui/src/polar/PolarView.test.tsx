@@ -10,7 +10,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import type { ProjectSummary } from "../generated/ProjectSummary";
-import { FLAG_EXCLUDED, type ScenePacket } from "./scenePacket";
+import { FLAG_EXCLUDED, FLAG_FILTERED, type ScenePacket } from "./scenePacket";
 
 const scenes = vi.hoisted(() => ({ made: [] as FakeScene[], fail: false, pick: -1 }));
 
@@ -50,6 +50,7 @@ const api = vi.hoisted(() => ({ polarScene: vi.fn(), setExcluded: vi.fn() }));
 vi.mock("../ipc", () => ({ api }));
 
 const { default: PolarView } = await import("./PolarView");
+const selection = await import("../selection");
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let host: HTMLDivElement;
@@ -73,7 +74,7 @@ function packet(excluded = false): ScenePacket {
 
 const project = (revision: number): ProjectSummary => ({
   id: 1, name: "P", path: null, dirty: false, revision, boat_name: "", boat_notes: "",
-  sources: [{ id: 10, kind: "orc", label: "Farr 40", colour: "#ff0000", visible: true, weight: 1, count: 2, used: null, polar_file: null, orc: null }],
+  sources: [{ id: 10, kind: "orc", label: "Farr 40", colour: "#ff0000", visible: true, weight: 1, count: 2, used: null, polar_file: null, orc: null, track: null }],
   can_undo: false, can_redo: false, undo_label: null, redo_label: null,
 });
 
@@ -95,7 +96,23 @@ async function clickCanvas(shift = false) {
   });
 }
 
+/** The same scene with two track samples (ids 5 and 2^32 + 6), the second filtered out. */
+function withSamples(): ScenePacket {
+  const base = packet();
+  return {
+    ...base,
+    sources: [...base.sources, { id: 30, colour: "#0000ff", kind: "track" }],
+    samples: {
+      count: 2, points: Float32Array.from([120, 14, 9, 150, 16, 10]), source: Uint32Array.from([1, 1]),
+      ids: Uint32Array.from([5, 0, 6, 1]), hs: Float32Array.from([Number.NaN, Number.NaN]),
+      current: Float32Array.from([Number.NaN, Number.NaN]), time: Float32Array.from([0, 600]),
+      flags: Uint32Array.from([0, FLAG_FILTERED]),
+    },
+  };
+}
+
 beforeEach(() => {
+  selection.resetSelection();
   scenes.made = [];
   scenes.fail = false;
   scenes.pick = -1;
@@ -181,4 +198,31 @@ it("says so where WebGL is missing, and keeps its controls", async () => {
   expect(q(".view3d-unavailable")!.textContent).toBe("The 3D view needs WebGL, which this system does not offer.");
   expect(feature("view3d:layout")).not.toBeNull();
   expect(feature("view3d:exclude")).not.toBeNull();
+});
+
+it("shares its selected samples with the map, and shows them there", async () => {
+  api.polarScene.mockResolvedValue(withSamples());
+  const focused = vi.fn();
+  const off = selection.onFocusMap(focused);
+  await render();
+  // Dot 2 is the first sample (the two nodes come first).
+  scenes.pick = 2;
+  await clickCanvas();
+  expect([...selection.getSampleSelection().ids]).toEqual([5]);
+  const show = feature("view3d:show-on-map") as HTMLButtonElement;
+  expect(show.disabled).toBe(false);
+  await act(async () => show.click());
+  expect(focused).toHaveBeenCalledWith({ kind: "selection" });
+  off();
+});
+
+it("selects what a box on the map selected, but counts and excludes only drawn dots", async () => {
+  api.polarScene.mockResolvedValue(withSamples());
+  await render();
+  await act(async () => selection.selectSamples([5, 2 ** 32 + 6], "map"));
+  // The second sample is filtered out and hidden: it is not counted.
+  expect(q(".view3d-selection h3")!.textContent).toBe("1 selected");
+  expect(q(".view3d-breakdown")!.textContent).toBe("Unknown source: 1");
+  await act(async () => (feature("view3d:exclude") as HTMLButtonElement).click());
+  expect(api.setExcluded).toHaveBeenCalledWith([], [5], true);
 });
