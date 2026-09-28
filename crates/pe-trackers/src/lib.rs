@@ -6,4 +6,36 @@
 //! boat's fixes, decoding the vendor format in Rust (spec.md 7.2). Requests
 //! are made only when the user asks for an import.
 //!
-//! Filled in from milestone M10 (plan.md).
+//! M3 delivered the two binary decoders (YellowBrick AllPositions3 and the
+//! Geovoile hwx container, plan.md Appendices A and B) with fixture tests;
+//! the dialog flow and Blue Water Tracks follow in M10–M12.
+
+pub mod error;
+pub mod geovoile;
+pub mod net;
+pub mod yellowbrick;
+
+pub use error::{Result, TrackerError};
+
+/// Longitude in [-180, 180) (CLAUDE.md conventions), touching only values
+/// outside it so a recorded value keeps its exact decimal form.
+pub(crate) fn wrap_lon(lon: f64) -> f64 {
+    if lon >= 180.0 {
+        lon - 360.0
+    } else if lon < -180.0 {
+        lon + 360.0
+    } else {
+        lon
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn longitudes_wrap_into_the_convention_and_keep_their_digits() {
+        assert_eq!(super::wrap_lon(-1.22361), -1.22361);
+        assert_eq!(super::wrap_lon(180.0), -180.0);
+        assert_eq!(super::wrap_lon(359.5), -0.5);
+        assert_eq!(super::wrap_lon(-180.5), 179.5);
+    }
+}

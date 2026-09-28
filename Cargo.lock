@@ -2668,7 +2668,16 @@ dependencies = [
 name = "pe-trackers"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
+ "pe-core",
  "pe-tracks",
+ "quick-xml",
+ "reqwest",
+ "rustls",
+ "rustls-platform-verifier",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
