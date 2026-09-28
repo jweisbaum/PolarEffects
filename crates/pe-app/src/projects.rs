@@ -229,19 +229,24 @@ pub fn save_project(state: tauri::State<'_, AppState>) -> Result<ProjectSummary>
 
 /// [`save_project`] without a Tauri handle.
 pub fn save(state: &AppState) -> Result<ProjectSummary> {
-    state.with_session(|session| {
-        let path = session
-            .require_open()?
-            .path
-            .clone()
-            .ok_or(AppError::ProjectNeverSaved)?;
-        session.save_to(path)?;
-        persist_recent(state, session);
-        let open = session.require_open()?;
-        // Saved cleanly: there is nothing to recover (spec.md 4.5).
-        crate::autosave::forget(state, open.project.id.raw());
-        Ok(ProjectSummary::of(open))
-    })
+    state.with_session(|session| save_locked(state, session))
+}
+
+/// [`save`] for a caller that already holds the session lock, so it can
+/// decide under the same lock whether the save should happen at all
+/// (autosave in Save mode, which must not write after "Don't save").
+pub(crate) fn save_locked(state: &AppState, session: &mut Session) -> Result<ProjectSummary> {
+    let path = session
+        .require_open()?
+        .path
+        .clone()
+        .ok_or(AppError::ProjectNeverSaved)?;
+    session.save_to(path)?;
+    persist_recent(state, session);
+    let open = session.require_open()?;
+    // Saved cleanly: there is nothing to recover (spec.md 4.5).
+    crate::autosave::forget(state, open.project.id.raw());
+    Ok(ProjectSummary::of(open))
 }
 
 /// Saves the open project to a new file.

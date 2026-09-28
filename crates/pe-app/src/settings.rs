@@ -247,32 +247,56 @@ impl Settings {
             read_field(&object, "autosave", &mut settings.autosave);
             read_field(&object, "language", &mut settings.language);
             read_field(&object, "theme", &mut settings.theme);
-            read_field(&object, "units", &mut settings.units);
-            read_field(&object, "chunk_cache", &mut settings.chunk_cache);
-            read_field(&object, "network", &mut settings.network);
+            // The nested groups are read member by member too: one unit this
+            // build does not know must not reset the other two with it.
+            if let Some(serde_json::Value::Object(units)) = object.get("units") {
+                read_field(units, "speed", &mut settings.units.speed);
+                read_field(units, "wave_height", &mut settings.units.wave_height);
+                read_field(units, "distance", &mut settings.units.distance);
+            }
+            if let Some(serde_json::Value::Object(cache)) = object.get("chunk_cache") {
+                read_field(cache, "location", &mut settings.chunk_cache.location);
+                read_field(
+                    cache,
+                    "size_limit_gb",
+                    &mut settings.chunk_cache.size_limit_gb,
+                );
+            }
+            if let Some(serde_json::Value::Object(network)) = object.get("network") {
+                read_field(network, "concurrency", &mut settings.network.concurrency);
+                read_field(network, "timeout_s", &mut settings.network.timeout_s);
+            }
             read_field(&object, "projection", &mut settings.projection);
         }
         settings.normalised()
     }
 
-    /// Replaces anything out of range with its default or its nearest
-    /// allowed value. A file can be edited by hand or written by another
-    /// build; a bad value costs one preference, never the launch.
+    /// Replaces anything out of range with its default. A file can be edited
+    /// by hand or written by another build; a bad value costs one
+    /// preference, never the launch.
+    ///
+    /// Not clamped: a limit of 0 or 500 is not a near miss of 1 or 32 but a
+    /// value this build cannot vouch for, and the spec says an out-of-range
+    /// value costs that preference (spec.md 3.4) — which is what the default
+    /// is for.
     pub fn normalised(mut self) -> Self {
+        let defaults = Self::default();
         self.recent_projects.truncate(MAX_RECENT);
         if !LANGUAGES.contains(&self.language.as_str()) {
-            LANGUAGES[0].clone_into(&mut self.language);
+            self.language = defaults.language;
         }
         if !known_themes().contains(&self.theme) {
-            DEFAULT_THEME.clone_into(&mut self.theme);
+            self.theme = defaults.theme;
         }
-        self.chunk_cache.size_limit_gb =
-            self.chunk_cache.size_limit_gb.clamp(1, MAX_CACHE_LIMIT_GB);
-        self.network.concurrency = self.network.concurrency.clamp(1, MAX_CONCURRENCY);
-        self.network.timeout_s = self
-            .network
-            .timeout_s
-            .clamp(TIMEOUT_RANGE_S.0, TIMEOUT_RANGE_S.1);
+        if !(1..=MAX_CACHE_LIMIT_GB).contains(&self.chunk_cache.size_limit_gb) {
+            self.chunk_cache.size_limit_gb = defaults.chunk_cache.size_limit_gb;
+        }
+        if !(1..=MAX_CONCURRENCY).contains(&self.network.concurrency) {
+            self.network.concurrency = defaults.network.concurrency;
+        }
+        if !(TIMEOUT_RANGE_S.0..=TIMEOUT_RANGE_S.1).contains(&self.network.timeout_s) {
+            self.network.timeout_s = defaults.network.timeout_s;
+        }
         self
     }
 
@@ -655,10 +679,72 @@ mod tests {
         assert_eq!(s.units, Units::default());
         assert_eq!(s.language, "en");
         assert_eq!(s.theme, DEFAULT_THEME);
-        assert_eq!(s.network.concurrency, MAX_CONCURRENCY);
-        assert_eq!(s.network.timeout_s, TIMEOUT_RANGE_S.0);
-        assert_eq!(s.chunk_cache.size_limit_gb, 1);
+        // Out of range is the default, not the nearest allowed value.
+        assert_eq!(s.network.concurrency, DEFAULT_CONCURRENCY);
+        assert_eq!(s.network.timeout_s, DEFAULT_TIMEOUT_S);
+        assert_eq!(s.chunk_cache.size_limit_gb, DEFAULT_CACHE_LIMIT_GB);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// One unit this build does not know resets that unit only; the other
+    /// two, and the other members of the nested groups, are kept.
+    #[test]
+    fn each_nested_member_is_read_on_its_own() {
+        let dir = temp("nested");
+        let file = dir.join("settings.json");
+        std::fs::write(
+            &file,
+            r#"{ "units": { "speed": "furlongs", "wave_height": "ft", "distance": "km" },
+                 "network": { "concurrency": 12, "timeout_s": "soon" },
+                 "chunk_cache": { "location": 7, "size_limit_gb": 55 } }"#,
+        )
+        .unwrap();
+        let s = Settings::load(&file);
+        assert_eq!(
+            s.units,
+            Units {
+                speed: SpeedUnit::Kn,
+                wave_height: WaveHeightUnit::Ft,
+                distance: DistanceUnit::Km,
+            }
+        );
+        assert_eq!(s.network.concurrency, 12);
+        assert_eq!(s.network.timeout_s, DEFAULT_TIMEOUT_S);
+        assert!(s.chunk_cache.location.is_empty());
+        assert_eq!(s.chunk_cache.size_limit_gb, 55);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The edges of each range are in range; one past them is the default.
+    #[test]
+    fn range_edges_are_kept_and_one_past_is_the_default() {
+        let at_edges = Settings {
+            chunk_cache: ChunkCacheSettings {
+                location: String::new(),
+                size_limit_gb: MAX_CACHE_LIMIT_GB,
+            },
+            network: NetworkSettings {
+                concurrency: 1,
+                timeout_s: TIMEOUT_RANGE_S.1,
+            },
+            ..Settings::default()
+        };
+        assert_eq!(at_edges.clone().normalised(), at_edges);
+        let past = Settings {
+            chunk_cache: ChunkCacheSettings {
+                location: String::new(),
+                size_limit_gb: MAX_CACHE_LIMIT_GB + 1,
+            },
+            network: NetworkSettings {
+                concurrency: MAX_CONCURRENCY + 1,
+                timeout_s: TIMEOUT_RANGE_S.0 - 1,
+            },
+            ..Settings::default()
+        }
+        .normalised();
+        assert_eq!(past.chunk_cache.size_limit_gb, DEFAULT_CACHE_LIMIT_GB);
+        assert_eq!(past.network.concurrency, DEFAULT_CONCURRENCY);
+        assert_eq!(past.network.timeout_s, DEFAULT_TIMEOUT_S);
     }
 
     #[test]

@@ -67,3 +67,60 @@ fn quitting_without_saving_drops_the_recovery_snapshot() {
     quit::confirm(&app, true).unwrap();
     assert!(autosave::list(&app).is_empty());
 }
+
+/// M2 review fix: an autosave tick already past its checks when the user
+/// answers "Don't save" must not write the snapshot back after
+/// `quit::confirm` forgot it, or the discarded work is offered as Recovered
+/// on the next launch.
+#[test]
+fn dont_save_during_a_snapshot_write_leaves_no_snapshot() {
+    let root = TempRoot::new("quit-race");
+    let app = root.state();
+    projects::create(&app, "Q".to_owned(), None, false).unwrap();
+    let kept = autosave::snapshot_with_hook(&app, true, || {
+        quit::confirm(&app, true).expect("don't save in the gap");
+    })
+    .unwrap();
+    assert!(!kept);
+    assert!(
+        autosave::list(&app).is_empty(),
+        "a discarded project came back"
+    );
+}
+
+/// Once the guard is answered, later ticks write nothing at all.
+#[test]
+fn no_snapshot_is_taken_after_dont_save() {
+    let root = TempRoot::new("quit-after");
+    let app = root.state();
+    projects::create(&app, "Q".to_owned(), None, false).unwrap();
+    quit::confirm(&app, true).unwrap();
+    assert!(!autosave::snapshot(&app, true).unwrap());
+    assert!(autosave::list(&app).is_empty());
+}
+
+/// In Save mode the autosave writes the project file itself. "Don't save"
+/// in the gap must leave the file as the user last saved it.
+#[test]
+fn dont_save_during_an_in_place_autosave_leaves_the_file_alone() {
+    use pe_app::settings::AutosaveMode;
+    let root = TempRoot::new("quit-inplace");
+    let app = root.state();
+    projects::create(&app, "Saved".to_owned(), None, false).unwrap();
+    let path = root.file("q.wpsproj");
+    projects::save_as(&app, path.clone()).unwrap();
+    app.with_session(|s| {
+        s.settings.autosave = AutosaveMode::Save;
+        Ok(())
+    })
+    .unwrap();
+    edit::rename(&app, "Discarded".to_owned()).unwrap();
+    let kept = autosave::snapshot_with_hook(&app, true, || {
+        quit::confirm(&app, true).expect("don't save in the gap");
+    })
+    .unwrap();
+    assert!(!kept);
+    let on_disk = pe_core::io::load(std::path::Path::new(&path)).unwrap();
+    assert_eq!(on_disk.name, "Saved");
+    assert!(autosave::list(&app).is_empty());
+}

@@ -96,6 +96,12 @@ pub fn snapshot(state: &AppState, force: bool) -> Result<bool> {
 pub fn snapshot_with_hook(state: &AppState, force: bool, between: impl FnOnce()) -> Result<bool> {
     let dir = &state.paths.autosave_dir;
     let Some((project, path, revision, recorded, saves, mode)) = state.with_session(|session| {
+        // The user already answered the quit guard. "Don't save" forgot the
+        // snapshot; writing one now would offer the discarded work back.
+        // Read under the lock, which is where `quit::confirm` sets it.
+        if exiting(state) {
+            return Ok(None);
+        }
         let mode = session.settings.autosave;
         Ok(session.open.as_ref().and_then(|open| {
             open.dirty.then(|| {
@@ -139,8 +145,18 @@ pub fn snapshot_with_hook(state: &AppState, force: bool, between: impl FnOnce())
     let in_place = mode == AutosaveMode::Save && path.is_some();
     if in_place {
         // Written in place: the save clears any snapshot, and the manifest
-        // written below only carries the cadence.
-        crate::projects::save(state)?;
+        // written below only carries the cadence. The exit flag is checked
+        // under the same lock as the save, so a "Don't save" answered in the
+        // unlocked gap above is never overridden by writing the project.
+        let saved = state.with_session(|session| {
+            if exiting(state) {
+                return Ok(false);
+            }
+            crate::projects::save_locked(state, session).map(|_| true)
+        })?;
+        if !saved {
+            return Ok(false);
+        }
     } else {
         let target = snapshot_path(dir, id);
         io::save(&project, &target).doing("write a recovery snapshot to", target.display())?;
@@ -167,16 +183,26 @@ pub fn snapshot_with_hook(state: &AppState, force: bool, between: impl FnOnce())
     // saved, or revive a deliberate "Don't save". Checked again under the
     // lock, and removed if the project it was taken from is no longer the
     // open, dirty, unsaved-since one.
+    //
+    // The quit guard's answer counts too: `quit::confirm` forgets the
+    // snapshot and allows the exit under the lock, so a snapshot finished
+    // after it is removed here, and one finished before it is removed there.
     state.with_session(|session| {
-        let still_current = session
-            .open
-            .as_ref()
-            .is_some_and(|open| open.project.id.raw() == id && open.dirty && open.saves == saves);
+        let still_current = !exiting(state)
+            && session.open.as_ref().is_some_and(|open| {
+                open.project.id.raw() == id && open.dirty && open.saves == saves
+            });
         if !still_current {
             forget(state, id);
         }
         Ok(still_current)
     })
+}
+
+/// Whether the user has answered the quit guard and the process is on its
+/// way out.
+fn exiting(state: &AppState) -> bool {
+    state.exit_allowed.load(std::sync::atomic::Ordering::SeqCst)
 }
 
 /// Removes a project's snapshot, if there is one.
