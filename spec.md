@@ -305,9 +305,18 @@ Same container rules as VectorEffects' `.veproj` (D11):
   gives identical bytes.
 - No rendered images and no blend results (invariant 2). A test fails on any
   unexpected entry, and opening refuses an archive that holds one (or lacks a
-  track's entry) rather than dropping it silently on the next save.
+  track's entry) rather than dropping it silently on the next save. The one
+  exception is operating-system litter from re-zipping or browsing the file
+  (`__MACOSX/…`, `.DS_Store`, `Thumbs.db`), which is ignored on open and
+  never written back.
 - Floats go through the canonical helpers.
-- Saves are atomic: write `<name>.wpsproj.tmp`, then rename.
+- Saves are atomic: write `<name>.wpsproj.tmp`, then rename. The same
+  helper writes `settings.json` and autosave manifests.
+- The document is validated as it will be read back (after canonical
+  rounding) before anything is written, so a project that could not be
+  reopened is refused at save time.
+- Save As appends `.wpsproj` unless the name already ends in exactly that
+  (`Race.v2` → `Race.v2.wpsproj`).
 - Migrations: `MIGRATIONS: &[(u32, fn(&mut Value) -> Result<()>)]`, keyed by
   the version each step migrates from. Newer files are refused with a message
   naming both versions.

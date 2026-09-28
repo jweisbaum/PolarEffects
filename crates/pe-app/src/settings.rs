@@ -60,7 +60,8 @@ impl Settings {
             std::fs::create_dir_all(parent)
                 .doing("make the settings folder at", parent.display())?;
         }
-        std::fs::write(file, json).doing("write the settings to", file.display())?;
+        pe_core::io::write_atomic(file, json.as_bytes())
+            .doing("write the settings to", file.display())?;
         Ok(())
     }
 

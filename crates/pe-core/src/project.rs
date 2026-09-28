@@ -177,6 +177,16 @@ impl Project {
 
     /// Checks every rule the document must hold before it is written.
     pub fn validate(&self) -> Result<()> {
+        self.check(true)
+    }
+
+    /// [`Self::validate`] without the bulk track data, for a document read
+    /// back from `project.json` alone (which has no fixes or samples).
+    pub fn validate_document(&self) -> Result<()> {
+        self.check(false)
+    }
+
+    fn check(&self, bulk: bool) -> Result<()> {
         if self.name.trim().is_empty() {
             return Err(CoreError::Invalid("the project has no name".to_owned()));
         }
@@ -201,6 +211,9 @@ impl Project {
             source.validate()?;
             if let Some(track) = source.track() {
                 claim(track.id.raw(), "track")?;
+                if !bulk {
+                    continue;
+                }
                 for sample in &track.samples {
                     claim(sample.id.raw(), "sample")?;
                     if sample.fix as usize >= track.fixes.len() {

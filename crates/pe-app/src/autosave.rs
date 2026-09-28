@@ -86,8 +86,16 @@ fn now_unix_s() -> u64 {
 /// or there is no snapshot yet. `force` skips the two timers (tests); the
 /// dirty-and-changed checks are never skipped.
 pub fn snapshot(state: &AppState, force: bool) -> Result<bool> {
+    snapshot_with_hook(state, force, || {})
+}
+
+/// [`snapshot`], running `between` once the document has been cloned and
+/// the lock released, before the files are written. Only tests pass anything
+/// but a no-op: it is how they force a Save or a Close into the unlocked gap.
+#[doc(hidden)]
+pub fn snapshot_with_hook(state: &AppState, force: bool, between: impl FnOnce()) -> Result<bool> {
     let dir = &state.paths.autosave_dir;
-    let Some((project, path, revision, recorded, mode)) = state.with_session(|session| {
+    let Some((project, path, revision, recorded, saves, mode)) = state.with_session(|session| {
         let mode = session.settings.autosave;
         Ok(session.open.as_ref().and_then(|open| {
             open.dirty.then(|| {
@@ -96,6 +104,7 @@ pub fn snapshot(state: &AppState, force: bool) -> Result<bool> {
                     open.path.clone(),
                     open.revision,
                     open.history.recorded(),
+                    open.saves,
                     mode,
                 )
             })
@@ -123,8 +132,12 @@ pub fn snapshot(state: &AppState, force: bool) -> Result<bool> {
         }
     }
 
+    // The session is unlocked from here until the check at the end.
+    between();
+
     std::fs::create_dir_all(dir).doing("make the autosave folder at", dir.display())?;
-    if mode == AutosaveMode::Save && path.is_some() {
+    let in_place = mode == AutosaveMode::Save && path.is_some();
+    if in_place {
         // Written in place: the save clears any snapshot, and the manifest
         // written below only carries the cadence.
         crate::projects::save(state)?;
@@ -142,8 +155,28 @@ pub fn snapshot(state: &AppState, force: bool) -> Result<bool> {
     let target = manifest_path(dir, id);
     let json = serde_json::to_string_pretty(&manifest)
         .doing("write the autosave record to", target.display())?;
-    std::fs::write(&target, json).doing("write the autosave record to", target.display())?;
-    Ok(true)
+    io::write_atomic(&target, json.as_bytes())
+        .doing("write the autosave record to", target.display())?;
+    if in_place {
+        return Ok(true);
+    }
+
+    // The files were written outside the lock. A Save or a Close in that gap
+    // already called `forget`, and the write put the snapshot back: stale
+    // work that would be offered as Recovered and could overwrite what was
+    // saved, or revive a deliberate "Don't save". Checked again under the
+    // lock, and removed if the project it was taken from is no longer the
+    // open, dirty, unsaved-since one.
+    state.with_session(|session| {
+        let still_current = session
+            .open
+            .as_ref()
+            .is_some_and(|open| open.project.id.raw() == id && open.dirty && open.saves == saves);
+        if !still_current {
+            forget(state, id);
+        }
+        Ok(still_current)
+    })
 }
 
 /// Removes a project's snapshot, if there is one.

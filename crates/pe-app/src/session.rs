@@ -45,6 +45,10 @@ pub struct OpenProject {
     pub dirty: bool,
     /// Bumped on every document change; unique to this opening.
     pub revision: u64,
+    /// How many times this opening has been saved. The autosave compares it
+    /// before and after writing a snapshot outside the lock: a save in
+    /// between makes the snapshot stale, and it is removed.
+    pub saves: u64,
 }
 
 impl OpenProject {
@@ -57,6 +61,7 @@ impl OpenProject {
             path: None,
             dirty: true,
             revision: fresh_revision(),
+            saves: 0,
         }
     }
 
@@ -68,6 +73,7 @@ impl OpenProject {
             path: Some(path),
             dirty: false,
             revision: fresh_revision(),
+            saves: 0,
         }
     }
 
@@ -138,6 +144,7 @@ impl Session {
         io::save(&open.project, &path).doing("save the project to", path.display())?;
         open.path = Some(path.clone());
         open.dirty = false;
+        open.saves += 1;
         self.settings.remember(&path);
         Ok(())
     }

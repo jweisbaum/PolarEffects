@@ -109,10 +109,16 @@ fn run_migrations(value: &mut Value, migrations: &[(u32, Migration)], target: u3
 /// place, so an interrupted save cannot leave a truncated file where a valid
 /// project used to be.
 pub fn save(project: &Project, path: &Path) -> Result<()> {
-    let bytes = to_bytes(project)?;
+    write_atomic(path, &to_bytes(project)?)
+}
+
+/// Writes `bytes` to `path` atomically: to `<name>.tmp` beside it, synced,
+/// then renamed into place. A crash mid-write leaves the old file intact.
+/// Used for project files, the settings file and autosave manifests.
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let temp = temp_path_for(path);
     let written = std::fs::File::create(&temp).and_then(|mut file| {
-        file.write_all(&bytes)?;
+        file.write_all(bytes)?;
         file.sync_all()
     });
     if let Err(err) = written {
@@ -142,6 +148,12 @@ pub fn to_bytes(project: &Project) -> Result<Vec<u8>> {
 
     project.validate()?;
     let json = to_canonical_json(project)?;
+    // Validation above saw the in-memory values; the file holds them rounded
+    // (`canonical`). Two axis values closer than the canonical precision are
+    // distinct in memory and equal on disk, and that file would never open
+    // again. So the document is also validated as it will be read back, and
+    // an unsaveable one is refused here, before anything is written.
+    from_json(&json)?.validate_document()?;
 
     let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     // A fixed timestamp keeps the archive byte-reproducible: with the clock
@@ -204,7 +216,10 @@ pub fn from_bytes(bytes: &[u8]) -> Result<Project> {
         track.samples = bulk.samples;
         expected.insert(name);
     }
-    if let Some(unexpected) = archive.file_names().find(|name| !expected.contains(*name)) {
+    if let Some(unexpected) = archive
+        .file_names()
+        .find(|name| !expected.contains(*name) && !is_os_artefact(name))
+    {
         return Err(CoreError::Archive(format!(
             "it holds {unexpected:?}, which is not part of a project"
         )));
@@ -212,6 +227,15 @@ pub fn from_bytes(bytes: &[u8]) -> Result<Project> {
 
     project.validate()?;
     Ok(project)
+}
+
+/// Whether an archive entry is litter an operating system adds when a user
+/// re-zips or browses the file: macOS `__MACOSX/` resource forks and
+/// `.DS_Store`, Windows `Thumbs.db`. Ignored on load (and never written back)
+/// rather than refused, because they carry nothing of the project.
+fn is_os_artefact(name: &str) -> bool {
+    let file = name.rsplit('/').next().unwrap_or(name);
+    name.starts_with("__MACOSX/") || file == ".DS_Store" || file == "Thumbs.db"
 }
 
 /// Reads only the schema version, without parsing the document.
@@ -376,6 +400,69 @@ mod tests {
             entries.push(("tracks/999.json".to_owned(), b"{}".to_vec()));
         });
         assert!(matches!(from_bytes(&stray), Err(CoreError::Archive(_))));
+    }
+
+    #[test]
+    fn operating_system_artefacts_are_ignored_on_load() {
+        let project = fixtures::project();
+        let bytes = to_bytes(&project).unwrap();
+        let littered = rewrite(&bytes, |entries| {
+            for name in [
+                "__MACOSX/._project.json",
+                "__MACOSX/tracks/._3.json",
+                ".DS_Store",
+                "tracks/.DS_Store",
+                "Thumbs.db",
+            ] {
+                entries.push((name.to_owned(), b"junk".to_vec()));
+            }
+        });
+        let loaded = from_bytes(&littered).unwrap();
+        assert_eq!(loaded, project);
+        // And they are not carried into the next save.
+        assert_eq!(to_bytes(&loaded).unwrap(), bytes);
+
+        // Anything merely resembling one is still foreign.
+        let lookalike = rewrite(&bytes, |entries| {
+            entries.push(("MACOSX/x".to_owned(), vec![]));
+        });
+        assert!(matches!(from_bytes(&lookalike), Err(CoreError::Archive(_))));
+    }
+
+    /// Controller ruling on M1: values distinct in memory but equal once
+    /// rounded would write a file that can never open. Refused at save time.
+    #[test]
+    fn a_document_that_rounds_into_an_invalid_one_is_not_written() {
+        let dir = TempDir::new("rounds-invalid");
+        let path = dir.path("p.wpsproj");
+
+        let mut polar_axis = fixtures::project();
+        if let crate::source::SourceKind::PolarFile { polar, .. } = &mut polar_axis.sources[1].kind
+        {
+            polar.twa[1] = polar.twa[2] - 1e-12;
+        }
+        polar_axis.validate().unwrap();
+        let err = save(&polar_axis, &path).unwrap_err();
+        assert!(err.to_string().contains("strictly increasing"), "{err}");
+
+        let mut grid = fixtures::project();
+        grid.grid.tws[1] = grid.grid.tws[0] + 1e-9;
+        grid.validate().unwrap();
+        assert!(save(&grid, &path).is_err());
+
+        assert!(!path.exists(), "nothing was written");
+        assert!(!dir.path("p.wpsproj.tmp").exists());
+    }
+
+    #[test]
+    fn write_atomic_replaces_whole_files_and_leaves_no_temporary() {
+        let dir = TempDir::new("write-atomic");
+        let path = dir.path("settings.json");
+        write_atomic(&path, b"first").unwrap();
+        write_atomic(&path, b"second").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"second");
+        assert!(!dir.path("settings.json.tmp").exists());
+        assert!(write_atomic(&dir.path("missing/dir/x"), b"x").is_err());
     }
 
     #[test]

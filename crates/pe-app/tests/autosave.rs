@@ -190,3 +190,65 @@ fn off_writes_nothing_and_save_writes_in_place() {
     let on_disk = pe_core::io::load(std::path::Path::new(&path)).unwrap();
     assert_eq!(on_disk.name, "Saved in place");
 }
+
+/// Review fix: the snapshot is written outside the session lock. A Save in
+/// that gap forgets the snapshot, the write then puts it back, and a stale
+/// snapshot would be offered as Recovered work. It must be removed.
+#[test]
+fn a_save_during_the_snapshot_write_leaves_no_stale_snapshot() {
+    let root = TempRoot::new("race-save");
+    let state = root.state();
+    create(&state);
+    projects::save_as(&state, root.file("race.wpsproj")).unwrap();
+    rename(&state, "Edited");
+    let kept = autosave::snapshot_with_hook(&state, true, || {
+        projects::save(&state).expect("save in the gap");
+    })
+    .unwrap();
+    assert!(!kept);
+    assert!(
+        autosave::list(&state).is_empty(),
+        "stale snapshot survived a save"
+    );
+}
+
+/// The same for a deliberate "Don't save" close in the gap: the snapshot
+/// must not revive work the user chose to drop.
+#[test]
+fn a_close_during_the_snapshot_write_leaves_no_stale_snapshot() {
+    let root = TempRoot::new("race-close");
+    let state = root.state();
+    create(&state);
+    autosave::snapshot_with_hook(&state, true, || {
+        projects::close(&state, true).expect("close in the gap");
+    })
+    .unwrap();
+    assert!(
+        autosave::list(&state).is_empty(),
+        "a dropped project came back"
+    );
+}
+
+/// Another project opened in the gap: the first one's snapshot is stale too.
+#[test]
+fn a_new_project_during_the_snapshot_write_leaves_no_stale_snapshot() {
+    let root = TempRoot::new("race-new");
+    let state = root.state();
+    let first = create(&state);
+    autosave::snapshot_with_hook(&state, true, || {
+        projects::create(&state, "Next".to_owned(), None, true).expect("replace");
+    })
+    .unwrap();
+    assert!(autosave::list(&state).iter().all(|r| r.id != first));
+}
+
+/// An edit (not a save) in the gap leaves the snapshot: it is older work of
+/// the same unsaved project, and the next tick replaces it.
+#[test]
+fn an_edit_during_the_snapshot_write_keeps_the_snapshot() {
+    let root = TempRoot::new("race-edit");
+    let state = root.state();
+    create(&state);
+    assert!(autosave::snapshot_with_hook(&state, true, || rename(&state, "Later")).unwrap());
+    assert_eq!(autosave::list(&state).len(), 1);
+}

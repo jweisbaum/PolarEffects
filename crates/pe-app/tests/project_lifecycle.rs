@@ -79,6 +79,26 @@ fn save_as_supplies_the_extension_and_save_reuses_the_path() {
     assert!(!again.dirty);
 }
 
+/// Review fix: the extension is appended unless it is exactly `wpsproj`,
+/// so a dotted name keeps its whole stem.
+#[test]
+fn save_as_appends_the_extension_unless_it_is_exactly_wpsproj() {
+    let root = TempRoot::new("dotted");
+    let app = root.state();
+    create(&app, "Dotted");
+    for (given, expected) in [
+        ("Race.v2", "Race.v2.wpsproj"),
+        ("Race.txt", "Race.txt.wpsproj"),
+        ("Race.WPSPROJ", "Race.WPSPROJ.wpsproj"),
+        ("Race.wpsproj", "Race.wpsproj"),
+        ("Race", "Race.wpsproj"),
+    ] {
+        let saved = projects::save_as(&app, root.file(given)).expect("save as");
+        assert_eq!(saved.path.as_deref(), Some(root.file(expected).as_str()));
+        assert!(std::path::Path::new(&root.file(expected)).is_file());
+    }
+}
+
 #[test]
 fn saving_a_never_saved_project_asks_for_a_location() {
     let root = TempRoot::new("never-saved");

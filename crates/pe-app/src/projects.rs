@@ -254,10 +254,7 @@ pub fn save_project_as(state: tauri::State<'_, AppState>, path: String) -> Resul
 pub fn save_as(state: &AppState, path: String) -> Result<ProjectSummary> {
     // Add the extension if the user did not, so the project is found again
     // by the same filter that saved it.
-    let mut path = PathBuf::from(path);
-    if path.extension().is_none() {
-        path.set_extension(io::EXTENSION);
-    }
+    let path = with_extension(PathBuf::from(path));
     state.with_session(|session| {
         session.save_to(path)?;
         persist_recent(state, session);
@@ -265,6 +262,18 @@ pub fn save_as(state: &AppState, path: String) -> Result<ProjectSummary> {
         crate::autosave::forget(state, open.project.id.raw());
         Ok(ProjectSummary::of(open))
     })
+}
+
+/// Appends `.wpsproj` unless the name already ends in exactly that, so
+/// "Race.v2" becomes "Race.v2.wpsproj" rather than "Race.wpsproj".
+pub fn with_extension(path: PathBuf) -> PathBuf {
+    if path.extension().is_some_and(|ext| ext == io::EXTENSION) {
+        return path;
+    }
+    let mut name = path.into_os_string();
+    name.push(".");
+    name.push(io::EXTENSION);
+    PathBuf::from(name)
 }
 
 /// Closes the open project.
