@@ -1,0 +1,245 @@
+name: Release builds
+
+# Manual runs create build artifacts, or rebuild an existing unpublished tag.
+# Beta releases publish only after every platform succeeds.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing unpublished tag to rebuild (blank for artifacts only)
+        required: false
+        type: string
+      platform:
+        description: Platform to build (a release still requires all platform installers)
+        required: false
+        default: all
+        type: choice
+        options: [all, mac-intel, mac-arm, windows-x64, windows-arm64, linux-x64]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.release_tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
+  RELEASE_TAG: ${{ inputs.release_tag || (startsWith(github.ref, 'refs/tags/') && github.ref_name) || '' }}
+
+jobs:
+  prepare:
+    name: validate version and prepare release
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    outputs:
+      release-id: ${{ steps.release.outputs.release-id }}
+      release-tag: ${{ steps.release.outputs.release-tag }}
+      source-sha: ${{ steps.source.outputs.sha }}
+      build-matrix: ${{ steps.matrix.outputs.targets }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
+      - name: Pin source commit for every platform
+        id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Select platforms
+        id: matrix
+        env:
+          BUILD_PLATFORM: ${{ inputs.platform || 'all' }}
+        run: |
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { appendFileSync } from 'node:fs';
+          const targets = [
+            { name: 'mac-intel', os: 'macos-15-intel', targets: 'x86_64-apple-darwin' },
+            { name: 'mac-arm', os: 'macos-15', targets: 'aarch64-apple-darwin' },
+            { name: 'windows-x64', os: 'windows-2022', targets: 'x86_64-pc-windows-msvc' },
+            // Cross-built on the x64 runner (see ci.yml). WiX cannot build an
+            // ARM64 MSI, so this target bundles the NSIS setup only.
+            { name: 'windows-arm64', os: 'windows-2022', targets: 'aarch64-pc-windows-msvc', cross: true, bundles: 'nsis' },
+            { name: 'linux-x64', os: 'ubuntu-22.04', targets: 'x86_64-unknown-linux-gnu' },
+          ].filter(target => process.env.BUILD_PLATFORM === 'all' || target.name === process.env.BUILD_PLATFORM)
+            .map(target => ({
+              cross: false,
+              ...target,
+              args: `--target ${target.targets}${target.bundles ? ` --bundles ${target.bundles}` : ''} -- --locked`,
+            }));
+          assert(targets.length > 0, 'Unknown build platform');
+          appendFileSync(process.env.GITHUB_OUTPUT, `targets=${JSON.stringify(targets)}\n`);
+          JS
+      - name: Check application and tag versions
+        run: |
+          node tools/check-release.mjs
+          # Also validate manual rebuilds, where GITHUB_REF names the workflow's
+          # branch while the source checkout comes from the requested tag.
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          const version = JSON.parse(readFileSync('package.json', 'utf8')).version;
+          if (process.env.RELEASE_TAG) assert.equal(process.env.RELEASE_TAG, `v${version}`);
+          JS
+      - name: Prepare draft beta release
+        id: release
+        if: env.RELEASE_TAG != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # A failed build can resume its draft; a published release is immutable
+          # to this workflow. Create it once before the parallel uploads begin.
+          gh api --paginate --slurp "repos/$GH_REPO/releases" > "$RUNNER_TEMP/releases.json"
+          release_id=$(jq -r --arg tag "$RELEASE_TAG" '.[][] | select(.tag_name == $tag) | .id' "$RUNNER_TEMP/releases.json")
+          if [ -n "$release_id" ]; then
+            jq -e --arg tag "$RELEASE_TAG" '.[][] | select(.tag_name == $tag) | .draft == true' "$RUNNER_TEMP/releases.json"
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --draft --prerelease \
+              --title "PolarEffects $RELEASE_TAG (Beta)" \
+              --generate-notes
+            release_id=$(gh release view "$RELEASE_TAG" --json databaseId --jq .databaseId)
+          fi
+          echo "release-id=$release_id" >> "$GITHUB_OUTPUT"
+          echo "release-tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+
+  bundle:
+    needs: prepare
+    permissions:
+      contents: write
+    name: bundle / ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.prepare.outputs.build-matrix) }}
+    steps:
+      - name: Preserve source line endings on Windows
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.source-sha }}
+
+      - name: Install Linux system dependencies
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
+            libxdo-dev libssl-dev patchelf build-essential file xdg-utils
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.97"
+          components: rustfmt, clippy
+          targets: ${{ matrix.targets }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Reuse the matching platform's CI cache on the default branch.
+          shared-key: ${{ matrix.cross && 'rust-arm64' || 'rust' }}
+          cache-on-failure: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      # A cross-built target cannot run its tests; its host twin already did.
+      - run: cargo test --workspace
+        if: ${{ !matrix.cross }}
+      - run: npm run bindings
+      - run: git diff --exit-code -- ui/src/generated
+      - run: npm run ui:test
+      - run: npm run ui:build
+      # Invariant 4, checked on the bundle that will ship rather than on a
+      # development build.
+      - run: bash tools/check-offline.sh
+        shell: bash
+
+      - name: Configure optional macOS signing
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          node --input-type=module <<'JS'
+          import { appendFileSync } from 'node:fs';
+          import { randomUUID } from 'node:crypto';
+          const env = process.env;
+          const signing = {};
+          if (env.APPLE_CERTIFICATE) {
+            signing.APPLE_CERTIFICATE = env.APPLE_CERTIFICATE;
+            signing.APPLE_CERTIFICATE_PASSWORD = env.APPLE_CERTIFICATE_PASSWORD || '';
+          }
+          if (env.APPLE_SIGNING_IDENTITY) signing.APPLE_SIGNING_IDENTITY = env.APPLE_SIGNING_IDENTITY;
+          else if (!env.APPLE_CERTIFICATE) signing.APPLE_SIGNING_IDENTITY = '-';
+          for (const key of ['APPLE_ID', 'APPLE_PASSWORD', 'APPLE_TEAM_ID']) {
+            if (env[key]) signing[key] = env[key];
+          }
+          // Do not forward absent secrets as empty variables: Tauri interprets
+          // their presence as a request to import a certificate or notarize.
+          for (const [key, value] of Object.entries(signing)) {
+            const delimiter = randomUUID();
+            appendFileSync(env.GITHUB_ENV, `${key}<<${delimiter}\n${value}\n${delimiter}\n`);
+          }
+          JS
+
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          releaseId: ${{ needs.prepare.outputs.release-id }}
+          uploadWorkflowArtifacts: true
+          uploadUpdaterJson: false
+          args: ${{ matrix.args }}
+
+      # A failure here keeps `publish` from running: an application without
+      # its manifest does not open on Windows.
+      - name: The Windows application carries its manifest
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tools/check-windows-manifest.ps1 -Exe target/${{ matrix.targets }}/release/pe-app.exe
+
+  publish:
+    name: checksums and publish beta
+    needs: [prepare, bundle]
+    if: needs.prepare.outputs.release-tag != ''
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ needs.prepare.outputs.release-tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.source-sha }}
+      - name: Verify installers and generate checksums
+        run: |
+          mkdir release-assets
+          gh release download "$RELEASE_TAG" --dir release-assets --skip-existing \
+            --pattern '*.dmg' --pattern '*.app.tar.gz' --pattern '*.msi' \
+            --pattern '*.exe' --pattern '*.AppImage' --pattern '*.deb' --pattern '*.rpm'
+          python3 tools/check-release-assets.py release-assets
+          gh release upload "$RELEASE_TAG" release-assets/SHA256SUMS --clobber
+      - name: Publish complete beta release
+        run: |
+          gh release edit "$RELEASE_TAG" --draft=false --prerelease --verify-tag
+          echo "Published [$RELEASE_TAG](https://github.com/$GH_REPO/releases/tag/$RELEASE_TAG)" >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,177 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # Integration binaries otherwise exhaust the Linux runner's disk while
+  # linking. Keep normal optimizations and assertions, without DWARF/PDBs.
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
+
+jobs:
+  rust:
+    name: rust / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15-intel, macos-15, windows-2022, ubuntu-22.04]
+    steps:
+      - name: Preserve source line endings on Windows
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
+            libxdo-dev libssl-dev patchelf build-essential file
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.97"
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust
+          cache-on-failure: true
+
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Run cargo test --workspace
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --workspace 2>&1 | tee "$RUNNER_TEMP/cargo-test.log"
+      # A job's log needs a GitHub login to read; its annotations do not. So
+      # what failed is said twice, and the second time anyone can see it:
+      # the failing tests by name, then each panic with the line after it.
+      - name: Name the tests that failed
+        if: failure()
+        # PowerShell, which every hosted runner has: the Windows runner's bash
+        # did not have everything a text pipeline wants (exit 127).
+        shell: pwsh
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP 'cargo-test.log'
+          if (-not (Test-Path $log)) {
+            Write-Output "::error title=No test log::$log was never written"
+            exit 0
+          }
+          $lines = @((Get-Content $log) -replace "`e\[[0-9;]*m", '')
+          $failed = @($lines | Where-Object { $_ -match '^test .* \.\.\. FAILED$' } | Select-Object -First 4)
+          foreach ($line in $failed) { Write-Output "::error title=Failed test::$line" }
+          $panics = 0
+          for ($i = 0; $i -lt $lines.Count -and $panics -lt 5; $i++) {
+            if ($lines[$i] -match 'panicked at') {
+              $last = [Math]::Min($i + 2, $lines.Count - 1)
+              Write-Output ("::error title=Panic::" + ($lines[$i..$last] -join '%0A'))
+              $panics++
+            }
+          }
+          # Neither: a test program that would not build, link or start.
+          if ($failed.Count -eq 0 -and $panics -eq 0) {
+            $tail = @($lines | Where-Object { $_.Trim() } | Select-Object -Last 15) -join '%0A'
+            Write-Output "::error title=End of the test log::$tail"
+          }
+          exit 0
+      - run: cargo build --workspace
+      - name: The Windows application carries its manifest
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tools/check-windows-manifest.ps1 -Exe target/debug/pe-app.exe
+
+  # Windows ARM64 (spec.md 1.3) is cross-built on the x64 runner: its MSVC
+  # install carries the ARM64 build tools, and LLVM's clang, which `ring`
+  # needs for `aarch64-pc-windows-msvc`, is on the image's PATH. Nothing here
+  # can run an ARM64 program, so tests are built and linked, not run; the
+  # bundled app is checked by hand on the ARM64 reference laptop.
+  windows-arm64:
+    name: rust / windows-arm64 (cross-build)
+    runs-on: windows-2022
+    env:
+      TARGET: aarch64-pc-windows-msvc
+    steps:
+      - name: Preserve source line endings on Windows
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.97"
+          targets: aarch64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-arm64
+          cache-on-failure: true
+      - name: clang is available for ring
+        run: clang --version
+      - run: cargo build --workspace --target $env:TARGET
+      - run: cargo test --workspace --no-run --target $env:TARGET
+      - name: The Windows application carries its manifest
+        shell: pwsh
+        run: ./tools/check-windows-manifest.ps1 -Exe target/aarch64-pc-windows-msvc/debug/pe-app.exe
+
+  bindings:
+    name: typescript bindings are current
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
+            libxdo-dev libssl-dev patchelf build-essential file
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.97"
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo run -p pe-app --example export_bindings
+      # Bindings are generated from the Rust types and committed. If this diff
+      # is non-empty, someone changed a type without regenerating.
+      - name: Fail if bindings drifted
+        run: |
+          git add -N ui/src/generated
+          git diff --exit-code -- ui/src/generated
+
+  frontend:
+    name: frontend / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run ui:typecheck
+      - run: npm run ui:test
+      - run: npm run ui:build
+
+  offline:
+    name: no runtime network access
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      # Check the built bundle too: a remote reference pulled in by a dependency
+      # only becomes visible after bundling.
+      - run: npm run ui:build
+      - run: npm run check:offline
