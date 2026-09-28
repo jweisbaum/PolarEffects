@@ -8,7 +8,38 @@
 use serde::Serialize;
 use ts_rs::TS;
 
-use crate::error::Result;
+use crate::error::{AppError, Result};
+use crate::paths::AppPaths;
+use crate::session::Session;
+
+/// Everything the running application holds, managed by Tauri.
+#[derive(Debug)]
+pub struct AppState {
+    /// Resolved application directories.
+    pub paths: AppPaths,
+    /// The open project and the settings.
+    pub session: std::sync::Mutex<Session>,
+}
+
+impl AppState {
+    /// State over `paths`, with the settings read from disk.
+    pub fn new(paths: AppPaths) -> Self {
+        let session = Session::load(&paths.settings_file());
+        Self {
+            paths,
+            session: std::sync::Mutex::new(session),
+        }
+    }
+
+    /// Runs `f` with the session locked.
+    pub fn with_session<T>(&self, f: impl FnOnce(&mut Session) -> Result<T>) -> Result<T> {
+        let mut session = self
+            .session
+            .lock()
+            .map_err(|_| AppError::Internal("the session lock was poisoned".to_owned()))?;
+        f(&mut session)
+    }
+}
 
 /// Build facts for the start screen and the About panel.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]

@@ -43,4 +43,35 @@ describe("api", () => {
     expect((err as IpcError).kind).toBe("unknown");
     expect((err as IpcError).message).toBe("panicked");
   });
+
+  it("passes the unsaved-changes answer to every call that drops a project", async () => {
+    invoke.mockResolvedValue(null);
+    await api.newProject("Fastnet", { name: "Boat", notes: "" }, true);
+    expect(invoke).toHaveBeenLastCalledWith("new_project", {
+      name: "Fastnet",
+      boat: { name: "Boat", notes: "" },
+      discardUnsaved: true,
+    });
+    await api.openProject("/a.wpsproj");
+    expect(invoke).toHaveBeenLastCalledWith("open_project", {
+      path: "/a.wpsproj",
+      discardUnsaved: false,
+    });
+    await api.closeProject(true);
+    expect(invoke).toHaveBeenLastCalledWith("close_project", { discardUnsaved: true });
+    await api.openRecovered(7);
+    expect(invoke).toHaveBeenLastCalledWith("open_recovered", { id: 7, discardUnsaved: false });
+  });
+
+  it("names the history and recent-list commands as Rust does", async () => {
+    invoke.mockResolvedValue([]);
+    await api.undo();
+    expect(invoke).toHaveBeenLastCalledWith("undo", undefined);
+    await api.renameProject("New");
+    expect(invoke).toHaveBeenLastCalledWith("rename_project", { name: "New" });
+    await api.clearRecent();
+    expect(invoke).toHaveBeenLastCalledWith("clear_recent", undefined);
+    await api.saveProjectAs("/b");
+    expect(invoke).toHaveBeenLastCalledWith("save_project_as", { path: "/b" });
+  });
 });

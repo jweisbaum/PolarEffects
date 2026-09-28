@@ -24,6 +24,40 @@ pub enum AppError {
     #[error("A file could not be read or written: {0}")]
     Io(#[from] std::io::Error),
 
+    /// The document model or the project file refused.
+    #[error("{0}")]
+    Core(#[from] pe_core::CoreError),
+
+    /// An operation needed an open project and there is none.
+    #[error("No project is open.")]
+    NoProjectOpen,
+
+    /// Save was asked of a project that has never been saved; the frontend
+    /// answers with Save As.
+    #[error("This project has not been saved yet, so it has no file to save to.")]
+    ProjectNeverSaved,
+
+    /// Replacing or closing the open project would have discarded unsaved
+    /// changes (spec.md 3.3).
+    ///
+    /// The prompt that offers to save lives in the frontend, but the refusal
+    /// lives here, so no caller can lose work by forgetting to ask. The
+    /// caller asks, then repeats the call with `discard_unsaved = true`.
+    #[error("\"{name}\" has unsaved changes.")]
+    UnsavedChanges {
+        /// The open project's name, for the message.
+        name: String,
+    },
+
+    /// An argument was not one the command accepts.
+    #[error("{field} cannot be {value:?}.")]
+    BadOption {
+        /// Which argument.
+        field: &'static str,
+        /// What was received.
+        value: String,
+    },
+
     /// A named step failed, on a named thing.
     ///
     /// The general-purpose contextual error: `doing` is the action in the
@@ -72,6 +106,12 @@ impl AppError {
     pub fn kind(&self) -> &'static str {
         match self {
             Self::Io(_) => "io",
+            Self::Core(pe_core::CoreError::SchemaTooNew { .. }) => "schema-too-new",
+            Self::Core(_) => "core",
+            Self::NoProjectOpen => "no-project",
+            Self::ProjectNeverSaved => "never-saved",
+            Self::UnsavedChanges { .. } => "unsaved-changes",
+            Self::BadOption { .. } => "bad-option",
             Self::Doing { .. } => "doing",
             Self::Internal(_) => "internal",
         }

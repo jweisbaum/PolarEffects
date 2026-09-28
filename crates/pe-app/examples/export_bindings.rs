@@ -7,8 +7,11 @@
 
 use std::path::PathBuf;
 
+use pe_app::autosave::RecoveredProject;
 use pe_app::commands::AppInfo;
 use pe_app::error::AppErrorPayload;
+use pe_app::projects::{BoatInput, ProjectSummary, RecentProject, SourceSummary};
+use pe_app::settings::AutosaveMode;
 use ts_rs::{Config, TS};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -26,6 +29,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_large_int("number");
     AppInfo::export_all(&cfg)?;
     AppErrorPayload::export_all(&cfg)?;
+    ProjectSummary::export_all(&cfg)?;
+    SourceSummary::export_all(&cfg)?;
+    RecentProject::export_all(&cfg)?;
+    BoatInput::export_all(&cfg)?;
+    RecoveredProject::export_all(&cfg)?;
+    AutosaveMode::export_all(&cfg)?;
 
     // Keep generated files deterministic and free of ts-rs's trailing spaces.
     for entry in std::fs::read_dir(&out_dir)? {

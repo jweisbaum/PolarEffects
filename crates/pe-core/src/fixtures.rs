@@ -57,7 +57,7 @@ pub fn track(project: &mut Project) -> Track {
         id,
         TrackOrigin::Tracker {
             tracker: Tracker::YellowBrick,
-            event_url: "https://yb.tl/fastnet2025".to_owned(),
+            event_url: "https://event.invalid/fastnet2025".to_owned(),
             event_title: "Fastnet".to_owned(),
             boat_id: "42".to_owned(),
             boat_name: "Boat".to_owned(),

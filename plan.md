@@ -70,7 +70,7 @@ for `aarch64-pc-windows-msvc`; confirm the runner has it.
 
 ---
 
-### M1 — Document model, `.wpsproj`, history, project lifecycle
+### M1 — Document model, `.wpsproj`, history, project lifecycle · **complete**
 
 **Goal:** the full data model from spec §4 exists, round-trips and is
 undoable, before any of it is visible.

@@ -27,12 +27,16 @@ pe-grib = { workspace = true }
 
 anyhow = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
+# Platform config, data and cache directories (spec.md 3.4).
+directories = "6.0.0"
 thiserror = { workspace = true }
 ts-rs = { workspace = true }
 tauri = { version = "2.11.5", features = [] }
 
 [dev-dependencies]
-serde_json = { workspace = true }
+# Writing a project archive by hand, for the newer-schema refusal test.
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 [lints]
 workspace = true

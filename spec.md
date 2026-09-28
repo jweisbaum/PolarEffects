@@ -271,12 +271,14 @@ Source
   overlay: Overlay
 Overlay
   cell_overrides: [(twa, tws, bsp)]             // polar edits, §10.4
+  excluded_cells: [(twa, tws)]                  // polar nodes removed, §10.3
   excluded_samples: [SampleId]                  // track dots removed, §10.3
   filters: SampleFilters                        // track sources only, §7.6
 Track
   origin: { tracker, event_url, event_title, boat_id, boat_name, sail_no } | File { name }
   fixes: [Fix { t, lat, lon, cog?, sog? }]      // as imported
   derivation: DerivationSettings                // §7.4
+  statistic: median | mean | p75 | p90          // §12.1
   samples: [Sample]                             // §7.5, derived + fetched env
   env_meta: { datasets: [(name, version, fetched_at)] }
 ```
@@ -302,7 +304,8 @@ Same container rules as VectorEffects' `.veproj` (D11):
 - Every entry has a fixed timestamp, so saving an unchanged project twice
   gives identical bytes.
 - No rendered images and no blend results (invariant 2). A test fails on any
-  unexpected entry.
+  unexpected entry, and opening refuses an archive that holds one (or lacks a
+  track's entry) rather than dropping it silently on the next save.
 - Floats go through the canonical helpers.
 - Saves are atomic: write `<name>.wpsproj.tmp`, then rename.
 - Migrations: `MIGRATIONS: &[(u32, fn(&mut Value) -> Result<()>)]`, keyed by
