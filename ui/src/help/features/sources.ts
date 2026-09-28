@@ -6,12 +6,18 @@ const list = ["section:sources"];
 const picker = ["section:sources", "sources:colours"];
 
 const features: Feature[] = [
+  { id: "sources:blend-colour", label: msg("Blend colour"),
+    description: msg("Click the Blend entry's swatch to change the colour the blend is drawn in."),
+    keywords: [msg("blend"), msg("colour"), msg("color")], topic: "blend", reveal: list },
   { id: "sources:blend-visible", label: msg("Show the blend"),
-    description: msg("Show or hide the blend in every plot. Arrives with the blend."),
-    keywords: [msg("blend"), msg("visibility")], topic: "sources", reveal: list },
+    description: msg("Show or hide the blend in every plot. Export is not affected."),
+    keywords: [msg("blend"), msg("visibility")], topic: "blend", reveal: list },
   { id: "sources:blend-settings", label: msg("Blend settings"),
-    description: msg("The output grid and how sources are blended. Arrives with the blend."),
-    keywords: [msg("output grid"), msg("blend")], topic: "sources", reveal: list },
+    description: msg("The output grid and how sources are blended."),
+    keywords: [msg("output grid"), msg("blend")], topic: "blend", reveal: list },
+  { id: "sources:export", label: msg("Export the polar"),
+    description: msg("Write the blend as an Expedition, Adrena or CSV polar."),
+    keywords: [msg("export"), msg("save"), "Expedition", "Adrena", "CSV"], topic: "blend", reveal: list },
   { id: "sources:reorder", label: msg("Reorder sources"),
     description: msg("Drag a source by its handle to move it in the list, or use the arrow keys."),
     keywords: [msg("drag"), msg("order"), msg("move")], topic: "sources", reveal: list },

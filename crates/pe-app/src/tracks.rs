@@ -891,6 +891,9 @@ pub(crate) fn add_tracks(
             for (k, (mut p, colour)) in pending.into_iter().zip(colours).enumerate() {
                 let source_id = project.allocate_source_id();
                 p.track.id = project.allocate_track_id();
+                // A new track starts with the project's default statistic
+                // (Blend settings, spec.md 12.1); it keeps its own after.
+                p.track.statistic = project.blend.default_statistic;
                 for sample in &mut p.track.samples {
                     sample.id = project.allocate_sample_id();
                 }

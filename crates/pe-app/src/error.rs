@@ -83,6 +83,16 @@ pub enum AppError {
         why: String,
     },
 
+    /// An export was refused (spec.md 6, 12): a grid that would not read
+    /// back, or nothing to write. `code` is `pe_polar::ExportProblem::code`.
+    #[error("The polar cannot be exported: {message}.")]
+    Export {
+        /// The problem's stable code.
+        code: &'static str,
+        /// What it was, in English.
+        message: String,
+    },
+
     /// A tracker download or decode failed (spec.md 7.2).
     #[error("{0}")]
     Tracker(#[from] pe_trackers::TrackerError),
@@ -126,6 +136,7 @@ impl AppError {
             Self::BadOption { .. } => "bad-option",
             Self::DuplicateCertificate { .. } => "orc-duplicate",
             Self::Doing { .. } => "doing",
+            Self::Export { .. } => "export-refused",
             Self::Tracker(e) => match e {
                 pe_trackers::TrackerError::NotAnEvent { .. } => "tracker-address",
                 pe_trackers::TrackerError::Unavailable { .. } => "tracker-unavailable",

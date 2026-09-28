@@ -29,5 +29,11 @@
   "Smooth polar cells",
   "Reset polar cells",
   "Reset all edits",
-  "Change segment statistic"
+  "Change segment statistic",
+  "Change blend settings",
+  "Change the output grid",
+  "Show blend",
+  "Hide blend",
+  "Change blend colour",
+  "Blend"
 ]

@@ -8,6 +8,9 @@
 use std::path::PathBuf;
 
 use pe_app::autosave::RecoveredProject;
+use pe_app::blend::{
+    BlendSettingsInput, BlendSummary, ExportAxes, ExportPreview, ExportProblemView, ExportResult,
+};
 use pe_app::commands::AppInfo;
 use pe_app::env::{EnvEstimate, EnvJobTrack, EnvJobsStatus};
 use pe_app::error::AppErrorPayload;
@@ -54,6 +57,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     EditSurface::export_all(&cfg)?;
     EditOp::export_all(&cfg)?;
     PolarPlotResult::export_all(&cfg)?;
+    BlendSummary::export_all(&cfg)?;
+    BlendSettingsInput::export_all(&cfg)?;
+    ExportAxes::export_all(&cfg)?;
+    ExportPreview::export_all(&cfg)?;
+    ExportProblemView::export_all(&cfg)?;
+    ExportResult::export_all(&cfg)?;
     PolarNodeRef::export_all(&cfg)?;
     TrackSummary::export_all(&cfg)?;
     TrackerBoatRow::export_all(&cfg)?;

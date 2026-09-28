@@ -237,6 +237,9 @@ export default function PolarView({ project, settings, onProject }: {
   // A mode whose data has gone (the tracks were removed) falls back to source colours.
   const shownMode: ColourMode = modes[mode] ? mode : "source";
   const focused = useMemo(() => focusIndex(packet, focus), [packet, focus]);
+  // The blend surface is drawn in the Blend entry's colour (spec.md 8; M7
+  // carry), opaque (spec.md 10.1).
+  const blendColour = project.blend.colour;
   const focusStyle: Focus | null = useMemo(
     () => (focus === null ? null : { index: focused, hideOthers }),
     [focus, focused, hideOthers],
@@ -265,7 +268,7 @@ export default function PolarView({ project, settings, onProject }: {
     if (!current) return;
     current.setData({
       samples: dots.points, colors: dots.colors, shapes: dots.shapes, layout,
-      surfaces: toggles.surfaces ? buildSurfaces(packet, "#ffffff", focusStyle) : [],
+      surfaces: toggles.surfaces ? buildSurfaces(packet, blendColour, focusStyle) : [],
     });
     const guides = buildGuides(bounds, layout, unit);
     current.setGuides(guides.segments, cssColour("--muted", "#b3c9de"));
@@ -283,7 +286,7 @@ export default function PolarView({ project, settings, onProject }: {
       fitted.current = true;
     }
     draw();
-  }, [dots, packet, layout, toggles.surfaces, bounds, unit, draw, focusStyle]);
+  }, [dots, packet, layout, toggles.surfaces, bounds, unit, draw, focusStyle, blendColour]);
 
   // Selection is by global index; the scene highlights by drawn index.
   useEffect(() => {

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { PolarPlotResult } from "../generated/PolarPlotResult";
 import type { ProjectSummary } from "../generated/ProjectSummary";
 import type { SourceSummary } from "../generated/SourceSummary";
+import { TEST_BLEND } from "../testBlend";
 
 const polarPlotCall = vi.fn();
 vi.mock("../ipc", async () => {
@@ -26,12 +27,12 @@ const source = (overrides: Partial<SourceSummary> = {}): SourceSummary => ({
 
 const project = (overrides: Partial<ProjectSummary> = {}): ProjectSummary => ({
   id: 1, name: "P", path: null, dirty: false, revision: 1, boat_name: "", boat_notes: "",
-  sources: [source()], can_undo: false, can_redo: false, undo_label: null, redo_label: null, use_corrected: true, stokes_drift: false,
+  sources: [source()], can_undo: false, can_redo: false, undo_label: null, redo_label: null, use_corrected: true, stokes_drift: false, blend: TEST_BLEND,
   ...overrides,
 });
 
 const result = (overrides: Partial<PolarPlotResult> = {}): PolarPlotResult => ({
-  tws_min: 6, tws_max: 20, curves: [], blend: null, band_kn: 1, ...overrides,
+  tws_min: 6, tws_max: 20, curves: [], blend: [], band_kn: 1, ...overrides,
 });
 
 async function render(...args: Parameters<typeof PolarPlot>) {
@@ -112,4 +113,21 @@ it("shows a message when the plot has no point at the chosen slice", async () =>
   polarPlotCall.mockResolvedValue(result({ curves: [{ source_id: 1, label: "A", colour: "#4e79a7", tws: 10, points: [] }] }));
   await render({ project: project(), variant: "panel" });
   expect(host.querySelector(".polar-plot-empty")?.textContent).toBe("No source has data at this wind speed.");
+});
+
+it("sizes the fan and the hover hit-test to the blend too (M6 carry)", async () => {
+  const { plotMaxBsp } = await import("./PolarPlot");
+  const { emptyDots } = await import("./dotPacket");
+  const blend = { source_id: null, label: "Blend", colour: "#ff8800", tws: 10, points: [{ twa: 90, bsp: 12 }] };
+  const plotted = result({ curves: [{ source_id: 1, label: "A", colour: "#4e79a7", tws: 10, points: [{ twa: 90, bsp: 8 }] }], blend: [blend] });
+  expect(plotMaxBsp(plotted, emptyDots())).toBe(12);
+  expect(plotMaxBsp(result({ blend: [] }), emptyDots())).toBe(0);
+});
+
+it("counts a blend-only slice as something to draw", async () => {
+  polarPlotCall.mockResolvedValue(result({
+    blend: [{ source_id: null, label: "Blend", colour: "#ffffff", tws: 10, points: [{ twa: 90, bsp: 7 }] }],
+  }));
+  await render({ project: project(), variant: "panel" });
+  expect(host.querySelector(".polar-plot-empty")).toBeNull();
 });

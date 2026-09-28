@@ -67,38 +67,48 @@ fn lerp(a: f64, b: f64, t: f64) -> f64 {
     a + (b - a) * t
 }
 
-/// The speed in column `j` at `twa`, from that column's own known angles.
-fn column_at(grid: &PolarGrid, j: usize, twa: f64) -> Option<f64> {
-    let mut below: Option<(f64, f64)> = None;
-    let mut above: Option<(f64, f64)> = None;
+/// The speed in column `j` at `twa`, from that column's own known angles,
+/// and the rows it was read from (the same row twice on a known angle).
+fn column_at(grid: &PolarGrid, j: usize, twa: f64) -> Option<(f64, usize, usize)> {
+    let mut below: Option<(usize, f64, f64)> = None;
+    let mut above: Option<(usize, f64, f64)> = None;
     for (i, angle) in grid.twa.iter().enumerate() {
         let Some(bsp) = grid.get(i, j) else { continue };
         if (angle - twa).abs() <= ON_AXIS {
-            return Some(bsp);
+            return Some((bsp, i, i));
         }
         if *angle < twa {
-            below = Some((*angle, bsp));
+            below = Some((i, *angle, bsp));
         } else if above.is_none() {
-            above = Some((*angle, bsp));
+            above = Some((i, *angle, bsp));
         }
     }
-    let ((a0, b0), (a1, b1)) = (below?, above?);
-    Some(lerp(b0, b1, (twa - a0) / (a1 - a0)))
+    let ((i0, a0, b0), (i1, a1, b1)) = (below?, above?);
+    Some((lerp(b0, b1, (twa - a0) / (a1 - a0)), i0, i1))
+}
+
+/// The nodes, `(row, column)`, a value was read from: up to four corners.
+pub type Corners = [(usize, usize); 4];
+
+/// The boat speed at (`twa`, `tws`) and the nodes it was read from, or
+/// `None` where the polar says nothing. What [`interpolate`] reads.
+pub fn interpolate_from(grid: &PolarGrid, twa: f64, tws: f64) -> Option<(f64, Corners)> {
+    let twa = fold_twa(twa)?;
+    let (j0, j1, t) = bracket(&grid.tws, tws)?;
+    // Outside the TWA axis there is nothing either, whatever the column.
+    bracket(&grid.twa, twa)?;
+    let (low, a, b) = column_at(grid, j0, twa)?;
+    if j0 == j1 {
+        return Some((low, [(a, j0), (b, j0), (a, j0), (b, j0)]));
+    }
+    let (high, c, d) = column_at(grid, j1, twa)?;
+    Some((lerp(low, high, t), [(a, j0), (b, j0), (c, j1), (d, j1)]))
 }
 
 /// The boat speed at (`twa`, `tws`), or `None` where the polar says nothing.
 /// `twa` is folded first, so 220° reads the 140° value.
 pub fn interpolate(grid: &PolarGrid, twa: f64, tws: f64) -> Option<f64> {
-    let twa = fold_twa(twa)?;
-    let (j0, j1, t) = bracket(&grid.tws, tws)?;
-    // Outside the TWA axis there is nothing either, whatever the column.
-    bracket(&grid.twa, twa)?;
-    let low = column_at(grid, j0, twa)?;
-    if j0 == j1 {
-        return Some(low);
-    }
-    let high = column_at(grid, j1, twa)?;
-    Some(lerp(low, high, t))
+    interpolate_from(grid, twa, tws).map(|(bsp, _)| bsp)
 }
 
 /// `grid` read at every cell of the given axes (spec.md 12.2). Cells outside

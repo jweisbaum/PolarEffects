@@ -12,7 +12,9 @@
 //! Export bytes are pinned by golden files, because they must be identical on
 //! every platform (invariant 5).
 
+pub mod blend;
 pub mod edit;
+pub mod export;
 pub mod format;
 pub mod grid;
 pub mod orc;
@@ -23,8 +25,10 @@ mod build;
 mod expedition;
 mod table;
 
+pub use blend::{Blend, BlendOptions, BlendSource, CellOrigin, Confidence, Coverage, blend};
+pub use export::{ExportProblem, export};
 pub use format::{PolarError, Reason, detect, read, read_as, write};
-pub use grid::{cell_count, fold_twa, interpolate, resample};
+pub use grid::{cell_count, fold_twa, interpolate, interpolate_from, resample};
 pub use orc::vpp_to_polar;
 pub use pe_core::polar::{PolarFileFormat, PolarGrid as Polar};
 pub use segment::{Segment, bin};

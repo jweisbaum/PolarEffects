@@ -66,8 +66,9 @@
 //!
 //! A sample is sent only once it has a place in the polar, which needs its
 //! wind (M9): a track without environment adds no dot rather than one at an
-//! invented position. The blend surface is never sent until the blend
-//! exists (M14); the layout already carries it.
+//! invented position. The blend (spec.md 12.3) is one more surface on the
+//! output grid, source index [`BLEND_SOURCE`], sent while the Blend entry
+//! is shown; the frontend draws it opaque in the Blend entry's colour.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -221,15 +222,19 @@ fn colour_code(source: &Source) -> u32 {
 pub fn scene_of(project: &Project) -> Scene {
     let mut derivations = Derivations::default();
     let derived = derivations.visible(project);
-    scene_with(project, &derived, None, false)
+    let blend = derivations.blend(project);
+    let shown = project.blend.visible.then_some(&blend.polar);
+    scene_with(project, &derived, shown, None, false)
 }
 
-/// The scene from each visible source's derived data. `focus` names the
-/// source in edit mode: a track's segment is added as its surface.
-/// `flags_only` leaves out everything of the samples but their flags.
+/// The scene from each visible source's derived data, and the blend's
+/// surface when it is shown (`blend`). `focus` names the source in edit
+/// mode: a track's segment is added as its surface. `flags_only` leaves out
+/// everything of the samples but their flags.
 pub fn scene_with(
     project: &Project,
     derived: &BTreeMap<u64, Arc<Derived>>,
+    blend: Option<&pe_polar::Polar>,
     focus: Option<u64>,
     flags_only: bool,
 ) -> Scene {
@@ -304,8 +309,23 @@ pub fn scene_with(
             sample.time = (t - scene.time_origin) as f32;
         }
     }
-    // The blend surface joins here once it exists (M14): it is derived, and
-    // nothing in this module invents one (invariant 2).
+    if let Some(grid) = blend.filter(|grid| pe_polar::cell_count(grid) > 0) {
+        let nj = grid.tws.len();
+        let mut bsp = vec![f32::NAN; grid.twa.len() * nj];
+        for (i, row) in grid.bsp.iter().enumerate() {
+            for (j, value) in row.iter().enumerate() {
+                if let Some(value) = value {
+                    bsp[i * nj + j] = *value as f32;
+                }
+            }
+        }
+        scene.surfaces.push(SceneSurface {
+            source: BLEND_SOURCE,
+            twa: grid.twa.iter().map(|v| *v as f32).collect(),
+            tws: grid.tws.iter().map(|v| *v as f32).collect(),
+            bsp,
+        });
+    }
     scene
 }
 
@@ -485,7 +505,15 @@ pub fn scene_bytes_for(
         let open = session.require_open()?;
         let key = open.derived.samples_key(&open.project);
         let derived = open.derived.visible(&open.project);
-        let mut scene = scene_with(&open.project, &derived, focus, samples_key == Some(key));
+        let blend = open.derived.blend(&open.project);
+        let shown = open.project.blend.visible.then_some(&blend.polar);
+        let mut scene = scene_with(
+            &open.project,
+            &derived,
+            shown,
+            focus,
+            samples_key == Some(key),
+        );
         scene.samples_key = key;
         Ok(pack(&scene))
     })

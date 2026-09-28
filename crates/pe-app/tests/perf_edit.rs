@@ -244,7 +244,25 @@ fn edit_to_every_view_at_two_hundred_thousand_samples() {
         &views(&app, held, 12.0, 105),
     );
 
+    // The blend alone after an edit (spec.md 13: under 50 ms at 20 sources
+    // and 200k samples), every segment already derived; and an export,
+    // which derives everything from scratch (invariant 2).
+    let (blend_ms, export_ms) = app
+        .with_session(|session| {
+            let open = session.require_open()?;
+            open.derived.bump(3, pe_app::derived::Touch::Polar);
+            let t = Instant::now();
+            open.derived.blend(&open.project);
+            let blend_ms = ms(t.elapsed());
+            let t = Instant::now();
+            pe_app::blend::export_bytes(&open.project, "adrena", None)?;
+            Ok((blend_ms, ms(t.elapsed())))
+        })
+        .unwrap();
+    println!("blend after an edit: {blend_ms:.1} ms; export from scratch: {export_ms:.1} ms");
+
     if !cfg!(debug_assertions) {
+        assert!(blend_ms < 50.0, "the blend took {blend_ms} ms");
         for total in [polar_total, segment_total, exclude_total] {
             assert!(total < 100.0, "{total} ms is over the 100 ms budget");
         }

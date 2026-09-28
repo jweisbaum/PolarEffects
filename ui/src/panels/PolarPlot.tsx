@@ -34,6 +34,21 @@ function strokeCurve(ctx: CanvasRenderingContext2D, curve: PolarCurve, layout: R
 }
 
 /**
+ * The largest boat speed the plot must hold: every source curve, every dot
+ * and the blend. The drawing and the hover hit-test both size the fan with
+ * it, so a hovered point is where it is drawn (M6 carry).
+ */
+export function plotMaxBsp(result: PolarPlotResult | null, dots: DotPacket): number {
+  if (!result) return maxBoatSpeed([], dots);
+  return Math.max(maxBoatSpeed(result.curves, dots), maxBoatSpeed(result.blend, null));
+}
+
+/** The blend's curves with their label in the interface language. */
+function blendCurves(result: PolarPlotResult | null, t: (key: string) => string): PolarCurve[] {
+  return (result?.blend ?? []).map((curve) => ({ ...curve, label: t(curve.label) }));
+}
+
+/**
  * Draws the plot: radial BSP rings and angular TWA spokes, every curve in
  * its source colour, the blend thicker, sample dots in their track's colour
  * (filtered ones dimmed, excluded ones hollow, selected ones ringed), and
@@ -58,8 +73,8 @@ function draw(canvas: HTMLCanvasElement, result: PolarPlotResult | null, dots: D
   const accent = style.getPropertyValue("--accent").trim() || "#8fb8de";
 
   const curves = result?.curves ?? [];
-  const blend = result?.blend ?? null;
-  const maxBsp = Math.max(maxBoatSpeed(curves, dots), blend ? maxBoatSpeed([blend], null) : 0);
+  const blend = result?.blend ?? [];
+  const maxBsp = plotMaxBsp(result, dots);
   if (maxBsp <= 0) return;
   const layout = fitLayout(width, height, maxBsp);
 
@@ -87,9 +102,8 @@ function draw(canvas: HTMLCanvasElement, result: PolarPlotResult | null, dots: D
   }
 
   for (const curve of curves) strokeCurve(ctx, curve, layout, 1.5);
-  // The blend is drawn thicker (spec.md 9.2); it is a hook until M14, so
-  // this only ever runs once something upstream actually fills it in.
-  if (blend) strokeCurve(ctx, blend, layout, 3);
+  // The blend is drawn thicker (spec.md 9.2), in the Blend entry's colour.
+  for (const curve of blend) strokeCurve(ctx, curve, layout, 3);
 
   const many = dots.count > MANY_DOTS;
   const dotColours = dots.sources.map((id) => colours.get(id)?.colour ?? line);
@@ -214,19 +228,20 @@ export default function PolarPlot({ project, variant, onFullSize, onClose }: {
   const onMove = useCallback((event: MouseEvent<HTMLCanvasElement>) => {
     if (!result) return;
     const rect = event.currentTarget.getBoundingClientRect();
-    const layout = fitLayout(rect.width, rect.height, Math.max(maxBoatSpeed(result.curves, dots), 1));
+    const layout = fitLayout(rect.width, rect.height, Math.max(plotMaxBsp(result, dots), 1));
     const hit = nearestPoint(
-      result.curves, dots, sourcesById,
+      [...result.curves, ...blendCurves(result, t)], dots, sourcesById,
       event.clientX - rect.left, event.clientY - rect.top, layout, HOVER_DISTANCE_PX,
     );
     setHover(hit);
-  }, [result, dots, sourcesById]);
+  }, [result, dots, sourcesById, t]);
 
   const domainMin = result?.tws_min ?? null;
   const domainMax = result?.tws_max ?? null;
   const hasDomain = domainMin !== null && domainMax !== null;
   const sliderValue = tws ?? (hasDomain ? Math.round(((domainMin as number) + (domainMax as number)) / 2) : 0);
-  const hasAnyPoint = (result?.curves ?? []).some((curve) => curve.points.length > 0) || dots.count > 0;
+  const hasAnyPoint = [...(result?.curves ?? []), ...(result?.blend ?? [])].some((curve) => curve.points.length > 0)
+    || dots.count > 0;
 
   return (
     <div className={`polar-plot polar-plot-${variant}`}>

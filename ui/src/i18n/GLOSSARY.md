@@ -37,6 +37,11 @@ cross-platform "Einfügen"). The native menu's labels live in Rust,
 | blend (verb) | fusionner | einmischen | |
 | source | source | Quelle | Anything that contributes to the polar. |
 | weight (blend weight) | poids | Gewichtung | |
+| output grid | grille de sortie | Ausgaberaster | The TWA × TWS grid the blend is made on (M14). |
+| coverage (of the blend) | couverture | Abdeckung | "direct" / "filled": directe / remplie, direkt / gefüllt. |
+| confidence (full confidence) | confiance (pleine) | Vertrauen (volles) | A track cell's weight by its samples. |
+| export (verb / noun) | exporter / export | exportieren / Export | |
+| Blend settings | Réglages de la fusion | Mischungseinstellungen | |
 | overlay | surcouche | Überlagerung | A user change stored beside a source. |
 | track | trace | Track | German sailors say "Track"; not "Spur". |
 | tracker | balise | Tracker | The position-reporting device and service. |

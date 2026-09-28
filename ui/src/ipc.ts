@@ -16,6 +16,7 @@ import type { AppErrorPayload } from "./generated/AppErrorPayload";
 import type { AppInfo } from "./generated/AppInfo";
 import type { AppSettings } from "./generated/AppSettings";
 import type { AutosaveMode } from "./generated/AutosaveMode";
+import type { BlendSettingsInput } from "./generated/BlendSettingsInput";
 import type { BoatInput } from "./generated/BoatInput";
 import type { ChunkCacheSettings } from "./generated/ChunkCacheSettings";
 import type { ChunkCacheStatus } from "./generated/ChunkCacheStatus";
@@ -24,6 +25,9 @@ import type { EditOp } from "./generated/EditOp";
 import type { EditSurface } from "./generated/EditSurface";
 import type { EnvEstimate } from "./generated/EnvEstimate";
 import type { EnvJobsStatus } from "./generated/EnvJobsStatus";
+import type { ExportAxes } from "./generated/ExportAxes";
+import type { ExportPreview } from "./generated/ExportPreview";
+import type { ExportResult } from "./generated/ExportResult";
 import type { MapProjection } from "./generated/MapProjection";
 import type { NetworkSettings } from "./generated/NetworkSettings";
 import type { OrcCatalogueInfo } from "./generated/OrcCatalogueInfo";
@@ -80,6 +84,7 @@ const LONG_RUNNING: Readonly<Record<string, string>> = {
   inspect_csv_track: msg("Reading track files"),
   import_track_files: msg("Importing tracks"),
   import_tracker_boats: msg("Importing tracks"),
+  export_polar: msg("Exporting the polar"),
   env_estimate: msg("Estimating the download"),
   orc_catalogue_info: msg("Loading the ORC catalogue"),
 };
@@ -171,6 +176,25 @@ export const api = {
   /** Removes a source; undo puts it back. */
   removeSource: (id: number) => call<ProjectSummary>("remove_source", { id }),
 
+  // The blend (spec.md 8, 12). Each change is one undoable entry.
+
+  /** Shows or hides the blend in every plot; export is unchanged. */
+  setBlendVisible: (visible: boolean) => call<ProjectSummary>("set_blend_visible", { visible }),
+  /** Sets the blend's colour, `#rrggbb`. */
+  setBlendColour: (colour: string) => call<ProjectSummary>("set_blend_colour", { colour }),
+  /** Applies the Blend settings dialog: the output grid and the settings, as one entry. */
+  setBlendSettings: (settings: BlendSettingsInput) =>
+    call<ProjectSummary>("set_blend_settings", { settings }),
+  /**
+   * What an export would write (`expedition`, `adrena` or `csv`), on the
+   * project's grid or `axes`: the grid, the text, or why it is refused.
+   */
+  exportPreview: (format: string, axes: ExportAxes | null = null) =>
+    call<ExportPreview>("export_preview", { format, axes }),
+  /** Writes the blend to `path`, recomputed from the sources. */
+  exportPolar: (path: string, format: string, axes: ExportAxes | null = null) =>
+    call<ExportResult>("export_polar", { path, format, axes }),
+
   // Polar files (spec.md 6).
 
   /**
@@ -185,8 +209,8 @@ export const api = {
   /**
    * Every visible polar source's curve at `tws` (null for "all": one curve
    * per source per wind speed it has), read through its edits and
-   * exclusions, the domain those sources cover, and the blend (null until
-   * it exists).
+   * exclusions, the domain those sources cover, and the blend's curves
+   * (none while the Blend entry is hidden).
    */
   polarPlot: (tws: number | null) => call<PolarPlotResult>("polar_plot", { tws }),
   /**

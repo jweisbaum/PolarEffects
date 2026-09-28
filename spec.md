@@ -295,7 +295,10 @@ Project
   id, name, created, schema_version
   boat: { name, notes }                        // free text
   grid: { twa: [deg], tws: [kn] }               // output grid, §12.2
-  blend: BlendSettings                          // §12
+  blend: BlendSettings                          // §12: min_samples, n_full,
+                                                //  smoothing, use_corrected,
+                                                //  include_stokes_drift, colour,
+                                                //  visible, default_statistic
   sources: [Source]                             // ordered as the user sees them
   next_id                                       // ids never exceed 2^53 − 1
 Source
@@ -986,8 +989,12 @@ The right panel lists every source (ORC, file, track) in one list:
 - Actions: Edit (opens the 3D stage focused on this source, §10.4; a ✎
   after it means the source holds edits), Compare (§11), Remove.
 - Drag to reorder (display order only).
-- A **Blend** entry at the top represents the current blend: colour, show or
-  hide, and a Blend settings button (§12).
+- A **Blend** entry at the top represents the current blend: its colour
+  (the same picker as a source's), show or hide (the plots only; export
+  always writes the blend), its coverage ("N direct, M filled"; the tooltip
+  adds the empty cells, §12.3), a **Blend settings** button (§12.2) and
+  **Export…** (§12.4). Each change is one undo entry ("Show blend", "Hide
+  blend", "Change blend colour", "Change blend settings").
 
 ---
 
@@ -1040,7 +1047,11 @@ overlay on demand):
   shared fixture), not JSON: "all" draws every sample with wind, and 50
   tracks of 10,000 fixes as JSON objects are tens of megabytes. Beyond
   20,000 dots each is drawn as a small square rather than a circle.
-- Everything uses source colours. The blend is drawn thicker.
+- Everything uses source colours. The blend is drawn thicker, in the Blend
+  entry's colour, read from the blend grid (§12.3) the same way: at the
+  slice, or in "all" one curve per output-grid wind speed that has a value
+  off the 0° row. Those wind speeds join the slider's range. Hovering it
+  shows "Blend". A hidden blend is not drawn.
 - Hover shows the source, TWA, TWS and BSP.
 - Full size opens the same plot as a large overlay owned by the Map stage
   (D21): the panel's "Full size" button switches to the Map stage and opens
@@ -1060,7 +1071,8 @@ overlay on demand):
   - **Cartesian**: x = TWA, y = TWS, z = BSP.
 - Every visible polar source is a translucent surface in its colour, with the
   grid lines drawn. Every sample is a dot in its track's colour. The blend is
-  an opaque surface.
+  an opaque surface on the output grid, in the Blend entry's colour, sent
+  while the entry is shown (source index `0xFFFFFFFF` in the scene).
 - Orbit, pan, zoom; preset cameras (top, side, isometric); an axis
   legend with the display units. Top looks down the vertical axis (in the
   tower, the classic polar diagram with every TWS stacked); side looks
@@ -1216,6 +1228,20 @@ Project setting, editable in Blend settings:
   angles, then along TWS; so a ragged Expedition polar reads each wind speed
   between its own points, and a query below a column's first or above its
   last angle has no value.
+- Each axis is typed as a list (spaces, commas or semicolons between values,
+  "." as the decimal point) and must hold 1–512 values, TWA in 0–180 and TWS
+  in 0–70 kn, strictly increasing, with at most two decimals — so no two
+  values are closer than 0.01 and every value is written exactly as it is
+  (export writes axes with two decimals, §6). The editor says which values
+  are wrong before anything is sent; Rust checks again. "Default grid" puts
+  back the defaults above.
+- Blend settings also hold: the statistic a newly imported track starts
+  with (90th percentile by default; each track keeps its own, §12.1), the
+  samples a track cell needs (5), the samples for full confidence (`n_full`,
+  30), smoothing (off), current correction (§7.5) and Stokes drift
+  (§7.5.1). **Apply** makes everything one undo entry ("Change blend
+  settings"); a new grid re-bins every track, and an edit on a node the new
+  grid lacks is kept in the overlay with nothing to apply to.
 
 ### 12.3 Blend
 
@@ -1228,13 +1254,49 @@ that have a value in that cell:
   `min(1, n / n_full)` for track segments, with n the cell's sample count and
   `n_full` default 30.
 - Cell overrides apply before blending; exclusions remove the cell.
+- A polar source is read onto the output grid bilinearly (§12.2), its edits
+  written in; **every output cell read from an excluded node is empty** for
+  that source — reading across the node from its neighbours would put back
+  part of what was taken out. A track is read through its segment (§12.1),
+  already on the output grid, its excluded nodes empty.
 - Cells with no source stay empty, then are filled in order by: interpolation
-  along TWA within the same TWS; then along TWS; the 0° row is 0 kn.
-- Optional smoothing (off by default) over the filled grid.
-- The blend shows its own coverage: cells with direct evidence versus filled.
+  along TWA within the same TWS; then along TWS; the 0° row is 0 kn. Each
+  step fills only **between** two known values (nothing is extrapolated), the
+  TWS step also from the TWA step's values, and the 0° row takes no part in
+  either (as in binning, D22). A cell nothing reaches stays empty and is
+  written empty.
+- Optional smoothing (off by default) over the filled grid: the 3×3
+  binomial kernel over neighbours with a value (as the edit tool's, D22);
+  the 0° row stays 0 kn and takes no part; empty cells stay empty.
+- The blend shows its own coverage: cells with direct evidence (at least one
+  source with a positive weight had a value) versus filled (interpolated, or
+  the 0° row without direct evidence), and the empty rest.
+- Sources are summed in id order, never list order (display only, §8), and
+  every value is rounded to the canonical knot precision (1e-6 kn), so the
+  same project gives the same bits on every platform (invariant 5). A cell
+  whose weights sum to zero has no direct value.
 - The blending rule is isolated in `pe-polar::blend` behind one function so it
   can be changed later without touching views (asked before changing, see
   `CLAUDE.md`).
+
+### 12.4 Export
+
+- **Export…** on the Blend entry opens a dialog: the format (Expedition
+  `.txt`, Adrena `.pol` or CSV `.csv`, §6), the grid (the project's output
+  grid, or custom axes typed as in §12.2 — the blend read onto them
+  bilinearly, never extrapolated; tracks are binned on the project grid, so
+  that is where the blend is made), and a preview of the grid as it would be
+  written (filled cells muted, empty ones blank). **Save…** opens the native
+  save dialog with the format's extension; the file is written atomically.
+- Export always recomputes the blend from the sources and overlays, never
+  from what the views have cached (invariant 2).
+- Export refuses, naming the problem, a grid two of whose axis values would
+  be written the same with two decimals (the reader would refuse the file:
+  "TWA values 42.001 and 42.004 would both be written as 42"), an axis
+  value a polar file cannot hold, a boat speed over 60 kn, or a blend with
+  no value at all. Every file export writes reads back as the grid written
+  (a property test), and a fixed project's three files are pinned by
+  SHA-256 in `pe-app/tests/export.rs`, which every CI target runs.
 
 ---
 

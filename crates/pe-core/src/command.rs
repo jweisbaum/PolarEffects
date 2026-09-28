@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::canonical;
 use crate::error::{CoreError, Result};
 use crate::id::{SampleId, SourceId};
-use crate::project::Project;
+use crate::project::{BlendSettings, OutputGrid, Project};
 use crate::source::{
     CellOverride, CellRef, Colour, SampleFilters, Source, SourceKind, validate_edit_bsp,
     validate_weight,
@@ -236,6 +236,24 @@ pub enum Command {
         before: bool,
         /// New choice.
         after: bool,
+    },
+    /// Replaces the blend settings (spec.md 8, 12): the Blend entry's colour
+    /// and visibility, and the Blend settings dialog's sample counts,
+    /// smoothing, current correction, Stokes drift and default statistic.
+    SetBlendSettings {
+        /// Previous settings.
+        before: Box<BlendSettings>,
+        /// New settings.
+        after: Box<BlendSettings>,
+    },
+    /// Replaces the output grid (spec.md 12.2). Track segments are binned
+    /// onto it again; an edit on a node the new grid lacks is kept in the
+    /// overlay but has nothing to apply to.
+    SetOutputGrid {
+        /// Previous grid.
+        before: OutputGrid,
+        /// New grid.
+        after: OutputGrid,
     },
     /// Several commands as one history entry, e.g. a multi-file import.
     Batch {
@@ -498,6 +516,24 @@ impl Command {
                     "Stokes drift",
                 )
             }
+            Self::SetBlendSettings { before, after } => {
+                let (from, to) = if forward {
+                    (&**before, &**after)
+                } else {
+                    (&**after, &**before)
+                };
+                to.validate()?;
+                swap(&mut project.blend, from, to, "blend settings")
+            }
+            Self::SetOutputGrid { before, after } => {
+                let (from, to) = if forward {
+                    (&*before, &*after)
+                } else {
+                    (&*after, &*before)
+                };
+                to.validate()?;
+                swap(&mut project.grid, from, to, "output grid")
+            }
             Self::Batch { commands, .. } => {
                 if forward {
                     for (done, command) in commands.iter_mut().enumerate() {
@@ -612,9 +648,36 @@ impl Command {
             Self::SetSegmentStatistic { .. } => "Change segment statistic",
             Self::SetUseCorrected { .. } => "Change current correction",
             Self::SetStokesDrift { .. } => "Change Stokes drift",
+            Self::SetBlendSettings { before, after } => blend_label(before, after),
+            Self::SetOutputGrid { .. } => "Change the output grid",
             Self::Batch { label, .. } => return label.clone(),
         }
         .to_owned()
+    }
+}
+
+/// The history label of a change to the blend settings made in the dialog,
+/// also used for a batch of it with a new output grid.
+pub const BLEND_SETTINGS_LABEL: &str = "Change blend settings";
+
+/// Names a blend settings change by what it changes: the Blend entry's
+/// switch and colour have their own entries (spec.md 8).
+fn blend_label(before: &BlendSettings, after: &BlendSettings) -> &'static str {
+    let only = |f: fn(&mut BlendSettings, &BlendSettings)| {
+        let mut probe = before.clone();
+        f(&mut probe, after);
+        probe == *after
+    };
+    if before.visible != after.visible && only(|b, a| b.visible = a.visible) {
+        if after.visible {
+            "Show blend"
+        } else {
+            "Hide blend"
+        }
+    } else if before.colour != after.colour && only(|b, a| b.colour = a.colour.clone()) {
+        "Change blend colour"
+    } else {
+        BLEND_SETTINGS_LABEL
     }
 }
 
@@ -907,10 +970,12 @@ mod tests {
             Command::SetSegmentStatistic { .. } => "SetSegmentStatistic",
             Command::SetUseCorrected { .. } => "SetUseCorrected",
             Command::SetStokesDrift { .. } => "SetStokesDrift",
+            Command::SetBlendSettings { .. } => "SetBlendSettings",
+            Command::SetOutputGrid { .. } => "SetOutputGrid",
             Command::Batch { .. } => "Batch",
         }
     }
-    const VARIANTS: usize = 19;
+    const VARIANTS: usize = 21;
 
     fn edit(twa: f64, tws: f64, before: Option<f64>, after: Option<f64>) -> CellEdit {
         CellEdit {
@@ -1060,6 +1125,22 @@ mod tests {
                 before: false,
                 after: true,
             },
+            Command::SetBlendSettings {
+                before: Box::new(project.blend.clone()),
+                after: Box::new(BlendSettings {
+                    n_full: 12,
+                    smoothing: true,
+                    default_statistic: SegmentStatistic::Median,
+                    ..project.blend.clone()
+                }),
+            },
+            Command::SetOutputGrid {
+                before: project.grid.clone(),
+                after: OutputGrid {
+                    twa: vec![0.0, 45.0, 90.0, 135.0, 180.0],
+                    tws: vec![6.0, 12.5, 20.0],
+                },
+            },
             Command::Batch {
                 label: "Import polar files".to_owned(),
                 commands: vec![
@@ -1129,6 +1210,49 @@ mod tests {
         command.undo(&mut project).unwrap();
         assert_eq!(project, before);
         assert_eq!(project.sources[2].track().unwrap().samples.len(), 3);
+    }
+
+    /// The Blend entry's switch and colour name their own history entries;
+    /// anything else is a blend settings change. A grid the editor would
+    /// refuse is refused here too.
+    #[test]
+    fn blend_settings_commands_name_what_they_change_and_refuse_bad_values() {
+        let project = fixtures::project();
+        let base = project.blend.clone();
+        let with = |f: fn(&mut BlendSettings)| {
+            let mut after = base.clone();
+            f(&mut after);
+            Command::SetBlendSettings {
+                before: Box::new(base.clone()),
+                after: Box::new(after),
+            }
+        };
+        assert_eq!(with(|b| b.visible = false).label(), "Hide blend");
+        assert_eq!(
+            with(|b| b.colour = Colour::trusted("#123456")).label(),
+            "Change blend colour"
+        );
+        assert_eq!(
+            with(|b| {
+                b.visible = false;
+                b.n_full = 3;
+            })
+            .label(),
+            BLEND_SETTINGS_LABEL
+        );
+        let mut bad = with(|b| b.min_samples = 0);
+        assert!(bad.apply(&mut project.clone()).is_err());
+
+        let mut grid = Command::SetOutputGrid {
+            before: project.grid.clone(),
+            after: OutputGrid {
+                twa: vec![40.0, 40.004],
+                tws: vec![10.0],
+            },
+        };
+        let mut target = project.clone();
+        assert!(grid.apply(&mut target).is_err());
+        assert_eq!(target, project);
     }
 
     #[test]

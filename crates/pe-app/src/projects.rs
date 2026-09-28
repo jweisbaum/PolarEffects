@@ -179,6 +179,9 @@ pub struct ProjectSummary {
     pub use_corrected: bool,
     /// Whether the global merged current includes Stokes drift.
     pub stokes_drift: bool,
+    /// The Blend entry: colour, visibility, coverage and settings
+    /// (spec.md 8, 12).
+    pub blend: crate::blend::BlendSummary,
 }
 
 impl ProjectSummary {
@@ -193,6 +196,7 @@ impl ProjectSummary {
                 SourceSummary::of(source, &derived)
             })
             .collect();
+        let blend = open.derived.blend(&open.project);
         let project = &open.project;
         Self {
             id: project.id.raw(),
@@ -209,6 +213,7 @@ impl ProjectSummary {
             redo_label: open.history.redo_label().map(str::to_owned),
             use_corrected: project.blend.use_corrected,
             stokes_drift: project.blend.include_stokes_drift,
+            blend: crate::blend::BlendSummary::of(project, &blend),
         }
     }
 }

@@ -335,8 +335,8 @@ button.icon-button { padding: 0 5px; line-height: 16px; font-size: 11px; }
 .source-row { position: relative; padding: 4px 0; border-bottom: 1px solid var(--border-subtle); }
 .source-row.hidden-source .source-line > :not(input[type="checkbox"]) { opacity: 0.5; }
 .source-row.dragging { opacity: 0.4; }
-.blend-row { display: flex; align-items: center; gap: 6px; }
-.blend-swatch { background: var(--highlight); }
+/* The Blend entry: two lines like a source, its name in bold. */
+.blend-row .blend-label { font-weight: 600; }
 .source-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .source-line + .source-line { margin-top: 3px; padding-left: 18px; }
 .drag-handle { cursor: grab; color: var(--muted); user-select: none; width: 12px; text-align: center; }
@@ -776,6 +776,26 @@ button.source-label:hover { border-color: var(--border); background: var(--raise
   letter-spacing: 0.05em;
 }
 .modal.settings p { font-size: 12px; margin: 4px 0; }
+
+/* Blend settings and export (spec.md 12) */
+.axis-field { align-items: flex-start; }
+.axis-field textarea {
+  flex: 1;
+  min-width: 0;
+  resize: vertical;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+.modal.settings.export-dialog { width: min(760px, 94vw); max-width: none; }
+.export-format, .export-grid { border: none; margin: 8px 0; padding: 0; display: grid; gap: 4px; }
+.export-format legend, .export-grid legend { color: var(--muted); font-size: 12px; margin-bottom: 2px; }
+.export-preview { max-height: 34vh; overflow: auto; margin: 8px 0 12px; border: 1px solid var(--border-subtle); }
+.export-preview table { border-collapse: collapse; font-size: 11px; font-variant-numeric: tabular-nums; width: 100%; }
+.export-preview th, .export-preview td { padding: 2px 6px; text-align: right; border-bottom: 1px solid var(--border-subtle); }
+.export-preview thead th { position: sticky; top: 0; background: var(--panel); color: var(--muted); }
+.export-preview tbody th { color: var(--muted); }
+.export-preview td.filled { color: var(--muted); font-style: italic; }
 .settings-field {
   display: flex;
   align-items: center;

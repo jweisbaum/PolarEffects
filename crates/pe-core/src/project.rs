@@ -9,6 +9,7 @@ use crate::error::{CoreError, Result};
 use crate::id::{MAX_ID, ProjectId, SampleId, SourceId, TrackId};
 use crate::polar::validate_axis;
 use crate::source::{Colour, PALETTE, Source};
+use crate::track::SegmentStatistic;
 
 /// The document schema version this build writes.
 ///
@@ -35,6 +36,65 @@ pub struct OutputGrid {
     /// True wind speeds, knots, strictly increasing.
     #[serde(with = "canonical::knots_list")]
     pub tws: Vec<f64>,
+}
+
+/// The most values an output grid axis may have: what a polar file may hold
+/// (pe-polar's `MAX_AXIS_VALUES`), so every export reads back.
+pub const MAX_GRID_VALUES: usize = 512;
+
+/// The highest wind speed an output grid may have, knots: what a polar file
+/// may hold (spec.md 6).
+pub const MAX_GRID_TWS_KN: f64 = 70.0;
+
+/// The smallest step between two values of an output grid axis. Export
+/// writes axes with two decimals (spec.md 6), so two values closer than
+/// this would be written as one and the file would not read back
+/// (plan.md M14, carried from M4).
+pub const GRID_STEP: f64 = 0.01;
+
+/// Checks one output grid axis (spec.md 12.2): at least one value, at most
+/// [`MAX_GRID_VALUES`], each finite in `0..=max` with at most two decimals,
+/// strictly increasing — so no two are closer than [`GRID_STEP`] and every
+/// value is written exactly as it is.
+pub fn validate_grid_axis(axis: &[f64], name: &str, max: f64) -> Result<()> {
+    if axis.is_empty() {
+        return Err(CoreError::Invalid(format!("the {name} axis has no values")));
+    }
+    if axis.len() > MAX_GRID_VALUES {
+        return Err(CoreError::Invalid(format!(
+            "the {name} axis has more than {MAX_GRID_VALUES} values"
+        )));
+    }
+    for value in axis {
+        if !value.is_finite() || *value < 0.0 || *value > max {
+            return Err(CoreError::Invalid(format!(
+                "{name} value {value} is outside 0..={max}"
+            )));
+        }
+        let hundredths = value * 100.0;
+        if (hundredths - hundredths.round()).abs() > 1e-6 {
+            return Err(CoreError::Invalid(format!(
+                "{name} value {value} has more than two decimals"
+            )));
+        }
+    }
+    for pair in axis.windows(2) {
+        if pair[1] - pair[0] < GRID_STEP - 1e-9 {
+            return Err(CoreError::Invalid(format!(
+                "{name} values {} and {} are not increasing by at least {GRID_STEP}",
+                pair[0], pair[1]
+            )));
+        }
+    }
+    Ok(())
+}
+
+impl OutputGrid {
+    /// Checks both axes (see [`validate_grid_axis`]).
+    pub fn validate(&self) -> Result<()> {
+        validate_grid_axis(&self.twa, "TWA", 180.0)?;
+        validate_grid_axis(&self.tws, "TWS", MAX_GRID_TWS_KN)
+    }
 }
 
 impl Default for OutputGrid {
@@ -68,6 +128,31 @@ pub struct BlendSettings {
     pub colour: Colour,
     /// Whether the blend is drawn.
     pub visible: bool,
+    /// The per-cell statistic a newly imported track starts with (spec.md
+    /// 12.1); each track keeps its own after that.
+    pub default_statistic: SegmentStatistic,
+}
+
+/// The most samples a cell may be asked to need, or to reach full
+/// confidence at: far beyond any real track, small enough to stay sane.
+pub const MAX_SAMPLE_SETTING: u32 = 1_000_000;
+
+impl BlendSettings {
+    /// Checks the sample counts: at least one, at most
+    /// [`MAX_SAMPLE_SETTING`].
+    pub fn validate(&self) -> Result<()> {
+        for (name, value) in [
+            ("minimum samples per cell", self.min_samples),
+            ("samples for full confidence", self.n_full),
+        ] {
+            if value == 0 || value > MAX_SAMPLE_SETTING {
+                return Err(CoreError::Invalid(format!(
+                    "the {name} must be 1 to {MAX_SAMPLE_SETTING}, not {value}"
+                )));
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Default for BlendSettings {
@@ -80,6 +165,7 @@ impl Default for BlendSettings {
             include_stokes_drift: false,
             colour: Colour::trusted("#ffffff"),
             visible: true,
+            default_statistic: SegmentStatistic::default(),
         }
     }
 }
@@ -225,6 +311,7 @@ impl Project {
         }
         validate_axis(&self.grid.twa, "output TWA", 0.0, 180.0)?;
         validate_axis(&self.grid.tws, "output TWS", 0.0, f64::MAX)?;
+        self.blend.validate()?;
 
         if self.next_id > MAX_ID + 1 {
             return Err(CoreError::Invalid(format!(
@@ -300,6 +387,43 @@ mod tests {
         assert_eq!(p.blend.n_full, 30);
         assert!(p.blend.use_corrected);
         p.validate().unwrap();
+    }
+
+    /// The output grid editor's rules (spec.md 12.2, plan.md M14): two
+    /// decimals at most, strictly increasing by at least 0.01, in range.
+    #[test]
+    fn an_output_grid_axis_must_write_back_exactly() {
+        OutputGrid::default().validate().unwrap();
+        validate_grid_axis(&[0.0, 42.5, 42.51, 180.0], "TWA", 180.0).unwrap();
+        for bad in [
+            vec![],
+            vec![40.0, 40.0],
+            vec![45.0, 40.0],
+            vec![40.0, 40.005],
+            vec![40.125],
+            vec![-1.0],
+            vec![181.0],
+            vec![f64::NAN],
+        ] {
+            assert!(
+                validate_grid_axis(&bad, "TWA", 180.0).is_err(),
+                "{bad:?} should be refused"
+            );
+        }
+        assert!(validate_grid_axis(&[71.0], "TWS", MAX_GRID_TWS_KN).is_err());
+        let long: Vec<f64> = (0..=MAX_GRID_VALUES).map(|k| k as f64 / 100.0).collect();
+        assert!(validate_grid_axis(&long, "TWA", 180.0).is_err());
+    }
+
+    #[test]
+    fn blend_sample_counts_are_at_least_one() {
+        let mut blend = BlendSettings::default();
+        blend.validate().unwrap();
+        blend.n_full = 0;
+        assert!(blend.validate().is_err());
+        blend.n_full = 30;
+        blend.min_samples = MAX_SAMPLE_SETTING + 1;
+        assert!(blend.validate().is_err());
     }
 
     #[test]

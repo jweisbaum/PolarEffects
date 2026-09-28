@@ -13,6 +13,7 @@ import type { ProjectSummary } from "../generated/ProjectSummary";
 import type { SourceSummary } from "../generated/SourceSummary";
 import type { TrackFileInspection } from "../generated/TrackFileInspection";
 import type { TrackSummary } from "../generated/TrackSummary";
+import { TEST_BLEND } from "../testBlend";
 
 const calls: [string, unknown][] = [];
 /** A response that is a failure, as Rust sends one. */
@@ -53,7 +54,7 @@ const SOURCE: SourceSummary = {
 };
 const project = (sources: SourceSummary[]): ProjectSummary => ({
   id: 1, name: "P", path: null, dirty: false, revision: 1, boat_name: "", boat_notes: "", sources,
-  can_undo: false, can_redo: false, undo_label: null, redo_label: null, use_corrected: true, stokes_drift: false,
+  can_undo: false, can_redo: false, undo_label: null, redo_label: null, use_corrected: true, stokes_drift: false, blend: TEST_BLEND,
 });
 
 const CSV: TrackFileInspection = {

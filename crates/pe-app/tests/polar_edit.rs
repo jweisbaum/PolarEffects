@@ -346,8 +346,8 @@ fn an_edit_reaches_the_3d_scene_and_the_2d_curves() {
     // In edit mode on the track, its segment joins the scene.
     let plain = polar3d::scene_bytes_for(&app, None, None).unwrap();
     let focused = polar3d::scene_bytes_for(&app, Some(2), None).unwrap();
-    assert_eq!(word(&plain, 5), 1, "the file's surface");
-    assert_eq!(word(&focused, 5), 2, "and the track's segment");
+    assert_eq!(word(&plain, 5), 2, "the file's surface and the blend's");
+    assert_eq!(word(&focused, 5), 3, "and the track's segment");
     assert_eq!(word(&focused, 3), 8 + 1, "and its one cell with a value");
 }
 

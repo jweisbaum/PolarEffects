@@ -39,6 +39,9 @@ tauri-plugin-dialog = "2.7.3"
 [dev-dependencies]
 # Writing a project archive by hand, for the newer-schema refusal test.
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+# Pinning the export hashes the CI matrix compares (invariant 5, plan.md M14).
+# Pure Rust, already in the lock file through Tauri.
+sha2 = "0.10.9"
 
 [lints]
 workspace = true

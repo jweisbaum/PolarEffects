@@ -56,6 +56,8 @@ as the foundation of `pe-env`, `pe-trackers` and `ui/src/polar/`.
   tracks < 2 s are not exercised by these spikes: no evidence against,
   measured in M5, M8 and M14. ORC search, measured in M5: p99 2.4 ms per
   keystroke over the full catalogue (debug build, Intel i9) — **go**.
+  Blend, measured in M14: 1.0 ms after an edit at 20 sources and 200k
+  samples (debug build) — **go**.
 - *D19 decided*: hourly stays the default (see §5).
 
 ---
@@ -622,7 +624,7 @@ Blend settings, which arrive in M14.
 
 ---
 
-### M14 — Blend and export
+### M14 — Blend and export · **complete**
 
 **Deliverables**
 
@@ -633,6 +635,45 @@ Blend settings, which arrive in M14.
 
 **Acceptance:** golden exports; byte-identical on all five targets (CI
 compares hashes).
+
+Built as specified (spec.md §8, §9.2, §10.1, §12.2–12.4, D23).
+`pe-polar::blend::blend` is the one function holding the rule (weighted
+mean, `w = weight × confidence`, `min(1, n / n_full)` for track cells;
+fill along TWA, then TWS, only between known values; 0° row 0 kn; optional
+3×3 binomial smoothing; per-cell origin for coverage); `blend::on_grid`
+reads a polar source onto the output grid with every cell read from an
+excluded node empty. `pe-polar::export` checks a grid writes back (axis
+collisions named, out-of-range axes, > 60 kn, nothing to write) before the
+writers run. `pe-core` gains `BlendSettings::default_statistic` (serde
+default, no schema bump; new tracks start with it), strict
+`OutputGrid::validate` (1–512 values, two decimals, ≥ 0.01 apart, TWA
+0–180, TWS 0–70) and `Command::SetBlendSettings` / `SetOutputGrid` (the
+dialog's Apply is one entry; the Blend entry's switch and colour name their
+own). `pe-app/src/blend.rs` assembles the blend from the derived cache for
+the views (cached by the visible sources' `Arc`s, weights, grid, `n_full`
+and smoothing) and **from scratch for export** (`blend::fresh`); new IPC:
+`set_blend_visible`, `set_blend_colour`, `set_blend_settings`,
+`export_preview`, `export_polar`; `ProjectSummary.blend`; the 2D plot's
+`blend` is now a list of curves; the 3D scene sends the blend surface
+(`BLEND_SOURCE`). Frontend: the Blend row (colour, show/hide, coverage,
+Blend settings, Export…), `BlendSettingsDialog`, `ExportDialog` (format,
+project or custom grid, preview table, native save dialog), `axes.ts` (the
+grid editor's rules, the M4 carry). Carried items: M4 — export refuses
+colliding axes naming both values, the grid editor refuses values closer
+than 0.01, and a property test re-imports every export as the grid written
+(`pe-polar/tests/blend.rs`); M6 — the plot's hover layout includes the blend
+(`plotMaxBsp`); M7 — the blend surface takes the Blend entry's colour and
+the 3D bounds include it. Acceptance: golden files
+`pe-polar/tests/golden/blend.{txt,pol,csv}` (a fixed blend, two cells worked
+by hand) and the SHA-256 of a fixed project's three exports pinned in
+`pe-app/tests/export.rs`, run by every CI target that runs tests (four;
+Windows ARM64 builds its tests but cannot run them on the hosted runner).
+
+*Measured 2026-09-28 on the development machine* (Intel i9, debug build,
+`perf_edit`): the blend after an edit at 20 polar sources and 20 tracks ×
+10,000 samples 1.0 ms (budget 50 ms); an export from scratch (every segment
+binned again) 70.5 ms; edit → every view 73, 73 and 92 ms (M13: 61, 67,
+97), the summary now carrying the blend's coverage.
 
 ---
 
@@ -724,6 +765,7 @@ jieter/orc-data MIT), user guide.
 | D19 | Reanalysis sampling hourly by default, 3-hourly option; the pre-flight dialog preselects 3-hourly when the hourly download would exceed half the chunk-cache limit | Confirmed by M3: a 5-day race hourly is ≈ 1.2 GB and ≈ 40 s cold at 8 requests in flight, and a warm chunk is 3 ms. Hourly resolves wind shifts and tidal streams that 3-hourly smooths. A long race is different: the Vendée Globe hourly would be ≈ 19 GB, about the whole default cache, which is when 3-hourly is the better default |
 | D20 | Current tiers: regional tidal reanalysis → global merged (uo + utide, 2020-11+) → GlobCurrent (geostrophic + Ekman + FES2022 tide, 1993+; its 202411 metadata, checked 2026-09-28, Q7) | Only anonymous sources; GlobCurrent (FES2022) gives tides globally from 1993, not only NW Europe/IBI |
 | D21 | 2D polar plot (M6): "All" draws one curve per visible source per wind speed that source's grid has; curves are read at each source's own TWA points; the full-size view is a Map-stage overlay toggled by the shell, closed by its own button, Escape or a stage switch | Spec §9.2 named the slider's "all" state and the full-size overlay without saying what either draws or how the overlay opens and closes |
+| D23 | Blend and export (M14): an output cell read from an excluded node of a polar source is empty for that source (not read across it); the fill steps interpolate only between known values and the 0° row takes no part in them (set to 0 kn last, "filled" unless a source had it); sources are summed in id order and cells rounded to 1e-6 kn; the Blend settings dialog applies as one undo entry, the Blend entry's switch and colour as their own; the grid editor takes two decimals at most (≥ 0.01 apart); a custom export grid is the project-grid blend resampled; export refuses axis collisions, > 60 kn and an empty blend, naming the values | Spec §12.3 named the rule and the fill order without saying how exclusions reach a resampled cell, whether the 0° row anchors the fill, the summation order or how settings are undone; §12.2 and the M4 carry left the grid editor's precision open |
 | D22 | Polar edits and segments (M13): one `EditCells` command for every edit tool (overrides before/after per cell, the tool naming the undo entry, drags coalescing); segment bins are half-steps around each output-grid node with nothing beyond the outer half-steps, and nothing is binned into a 0° TWA node (samples nearest 0° are dropped, not moved: the 0° row is 0 kn, spec §12.3; controller ruling); spread is the sample standard deviation; smooth is the 3×3 binomial kernel over neighbours with a value as the blend reads them (excluded nodes take no part; controller ruling); the 3D samples key mixes a per-opening nonce, so two openings never share one; views show sources as edited, and the 2D curves also leave excluded nodes out | Spec §10.4 and §12.1 named the tools, the statistic and "count and spread" without the binning edges, the spread measure, the kernel or how undo groups them |
 
 ## 6. Settled before coding started

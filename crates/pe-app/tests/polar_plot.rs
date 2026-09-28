@@ -115,7 +115,7 @@ fn the_plot_needs_an_open_project() {
 }
 
 #[test]
-fn dots_and_the_blend_are_always_empty_for_now() {
+fn without_tracks_there_are_no_dots_and_the_blend_is_between_the_sources() {
     let root = TempRoot::new("plot-placeholders");
     let app = project_with_orc_and_file(&root);
     let result = plot(&app, Some(10.0)).unwrap();
@@ -125,5 +125,18 @@ fn dots_and_the_blend_are_always_empty_for_now() {
             .is_empty(),
         "no track exists"
     );
-    assert!(result.blend.is_none(), "the blend arrives in M14");
+    // The blend at 10 kn, 60°: the mean of the certificate and the file's
+    // 7.0 kn, both at weight 1 (spec.md 12.3).
+    assert_eq!(result.blend.len(), 1);
+    let at_60 = |points: &[pe_app::polar_plot::PolarCurvePoint]| {
+        points.iter().find(|p| p.twa == 60.0).map(|p| p.bsp)
+    };
+    let orc = result
+        .curves
+        .iter()
+        .find(|c| c.label != "File")
+        .and_then(|c| at_60(&c.points))
+        .unwrap();
+    let blend = at_60(&result.blend[0].points).unwrap();
+    assert!((blend - (orc + 7.0) / 2.0).abs() < 1e-6, "{blend} vs {orc}");
 }

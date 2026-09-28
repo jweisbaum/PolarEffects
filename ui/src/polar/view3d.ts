@@ -313,6 +313,14 @@ export function sceneBounds(packet: ScenePacket, layout: Layout): Bounds {
   for (const set of [packet.nodes, packet.samples]) {
     for (let k = 0; k < set.count; k++) add(set.points[k * 3]!, set.points[k * 3 + 1]!, set.points[k * 3 + 2]!);
   }
+  // The blend has no nodes of its own; its surface belongs in the view.
+  for (const surface of packet.surfaces) {
+    if (surface.source !== BLEND_SOURCE) continue;
+    const nj = surface.tws.length;
+    surface.twa.forEach((twa, i) => {
+      surface.tws.forEach((tws, j) => add(twa, tws, surface.bsp[i * nj + j]!));
+    });
+  }
   if (!Number.isFinite(min[0])) {
     add(0, 0, 0);
     add(180, 20, 10);

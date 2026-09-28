@@ -41,6 +41,7 @@ function lineFor(kind: string): string | null {
     case "tracker-legacy": return t("This is an older tracker (Flash, or Geovoile before about 2016), which PolarEffects does not read.");
     case "tracker-network": return t("The tracker could not be reached or refused the request.");
     case "cancelled": return t("Cancelled.");
+    case "export-refused": return t("The polar cannot be exported as it is: its grid would not read back, or it holds nothing. The export dialog says which.");
     default: return null;
   }
 }

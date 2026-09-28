@@ -7,6 +7,8 @@ import { onReveal } from "../help/highlight";
 import { msg, useT } from "../i18n";
 import { api } from "../ipc";
 import { editSource } from "../polar/editFocus";
+import BlendSettingsDialog from "./BlendSettingsDialog";
+import ExportDialog from "./ExportDialog";
 import PALETTE from "./palette.json";
 
 /** A glyph and a name per kind of source. */
@@ -19,7 +21,9 @@ const KINDS: Readonly<Record<string, { glyph: string; name: string }>> = {
 let gestures = 0;
 
 /**
- * The source list (spec.md 8): the Blend entry at the top, then every source
+ * The source list (spec.md 8): the Blend entry at the top — its colour, a
+ * show or hide switch, its coverage (cells with direct evidence and cells
+ * filled), Blend settings and Export — then every source
  * with its colour (a palette of sixteen plus a custom picker), a show or hide
  * switch, its label (renamed in place), kind, count and blend weight, and
  * Edit, Compare and Remove. Rows reorder by dragging the handle, or with the
@@ -32,11 +36,14 @@ export default function SourceList({ project, onProject }: {
 }) {
   const t = useT();
   const [picking, setPicking] = useState<number | null>(null);
+  const [pickingBlend, setPickingBlend] = useState(false);
+  const [dialog, setDialog] = useState<"settings" | "export" | null>(null);
   const [renaming, setRenaming] = useState<{ id: number; text: string } | null>(null);
   const [dragging, setDragging] = useState<number | null>(null);
   const [weights, setWeights] = useState<Record<number, number>>({});
   const gesture = useRef<string | null>(null);
   const sources = project.sources;
+  const blend = project.blend;
   const first = useRef<number | null>(null);
   first.current = sources[0]?.id ?? null;
 
@@ -80,16 +87,45 @@ export default function SourceList({ project, onProject }: {
 
   return (
     <ul className="source-list">
-      {/* The blend (spec.md 8, 12): its controls arrive with the blend (M14). */}
-      <li className="source-row blend-row">
-        <span className="swatch blend-swatch" aria-hidden="true" />
-        <input type="checkbox" checked disabled data-feature="sources:blend-visible"
-          aria-label={t("Show the blend")} title={t("Show or hide the blend. Arrives with the blend.")} />
-        <span className="source-label">{t("Blend")}</span>
-        <button className="small" disabled data-feature="sources:blend-settings"
-          title={t("The output grid and how sources are blended. Arrives with the blend.")}>
-          {t("Blend settings")}
-        </button>
+      {/* The blend (spec.md 8, 12). */}
+      <li className={["source-row", "blend-row", blend.visible ? "" : "hidden-source"].join(" ").trim()}>
+        <div className="source-line">
+          <button className="swatch-button" data-feature="sources:blend-colour"
+            style={{ backgroundColor: blend.colour }} aria-expanded={pickingBlend}
+            title={t("Change the blend's colour")} aria-label={t("Blend colour")}
+            onClick={() => setPickingBlend(!pickingBlend)} />
+          <input type="checkbox" checked={blend.visible} data-feature="sources:blend-visible"
+            aria-label={t("Show the blend")}
+            title={t("Show or hide the blend in every plot. Export is not affected.")}
+            onChange={(event) => void run(api.setBlendVisible(event.target.checked))} />
+          <span className="source-label blend-label">{t("Blend")}</span>
+          <span className="muted source-count"
+            title={t("{direct} cells have direct evidence from a source, {filled} are filled between them (and the 0° row), {empty} stay empty.", { direct: blend.direct, filled: blend.filled, empty: blend.empty })}>
+            {t("{direct} direct, {filled} filled", { direct: blend.direct, filled: blend.filled })}
+          </span>
+        </div>
+        <div className="source-line">
+          <button className="small" data-feature="sources:blend-settings"
+            title={t("The output grid and how sources are blended")}
+            onClick={() => setDialog("settings")}>
+            {t("Blend settings")}
+          </button>
+          <button className="small" data-feature="sources:export"
+            title={t("Write the blend as an Expedition, Adrena or CSV polar")}
+            onClick={() => setDialog("export")}>
+            {t("Export…")}
+          </button>
+        </div>
+        {pickingBlend && (
+          <ColourPicker colour={blend.colour} onClose={() => setPickingBlend(false)}
+            onChoose={(colour) => {
+              if (colour !== blend.colour) void run(api.setBlendColour(colour));
+            }} />
+        )}
+        {dialog === "settings" && (
+          <BlendSettingsDialog project={project} onProject={onProject} onClose={() => setDialog(null)} />
+        )}
+        {dialog === "export" && <ExportDialog project={project} onClose={() => setDialog(null)} />}
       </li>
       {sources.length === 0 && <li className="muted placeholder">{t("No sources yet.")}</li>}
       {sources.map((source, index) => {

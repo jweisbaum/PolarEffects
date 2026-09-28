@@ -102,6 +102,17 @@ pub fn statistic_name(statistic: SegmentStatistic) -> &'static str {
     }
 }
 
+/// A statistic from its wire name.
+pub fn parse_statistic(name: &str) -> Option<SegmentStatistic> {
+    match name {
+        "median" => Some(SegmentStatistic::Median),
+        "mean" => Some(SegmentStatistic::Mean),
+        "p75" => Some(SegmentStatistic::P75),
+        "p90" => Some(SegmentStatistic::P90),
+        _ => None,
+    }
+}
+
 fn source_of(open: &OpenProject, id: u64) -> Result<Source> {
     open.project
         .source(SourceId(id))
@@ -317,13 +328,7 @@ pub fn segment_statistic_set(
     source_id: u64,
     statistic: &str,
 ) -> Result<ProjectSummary> {
-    let after = match statistic {
-        "median" => SegmentStatistic::Median,
-        "mean" => SegmentStatistic::Mean,
-        "p75" => SegmentStatistic::P75,
-        "p90" => SegmentStatistic::P90,
-        other => return Err(bad("Statistic", other)),
-    };
+    let after = parse_statistic(statistic).ok_or_else(|| bad("Statistic", statistic))?;
     crate::edit::apply(state, |project| {
         let source = project
             .source(SourceId(source_id))

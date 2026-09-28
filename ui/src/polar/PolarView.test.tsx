@@ -11,6 +11,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import type { ProjectSummary } from "../generated/ProjectSummary";
 import { FLAG_EXCLUDED, FLAG_FILTERED, type ScenePacket } from "./scenePacket";
+import { TEST_BLEND } from "../testBlend";
 
 const scenes = vi.hoisted(() => ({ made: [] as FakeScene[], fail: false, pick: -1 }));
 
@@ -79,7 +80,7 @@ function packet(excluded = false): ScenePacket {
 const project = (revision: number): ProjectSummary => ({
   id: 1, name: "P", path: null, dirty: false, revision, boat_name: "", boat_notes: "",
   sources: [{ id: 10, kind: "orc", label: "Farr 40", colour: "#ff0000", visible: true, weight: 1, count: 2, used: null, polar_file: null, orc: null, track: null, edits: 0 }],
-  can_undo: false, can_redo: false, undo_label: null, redo_label: null, use_corrected: true, stokes_drift: false,
+  can_undo: false, can_redo: false, undo_label: null, redo_label: null, use_corrected: true, stokes_drift: false, blend: TEST_BLEND,
 });
 
 const onProject = vi.fn();

@@ -14,6 +14,7 @@ import type { AppSettings } from "./generated/AppSettings";
 import type { OrcHit } from "./generated/OrcHit";
 import type { ProjectSummary } from "./generated/ProjectSummary";
 import type { SourceSummary } from "./generated/SourceSummary";
+import { TEST_BLEND } from "./testBlend";
 
 const invoke = vi.hoisted(() => vi.fn());
 const events = vi.hoisted(() => new Map<string, () => void>());
@@ -76,7 +77,7 @@ const HIT: OrcHit = {
 function summary(dirty: boolean, path: string | null = null, sources: SourceSummary[] = []): ProjectSummary {
   return {
     id: 1, name: "Fastnet", path, dirty, revision: 1, boat_name: "", boat_notes: "", sources,
-    can_undo: false, can_redo: false, undo_label: null, redo_label: null, use_corrected: true, stokes_drift: false,
+    can_undo: false, can_redo: false, undo_label: null, redo_label: null, use_corrected: true, stokes_drift: false, blend: TEST_BLEND,
   };
 }
 
@@ -152,6 +153,21 @@ function backend() {
           project, imported: ["boat.pol"],
           failures: [{ file: "bad.csv", line: 2, column: 6, reason: "not-a-number", message: "bad.csv, line 2, column 6: \"x\" is not a number" }],
         };
+      case "set_blend_visible":
+        project = project && { ...project, blend: { ...project.blend, visible: args?.visible as boolean } };
+        return project;
+      case "set_blend_colour": case "set_blend_settings": return project;
+      case "export_preview": {
+        const axes = args?.axes as { twa: number[]; tws: number[] } | null;
+        const twa = axes?.twa ?? [0, 90];
+        const tws = axes?.tws ?? [10];
+        return {
+          format: args?.format, twa, tws, bsp: twa.map((a) => tws.map(() => (a === 0 ? 0 : 7.5))),
+          origin: axes ? null : twa.map((a) => tws.map(() => (a === 0 ? "filled" : "direct"))),
+          text: "TWA\\TWS\t10\n0\t0.00\n90\t7.50\n", problem: null,
+        };
+      }
+      case "export_polar": return { path: args?.path, bytes: 31 };
       case "set_source_label": case "set_source_visible": case "set_source_colour": case "set_source_weight":
       case "move_source": case "remove_source": case "edit_polar": case "set_segment_statistic":
         return project;
@@ -196,9 +212,10 @@ const click = async (element: Element | null) => {
 };
 const buttonNamed = (text: string) =>
   [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === text) ?? null;
-const type = async (input: HTMLInputElement, text: string) => act(async () => {
+const type = async (input: HTMLInputElement | HTMLTextAreaElement, text: string) => act(async () => {
   input.focus();
-  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, text);
+  const prototype = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(prototype, "value")!.set!.call(input, text);
   input.dispatchEvent(new Event("input", { bubbles: true }));
 });
 
@@ -618,7 +635,9 @@ describe("finding every control (plan.md M2 acceptance)", () => {
         document.body.innerHTML = "";
       }
       await mount();
-    }, 60_000);
+      // One mount per control: about 0.3 s each, and M14 took the registry
+      // past 60 s on the development machine.
+    }, 180_000);
 
     it(`finds every start-screen control in ${lang}`, async () => {
       settings = { ...settings, language: lang };
@@ -679,9 +698,55 @@ describe("polar files and the source list (plan.md M4)", () => {
     expect(rows[1]!.textContent).toContain("71 cells");
     expect(rows[2]!.textContent).toContain("100/120 samples");
     expect(rows[2]!.classList.contains("hidden-source")).toBe(true);
-    expect((feature("sources:blend-settings") as HTMLButtonElement).disabled).toBe(true);
+    expect(rows[0]!.textContent).toContain("0 direct, 10 filled");
+    expect((feature("sources:blend-settings") as HTMLButtonElement).disabled).toBe(false);
     expect((feature("sources:edit") as HTMLButtonElement).disabled).toBe(false);
     expect((feature("sources:compare") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("shows and hides the blend, and applies Blend settings as one change (spec.md 8, 12)", async () => {
+    await open([POLAR]);
+    const visible = feature("sources:blend-visible") as HTMLInputElement;
+    await click(visible);
+    expect(commands("set_blend_visible")).toEqual([{ visible: false }]);
+    expect(q(".blend-row")!.classList.contains("hidden-source")).toBe(true);
+
+    await click(feature("sources:blend-settings"));
+    const twa = feature("blend-settings:twa") as HTMLTextAreaElement;
+    expect(twa.value).toBe("0, 30, 35, 40, 45, 52, 60, 70, 75, 80, 90, 100, 110, 120, 135, 150, 160, 170, 180");
+    const apply = () => buttonNamed("Apply") as HTMLButtonElement;
+    // Two values closer than 0.01 are refused before anything is sent (M4 carry).
+    await type(twa, "0, 40, 40.004, 180");
+    expect(q(".blend-settings .modal-error")!.textContent).toBe("40 and 40.004 are closer than 0.01: a polar file could not tell them apart.");
+    expect(apply().disabled).toBe(true);
+    await type(twa, "0, 45; 90 135 180");
+    await type(feature("blend-settings:n-full") as HTMLInputElement, "12");
+    await click(feature("blend-settings:smoothing"));
+    await click(apply());
+    expect(commands("set_blend_settings")).toEqual([{
+      settings: {
+        twa: [0, 45, 90, 135, 180], tws: [4, 6, 8, 10, 12, 14, 16, 20, 25, 30], min_samples: 5, n_full: 12,
+        smoothing: true, default_statistic: "p90", use_corrected: true, stokes_drift: false,
+      },
+    }]);
+    expect(feature("blend-settings:twa")).toBeNull();
+  });
+
+  it("previews the export on either grid and saves it through the native dialog (spec.md 12)", async () => {
+    await open([POLAR]);
+    await click(feature("sources:export"));
+    expect(commands("export_preview")).toEqual([{ format: "expedition", axes: null }]);
+    expect(q(".export-preview td.filled")!.textContent).toBe("0.00");
+    await click(feature("export:csv"));
+    await click(feature("export:custom-grid"));
+    await type(feature("export:custom-tws") as HTMLTextAreaElement, "8 12");
+    expect(commands("export_preview").at(-1)).toMatchObject({ format: "csv", axes: { tws: [8, 12] } });
+    expect(q(".export-preview thead")!.textContent).toContain("12");
+    dialog.save.mockResolvedValue("/boats/blend.csv");
+    await click(buttonNamed("Save…"));
+    expect(dialog.save.mock.calls.at(-1)![0]).toMatchObject({ defaultPath: "Fastnet.csv" });
+    expect(commands("export_polar")).toEqual([{ path: "/boats/blend.csv", format: "csv", axes: expect.objectContaining({ tws: [8, 12] }) }]);
+    expect(feature("export:preview")).toBeNull();
   });
 
   it("opens a source in the 3D stage to edit it, and a typed value is an edit in Rust (spec.md 10.4)", async () => {

@@ -80,3 +80,26 @@ export async function pickTrackFiles(): Promise<string[]> {
   if (Array.isArray(chosen)) return chosen.filter((path): path is string => typeof path === "string");
   return typeof chosen === "string" ? [chosen] : [];
 }
+
+/** The file extension each export format is written with (spec.md 6). */
+export const EXPORT_EXTENSIONS: Readonly<Record<string, string>> = {
+  expedition: "txt",
+  adrena: "pol",
+  csv: "csv",
+};
+
+/**
+ * Asks where to export the blend (spec.md 12), suggesting `<name>.<ext>`
+ * for the format. Returns null if the user cancelled.
+ */
+export async function pickExportPath(format: string, suggestedName: string): Promise<string | null> {
+  const extension = EXPORT_EXTENSIONS[format] ?? "txt";
+  const chosen = await whileChoosing(msg("Choosing where to export"), () =>
+    save({
+      title: t("Export the polar"),
+      defaultPath: `${suggestedName}.${extension}`,
+      filters: [{ name: t("Polar file"), extensions: [extension] }],
+    }),
+  );
+  return typeof chosen === "string" ? chosen : null;
+}

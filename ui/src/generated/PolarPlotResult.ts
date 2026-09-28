@@ -24,6 +24,8 @@ curves: Array<PolarCurve>,
  */
 band_kn: number,
 /**
- * The blend at the slice; `None` until the blend arrives (M14).
+ * The blend at the slice, or one curve per output-grid wind speed in
+ * "all"; empty while the Blend entry is hidden. `source_id` is null
+ * and `label` is "Blend", which the interface translates.
  */
-blend: PolarCurve | null, };
+blend: Array<PolarCurve>, };

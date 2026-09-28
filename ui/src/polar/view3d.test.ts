@@ -206,6 +206,15 @@ describe("cameras and guides (spec.md 10.1)", () => {
     expect(bounds.max).toEqual(place(150, 16, 10, "cartesian"));
   });
 
+  it("bounds the blend surface too, which has no nodes of its own", () => {
+    const p = packet();
+    p.surfaces.push({
+      source: BLEND_SOURCE, twa: Float32Array.from([90, 170]), tws: Float32Array.from([30]),
+      bsp: Float32Array.from([12, Number.NaN]),
+    });
+    expect(sceneBounds(p, "cartesian").max).toEqual(place(150, 30, 12, "cartesian"));
+  });
+
   it("chooses round ticks", () => {
     expect(ticks(10, 5)).toEqual([0, 2, 4, 6, 8, 10]);
     expect(ticks(23, 4)).toEqual([0, 10, 20]);

@@ -32,8 +32,11 @@
 //! ```
 //!
 //! A sample has a place only once it has wind (M9): until then it is left
-//! out rather than drawn somewhere invented. The blend is a hook returning
-//! `None` until the blend itself lands (M14) — nothing here fabricates one.
+//! out rather than drawn somewhere invented.
+//!
+//! The blend (spec.md 12.3) is drawn from `pe_polar::blend`'s grid when the
+//! Blend entry is shown: at the slice, or one curve per output-grid wind
+//! speed in "all", read the same way as a source's curves.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -121,26 +124,68 @@ pub struct PolarPlotResult {
     pub curves: Vec<PolarCurve>,
     /// The band used for the dots, knots.
     pub band_kn: f64,
-    /// The blend at the slice; `None` until the blend arrives (M14).
-    pub blend: Option<PolarCurve>,
+    /// The blend at the slice, or one curve per output-grid wind speed in
+    /// "all"; empty while the Blend entry is hidden. `source_id` is null
+    /// and `label` is "Blend", which the interface translates.
+    pub blend: Vec<PolarCurve>,
 }
 
-/// One curve of `grid` at `tws`, read at every one of the grid's own TWA
+/// The label a blend curve carries: an English key the interface translates.
+pub const BLEND_LABEL: &str = "Blend";
+
+/// The points of `grid` at `tws`, read at every one of the grid's own TWA
 /// angles (no extrapolation, gaps stay gaps).
-fn curve_at(source: &Source, grid: &Polar, tws: f64) -> PolarCurve {
-    let points = grid
-        .twa
+fn points_at(grid: &Polar, tws: f64) -> Vec<PolarCurvePoint> {
+    grid.twa
         .iter()
         .filter_map(|&twa| {
             pe_polar::interpolate(grid, twa, tws).map(|bsp| PolarCurvePoint { twa, bsp })
         })
-        .collect();
+        .collect()
+}
+
+/// One curve of a source's `grid` at `tws`.
+fn curve_at(source: &Source, grid: &Polar, tws: f64) -> PolarCurve {
     PolarCurve {
         source_id: Some(source.id.raw()),
         label: source.label.clone(),
         colour: source.colour.to_string(),
         tws,
-        points,
+        points: points_at(grid, tws),
+    }
+}
+
+/// The blend's wind speeds that hold a value off the 0° row (which is 0 kn
+/// everywhere by definition, so says nothing about where the blend reaches).
+fn blend_speeds(blend: &Polar) -> Vec<f64> {
+    blend
+        .tws
+        .iter()
+        .enumerate()
+        .filter(|(j, _)| {
+            blend
+                .twa
+                .iter()
+                .enumerate()
+                .any(|(i, twa)| *twa > 0.0 && blend.get(i, *j).is_some())
+        })
+        .map(|(_, tws)| *tws)
+        .collect()
+}
+
+/// The blend's curves: at the slice, or at each of its wind speeds with a
+/// value.
+fn blend_curves(project: &pe_core::Project, blend: &Polar, tws: Option<f64>) -> Vec<PolarCurve> {
+    let curve = |tws: f64| PolarCurve {
+        source_id: None,
+        label: BLEND_LABEL.to_owned(),
+        colour: project.blend.colour.to_string(),
+        tws,
+        points: points_at(blend, tws),
+    };
+    match tws {
+        Some(value) => vec![curve(value)],
+        None => blend_speeds(blend).into_iter().map(curve).collect(),
     }
 }
 
@@ -278,14 +323,18 @@ pub fn plot(state: &AppState, tws: Option<f64>) -> Result<PolarPlotResult> {
         let band = session.settings.plot_tws_band_kn;
         let open = session.require_open()?;
         let derived = open.derived.visible(&open.project);
-        Ok(plot_of(&open.project, &derived, tws, band))
+        let blend = open.derived.blend(&open.project);
+        let shown = open.project.blend.visible.then_some(&blend.polar);
+        Ok(plot_of(&open.project, &derived, shown, tws, band))
     })
 }
 
-/// The curves from each visible source's derived data.
+/// The curves from each visible source's derived data, and the blend's
+/// when it is shown (`blend`).
 pub fn plot_of(
     project: &pe_core::Project,
     derived: &BTreeMap<u64, Arc<Derived>>,
+    blend: Option<&Polar>,
     tws: Option<f64>,
     band: f64,
 ) -> PolarPlotResult {
@@ -301,15 +350,25 @@ pub fn plot_of(
         })
         .collect();
 
-    let tws_min = grids
+    // The blend's wind speeds with a value count toward the slider's range.
+    let blend = blend.filter(|grid| !blend_speeds(grid).is_empty());
+    let spans: Vec<(f64, f64)> = grids
         .iter()
-        .filter_map(|(_, grid)| grid.tws.first().copied())
+        .filter_map(|(_, grid)| Some((*grid.tws.first()?, *grid.tws.last()?)))
+        .chain(blend.and_then(|grid| {
+            let speeds = blend_speeds(grid);
+            Some((*speeds.first()?, *speeds.last()?))
+        }))
+        .collect();
+    let tws_min = spans
+        .iter()
+        .map(|(low, _)| *low)
         .fold(None, |acc: Option<f64>, value| {
             Some(acc.map_or(value, |current| current.min(value)))
         });
-    let tws_max = grids
+    let tws_max = spans
         .iter()
-        .filter_map(|(_, grid)| grid.tws.last().copied())
+        .map(|(_, high)| *high)
         .fold(None, |acc: Option<f64>, value| {
             Some(acc.map_or(value, |current| current.max(value)))
         });
@@ -334,9 +393,9 @@ pub fn plot_of(
         tws_max,
         curves,
         band_kn: band,
-        // The blend is derived by pe-polar once it exists (M14,
-        // invariant 2: never fabricated here in the meantime).
-        blend: None,
+        blend: blend
+            .map(|grid| blend_curves(project, grid, tws))
+            .unwrap_or_default(),
     }
 }
 
@@ -607,10 +666,23 @@ mod tests {
         .unwrap()
     }
 
+    /// The blend is drawn at the slice in its own colour, one curve per
+    /// output-grid wind speed in "all", and not at all once hidden.
     #[test]
-    fn the_blend_is_none_until_it_arrives() {
+    fn the_blend_is_drawn_while_shown() {
         let app = two_sources();
-        assert_eq!(plot(&app, None).unwrap().blend, None);
+        let slice = plot(&app, Some(10.0)).unwrap();
+        assert_eq!(slice.blend.len(), 1);
+        let curve = &slice.blend[0];
+        assert_eq!((curve.source_id, curve.label.as_str()), (None, BLEND_LABEL));
+        assert_eq!(curve.colour, "#ffffff");
+        assert!(!curve.points.is_empty());
+        // A (6–12 kn) and B (10 kn) reach the grid's 6, 8, 10 and 12 kn.
+        let all = plot(&app, None).unwrap();
+        let speeds: Vec<f64> = all.blend.iter().map(|c| c.tws).collect();
+        assert_eq!(speeds, [6.0, 8.0, 10.0, 12.0]);
+        crate::blend::blend_visible_set(&app, false).unwrap();
+        assert!(plot(&app, Some(10.0)).unwrap().blend.is_empty());
     }
 
     #[test]

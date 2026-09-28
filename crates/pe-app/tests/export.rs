@@ -1,0 +1,467 @@
+#![allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    reason = "test code; clippy's allow-in-tests does not reach tests/"
+)]
+//! The blend, its settings and its export end to end (spec.md 8, 12, 6),
+//! through the functions the Tauri commands call.
+//!
+//! **The CI matrix compares these hashes** (invariant 5, plan.md M14): a
+//! fixed project — an ORC certificate, an edited polar file with an excluded
+//! node, a track with current-corrected samples, and a hidden source — is
+//! exported in all three formats, and the SHA-256 of each file is pinned
+//! here. Every target that runs the suite (macOS Intel and Apple silicon,
+//! Windows x64, Linux) must produce the same bytes. Changing them is
+//! changing export output (CLAUDE.md, "Changing export output").
+
+mod common;
+
+use common::TempRoot;
+use pe_app::blend::{self, BlendSettingsInput, ExportAxes};
+use pe_app::{edit, projects};
+use pe_core::orc::{OrcRecord, OrcSize, OrcVpp};
+use pe_core::polar::PolarFileFormat;
+use pe_core::source::{CellOverride, CellRef};
+use pe_core::track::{Fix, Sample, Track, TrackOrigin};
+use pe_core::{Boat, Colour, Command, Project, SampleId, Source, SourceKind, TrackId};
+use sha2::{Digest, Sha256};
+
+const EXPEDITION: &[u8] = include_bytes!("../../pe-polar/tests/golden/expedition.txt");
+
+/// The pinned SHA-256 of the fixed project's exports.
+const EXPEDITION_SHA256: &str = "018cc7a603f6944f18489019d4aed41a3062d35bab6e16d6aea65752bd720005";
+const ADRENA_SHA256: &str = "b1dff1adb1a65b2e238bca7ed09bbd4aba290d624815fb5d45f6c474057a1052";
+const CSV_SHA256: &str = "6e50ad6c2333f697848c0ce08d68a9348c9b406f181e3f5802969964aec3a910";
+
+fn orc() -> OrcRecord {
+    let angles = vec![52.0, 60.0, 75.0, 90.0, 110.0, 120.0, 135.0, 150.0];
+    let speeds = vec![6.0, 8.0, 10.0, 12.0, 14.0, 16.0, 20.0];
+    // Boat speeds from a formula in hundredths, so the fixture is plain
+    // data: faster with wind, fastest near a beam reach.
+    let bsp = angles
+        .iter()
+        .map(|a: &f64| {
+            speeds
+                .iter()
+                .map(|s: &f64| {
+                    let reach = 100.0 - (a - 105.0).abs();
+                    let hundredths = (300.0 + s * 38.0 + reach * 1.5 - s * s * 0.6).round();
+                    Some(hundredths / 100.0)
+                })
+                .collect()
+        })
+        .collect();
+    OrcRecord {
+        ref_no: Some("EXPORT0001".to_owned()),
+        sail_no: "GBR 1".to_owned(),
+        country: "GBR".to_owned(),
+        name: "Export Fixture".to_owned(),
+        model: Some("Fixture 40".to_owned()),
+        builder: None,
+        designer: None,
+        year: Some(2020),
+        certificate_year: Some(2025),
+        size: OrcSize::default(),
+        gph: Some(560.0),
+        osn: None,
+        vpp: OrcVpp {
+            angles,
+            speeds,
+            bsp,
+            beat_angle: vec![44.5, 42.0, 40.5, 39.0, 38.5, 38.0, 38.5],
+            beat_vmg: vec![3.9, 4.6, 5.1, 5.45, 5.7, 5.85, 6.0],
+            run_angle: vec![142.0, 146.0, 150.0, 160.0, 168.0, 172.0, 176.0],
+            run_vmg: vec![4.1, 5.0, 5.8, 6.5, 7.1, 7.6, 8.6],
+        },
+    }
+}
+
+/// A track of 600 samples over the polar, every second one with a current
+/// correction, all from integer arithmetic.
+fn track() -> Track {
+    let mut track = Track::new(
+        TrackId(20),
+        TrackOrigin::File {
+            name: "race.csv".to_owned(),
+            boat_name: None,
+        },
+    );
+    for k in 0..600u32 {
+        let fix = Fix {
+            t: 1_750_000_000 + i64::from(k) * 60,
+            lat: 50.0,
+            lon: -1.0,
+            cog: None,
+            sog: None,
+        };
+        let mut sample = Sample::at(SampleId(1_000 + u64::from(k)), k, &fix);
+        let twa = 30.0 + f64::from(k * 7 % 150);
+        let tws = 5.0 + f64::from(k * 3 % 22) + 0.25;
+        let bsp =
+            (300.0 + tws * 30.0 + (twa - 30.0) * 1.2 + f64::from(k % 5) * 10.0).round() / 100.0;
+        sample.twa = Some(twa);
+        sample.tws = Some(tws);
+        sample.speed = Some(bsp);
+        if k % 2 == 0 {
+            sample.twa_corrected = Some(twa + 1.0);
+            sample.tws_corrected = Some(tws - 0.5);
+            sample.bsp_corrected = Some(bsp - 0.2);
+        }
+        track.fixes.push(fix);
+        track.samples.push(sample);
+    }
+    track
+}
+
+/// The fixed project, read back through its own file format, as a person's
+/// saved project would be.
+fn fixed_project() -> Project {
+    let mut project = Project::new("Export fixture", Boat::default(), 1_700_000_000);
+    let colour = |c: &str| Colour::parse(c).unwrap();
+    let mut file = Source::new(
+        pe_core::SourceId(2),
+        "Expedition",
+        colour("#f28e2b"),
+        SourceKind::PolarFile {
+            format: PolarFileFormat::Expedition,
+            file_name: "expedition.txt".to_owned(),
+            polar: pe_polar::read(EXPEDITION).unwrap().polar,
+        },
+    );
+    file.weight = 0.75;
+    file.overlay.cell_overrides = vec![CellOverride {
+        twa: 90.0,
+        tws: 16.0,
+        bsp: 8.6,
+    }];
+    file.overlay.excluded_cells = vec![CellRef {
+        twa: 110.0,
+        tws: 10.0,
+    }];
+    let mut track = Source::new(
+        pe_core::SourceId(3),
+        "Track",
+        colour("#e15759"),
+        SourceKind::Track {
+            track: Box::new(track()),
+        },
+    );
+    track.overlay.filters.min_bsp_kn = None;
+    track.overlay.filters.max_heading_change_deg = None;
+    let mut hidden = Source::new(
+        pe_core::SourceId(4),
+        "Hidden",
+        colour("#76b7b2"),
+        SourceKind::PolarFile {
+            format: PolarFileFormat::Expedition,
+            file_name: "hidden.txt".to_owned(),
+            polar: pe_polar::read(b"10 90 20\n").unwrap().polar,
+        },
+    );
+    hidden.visible = false;
+    hidden.weight = 2.0;
+    project.sources = vec![
+        Source::new(
+            pe_core::SourceId(1),
+            "ORC",
+            colour("#4e79a7"),
+            SourceKind::Orc {
+                record: Box::new(orc()),
+            },
+        ),
+        file,
+        track,
+        hidden,
+    ];
+    project.next_id = 10_000;
+    pe_core::io::from_bytes(&pe_core::io::to_bytes(&project).unwrap()).unwrap()
+}
+
+fn sha256(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+fn exports(project: &Project) -> [(&'static str, Vec<u8>); 3] {
+    ["expedition", "adrena", "csv"].map(|f| (f, blend::export_bytes(project, f, None).unwrap()))
+}
+
+/// The pinned hashes (see the module documentation). Every export also
+/// reads back as a polar.
+#[test]
+fn the_fixed_project_exports_the_same_bytes_on_every_platform() {
+    let project = fixed_project();
+    let pinned = [EXPEDITION_SHA256, ADRENA_SHA256, CSV_SHA256];
+    let exports = exports(&project);
+    let hashes: Vec<String> = exports.iter().map(|(_, bytes)| sha256(bytes)).collect();
+    for (((format, bytes), hash), pinned) in exports.iter().zip(&hashes).zip(pinned) {
+        let parsed = pe_polar::read(bytes).unwrap();
+        assert!(pe_polar::cell_count(&parsed.polar) > 100, "{format}");
+        assert_eq!(
+            hash,
+            pinned,
+            "{format} export changed (every hash: {hashes:?}):\n{}",
+            String::from_utf8_lossy(bytes)
+        );
+    }
+}
+
+/// Reordering the list (display only, spec.md 8) and saving and reloading
+/// change no byte; a hidden source changes nothing either.
+#[test]
+fn list_order_saving_and_hidden_sources_change_no_byte() {
+    let project = fixed_project();
+    let reference = exports(&project);
+    let mut reordered = project.clone();
+    reordered.sources.reverse();
+    assert_eq!(exports(&reordered), reference);
+    let reloaded = pe_core::io::from_bytes(&pe_core::io::to_bytes(&project).unwrap()).unwrap();
+    assert_eq!(exports(&reloaded), reference);
+    let mut without_hidden = project.clone();
+    without_hidden.sources.pop();
+    assert_eq!(exports(&without_hidden), reference);
+}
+
+fn open_fixed(root: &TempRoot) -> pe_app::commands::AppState {
+    let app = root.state();
+    projects::create(&app, "Export".to_owned(), None, false).unwrap();
+    let fixed = fixed_project();
+    app.with_session(|session| {
+        let open = session.require_open()?;
+        for (index, source) in fixed.sources.iter().enumerate() {
+            let mut source = source.clone();
+            source.id = open.project.allocate_source_id();
+            if let SourceKind::Track { track } = &mut source.kind {
+                track.id = open.project.allocate_track_id();
+                for sample in &mut track.samples {
+                    sample.id = open.project.allocate_sample_id();
+                }
+            }
+            open.apply(Command::AddSource {
+                index,
+                source: Box::new(source),
+            })?;
+        }
+        Ok(())
+    })
+    .unwrap();
+    app
+}
+
+/// Export writes the file, recomputed from the sources: a change made
+/// behind the session's cache (no command, no revision) is still what is
+/// written (invariant 2).
+#[test]
+fn export_writes_the_file_and_always_recomputes() {
+    let root = TempRoot::new("export-write");
+    let app = open_fixed(&root);
+    let path = root.file("blend.pol");
+    let written = blend::export_to(&app, &path, "adrena", None).unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    assert_eq!(written.bytes as usize, bytes.len());
+    assert_eq!(
+        bytes,
+        blend::export_bytes(&fixed_project(), "adrena", None).unwrap()
+    );
+
+    let summary_before = projects::summary(&app).unwrap().unwrap().blend;
+    app.with_session(|session| {
+        let open = session.require_open()?;
+        // The polar file's own grid, rewritten without a command: the
+        // session's cache has no way to know.
+        if let SourceKind::PolarFile { polar, .. } = &mut open.project.sources[1].kind {
+            for cell in polar.bsp.iter_mut().flatten().flatten() {
+                *cell += 1.0;
+            }
+        }
+        Ok(())
+    })
+    .unwrap();
+    blend::export_to(&app, &path, "adrena", None).unwrap();
+    assert_ne!(std::fs::read(&path).unwrap(), bytes, "recomputed");
+    // The views' cache has not seen it; export did not use the cache.
+    assert_eq!(
+        projects::summary(&app).unwrap().unwrap().blend,
+        summary_before
+    );
+}
+
+/// The preview shows the grid and the text; a custom grid is the blend
+/// resampled; a grid that would not read back is refused with the values
+/// named, and nothing is written.
+#[test]
+fn the_preview_offers_the_project_grid_or_a_custom_one() {
+    let root = TempRoot::new("export-preview");
+    let app = open_fixed(&root);
+    let preview = blend::preview(&app, "expedition", None).unwrap();
+    assert!(preview.problem.is_none());
+    assert_eq!(preview.twa.len(), 19);
+    assert_eq!(preview.tws.len(), 10);
+    let origin = preview.origin.unwrap();
+    assert_eq!(origin[0][0], "filled", "the 0° row");
+    assert!(origin.iter().flatten().any(|o| o == "direct"));
+    assert_eq!(
+        preview.text.as_bytes(),
+        blend::export_bytes(&fixed_project(), "expedition", None).unwrap()
+    );
+
+    let axes = ExportAxes {
+        twa: vec![0.0, 45.0, 90.0, 135.0, 180.0],
+        tws: vec![8.0, 12.0, 16.0],
+    };
+    let custom = blend::preview(&app, "csv", Some(&axes)).unwrap();
+    assert!(custom.origin.is_none());
+    assert_eq!(custom.bsp.len(), 5);
+    let project = blend::preview(&app, "csv", None).unwrap();
+    // 90° at 12 kn is a node of both grids: the same value.
+    assert_eq!(custom.bsp[2][1], project.bsp[10][4]);
+    assert!(custom.text.starts_with("TWA\\TWS;8;12;16\n"));
+
+    let colliding = ExportAxes {
+        twa: vec![40.0, 40.004],
+        tws: vec![10.0],
+    };
+    assert!(blend::preview(&app, "csv", Some(&colliding)).is_err());
+    let path = root.file("never.csv");
+    assert!(blend::export_to(&app, &path, "csv", Some(&colliding)).is_err());
+    assert!(!std::path::Path::new(&path).exists());
+    assert!(blend::preview(&app, "gpx", None).is_err());
+}
+
+/// A project grid that would write two axis values as one — possible only
+/// in a file edited by hand, since the Blend settings refuse it — is
+/// refused at export with the two values named (plan.md M14, from M4).
+#[test]
+fn a_colliding_project_grid_is_refused_at_export_with_its_values_named() {
+    let mut project = fixed_project();
+    project.grid.twa = vec![0.0, 42.001, 42.004, 90.0, 180.0];
+    let preview = blend::preview_of(&project, "adrena", None).unwrap();
+    let problem = preview.problem.unwrap();
+    assert_eq!(problem.code, "axis-collision");
+    assert_eq!(problem.axis.as_deref(), Some("twa"));
+    assert_eq!(
+        (problem.first, problem.second),
+        (Some(42.001), Some(42.004))
+    );
+    assert_eq!(problem.written.as_deref(), Some("42"));
+    assert!(preview.text.is_empty());
+    let refused = blend::export_bytes(&project, "adrena", None).unwrap_err();
+    assert_eq!(refused.kind(), "export-refused");
+    assert!(refused.to_string().contains("42.001 and 42.004"));
+}
+
+fn input(summary: &pe_app::blend::BlendSummary) -> BlendSettingsInput {
+    BlendSettingsInput {
+        twa: summary.twa.clone(),
+        tws: summary.tws.clone(),
+        min_samples: summary.min_samples,
+        n_full: summary.n_full,
+        smoothing: summary.smoothing,
+        default_statistic: summary.default_statistic.clone(),
+        use_corrected: true,
+        stokes_drift: false,
+    }
+}
+
+/// The dialog applies as one undo entry; the Blend entry's switch and
+/// colour are entries of their own; undo restores each exactly; a bad grid
+/// or count is refused and changes nothing.
+#[test]
+fn blend_settings_are_undoable_and_validated() {
+    let root = TempRoot::new("blend-settings");
+    let app = open_fixed(&root);
+    let before = projects::summary(&app).unwrap().unwrap();
+    assert!(before.blend.direct > 0 && before.blend.filled > 0);
+
+    let mut change = input(&before.blend);
+    change.tws = vec![6.0, 10.0, 14.0, 20.0];
+    change.n_full = 10;
+    change.smoothing = true;
+    change.default_statistic = "median".to_owned();
+    let after = blend::blend_settings_set(&app, change).unwrap();
+    assert_eq!(after.undo_label.as_deref(), Some("Change blend settings"));
+    assert_eq!(after.blend.tws, [6.0, 10.0, 14.0, 20.0]);
+    assert_eq!(after.blend.default_statistic, "median");
+    assert_eq!(
+        after.blend.direct + after.blend.filled + after.blend.empty,
+        19 * 4
+    );
+    let undone = edit::undo_last(&app).unwrap();
+    assert_eq!(undone.blend, before.blend);
+
+    let hidden = blend::blend_visible_set(&app, false).unwrap();
+    assert_eq!(hidden.undo_label.as_deref(), Some("Hide blend"));
+    assert!(!hidden.blend.visible);
+    let coloured = blend::blend_colour_set(&app, "#ff8800").unwrap();
+    assert_eq!(coloured.undo_label.as_deref(), Some("Change blend colour"));
+    assert_eq!(coloured.blend.colour, "#ff8800");
+    assert!(blend::blend_colour_set(&app, "orange").is_err());
+    edit::undo_last(&app).unwrap();
+    assert_eq!(
+        edit::undo_last(&app).unwrap().blend,
+        before.blend,
+        "both undone"
+    );
+
+    let revision = projects::summary(&app).unwrap().unwrap().revision;
+    let mut bad = input(&before.blend);
+    bad.twa = vec![0.0, 45.0, 45.004];
+    assert!(blend::blend_settings_set(&app, bad).is_err());
+    let mut bad = input(&before.blend);
+    bad.n_full = 0;
+    assert!(blend::blend_settings_set(&app, bad).is_err());
+    let mut bad = input(&before.blend);
+    bad.default_statistic = "p99".to_owned();
+    assert!(blend::blend_settings_set(&app, bad).is_err());
+    assert_eq!(projects::summary(&app).unwrap().unwrap().revision, revision);
+    // Applying what is already there records nothing.
+    let same = blend::blend_settings_set(&app, input(&before.blend)).unwrap();
+    assert_eq!(same.revision, revision);
+}
+
+/// A track imported after the default statistic changed starts with it.
+#[test]
+fn a_new_track_takes_the_default_statistic() {
+    let root = TempRoot::new("blend-default-statistic");
+    let app = root.state();
+    projects::create(&app, "Stat".to_owned(), None, false).unwrap();
+    let summary = projects::summary(&app).unwrap().unwrap();
+    let mut change = input(&summary.blend);
+    change.default_statistic = "p75".to_owned();
+    blend::blend_settings_set(&app, change).unwrap();
+    let path = root.file("track.geojson");
+    let features: Vec<String> = (0..3)
+        .map(|k| {
+            format!(
+                r#"{{"type":"Feature","geometry":{{"type":"Point","coordinates":[-1.{k},50]}},"properties":{{"time":{}}}}}"#,
+                1_753_531_200 + 600 * k
+            )
+        })
+        .collect();
+    std::fs::write(
+        &path,
+        format!(
+            r#"{{"type":"FeatureCollection","features":[{}]}}"#,
+            features.join(",")
+        ),
+    )
+    .unwrap();
+    pe_app::tracks::import(
+        &app,
+        &[pe_app::tracks::TrackFileRequest {
+            path,
+            mapping: None,
+            boats: None,
+        }],
+    )
+    .unwrap();
+    app.with_session(|session| {
+        let open = session.require_open()?;
+        let track = open.project.sources[0].track().unwrap();
+        assert_eq!(track.statistic, pe_core::track::SegmentStatistic::P75);
+        Ok(())
+    })
+    .unwrap();
+}

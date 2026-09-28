@@ -118,13 +118,20 @@ fn every_visible_polar_gives_its_nodes_and_its_surface_over_its_own_axes() {
     assert_eq!(surface.tws, [6.0, 12.0]);
     // The empty cell is a hole, not a zero.
     assert!(surface.bsp[3].is_nan());
-    assert_eq!(scene.surfaces.len(), 2);
+    // Two sources' surfaces, then the blend's on the output grid.
+    assert_eq!(scene.surfaces.len(), 3);
+    assert_eq!(scene.surfaces[2].source, polar3d::BLEND_SOURCE);
+    assert_eq!(scene.surfaces[2].tws.len(), 10);
 
     edit::source_visible_set(&app, 2, false).unwrap();
     let scene = self::scene(&app);
     assert_eq!(scene.sources.len(), 1);
-    assert_eq!(scene.surfaces.len(), 1);
+    assert_eq!(scene.surfaces.len(), 2);
     assert_eq!(scene.nodes.len(), 5);
+
+    // A hidden blend is not drawn (spec.md 8).
+    pe_app::blend::blend_visible_set(&app, false).unwrap();
+    assert_eq!(self::scene(&app).surfaces.len(), 1);
 }
 
 #[test]
@@ -262,5 +269,6 @@ fn a_track_has_no_polar_nodes_to_exclude() {
     let scene = scene(&app);
     assert_eq!(scene.sources.len(), 3);
     assert_eq!(scene.sources[2].kind, polar3d::KIND_TRACK);
-    assert_eq!(scene.surfaces.len(), 2);
+    // Two polar surfaces and the blend; the track has none of its own.
+    assert_eq!(scene.surfaces.len(), 3);
 }

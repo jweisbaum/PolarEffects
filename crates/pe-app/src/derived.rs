@@ -70,7 +70,17 @@ fn collect(command: &Command, out: &mut Touches) {
         Command::ExcludeCells { source, .. }
         | Command::IncludeCells { source, .. }
         | Command::EditCells { source, .. } => one(*source, Touch::Polar),
-        Command::SetUseCorrected { .. } => out.all = true,
+        // A new grid re-bins every track; the choice of corrected or
+        // ground values moves every sample.
+        Command::SetUseCorrected { .. } | Command::SetOutputGrid { .. } => out.all = true,
+        Command::SetBlendSettings { before, after } => {
+            if before.use_corrected != after.use_corrected {
+                out.all = true;
+            }
+            // The sample minimum re-bins through each track's key; the rest
+            // (colour, visibility, n_full, smoothing) reaches only the
+            // blend, whose key holds them.
+        }
         // Colour, label, weight, visibility and order change no source's
         // own derived data; the views read them from the project directly.
         Command::RenameProject { .. }
@@ -147,6 +157,31 @@ struct Entry {
     value: Arc<Derived>,
 }
 
+/// What the blend was made from: equal keys give the same blend. Each
+/// source's derived data is held by its `Arc`, so it cannot be freed and
+/// its address reused while the key compares it.
+#[derive(Debug, Clone)]
+struct BlendKey {
+    grid: pe_core::project::OutputGrid,
+    n_full: u32,
+    smoothing: bool,
+    sources: Vec<(u64, u64, Arc<Derived>)>,
+}
+
+impl PartialEq for BlendKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.grid == other.grid
+            && self.n_full == other.n_full
+            && self.smoothing == other.smoothing
+            && self.sources.len() == other.sources.len()
+            && self
+                .sources
+                .iter()
+                .zip(&other.sources)
+                .all(|(a, b)| a.0 == b.0 && a.1 == b.1 && Arc::ptr_eq(&a.2, &b.2))
+    }
+}
+
 /// The revisions and the cache of one opening of a project.
 #[derive(Debug, Default)]
 pub struct Derivations {
@@ -159,8 +194,11 @@ pub struct Derivations {
     epoch: u64,
     revs: BTreeMap<u64, SourceRevs>,
     cache: BTreeMap<u64, Entry>,
+    blend: Option<(BlendKey, Arc<pe_polar::Blend>)>,
     /// Entries computed since the opening, for tests of what recomputes.
     pub computed: u64,
+    /// Blends computed since the opening.
+    pub blends: u64,
 }
 
 impl Derivations {
@@ -176,8 +214,15 @@ impl Derivations {
     /// Drops the cached entries of sources no longer in the project, so a
     /// removed source's samples are not held in memory.
     pub fn prune(&mut self, project: &Project) {
-        self.cache
-            .retain(|id, _| project.sources.iter().any(|s| s.id.raw() == *id));
+        let present = |id: u64| project.sources.iter().any(|s| s.id.raw() == id);
+        self.cache.retain(|id, _| present(*id));
+        if self
+            .blend
+            .as_ref()
+            .is_some_and(|(key, _)| key.sources.iter().any(|(id, ..)| !present(*id)))
+        {
+            self.blend = None;
+        }
     }
 
     /// How many sources have a cached entry.
@@ -304,6 +349,36 @@ impl Derivations {
         value
     }
 
+    /// The blend (spec.md 12.3), from the cache when no visible source,
+    /// weight, grid or blend setting it reads has moved. For the views;
+    /// export recomputes from scratch (invariant 2, [`crate::blend::fresh`]).
+    pub fn blend(&mut self, project: &Project) -> Arc<pe_polar::Blend> {
+        let derived = self.visible(project);
+        let key = BlendKey {
+            grid: project.grid.clone(),
+            n_full: project.blend.n_full,
+            smoothing: project.blend.smoothing,
+            sources: project
+                .sources
+                .iter()
+                .filter(|s| s.visible)
+                .filter_map(|s| {
+                    let data = derived.get(&s.id.raw())?;
+                    Some((s.id.raw(), s.weight.to_bits(), Arc::clone(data)))
+                })
+                .collect(),
+        };
+        if let Some((held, value)) = &self.blend
+            && *held == key
+        {
+            return Arc::clone(value);
+        }
+        self.blends += 1;
+        let value = Arc::new(crate::blend::assemble(project, &derived));
+        self.blend = Some((key, Arc::clone(&value)));
+        value
+    }
+
     /// Every visible source's derived data, by id.
     pub fn visible(&mut self, project: &Project) -> BTreeMap<u64, Arc<Derived>> {
         project
@@ -316,7 +391,10 @@ impl Derivations {
 }
 
 /// The editable surface of a source before edits, and a track's samples.
-fn derive_base(project: &Project, source: &Source) -> (Polar, Option<Arc<TrackDerived>>) {
+pub(crate) fn derive_base(
+    project: &Project,
+    source: &Source,
+) -> (Polar, Option<Arc<TrackDerived>>) {
     match &source.kind {
         SourceKind::Orc { .. } | SourceKind::PolarFile { .. } => {
             (pe_polar::source_polar(source).unwrap_or_default(), None)
@@ -536,6 +614,33 @@ mod tests {
             first.samples_key(&project),
             Derivations::for_opening(1_000).samples_key(&project)
         );
+    }
+
+    /// The blend is kept until something it reads moves: a weight, a
+    /// source's data, the grid or a blend setting — not a colour.
+    #[test]
+    fn the_blend_is_recomputed_only_when_what_it_reads_moves() {
+        let mut project = project();
+        let mut derivations = Derivations::default();
+        let first = derivations.blend(&project);
+        assert!(Arc::ptr_eq(&first, &derivations.blend(&project)));
+        assert_eq!(derivations.blends, 1);
+        project.sources[0].colour = Colour::parse("#000000").unwrap();
+        derivations.blend(&project);
+        assert_eq!(derivations.blends, 1, "a colour is not blended");
+        project.sources[0].weight = 0.5;
+        derivations.blend(&project);
+        assert_eq!(derivations.blends, 2);
+        project.blend.smoothing = true;
+        derivations.blend(&project);
+        assert_eq!(derivations.blends, 3);
+        derivations.bump(1, Touch::Polar);
+        derivations.blend(&project);
+        assert_eq!(derivations.blends, 4);
+        project.sources.remove(1);
+        derivations.prune(&project);
+        derivations.blend(&project);
+        assert_eq!(derivations.blends, 5);
     }
 
     /// A removed source's entry is dropped.

@@ -14,7 +14,8 @@ export function cellCode(i: number, j: number): number {
   return i | (j << 16);
 }
 
-const STATISTICS: readonly { id: string; label: string }[] = [
+/** The segment statistics offered (spec.md 12.1), the default first. */
+export const STATISTICS: readonly { id: string; label: string }[] = [
   { id: "p90", label: msg("90th percentile") },
   { id: "p75", label: msg("75th percentile") },
   { id: "median", label: msg("Median") },

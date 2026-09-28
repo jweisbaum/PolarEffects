@@ -270,7 +270,39 @@ fn every_history_label_is_listed_for_translation() {
             before: Default::default(),
             after: Default::default(),
         },
+        Command::SetOutputGrid {
+            before: Default::default(),
+            after: Default::default(),
+        },
     ];
+    // A blend settings change is named by what it changes (spec.md 8).
+    let blend = pe_core::project::BlendSettings::default();
+    for after in [
+        pe_core::project::BlendSettings {
+            visible: false,
+            ..blend.clone()
+        },
+        pe_core::project::BlendSettings {
+            colour: pe_core::Colour::parse("#123456").unwrap(),
+            ..blend.clone()
+        },
+        pe_core::project::BlendSettings {
+            n_full: 3,
+            ..blend.clone()
+        },
+    ] {
+        let hidden = !after.visible;
+        commands.push(Command::SetBlendSettings {
+            before: Box::new(blend.clone()),
+            after: Box::new(after.clone()),
+        });
+        if hidden {
+            commands.push(Command::SetBlendSettings {
+                before: Box::new(after),
+                after: Box::new(blend.clone()),
+            });
+        }
+    }
     // An edit is named by the tool that made it.
     commands.extend(
         [
@@ -298,6 +330,8 @@ fn every_history_label_is_listed_for_translation() {
             pe_app::tracks::IMPORT_MANY,
             pe_core::command::EXCLUDE_DOTS_LABEL,
             pe_core::command::INCLUDE_DOTS_LABEL,
+            // Not a history label: the blend curve's, translated as one.
+            pe_app::polar_plot::BLEND_LABEL,
         ]
         .map(str::to_owned),
     );
