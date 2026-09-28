@@ -58,27 +58,29 @@ impl OpenProject {
     /// Wraps a freshly created project. A new project starts dirty: it exists
     /// only in memory, so closing it really would lose it (spec.md 3.3).
     pub fn created(project: Project) -> Self {
+        let revision = fresh_revision();
         Self {
             project,
             history: History::default(),
             path: None,
             dirty: true,
-            revision: fresh_revision(),
+            revision,
             saves: 0,
-            derived: Default::default(),
+            derived: crate::derived::Derivations::for_opening(revision),
         }
     }
 
     /// Wraps a project loaded from disk.
     pub fn loaded(project: Project, path: PathBuf) -> Self {
+        let revision = fresh_revision();
         Self {
             project,
             history: History::default(),
             path: Some(path),
             dirty: false,
-            revision: fresh_revision(),
+            revision,
             saves: 0,
-            derived: Default::default(),
+            derived: crate::derived::Derivations::for_opening(revision),
         }
     }
 
@@ -106,6 +108,7 @@ impl OpenProject {
         let touches = crate::derived::touches(&command);
         self.history.push(&mut self.project, command)?;
         self.derived.record(&touches);
+        self.derived.prune(&self.project);
         self.mark();
         Ok(())
     }
@@ -117,6 +120,7 @@ impl OpenProject {
         self.history
             .push_coalesced(&mut self.project, command, key)?;
         self.derived.record(&touches);
+        self.derived.prune(&self.project);
         self.mark();
         Ok(())
     }
@@ -133,6 +137,7 @@ impl OpenProject {
             return Ok(false);
         }
         self.derived.record(&touches.unwrap_or_default());
+        self.derived.prune(&self.project);
         self.mark();
         Ok(true)
     }
@@ -148,6 +153,7 @@ impl OpenProject {
             return Ok(false);
         }
         self.derived.record(&touches.unwrap_or_default());
+        self.derived.prune(&self.project);
         self.mark();
         Ok(true)
     }

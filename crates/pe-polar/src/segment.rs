@@ -7,6 +7,11 @@
 //! beside them, so a sample well beyond the axis is left out rather than
 //! piled onto its end. A point exactly halfway goes to the upper node.
 //!
+//! **Nothing is binned into a 0° TWA node.** The 0° row is 0 kn by
+//! definition (spec.md 12.3): a boat does not sail head to wind, and samples
+//! nearest 0° are noise (tacks, the wind a little off). They are dropped,
+//! not moved to the next node.
+//!
 //! Per cell the segment keeps every sample's count and the spread of their
 //! boat speeds (for the blend weight and the tooltips), and a value — the
 //! track's statistic of those speeds — only where there are at least the
@@ -108,6 +113,9 @@ pub fn bin(
         let (Some(i), Some(j)) = (bin_index(twa, angle), bin_index(tws, wind)) else {
             continue;
         };
+        if twa.get(i).is_some_and(|node| *node == 0.0) {
+            continue;
+        }
         if let Some(cell) = cells.get_mut(i * nj + j) {
             cell.push(bsp);
         }
@@ -216,6 +224,25 @@ mod tests {
             0,
         );
         close(p90.polar.bsp[1][1], 9.6);
+    }
+
+    /// Samples nearest the 0° node are dropped, not moved to 30°: the 0° row
+    /// is 0 kn by definition (spec.md 12.3). On the axis 0, 30, 60 the 0°
+    /// bin is [-15, 15).
+    #[test]
+    fn nothing_is_binned_into_the_zero_degree_row() {
+        let twa = [0.0, 30.0, 60.0];
+        let tws = [10.0];
+        let points = [
+            (5.0, 10.0, 3.0),
+            (14.9, 10.0, 3.0),
+            (355.0, 10.0, 3.0),
+            (15.0, 10.0, 4.0),
+        ];
+        let segment = bin(points, &twa, &tws, SegmentStatistic::Mean, 1);
+        assert_eq!(segment.count, vec![vec![0], vec![1], vec![0]]);
+        assert_eq!(segment.polar.bsp[0][0], None);
+        close(segment.polar.bsp[1][0], 4.0);
     }
 
     /// The same samples in another order give the same bits.

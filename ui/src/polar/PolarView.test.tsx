@@ -84,8 +84,8 @@ const project = (revision: number): ProjectSummary => ({
 
 const onProject = vi.fn();
 
-async function render(revision = 1) {
-  await act(async () => root.render(<PolarView project={project(revision)} settings={null} onProject={onProject} />));
+async function render(revision = 1, id = 1) {
+  await act(async () => root.render(<PolarView project={{ ...project(revision), id }} settings={null} onProject={onProject} />));
   await act(async () => { await Promise.resolve(); });
 }
 
@@ -287,4 +287,12 @@ it("takes only the flags when the scene held names its samples", async () => {
   const first = api.polarScene.mock.results[0]!.value as Promise<ScenePacket>;
   await render(2);
   expect(api.polarScene).toHaveBeenLastCalledWith(null, await first);
+});
+
+it("never sends another project's samples key: a new project fetches the whole scene", async () => {
+  await render(1, 1);
+  await render(2, 1);
+  expect(api.polarScene.mock.calls[1]![1]).not.toBeNull();
+  await render(1, 2);
+  expect(api.polarScene).toHaveBeenLastCalledWith(null, null);
 });

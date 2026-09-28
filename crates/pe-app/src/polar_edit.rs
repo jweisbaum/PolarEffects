@@ -235,7 +235,9 @@ pub fn polar_edit(
             }
             EditOp::Smooth => (
                 EditAction::Smooth,
-                pe_polar::edit::smoothed(grid, &chosen)
+                // Neighbours as the blend reads them: an excluded node is
+                // empty for this source (spec.md 10.3) and takes no part.
+                pe_polar::edit::smoothed(grid, &derived.blend, &chosen)
                     .into_iter()
                     .map(|(cell, v)| (cell, Some(canonical::knots(v))))
                     .collect(),

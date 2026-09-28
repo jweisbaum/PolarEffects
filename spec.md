@@ -1142,7 +1142,8 @@ Every source can be edited on its own (D17):
   - scale a selection by a percentage (of the value as edited; empty cells
     are left out);
   - smooth a selection (3×3 binomial kernel, 1-2-1 × 1-2-1, over the
-    neighbours that have a value, every cell read from the grid as it was;
+    neighbours that have a value as the blend reads them — a node excluded
+    from the blend takes no part — every cell read from the grid as it was;
     a hole stays a hole);
   - reset a selection to the source value;
   - for a track, choose its segment statistic (§12.1).
@@ -1189,7 +1190,9 @@ Every source can be edited on its own (D17):
   the node nearest it on each axis: a node's bin runs halfway to each
   neighbour, and past the first and last node by the same half-step as
   beside them; a sample beyond that is left out, and one exactly halfway
-  goes to the upper node.
+  goes to the upper node. Nothing is binned into a 0° TWA node: the 0° row
+  is 0 kn by definition (§12.3), so samples nearest 0° are dropped, not
+  moved to the next node.
 - Per cell: statistic of BSP, selectable per track (in the edit panel,
   undoable) — median, mean, 75th or **90th percentile (default)**.
   Percentiles interpolate linearly between the two nearest ranks. A polar describes good sailing, not average

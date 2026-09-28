@@ -61,12 +61,18 @@ pub fn scaled(grid: &Polar, cells: &[(usize, usize)], percent: f64) -> Vec<((usi
 /// The 3×3 binomial kernel: 4 at the centre, 2 beside, 1 at the corners.
 const KERNEL: [[f64; 3]; 3] = [[1.0, 2.0, 1.0], [2.0, 4.0, 2.0], [1.0, 2.0, 1.0]];
 
-/// Each selected cell with a value, smoothed over its 3×3 neighbourhood on
-/// the grid (spec.md 10.4) with the binomial kernel, weighted over the
-/// neighbours that have a value. Every cell reads the grid as it was, so
-/// the order of the selection does not matter. Empty cells stay empty: a
-/// hole is not filled by smoothing.
-pub fn smoothed(grid: &Polar, cells: &[(usize, usize)]) -> Vec<((usize, usize), f64)> {
+/// Each selected cell with a value in `grid`, smoothed over its 3×3
+/// neighbourhood (spec.md 10.4) with the binomial kernel, weighted over the
+/// cells of `neighbours` that have a value. `neighbours` is the grid as the
+/// blend reads it, so a node excluded from the blend — empty for that source
+/// — takes no part, itself included. Every cell reads the grids as they
+/// were, so the order of the selection does not matter. Empty cells stay
+/// empty: a hole is not filled by smoothing.
+pub fn smoothed(
+    grid: &Polar,
+    neighbours: &Polar,
+    cells: &[(usize, usize)],
+) -> Vec<((usize, usize), f64)> {
     cells
         .iter()
         .filter_map(|&(i, j)| {
@@ -79,7 +85,7 @@ pub fn smoothed(grid: &Polar, cells: &[(usize, usize)]) -> Vec<((usize, usize), 
                     else {
                         continue;
                     };
-                    if let Some(value) = grid.get(ni, nj) {
+                    if let Some(value) = neighbours.get(ni, nj) {
                         sum += w * value;
                         weight += w;
                     }
@@ -151,7 +157,7 @@ mod tests {
     #[test]
     fn smoothing_is_the_binomial_kernel_over_present_neighbours() {
         let polar = grid();
-        let out = smoothed(&polar, &[(1, 1), (0, 0), (2, 1)]);
+        let out = smoothed(&polar, &polar, &[(1, 1), (0, 0), (2, 1)]);
         assert_eq!(out.len(), 2, "the hole stays a hole");
         assert!((out[0].1 - 91.0 / 14.0).abs() < 1e-12);
         assert!((out[1].1 - 5.0).abs() < 1e-12);
@@ -162,9 +168,21 @@ mod tests {
             bsp: vec![vec![Some(3.0); 2]; 2],
         };
         assert!(
-            smoothed(&flat, &[(0, 0), (1, 1)])
+            smoothed(&flat, &flat, &[(0, 0), (1, 1)])
                 .iter()
                 .all(|(_, v)| (v - 3.0).abs() < 1e-12)
         );
+    }
+
+    /// A neighbour excluded from the blend takes no part. Corner (0, 0) with
+    /// (1, 1) (9.0, weight 1) excluded: 4·4 + 2·5 + 2·5 = 36 over 8 = 4.5.
+    #[test]
+    fn smoothing_leaves_out_excluded_neighbours() {
+        let polar = grid();
+        let mut blend = grid();
+        blend.bsp[1][1] = None;
+        let out = smoothed(&polar, &blend, &[(0, 0)]);
+        assert_eq!(out.len(), 1);
+        assert!((out[0].1 - 4.5).abs() < 1e-12);
     }
 }

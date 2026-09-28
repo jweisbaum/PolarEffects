@@ -272,9 +272,11 @@ fn a_track_segment_bins_its_samples_with_its_statistic() {
     // 6.0 … 6.9: the 90th percentile at rank 8.1 is 6.81.
     assert!((segment.bsp[i][j].unwrap() - 6.81).abs() < 1e-9);
     assert_eq!(segment.bsp[i60][j8], None, "three samples are below five");
-    // Their spread: the sample standard deviation of 6.0 … 6.9.
+    // Their spread: the sample standard deviation of 6.0 … 6.9. The mean is
+    // 6.45; the squares sum to (0.45² + 0.35² + … + 0.45²) = 0.825, over 9
+    // is 11/120, whose square root is 0.302765035409749…
     let spread = segment.spread.as_ref().unwrap()[i][j].unwrap();
-    assert!((spread - (0.0916_f64 + 0.0000_6666_6666_67).sqrt()).abs() < 1e-3);
+    assert!((spread - 0.302_765_035_409_749).abs() < 1e-12, "{spread}");
 
     // The median instead, undoably.
     let summary = polar_edit::segment_statistic_set(&app, 2, "median").unwrap();
@@ -394,4 +396,105 @@ fn only_the_flags_travel_when_no_sample_moved() {
     let moved = polar3d::scene_bytes_for(&app, None, Some(held)).unwrap();
     assert_eq!(word(&moved, 10), polar3d::SAMPLES_FULL);
     assert_ne!(key(&moved), held);
+}
+
+/// Smoothing reads neighbours as the blend does: a node excluded from the
+/// blend takes no part. The file's (0, 0) is 4 with neighbours 5 (0, 1),
+/// 5 (1, 0) and 9 (1, 1); with (1, 1) excluded, 4·4 + 2·5 + 2·5 = 36 over 8
+/// is 4.5 (it would be 45 over 9 = 5 with it).
+#[test]
+fn smoothing_leaves_out_nodes_excluded_from_the_blend() {
+    let root = TempRoot::new("edit-smooth-excluded");
+    let app = app(&root);
+    polar3d::excluded_set(
+        &app,
+        &[polar3d::PolarNodeRef {
+            source_id: 1,
+            twa_index: 1,
+            tws_index: 1,
+        }],
+        &[],
+        true,
+    )
+    .unwrap();
+    polar_edit::polar_edit(&app, 1, &EditOp::Smooth, &[cell(0, 0)], None).unwrap();
+    assert_eq!(surface(&app, 1).bsp[0][0], Some(4.5));
+}
+
+/// Undo and redo of an exclusion and of a statistic change re-bin the
+/// segment each time (the derived cache follows the history both ways).
+#[test]
+fn undo_and_redo_rebin_the_segment() {
+    let root = TempRoot::new("edit-undo-rebin");
+    let app = app(&root);
+    let at = |s: &polar_edit::EditSurface| {
+        let i = s.twa.iter().position(|v| *v == 90.0).unwrap();
+        let j = s.tws.iter().position(|v| *v == 12.0).unwrap();
+        (s.count.as_ref().unwrap()[i][j], s.bsp[i][j])
+    };
+    let original = at(&surface(&app, 2));
+    assert_eq!(original.0, 10);
+
+    polar3d::excluded_set(&app, &[], &[200, 201, 202], true).unwrap();
+    let excluded = at(&surface(&app, 2));
+    // 6.3 … 6.9: the 90th percentile at rank 5.4 is 6.84.
+    assert_eq!(excluded.0, 7);
+    assert!((excluded.1.unwrap() - 6.84).abs() < 1e-9);
+    edit::undo_last(&app).unwrap();
+    assert_eq!(at(&surface(&app, 2)), original);
+    edit::redo_next(&app).unwrap();
+    assert_eq!(at(&surface(&app, 2)), excluded);
+    edit::undo_last(&app).unwrap();
+
+    polar_edit::segment_statistic_set(&app, 2, "mean").unwrap();
+    let mean = at(&surface(&app, 2));
+    assert!((mean.1.unwrap() - 6.45).abs() < 1e-9);
+    edit::undo_last(&app).unwrap();
+    assert_eq!(at(&surface(&app, 2)), original);
+    edit::redo_next(&app).unwrap();
+    assert_eq!(at(&surface(&app, 2)), mean);
+}
+
+/// Removing a source drops its derived data; undo brings the source back.
+#[test]
+fn a_removed_source_leaves_the_derived_cache() {
+    let root = TempRoot::new("edit-prune");
+    let app = app(&root);
+    surface(&app, 1);
+    surface(&app, 2);
+    let cached = || {
+        app.with_session(|s| Ok(s.require_open()?.derived.cached()))
+            .unwrap()
+    };
+    assert_eq!(cached(), 2);
+    edit::source_remove(&app, 2).unwrap();
+    assert_eq!(cached(), 1);
+    edit::undo_last(&app).unwrap();
+    assert_eq!(
+        surface(&app, 2)
+            .count
+            .as_ref()
+            .unwrap()
+            .iter()
+            .flatten()
+            .sum::<u32>(),
+        13
+    );
+}
+
+/// Opening the same project again gives a new samples key, so a view that
+/// names the old one gets the whole scene, never flags onto old positions.
+#[test]
+fn reopening_a_project_changes_the_samples_key() {
+    let root = TempRoot::new("edit-reopen");
+    let app = app(&root);
+    let word = |b: &[u8], i: usize| u32::from_le_bytes(b[i * 4..i * 4 + 4].try_into().unwrap());
+    let key = |b: &[u8]| u64::from(word(b, 8)) | (u64::from(word(b, 9)) << 32);
+    let path = root.file("edit.wpsproj");
+    projects::save_as(&app, path.clone()).unwrap();
+    let first = polar3d::scene_bytes_for(&app, None, None).unwrap();
+    projects::open(&app, path, true).unwrap();
+    let again = polar3d::scene_bytes_for(&app, None, Some(key(&first))).unwrap();
+    assert_eq!(word(&again, 10), polar3d::SAMPLES_FULL);
+    assert_ne!(key(&again), key(&first));
 }

@@ -179,8 +179,15 @@ export default function PolarView({ project, settings, onProject }: {
   // undo and redo included) and on switching project.
   // Only the samples' flags travel when no sample moved (the scene held
   // names its samples key); a scene that no longer matches is fetched whole.
+  // A scene held from another project is never a base: it is dropped in the
+  // same effect, before the fetch, so no effect order can send its key.
+  const heldProject = useRef<number | null>(null);
   useEffect(() => {
     const id = ++request.current;
+    if (heldProject.current !== project.id) {
+      held.current = null;
+      heldProject.current = project.id;
+    }
     const base = held.current;
     void api.polarScene(focus, base)
       .catch((error: unknown) => {
@@ -194,9 +201,6 @@ export default function PolarView({ project, settings, onProject }: {
       })
       .catch((error: unknown) => { if (request.current === id) reportFailure(error); });
   }, [project.id, project.revision, focus]);
-
-  // A new project starts from a whole scene.
-  useEffect(() => { held.current = null; }, [project.id]);
 
   // Leaving edit mode puts the Drag tool down.
   useEffect(() => {

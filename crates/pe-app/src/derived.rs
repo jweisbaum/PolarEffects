@@ -150,6 +150,10 @@ struct Entry {
 /// The revisions and the cache of one opening of a project.
 #[derive(Debug, Default)]
 pub struct Derivations {
+    /// Unique to this opening of the project (its first revision), so two
+    /// openings — whose counters and ids both start again — never share a
+    /// samples key.
+    nonce: u64,
     counter: u64,
     /// Moves when everything is stale.
     epoch: u64,
@@ -160,6 +164,27 @@ pub struct Derivations {
 }
 
 impl Derivations {
+    /// The derivations of one opening; `nonce` must differ between openings
+    /// (the session passes the opening's fresh revision).
+    pub fn for_opening(nonce: u64) -> Self {
+        Self {
+            nonce,
+            ..Self::default()
+        }
+    }
+
+    /// Drops the cached entries of sources no longer in the project, so a
+    /// removed source's samples are not held in memory.
+    pub fn prune(&mut self, project: &Project) {
+        self.cache
+            .retain(|id, _| project.sources.iter().any(|s| s.id.raw() == *id));
+    }
+
+    /// How many sources have a cached entry.
+    pub fn cached(&self) -> usize {
+        self.cache.len()
+    }
+
     fn next(&mut self) -> u64 {
         self.counter += 1;
         self.counter
@@ -217,6 +242,7 @@ impl Derivations {
                 hash = hash.wrapping_mul(0x0100_0000_01b3);
             }
         };
+        mix(self.nonce);
         mix(self.epoch);
         mix(u64::from(project.blend.use_corrected));
         for source in project.sources.iter().filter(|s| s.visible) {
@@ -495,6 +521,33 @@ mod tests {
         // the segment, and the override still holds it.
         assert_eq!(fewer.base.bsp[i][j], None);
         assert_eq!(fewer.edited.bsp[i][j], Some(9.0));
+    }
+
+    /// Two openings of the same project never share a samples key, though
+    /// their counters and ids start again: a view holding the first
+    /// opening's scene must not take the second's flags onto it.
+    #[test]
+    fn two_openings_of_one_project_have_different_samples_keys() {
+        let project = project();
+        let first = Derivations::for_opening(1_000);
+        let second = Derivations::for_opening(1_001);
+        assert_ne!(first.samples_key(&project), second.samples_key(&project));
+        assert_eq!(
+            first.samples_key(&project),
+            Derivations::for_opening(1_000).samples_key(&project)
+        );
+    }
+
+    /// A removed source's entry is dropped.
+    #[test]
+    fn a_removed_source_leaves_the_cache() {
+        let mut project = project();
+        let mut derivations = Derivations::default();
+        derivations.visible(&project);
+        assert_eq!(derivations.cached(), 2);
+        project.sources.remove(1);
+        derivations.prune(&project);
+        assert_eq!(derivations.cached(), 1);
     }
 
     /// The samples key moves when samples move or the visible list changes,
