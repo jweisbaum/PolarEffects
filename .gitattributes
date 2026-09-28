@@ -4,3 +4,7 @@
 # Recorded vendor and archive responses are kept byte for byte.
 crates/pe-trackers/tests/fixtures/** -text
 crates/pe-env/tests/fixtures/** -text
+# Polar file fixtures test CRLF, BOMs and UTF-16, and the golden files pin
+# export bytes (invariant 5): both byte for byte.
+crates/pe-polar/tests/fixtures/** -text
+crates/pe-polar/tests/golden/** -text

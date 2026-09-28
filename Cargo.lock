@@ -2661,6 +2661,8 @@ name = "pe-polar"
 version = "0.1.0"
 dependencies = [
  "pe-core",
+ "proptest",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

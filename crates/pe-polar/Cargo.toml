@@ -8,6 +8,11 @@ description = "PolarEffects polar grids, polar file formats, binning and blendin
 
 [dependencies]
 pe-core = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+# Arbitrary input for the never-panics tests.
+proptest = "1.11.0"
 
 [lints]
 workspace = true
