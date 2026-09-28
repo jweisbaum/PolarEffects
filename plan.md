@@ -301,7 +301,7 @@ buffer, are still unmeasured — to do before release (M18).
 
 ---
 
-### M8 — File tracks and the sample pipeline
+### M8 — File tracks and the sample pipeline · **complete**
 
 **Deliverables**
 
@@ -315,6 +315,37 @@ buffer, are still unmeasured — to do before release (M18).
 
 - Heading and speed derivation tests against hand-computed values, including
   the antimeridian, a stationary boat and a single-fix track.
+
+Built as specified (acceptance: `pe-tracks/src/derive.rs` tests, values
+hand-computed on the 6,371,229 m sphere: equator, antimeridian both ways,
+north at 50°N, over the pole, off-line central difference, stationary,
+single fix, gaps, prefer). `pe-tracks` holds geodesy, derivation, filters,
+time parsing and the GeoJSON and CSV readers (never-panics proptests);
+`pe-app/src/tracks.rs` inspects and imports outside the lock, one
+`Batch` per import; `map_tracks.rs` sends visible tracks as a packed binary
+buffer (unwrapped longitudes). New undoable commands: `ExcludeSamples`,
+`IncludeSamples`, `SetSampleFilters`, `SetDerivation` (carrying every
+sample's motion both ways, since `pe-core` cannot derive). Ids are capped at
+2^53 − 1 (`pe_core::MAX_ID`, `Project::reserve_ids`, validation) so they
+cross IPC as exact JavaScript numbers. Per the controller rulings: a sample
+without wind has no place in the polar and is not drawn (the 2D and 3D dots
+appear once M9 fills TWS/TWA — `samples_become_dots_once_they_have_wind`
+and `samples_appear_in_the_3d_scene_once_they_have_wind` inject values to
+prove it); sample exclusion and "show on map" are wired; the M7 minors are
+fixed (only drawn dots are counted or acted on, numeric selection keys —
+keying and re-finding all 200k samples selected measured 48 ms in Node
+against 188 ms for the string keys it replaces, camera refit on project change, `buildDots` uses the
+shown mode, "?" translated); the ±1 kn dot band is a Settings preference.
+The wind, wave and current filters are modelled and evaluated but offered
+disabled until M9. The CSV mapping dialog's controls carry no `data-feature`
+(like the other transient dialogs); the search finds File… and the help page
+documents each step.
+
+*Measured 2026-09-28* on the development machine, debug build (`pe-app` at
+opt-level 0), 50 tracks × 10,000 fixes: project summary 49 ms, map packet
+141 ms (10 MB), 3D scene 173 ms, 2D plot 51 ms, excluding 10,000 samples
+87 ms (summary included). Release numbers and the webview's draw rate at
+this size are still to measure (M18).
 
 ---
 

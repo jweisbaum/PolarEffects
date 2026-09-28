@@ -223,6 +223,9 @@ or a failed write leaves the previous setting in place.
 - **Network**: request concurrency (default 8, 1–32), timeout (default 60 s,
   5–600 s).
 - **Map projection** (§9.1), remembered here rather than in the project.
+- **Polar plot dot band** (§9.2): how far from the plot's wind speed a
+  sample may be and still be drawn, ±0.25 to ±5 kn (default ±1 kn). A display
+  preference; it never changes the blend.
 
 ### 3.5 Language, help and tooltips
 
@@ -290,7 +293,7 @@ Project
   grid: { twa: [deg], tws: [kn] }               // output grid, §12.2
   blend: BlendSettings                          // §12
   sources: [Source]                             // ordered as the user sees them
-  next_id
+  next_id                                       // ids never exceed 2^53 − 1
 Source
   id, kind, label, colour "#rrggbb", visible, weight (0..=2, default 1)
   kind = Orc { record: OrcRecord }                     // copied from the catalogue
@@ -582,9 +585,24 @@ All three trackers share one dialog flow (D4):
 - **CSV**: header row required. A column-mapping step guesses time, lat, lon,
   heading, speed and boat columns from the header and a preview, and lets the
   user correct them. Time formats: ISO 8601, epoch seconds or ms, or a user
-  format string. Speed unit selectable (kn default).
+  format string (`%Y %y %m %d %H %M %S %f %b %z`). Speed unit selectable
+  (kn default, m/s, km/h, mph). The separator (`,` `;` or tab) is taken from
+  the header, quoted fields follow RFC 4180, and a decimal comma is read when
+  the separator is not a comma. The file is re-read as the mapping changes,
+  so the dialog shows the boats (or the error) the mapping gives.
+- Times without a zone are UTC. Longitudes written 0–360 are accepted and
+  folded to [−180, 180); in-range values are stored bit for bit as read.
+  GeoJSON MultiLineString features with one list of times per line (as GPX
+  converters write) are read too. A file that is not UTF-8 is read as
+  Latin-1.
+- A file that cannot be read is reported with its line and column (CSV and
+  JSON syntax) or its feature number (a GeoJSON feature that is not a usable
+  position), and nothing of it is imported; the other files still import.
 - Several files can be chosen at once. A file with several boats offers the
-  same boat picker as a tracker event.
+  same boat picker as a tracker event. All the tracks of one import are one
+  undo entry. The import summary gives, per track, the positions kept, how
+  many were out of order and sorted, how many duplicate times were merged,
+  and how many headings and speeds were given or derived.
 
 ### 7.4 Deriving heading and speed
 
@@ -593,17 +611,25 @@ Every track is reduced to timestamped fixes. Then, per fix:
 - **Heading.** If the track supplies heading or COG, use it. Otherwise use
   the initial great-circle bearing from the previous fix to the next fix
   (central difference). The first and last fixes use the one neighbour they
-  have.
+  have. Where the two positions used are the same place (a stationary boat)
+  there is no heading.
 - **Speed.** If the track supplies SOG or boat speed, use it. Otherwise
   (distance(prev, this) + distance(this, next)) / (t_next − t_prev).
 - Duplicate timestamps are merged, and out-of-order fixes are sorted, before
-  derivation. Both are reported in the import summary.
+  derivation. Both are reported in the import summary. Of several fixes at
+  one time the first in the file is kept; a heading or speed only a later
+  one gives is kept with it.
 - The track records per fix whether heading and speed were **given** or
   **derived**, so the user can filter on it.
 
 Derivation settings (per track, editable later, undoable): maximum gap
-between neighbours used for a central difference (default 3 h; beyond it the
-fix gets no derived values), and whether to prefer given or derived values.
+between neighbours used for a central difference (default 3 h, 1 s–24 h). A
+neighbour further away in time than the gap is not used: a fix with one
+usable neighbour uses that one (as the first and last fixes do), and a fix
+with none gets no derived values. And whether to prefer given or derived
+values; with "derived", a fix with nothing to derive from keeps its given
+value. Changing either re-derives every sample's heading and speed, as one
+undo entry that restores the previous values exactly.
 
 ### 7.5 Environment for each sample
 
@@ -687,6 +713,19 @@ Per track source, editable any time, undoable:
 Filtered-out samples stay in the project and appear dimmed in the plots when
 "Show filtered" is on.
 
+- A sample lacking the value an active filter reads (no wind under a TWS
+  range, no speed under the minimum BSP) is filtered out: nothing shows it
+  passes. With no filter on a quantity, a missing value does not matter.
+- The manoeuvre filter compares a sample's heading with each neighbour's and
+  takes the larger change; a neighbour without a heading is ignored.
+- Wave sectors, off the bow (0° head seas): head below 30°, bow 30–60°, beam
+  60–120°, quarter 120–150°, following from 150°.
+- BSP, TWS and TWA are the water-relative (current-corrected) values where
+  they exist and the project uses them (§7.5), the ground values otherwise.
+- The filters that need no environment (time window, BSP range, manoeuvres,
+  given versus derived) are edited in the Tracks section from M8; the wind,
+  wave and current filters join them with the environment (M9).
+
 ### 7.7 Jobs
 
 Scraping, reanalysis fetches and GRIB exports are **jobs**: they run on a
@@ -748,10 +787,18 @@ shows everything again. The globe's land is drawn through an equirectangular
 mask texture, so no land triangle folds across the horizon.
 
 - Every visible track is drawn in its source colour. Filtered-out fixes are
-  drawn dimmed.
-- Hovering a fix shows time, BSP, heading, TWS, TWA, Hs and current.
+  drawn dimmed (excluded ones less so). A track crossing the antimeridian is
+  one continuous line: longitudes are unwrapped along each track.
+- Hovering a fix shows time (UTC), BSP and heading (each marked given or
+  derived), TWS, TWA, Hs and current, in the display units; a value not yet
+  known shows as a dash.
 - Selecting samples in a polar view highlights them on the map, and a box
-  selection on the map selects those samples in the polar views.
+  selection on the map (Shift-drag) selects those samples in the polar views.
+  "Show on map" in the 3D view and in the track list switches to the map and
+  frames what was asked for. "Fit the tracks" frames every visible track.
+- Tracks travel from Rust as one packed binary buffer (layout in
+  `pe-app/src/map_tracks.rs` and `ui/src/map/trackPacket.ts`, pinned by a
+  shared fixture), drawn in one WebGL2 draw call.
 - Wind barbs at the hovered time are a stretch goal (§14).
 
 ### 9.2 Polar plot
@@ -765,7 +812,10 @@ overlay on demand):
   source's own grid has, rather than a shared slice — the classic diagram of
   several TWS curves at once. A curve is read at bilinear interpolation
   (`pe-polar`, no extrapolation) across the source's own TWA axis; dots are
-  for every sample whose TWS is within ±1 kn (configurable) of the slice.
+  for every sample whose TWS is within ±1 kn (configurable in Settings,
+  §3.4) of the slice, in their track's colour, excluded ones hollow and
+  selected ones ringed. A sample without wind has no place in the polar and
+  is not drawn. A "Filtered" toggle adds the filtered-out samples, dimmed.
 - Everything uses source colours. The blend is drawn thicker.
 - Hover shows the source, TWA, TWS and BSP.
 - Full size opens the same plot as a large overlay owned by the Map stage
@@ -820,6 +870,10 @@ why.
   in each, and Escape clears the selection. The selection survives a
   refetch of the scene (dots are matched by source and grid cell, or by
   sample id).
+- Only dots that are drawn are counted in the selection info and acted on
+  by Exclude, Include and "show on map": a selected dot that a toggle hides
+  (samples off, or a filtered sample while "show filtered" is off) takes no
+  part.
 - **Exclude** removes the selection from the blend. Excluded sample dots are
   drawn hollow; excluded ORC or file nodes are drawn as crosses. **Include**
   restores them. Both are undoable.

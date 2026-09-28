@@ -176,9 +176,10 @@ describe("what the selection acts on", () => {
     const again = resolveKeys(big, keys);
     const elapsed = performance.now() - started;
     expect(again.length).toBe(count);
-    // Measured about 15 ms on the development machine; the bound only
-    // catches a return to building a string per dot.
-    expect(elapsed).toBeLessThan(250);
+    // Measured 48 ms on the development machine with every sample
+    // selected (188 ms with the string keys this replaced). The bound is a
+    // guard against a gross regression on a slow machine, not a benchmark.
+    expect(elapsed).toBeLessThan(400);
   });
 });
 
