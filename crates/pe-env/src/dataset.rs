@@ -51,7 +51,8 @@ pub const CMEMS_IBI_MY_URL: &str = "https://s3.waw3-1.cloudferro.com/mdl-arco-ge
 /// chunked for time series at a place (spec.md 7.5.1 tier 2).
 pub const CMEMS_MERGED_GEO_URL: &str = "https://s3.waw3-1.cloudferro.com/mdl-arco-geo-015/arco/GLOBAL_ANALYSISFORECAST_PHY_001_024/cmems_mod_glo_phy_anfc_merged-uv_PT1H-i_202211/geoChunked.zarr";
 
-/// GlobCurrent (MULTIOBS), multi-year, hourly, 0.25° (spec.md 7.5.1 tier 3).
+/// GlobCurrent (MULTIOBS), multi-year, hourly, 0.25°, geostrophic + Ekman +
+/// tide (FES2022) (spec.md 7.5.1 tier 3).
 pub const GLOBCURRENT_MY_URL: &str = "https://s3.waw3-1.cloudferro.com/mdl-arco-geo-037/arco/MULTIOBS_GLO_PHY_MYNRT_015_003/cmems_obs-mob_glo_phy-cur_my_0.25deg_PT1H-i_202411/geoChunked.zarr";
 
 /// GlobCurrent near real time, after the multi-year series ends.
@@ -129,13 +130,21 @@ impl Dataset {
     }
 
     /// Whether this dataset's current includes tides: `None` for wind and
-    /// wave datasets. The GlobCurrent tier is marked "no tide" (spec.md
-    /// 7.5.1), which the sample filters can leave out.
+    /// wave datasets. Every current tier read today does: the regional
+    /// reanalyses are tidally forced, the merged current is read as uo +
+    /// utide, and GlobCurrent 202411's `uo` is, by its own metadata,
+    /// "absolute geostrophic velocity + depth Ekman + tide velocity"
+    /// (FES2022; both the multi-year and near-real-time stores, checked
+    /// 2026-09-28, plan.md Q7). The flag stays per dataset so a tier
+    /// without tides can be marked, and filtered, should one be added.
     pub fn has_tide(self) -> Option<bool> {
         match self {
             Self::Wb2Era5Hourly | Self::ArcoEra5 => None,
-            Self::CmemsNwsMy | Self::CmemsIbiMy | Self::CmemsGlobalMerged => Some(true),
-            Self::GlobCurrentMy | Self::GlobCurrentNrt => Some(false),
+            Self::CmemsNwsMy
+            | Self::CmemsIbiMy
+            | Self::CmemsGlobalMerged
+            | Self::GlobCurrentMy
+            | Self::GlobCurrentNrt => Some(true),
         }
     }
 
@@ -582,42 +591,47 @@ impl OpenVariable {
     /// Fetches and decodes one chunk, once more after evicting it from the
     /// cache if the first attempt fails (a damaged cache file).
     fn fetch_chunk(&self, index: &[u64]) -> Result<Decoded> {
-        match self.decode_chunk(index) {
-            Ok(decoded) => Ok(decoded),
-            Err(first) => match &self.cache {
-                Some((cache, namespace)) => {
-                    let key = self.array.chunk_key(index);
-                    cache.remove(namespace, key.as_str());
-                    self.decode_chunk(index)
-                }
-                None => Err(first),
-            },
-        }
-    }
-
-    fn decode_chunk(&self, index: &[u64]) -> Result<Decoded> {
-        let options = CodecOptions::default();
         let what = self.spec.array;
         let err = |e: zarrs::array::ArrayError| EnvError::Read {
             what: format!("{what} chunk {index:?}"),
             source: Box::new(e),
         };
+        match self.decode_chunk(index) {
+            Ok(decoded) => Ok(decoded),
+            // Only a chunk that arrived and would not decode is suspect: a
+            // damaged cache file. A failed read (the network, a timeout, a
+            // cancel) says nothing about the cached bytes and is reported
+            // as it is; evicting would only throw away a good chunk.
+            Err(first) if !is_decode_error(&first) => Err(err(first)),
+            Err(first) => match &self.cache {
+                Some((cache, namespace)) => {
+                    let key = self.array.chunk_key(index);
+                    cache.remove(namespace, key.as_str());
+                    self.decode_chunk(index).map_err(err)
+                }
+                None => Err(err(first)),
+            },
+        }
+    }
+
+    fn decode_chunk(
+        &self,
+        index: &[u64],
+    ) -> std::result::Result<Decoded, zarrs::array::ArrayError> {
+        let options = CodecOptions::default();
         let unpack = self.unpack;
         let values: Option<Vec<f32>> = match unpack.stored {
             Stored::F32 => self
                 .array
-                .retrieve_chunk_if_exists_opt::<Vec<f32>>(index, &options)
-                .map_err(err)?
+                .retrieve_chunk_if_exists_opt::<Vec<f32>>(index, &options)?
                 .map(|v| v.into_iter().map(|x| unpack.float(f64::from(x))).collect()),
             Stored::F64 => self
                 .array
-                .retrieve_chunk_if_exists_opt::<Vec<f64>>(index, &options)
-                .map_err(err)?
+                .retrieve_chunk_if_exists_opt::<Vec<f64>>(index, &options)?
                 .map(|v| v.into_iter().map(|x| unpack.float(x)).collect()),
             Stored::I16 { fill } => self
                 .array
-                .retrieve_chunk_if_exists_opt::<Vec<i16>>(index, &options)
-                .map_err(err)?
+                .retrieve_chunk_if_exists_opt::<Vec<i16>>(index, &options)?
                 .map(|v| v.into_iter().map(|x| unpack.int(x, fill)).collect()),
         };
         Ok(values.map(Arc::new))
@@ -756,6 +770,18 @@ impl OpenVariable {
         let second = series.last().and_then(|c| stencil.interpolate(*c));
         Ok(lerp_time(first, second, w))
     }
+}
+
+/// Whether a chunk read failed in decoding the bytes it got, rather than in
+/// getting them.
+fn is_decode_error(err: &zarrs::array::ArrayError) -> bool {
+    use zarrs::array::ArrayError;
+    use zarrs::array::codec::api::CodecError;
+    !matches!(
+        err,
+        ArrayError::StorageError(_)
+            | ArrayError::CodecError(CodecError::StorageError(_) | CodecError::IOError(_))
+    )
 }
 
 /// The four cells of a stencil at one step, in [`Stencil::interpolate`]'s

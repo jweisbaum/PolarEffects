@@ -85,6 +85,9 @@ pub struct EnvJobsStatus {
     /// The last fetch that failed: `[label, message]`, until the next
     /// fetch starts.
     pub failure: Option<Vec<String>>,
+    /// The last fetch that had to leave a current source out (it would not
+    /// open): `[label, messages]`, until the next fetch starts.
+    pub warning: Option<Vec<String>>,
 }
 
 /// Where a job reports to: the frontend in the app, a recorder in tests.
@@ -111,6 +114,7 @@ struct Queue {
     running: Option<(Task, f64)>,
     cancel: Arc<AtomicBool>,
     failure: Option<Vec<String>>,
+    warning: Option<Vec<String>>,
 }
 
 /// The job queue of environment fetches.
@@ -149,6 +153,7 @@ impl EnvJobs {
         EnvJobsStatus {
             tracks,
             failure: queue.failure.clone(),
+            warning: queue.warning.clone(),
         }
     }
 
@@ -166,6 +171,7 @@ impl EnvJobs {
             queue.waiting.push_back(task);
         }
         queue.failure = None;
+        queue.warning = None;
         drop(queue);
         self.wake.notify_all();
     }
@@ -206,6 +212,13 @@ impl EnvJobs {
     fn advance(&self, fraction: f64) {
         if let Some((_, f)) = &mut self.lock().running {
             *f = fraction;
+        }
+    }
+
+    fn warn(&self, label: &str, warnings: std::collections::BTreeSet<String>) {
+        if !warnings.is_empty() {
+            let text = warnings.into_iter().collect::<Vec<_>>().join("; ");
+            self.lock().warning = Some(vec![label.to_owned(), text]);
         }
     }
 
@@ -360,11 +373,11 @@ fn run(
     provider: &dyn Provider,
     sink: &dyn JobSink,
     jobs: &EnvJobs,
-    cancel: &AtomicBool,
+    cancel: &Arc<AtomicBool>,
     now: i64,
 ) -> Result<Outcome> {
     // Gather what is still to fetch, starting over when asked or when the
-    // interval changed (a track is never a mix of the two).
+    // interval or the Stokes choice changed: a track is never a mix.
     let gathered = state.with_session(|session| {
         let Some(open) = session.open.as_mut() else {
             return Ok(None);
@@ -381,14 +394,24 @@ fn run(
             return Ok(None);
         };
         let seconds = task.interval.seconds();
-        let restart = task.restart || track.env_meta.interval_s.is_some_and(|s| s != seconds);
-        let changed = restart || track.env_meta.interval_s != Some(seconds);
+        let meta = &track.env_meta;
+        let restart = task.restart
+            || meta.interval_s.is_some_and(|s| s != seconds)
+            || meta.stokes_drift.is_some_and(|s| s != stokes);
+        let changed =
+            restart || meta.interval_s != Some(seconds) || meta.stokes_drift != Some(stokes);
         if restart {
+            // Nothing of the earlier fetch survives: not a value, not a
+            // dataset record (with its fetch time), so a cancel part way
+            // through leaves a track that is partly fetched, never mixed.
             for sample in &mut track.samples {
-                sample.env_fetched = false;
+                sample.clear_env();
             }
+            track.env_meta.datasets.clear();
+            track.env_meta.status = EnvStatus::NotFetched;
         }
         track.env_meta.interval_s = Some(seconds);
+        track.env_meta.stokes_drift = Some(stokes);
         let todo: Vec<(usize, Point)> = track
             .samples
             .iter()
@@ -426,6 +449,7 @@ fn run(
     let total = todo.len().max(1);
     let mut done = 0;
     let mut outcome = Outcome::Done;
+    let mut warnings = std::collections::BTreeSet::new();
     for batch in batches(&todo, batch_span_s(task.interval)) {
         if cancel.load(Ordering::SeqCst) {
             outcome = Outcome::Cancelled;
@@ -438,11 +462,16 @@ fn run(
                 outcome = Outcome::Cancelled;
                 break;
             }
+            Err(_) if cancel.load(Ordering::SeqCst) => {
+                outcome = Outcome::Cancelled;
+                break;
+            }
             Err(err) => {
                 outcome = Outcome::Failed(err.to_string());
                 break;
             }
         };
+        warnings.extend(provider.take_warnings());
         let written = with_track(state, target, |track| {
             for ((k, _), env) in batch.iter().zip(&found) {
                 if let Some(sample) = track.samples.get_mut(*k) {
@@ -467,6 +496,7 @@ fn run(
         })?;
         sink.changed();
     }
+    jobs.warn(&task.label, warnings);
     Ok(outcome)
 }
 
@@ -895,8 +925,8 @@ mod tests {
         assert!(sample.env_fetched);
         assert_eq!(
             meta.datasets[1].has_tide,
-            Some(false),
-            "GlobCurrent is no tide"
+            Some(true),
+            "GlobCurrent 202411 includes the tide (FES2022)"
         );
         assert_eq!(meta.datasets[0].name, "wb2-era5-1h");
         assert_eq!(meta.datasets[0].fetched_at, 42);

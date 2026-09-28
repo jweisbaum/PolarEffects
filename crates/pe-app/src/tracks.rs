@@ -283,7 +283,7 @@ pub struct TrackSummary {
     /// `"hourly"` or `"three_hourly"`: how the last fetch sampled wind and
     /// waves; null before any.
     pub env_interval: Option<String>,
-    /// Samples whose current has no tide (the GlobCurrent tier).
+    /// Samples whose current came from a dataset marked without tide.
     pub no_tide: u32,
     /// Longest gap a central difference may span, seconds.
     pub max_gap_s: i64,

@@ -32,6 +32,13 @@ export default function EnvFetchDialog({ sourceIds, restart, onClose }: {
   const [busy, setBusy] = useState(false);
   const close = useRef(onClose);
   close.current = onClose;
+  const fetchButton = useRef<HTMLButtonElement>(null);
+
+  // Fetch is the default answer, but it is disabled until the estimate
+  // arrives, and a disabled button takes no autofocus: focus it then.
+  useEffect(() => {
+    if (estimate !== null) fetchButton.current?.focus();
+  }, [estimate]);
 
   // Asked once, when the dialog opens.
   useEffect(() => {
@@ -101,7 +108,7 @@ export default function EnvFetchDialog({ sourceIds, restart, onClose }: {
         <div className="modal-actions">
           <button onClick={onClose} title={t("Fetch nothing now; Refetch environment starts it later")}>{t("Not now")}</button>
           <span className="spacer" />
-          <button className="primary" autoFocus disabled={busy || estimate === null || estimate.samples === 0}
+          <button className="primary" ref={fetchButton} disabled={busy || estimate === null || estimate.samples === 0}
             title={t("Start the fetch in the background")} onClick={() => void start()}>
             {t("Fetch")}
           </button>

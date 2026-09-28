@@ -136,7 +136,7 @@ it("offers the fetch after an import, with its download estimate, and starts it"
     samples: 120, hourly_bytes: 250_000_000, three_hourly_bytes: 90_000_000, cached_bytes: 0,
     cache_limit_bytes: 20 * 2 ** 30, recommended: "hourly",
   };
-  responses.startEnvFetch = { tracks: [], failure: null };
+  responses.startEnvFetch = { tracks: [], failure: null, warning: null };
   await act(async () => root.render(<Tracks project={project([])} onProject={() => undefined} />));
   await click(q('[data-feature="tracks:import-file"]'));
   await settle();
@@ -149,6 +149,8 @@ it("offers the fetch after an import, with its download estimate, and starts it"
   expect(text).toContain("Hourly: about 250 MB to download");
   expect(text).toContain("Every 3 hours: about 90 MB to download");
   expect((q('[data-feature="env-fetch:hourly"]') as HTMLInputElement).checked).toBe(true);
+  // Fetch, the default answer, has the focus once the estimate is in.
+  expect(document.activeElement).toBe(q(".modal-actions button.primary"));
   await click(q('[data-feature="env-fetch:three-hourly"]'));
   await click(q(".modal-actions button.primary"));
   await settle();
@@ -175,7 +177,7 @@ it("preselects 3-hourly for a download bigger than half the cache (D19)", async 
 
 it("shows a running fetch in the track list and cancels it", async () => {
   const { setEnvJobs, resetEnvJobs } = await import("../jobs");
-  setEnvJobs({ tracks: [{ source_id: 5, label: "Alpha", state: "fetching", fraction: 0.42 }], failure: null });
+  setEnvJobs({ tracks: [{ source_id: 5, label: "Alpha", state: "fetching", fraction: 0.42 }], failure: null, warning: null });
   await act(async () => root.render(<Tracks project={project([SOURCE])} onProject={() => undefined} />));
   expect(q(".track-list")!.textContent).toContain("Environment: fetching 42 %");
   await click(q('[data-feature="tracks:filters"]'));

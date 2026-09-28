@@ -276,7 +276,7 @@ const catalogue: Record<string, string> = {
   "Maximum current": "Maximale Strömung",
   "Leave out samples in more current than this.": "Punkte mit mehr Strömung auslassen.",
   "Leave out currents without tide": "Strömungen ohne Gezeiten auslassen",
-  "Leave out samples whose current comes from GlobCurrent, which has no tide.": "Punkte auslassen, deren Strömung von GlobCurrent kommt, das keine Gezeiten hat.",
+  "Leave out samples whose current comes from a source marked without tide (none of today's sources is).": "Punkte auslassen, deren Strömung aus einer als ohne Gezeiten markierten Quelle kommt (keine der heutigen Quellen ist es).",
   "Estimating the download": "Download wird geschätzt",
   "Fetch wind, waves and current": "Wind, Wellen und Strömung abrufen",
   "Reanalysis wind, waves and current for {count} samples, from the archives named in Help.": "Wind, Wellen und Strömung aus der Reanalyse für {count} Punkte, aus den in der Hilfe genannten Archiven.",

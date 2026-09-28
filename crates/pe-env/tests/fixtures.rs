@@ -178,3 +178,64 @@ fn a_cached_chunk_that_fails_to_decode_is_evicted_and_fetched_again() {
     assert_ne!(&recached[..], b"not a blosc container");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A read that fails in the store (the network, not the bytes) does not
+/// evict anything or try again: only a chunk that arrived and would not
+/// decode is suspect (review round 1).
+#[test]
+fn a_failed_read_is_not_retried_as_a_damaged_chunk() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use pe_env::cache::{CachedStore, ChunkCache};
+    use zarrs::storage::{ReadableStorage, ReadableStorageTraits, StorageError, StoreKey};
+    use zarrs_storage::byte_range::ByteRangeIterator;
+    use zarrs_storage::{MaybeBytes, MaybeBytesIterator};
+
+    /// The fixture store, except that every chunk read fails.
+    #[derive(Debug)]
+    struct Offline {
+        inner: zarrs::filesystem::FilesystemStore,
+        chunk_reads: Arc<AtomicUsize>,
+    }
+    impl ReadableStorageTraits for Offline {
+        fn get(&self, key: &StoreKey) -> Result<MaybeBytes, StorageError> {
+            if key.as_str().ends_with("539724.0.0") {
+                self.chunk_reads.fetch_add(1, Ordering::SeqCst);
+                return Err(StorageError::Other("connection reset".to_owned()));
+            }
+            self.inner.get(key)
+        }
+        fn get_partial_many<'a>(
+            &'a self,
+            key: &StoreKey,
+            ranges: ByteRangeIterator<'a>,
+        ) -> Result<MaybeBytesIterator<'a>, StorageError> {
+            self.inner.get_partial_many(key, ranges)
+        }
+        fn size_key(&self, key: &StoreKey) -> Result<Option<u64>, StorageError> {
+            self.inner.size_key(key)
+        }
+        fn supports_get_partial(&self) -> bool {
+            self.inner.supports_get_partial()
+        }
+    }
+
+    let dir = std::env::temp_dir().join(format!("pe-noevict-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let cache = ChunkCache::open(&dir, 1 << 30).unwrap();
+    pe_env::codec::register();
+    let reads = Arc::new(AtomicUsize::new(0));
+    let offline = Offline {
+        inner: zarrs::filesystem::FilesystemStore::new(fixture("wb2-crop")).unwrap(),
+        chunk_reads: Arc::clone(&reads),
+    };
+    let store: ReadableStorage = Arc::new(CachedStore::new(offline, Arc::clone(&cache), "wb2"));
+    let u = OpenVariable::open(&store, vars::WB2_U10)
+        .unwrap()
+        .with_cache(Arc::clone(&cache), "wb2");
+    let t = parse_utc("2020-07-27T12:00Z").unwrap();
+    assert!(u.sample(t, 50.0, -5.0).is_err());
+    assert_eq!(reads.load(Ordering::SeqCst), 1, "asked once");
+    let _ = std::fs::remove_dir_all(&dir);
+}

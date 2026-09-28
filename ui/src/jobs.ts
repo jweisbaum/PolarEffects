@@ -11,7 +11,7 @@ import { useSyncExternalStore } from "react";
 import type { EnvJobTrack } from "./generated/EnvJobTrack";
 import type { EnvJobsStatus } from "./generated/EnvJobsStatus";
 
-const EMPTY: EnvJobsStatus = { tracks: [], failure: null };
+const EMPTY: EnvJobsStatus = { tracks: [], failure: null, warning: null };
 
 let snapshot: EnvJobsStatus = EMPTY;
 const listeners = new Set<() => void>();

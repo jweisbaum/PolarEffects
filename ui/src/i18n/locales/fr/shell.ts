@@ -140,6 +140,7 @@ const catalogue: Record<string, string> = {
   "While wind, waves and current are being fetched, stop every fetch; the samples already fetched are kept.": "Pendant la récupération du vent, des vagues et du courant, arrêter toutes les récupérations ; les points déjà récupérés sont conservés.",
   "stop": "arrêter",
   "job": "tâche",
+  "The environment fetch of {label} left out a current source that would not open.": "La récupération de l’environnement de {label} a écarté une source de courant qui ne s’ouvrait pas.",
 };
 
 export default catalogue;

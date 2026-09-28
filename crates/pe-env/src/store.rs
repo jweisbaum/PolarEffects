@@ -47,8 +47,26 @@ pub fn open_http(
     timeout: Duration,
     cache: Option<(Arc<ChunkCache>, &str)>,
 ) -> Result<OpenStore> {
+    open_http_interruptible(
+        url,
+        timeout,
+        cache,
+        Arc::new(crate::http::Interrupt::default()),
+    )
+}
+
+/// [`open_http`], its retry pauses ending as soon as `interrupt` is set.
+///
+/// # Errors
+/// As [`open_http`].
+pub fn open_http_interruptible(
+    url: &str,
+    timeout: Duration,
+    cache: Option<(Arc<ChunkCache>, &str)>,
+    interrupt: Arc<crate::http::Interrupt>,
+) -> Result<OpenStore> {
     crate::codec::register();
-    let http = HttpStore::new(url, timeout)?;
+    let http = HttpStore::new(url, timeout)?.with_interrupt(interrupt);
     let net = Some(http.stats());
     let kept = cache
         .as_ref()

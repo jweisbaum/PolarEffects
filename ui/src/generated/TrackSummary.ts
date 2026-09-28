@@ -59,7 +59,7 @@ env_fetched: number,
  */
 env_interval: string | null,
 /**
- * Samples whose current has no tide (the GlobCurrent tier).
+ * Samples whose current came from a dataset marked without tide.
  */
 no_tide: number,
 /**

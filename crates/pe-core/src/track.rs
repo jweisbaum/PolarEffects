@@ -349,6 +349,24 @@ impl Sample {
         self.speed_origin = motion.speed_origin;
     }
 
+    /// Forgets everything the environment fetch stored for this sample —
+    /// wind, waves and current, raw and corrected, and which datasets
+    /// supplied them — as a Refetch that starts over does, so no value of
+    /// an earlier fetch survives next to the new one.
+    pub fn clear_env(&mut self) {
+        self.tws = None;
+        self.twd_from = None;
+        self.hs_m = None;
+        self.wave_from = None;
+        self.current_speed = None;
+        self.current_toward = None;
+        self.wind_dataset = None;
+        self.wave_dataset = None;
+        self.current_dataset = None;
+        self.env_fetched = false;
+        self.relate();
+    }
+
     /// Recomputes everything that relates the boat's motion to the stored
     /// environment (spec.md 7.5, D13): TWA and tack over the ground, the
     /// current-corrected motion and wind, and the wave angle off the bow.
@@ -521,6 +539,12 @@ pub struct EnvMeta {
     /// at another interval starts over rather than mixing the two.
     #[serde(default)]
     pub interval_s: Option<i64>,
+    /// Whether the last fetch added Stokes drift to the global merged
+    /// current (spec.md 7.5.1); `None` before any fetch. Like the interval,
+    /// a Refetch with the other choice starts over, so a track never mixes
+    /// currents with and without it.
+    #[serde(default)]
+    pub stokes_drift: Option<bool>,
 }
 
 /// One dataset a track's environment was taken from.
@@ -624,6 +648,31 @@ mod tests {
         // Ground values are untouched by the current.
         assert!(close(s.twa, 0.0));
         assert_eq!(s.tack, None, "head to wind is neither tack");
+    }
+
+    /// Clearing leaves nothing of the fetch: no raw, corrected or
+    /// provenance value, and not fetched.
+    #[test]
+    fn clearing_the_environment_leaves_only_the_motion() {
+        let mut s = sample();
+        s.heading = Some(0.0);
+        s.speed = Some(6.0);
+        s.tws = Some(10.0);
+        s.twd_from = Some(0.0);
+        s.hs_m = Some(1.0);
+        s.wave_from = Some(10.0);
+        s.current_speed = Some(1.0);
+        s.current_toward = Some(90.0);
+        s.wind_dataset = Some(0);
+        s.wave_dataset = Some(1);
+        s.current_dataset = Some(2);
+        s.env_fetched = true;
+        s.relate();
+        s.clear_env();
+        let mut bare = sample();
+        bare.heading = Some(0.0);
+        bare.speed = Some(6.0);
+        assert_eq!(s, bare);
     }
 
     /// Without a heading there is no angle, and a missing speed leaves the

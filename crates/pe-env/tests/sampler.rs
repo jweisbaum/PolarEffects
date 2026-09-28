@@ -26,6 +26,7 @@
 //!   stores written here, uncompressed, with hand-chosen values.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use pe_env::dataset::Dataset;
@@ -47,7 +48,8 @@ fn provider(dirs: &[(Dataset, PathBuf)]) -> Reanalysis {
 }
 
 fn sample(p: &Reanalysis, points: &[Point], options: Options) -> Vec<EnvPoint> {
-    p.sample(points, &options, &AtomicBool::new(false)).unwrap()
+    p.sample(points, &options, &Arc::new(AtomicBool::new(false)))
+        .unwrap()
 }
 
 const HOURLY: Options = Options {
@@ -423,8 +425,43 @@ fn before_the_archives_there_is_nothing() {
 fn a_cancelled_batch_is_an_error_not_a_partial_answer() {
     let (p, root) = era5_pair("cancel");
     let err = p
-        .sample(&[at(2.0, 50.0, -4.0)], &HOURLY, &AtomicBool::new(true))
+        .sample(
+            &[at(2.0, 50.0, -4.0)],
+            &HOURLY,
+            &Arc::new(AtomicBool::new(true)),
+        )
         .expect_err("cancelled");
     assert!(matches!(err, pe_env::EnvError::Cancelled), "{err}");
     let _ = std::fs::remove_dir_all(root);
+}
+
+/// A current tier whose store will not open (here the NW Shelf folder is
+/// empty) is left out with a warning, and its positions go on to the next
+/// tier; the batch does not fail (review round 1).
+#[test]
+fn a_tier_that_will_not_open_is_left_out_with_a_warning() {
+    let empty = temp("broken-tier");
+    std::fs::create_dir_all(&empty).unwrap();
+    let p = provider(&[
+        (Dataset::CmemsNwsMy, empty.clone()),
+        (
+            Dataset::CmemsGlobalMerged,
+            fixture("currents-crop").join("merged"),
+        ),
+    ]);
+    let got = sample(&p, &[current_point()], HOURLY);
+    let c = got[0].current.expect("the next tier answers");
+    assert_eq!(c.dataset, Dataset::CmemsGlobalMerged);
+    let warnings = p.take_warnings();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("cmems-nws-my-uv-geo"), "{warnings:?}");
+    assert!(p.take_warnings().is_empty(), "said once");
+    // Left out for a while, without asking again or warning again.
+    let again = sample(&p, &[current_point()], HOURLY);
+    assert_eq!(
+        again[0].current.map(|c| c.dataset),
+        Some(Dataset::CmemsGlobalMerged)
+    );
+    assert!(p.take_warnings().is_empty());
+    let _ = std::fs::remove_dir_all(empty);
 }

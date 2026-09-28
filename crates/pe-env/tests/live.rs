@@ -410,7 +410,7 @@ fn provider_end_to_end() {
                 interval: Interval::Hourly,
                 stokes_drift: false,
             },
-            &std::sync::atomic::AtomicBool::new(false),
+            &Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
         .unwrap();
     println!("provider: {:.1} s", start.elapsed().as_secs_f64());
@@ -424,7 +424,7 @@ fn provider_end_to_end() {
                 interval: Interval::Hourly,
                 stokes_drift: false,
             },
-            &std::sync::atomic::AtomicBool::new(false),
+            &Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
         .unwrap();
     println!(

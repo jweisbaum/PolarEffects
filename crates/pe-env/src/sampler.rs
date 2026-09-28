@@ -19,7 +19,7 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -29,7 +29,8 @@ use crate::dataset::{
 };
 use crate::error::Result;
 use crate::grid::Stencil;
-use crate::store::{OpenStore, TimeAxis, open_dir, open_http};
+use crate::http::Interrupt;
+use crate::store::{OpenStore, TimeAxis, open_dir, open_http_interruptible};
 
 /// One track position to sample.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -127,9 +128,19 @@ pub trait Provider: Send + Sync {
         &self,
         points: &[Point],
         options: &Options,
-        cancel: &AtomicBool,
+        cancel: &Arc<AtomicBool>,
     ) -> Result<Vec<EnvPoint>>;
+
+    /// What the last calls had to leave out and why (a current tier whose
+    /// store would not open), each said once; emptied by the call.
+    fn take_warnings(&self) -> Vec<String> {
+        Vec::new()
+    }
 }
+
+/// How long a current tier whose store would not open is left out before
+/// it is tried again.
+const TIER_RETRY: Duration = Duration::from_secs(600);
 
 /// How [`Reanalysis`] reaches the archives.
 #[derive(Debug, Clone)]
@@ -157,6 +168,11 @@ pub struct Reanalysis {
     concurrency: usize,
     stores: Mutex<BTreeMap<Dataset, OpenStore>>,
     opened: Mutex<BTreeMap<(Dataset, &'static str), Arc<OpenVariable>>>,
+    /// The running job's cancel flag, watched by every store's retries.
+    interrupt: Arc<Interrupt>,
+    /// Current tiers whose store would not open, and when.
+    unavailable: Mutex<BTreeMap<Dataset, std::time::Instant>>,
+    warnings: Mutex<Vec<String>>,
 }
 
 impl std::fmt::Debug for Reanalysis {
@@ -242,6 +258,9 @@ impl Reanalysis {
             concurrency: concurrency.max(1),
             stores: Mutex::new(BTreeMap::new()),
             opened: Mutex::new(BTreeMap::new()),
+            interrupt: Arc::new(Interrupt::default()),
+            unavailable: Mutex::new(BTreeMap::new()),
+            warnings: Mutex::new(Vec::new()),
         }
     }
 
@@ -262,10 +281,11 @@ impl Reanalysis {
             return Ok(Some(store.clone()));
         }
         let store = match &self.access {
-            Access::Http { timeout, cache } => open_http(
+            Access::Http { timeout, cache } => open_http_interruptible(
                 dataset.url(),
                 *timeout,
                 Some((Arc::clone(cache), dataset.id())),
+                Arc::clone(&self.interrupt),
             )?,
             Access::Dirs(dirs) => match dirs.get(&dataset) {
                 Some(dir) => open_dir(dir)?,
@@ -540,6 +560,9 @@ impl Reanalysis {
             if candidates.is_empty() {
                 continue;
             }
+            if !self.tier_opens(dataset, &parts, cancel)? {
+                continue;
+            }
             // Only positions inside this tier's grid and time axis.
             let Some(first) = self.var(parts[0].0)? else {
                 continue;
@@ -572,22 +595,95 @@ impl Reanalysis {
     }
 }
 
+impl Reanalysis {
+    /// Whether every array of a current tier opens. A tier whose store
+    /// will not open (the archive down, a version withdrawn) is left out
+    /// for [`TIER_RETRY`] with a warning, and its positions go on to the
+    /// next tier, rather than failing the whole batch: wind and waves, and
+    /// the other tiers, are still worth having.
+    fn tier_opens(
+        &self,
+        dataset: Dataset,
+        parts: &[(Variable, Variable)],
+        cancel: &AtomicBool,
+    ) -> Result<bool> {
+        let recently_failed = self
+            .unavailable
+            .lock()
+            .ok()
+            .and_then(|u| u.get(&dataset).copied())
+            .is_some_and(|at| at.elapsed() < TIER_RETRY);
+        if recently_failed {
+            return Ok(false);
+        }
+        for (u, v) in parts {
+            for spec in [*u, *v] {
+                match self.var(spec) {
+                    Ok(Some(_)) => {}
+                    Ok(None) => return Ok(false),
+                    Err(_) if cancel.load(Ordering::SeqCst) => {
+                        return Err(crate::EnvError::Cancelled);
+                    }
+                    Err(err) => {
+                        if let Ok(mut u) = self.unavailable.lock() {
+                            u.insert(dataset, std::time::Instant::now());
+                        }
+                        if let Ok(mut w) = self.warnings.lock() {
+                            w.push(format!(
+                                "the current source {} could not be opened and was left out: {err}",
+                                dataset.id()
+                            ));
+                        }
+                        return Ok(false);
+                    }
+                }
+            }
+        }
+        Ok(true)
+    }
+}
+
+/// Stops the stores watching a job's cancel flag when its read ends.
+struct Watching<'a>(&'a Interrupt);
+
+impl Drop for Watching<'_> {
+    fn drop(&mut self) {
+        self.0.watch(None);
+    }
+}
+
 impl Provider for Reanalysis {
     fn sample(
         &self,
         points: &[Point],
         options: &Options,
-        cancel: &AtomicBool,
+        cancel: &Arc<AtomicBool>,
     ) -> Result<Vec<EnvPoint>> {
         let mut out = vec![EnvPoint::default(); points.len()];
         if points.is_empty() {
             return Ok(out);
         }
+        self.interrupt.watch(Some(Arc::clone(cancel)));
+        let _watching = Watching(&self.interrupt);
         let every = options.interval.seconds();
-        self.wind(points, every, &mut out, cancel)?;
-        self.waves(points, every, &mut out, cancel)?;
-        self.current(points, options.stokes_drift, &mut out, cancel)?;
-        Ok(out)
+        let mut run = || -> Result<()> {
+            self.wind(points, every, &mut out, cancel)?;
+            self.waves(points, every, &mut out, cancel)?;
+            self.current(points, options.stokes_drift, &mut out, cancel)
+        };
+        match run() {
+            // A read that failed because the user cancelled is a cancel.
+            Err(_) if cancel.load(Ordering::SeqCst) => Err(crate::EnvError::Cancelled),
+            Err(err) => Err(err),
+            Ok(()) => Ok(out),
+        }
+    }
+
+    fn take_warnings(&self) -> Vec<String> {
+        self.warnings
+            .lock()
+            .map(|mut w| std::mem::take(&mut *w))
+            .unwrap_or_default()
     }
 }
 
@@ -627,9 +723,23 @@ fn era5_hours(t: i64, every: i64) -> [i64; 2] {
 
 /// Expected download for sampling `points`: the ERA5 hours they need (wind
 /// from WeatherBench2 or ARCO-ERA5, waves from ARCO-ERA5), less those the
-/// cache already holds, plus about one current geoChunk per variable per
-/// box and half-year crossed. An estimate, not a promise: regional current
-/// tiers and land change the current part.
+/// cache already holds, plus the currents.
+///
+/// An estimate, not a promise. Its approximations:
+/// - **Sizes** are the per-chunk averages measured in M3; real chunks vary
+///   with the weather (compression).
+/// - **The WeatherBench2 → ARCO boundary** is decided per hour here, while
+///   the sampler decides per position (both bracketing hours in
+///   WeatherBench2); a position in the last hour before the switch is
+///   counted against WeatherBench2 but read from ARCO.
+/// - **Currents** are counted as about one 0.8 MB chunk per variable for
+///   four variables per 1.3° × 0.7° box and half year crossed, whatever the
+///   tier: the regional stores chunk finer boxes over longer spans, Stokes
+///   drift adds two variables, GlobCurrent has two, and land and positions
+///   answered by an earlier tier cost nothing. Currents are not checked
+///   against the cache.
+/// - **The cache** check is by key presence at estimate time; eviction
+///   during the fetch can make some of it download again.
 pub fn estimate(points: &[Point], cache: Option<&ChunkCache>) -> Estimate {
     let mut out = Estimate::default();
     for (every, total) in [

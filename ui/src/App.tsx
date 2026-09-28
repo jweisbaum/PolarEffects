@@ -102,11 +102,15 @@ function Shell() {
     const onStatus = (status: EnvJobsStatus | null) => {
       // A backend that is not there yet (the frontend alone) answers nothing.
       if (!status?.tracks) return;
-      const before = currentEnvJobs().failure;
+      const before = currentEnvJobs();
       setEnvJobs(status);
       const failure = status.failure;
-      if (failure && JSON.stringify(failure) !== JSON.stringify(before)) {
+      if (failure && JSON.stringify(failure) !== JSON.stringify(before.failure)) {
         reportError(t("The environment fetch of {label} stopped: {reason}", { label: failure[0] ?? "", reason: failure[1] ?? "" }), failure[1] ?? null);
+      }
+      const warning = status.warning;
+      if (!failure && warning && JSON.stringify(warning) !== JSON.stringify(before.warning)) {
+        reportError(t("The environment fetch of {label} left out a current source that would not open.", { label: warning[0] ?? "" }), warning[1] ?? null);
       }
     };
     void api.envJobs().then(onStatus).catch(() => undefined);

@@ -696,9 +696,10 @@ until Refetch environment.
 
 #### 7.5.1 Current source
 
-No single anonymous global dataset has total current including tides for
-every year since 2015. The app takes each sample from the first source in
-this chain that covers its time and place (D20):
+Every tier below includes the tide (settled from the stores' own metadata
+on 2026-09-28, `plan.md` §6, Q7); they differ in resolution and in how the
+tide is modelled. The app takes each sample from the first source in this
+chain that covers its time and place (D20):
 
 1. **Regional tidal reanalyses**, 1993 to a few months ago. They are tidally
    forced models, so `uo`/`vo` is already the total current:
@@ -715,19 +716,26 @@ this chain that covers its time and place (D20):
    `utotal = uo + utide + vsdx`. The app uses `uo + utide` by default, with a
    setting to include Stokes drift.
 3. **GlobCurrent** (`MULTIOBS_GLO_PHY_MYNRT_015_003`, the store VectorEffects
-   reads), 1993 onward, **without tides**. Samples from this tier are marked
-   "no tide" and can be filtered. The multi-year series
-   (`cmems_obs-mob_glo_phy-cur_my_0.25deg_PT1H-i`) is read first and the
-   near-real-time one (`…_nrt_…`) after it ends; `uo`/`vo` are read at the
-   level nearest the surface (0 m of 0 and −15 m). *Open:* the 202411
-   version's metadata describes `uo` as "geostrophic + Ekman + tide", which
-   would make the "no tide" mark wrong; see `plan.md` §6, Q7.
+   reads), 1993 onward, 0.25°, **with tide (FES2022)**: in version 202411
+   both the multi-year and near-real-time stores describe `uo` as "absolute
+   geostrophic velocity + depth Ekman + tide velocity". The multi-year
+   series (`cmems_obs-mob_glo_phy-cur_my_0.25deg_PT1H-i`) is read first and
+   the near-real-time one (`…_nrt_…`) after it ends; `uo`/`vo` are read at
+   the level nearest the surface (0 m of 0 and −15 m).
+
+Each dataset record says whether its current includes the tide; every
+tier above does, so no sample is marked "no tide" today. The "leave out
+currents without tide" filter stays for a tier without one should it ever
+be added.
 
 A position is looked for in a tier only if it lies inside that tier's grid
 and time axis (the regional tiers only inside their boxes, so a race
 elsewhere never opens those stores). A tier whose value is missing there —
 land, fill, or a chunk the archive does not have — passes the position to
-the next tier. The stores read (versions as recorded on each sample):
+the next tier. A tier whose store will not open (the archive down, a
+version withdrawn) is left out for ten minutes, its positions going on to
+the next tier; the fetch goes on and reports "left out a current source
+that would not open" on the status line with the reason. The stores read (versions as recorded on each sample):
 `cmems_mod_nws_phy-uv_my_7km-2D_PT1H-i_202112`,
 `cmems_mod_ibi_phy-cur_my_0.027deg_PT1H-m_202511`,
 `cmems_mod_glo_phy_anfc_merged-uv_PT1H-i_202211`,
@@ -741,8 +749,6 @@ track the **geoChunked** stores are used (one chunk covers months at one
 place). Their fill value is about 9.97e36, and a missing chunk comes back as
 HTTP 403 or 404; both mean "no data".
 
-Adding tides to tier 3 from a harmonic atlas (FES2014) is possible in pure
-Rust but blocked on licensing: see `plan.md` §6, Q1.
 
 ### 7.6 Sample filters
 
@@ -801,8 +807,11 @@ The environment fetch in detail (M9):
   depend only on its own time and place, so a resumed fetch ends exactly
   where an uninterrupted one would.
 - Refetch fetches the samples still missing; on a ready track, or at a
-  different interval than the last fetch, it starts over (a track is never
-  a mix of hourly and 3-hourly).
+  different interval or Stokes-drift choice than the last fetch (both
+  recorded on the track), it starts over. Starting over first clears every
+  sample's wind, waves and current (raw, corrected and which datasets) and
+  the track's dataset records, so a restart that is cancelled leaves a
+  track partly fetched at the new settings, never a mix of two fetches.
 - The status bar shows the running track, its progress and how many wait,
   with Cancel fetch (all); a track's details have Cancel fetch for it. A
   failure is reported on the status line and leaves "partial" (or "failed"
@@ -812,8 +821,9 @@ The environment fetch in detail (M9):
   for a track that was removed or changed meanwhile is dropped.
 - Reads: a transient failure (a 5xx or 429 answer, a timeout, a dropped
   connection) is retried three times, pausing 0.5, 1 and 2 s; anything else
-  fails at once. A body over 64 MB is refused. A cached chunk that fails to
-  decode is removed from the cache and fetched once more. Opened archives
+  fails at once. A retry pause ends at once on Cancel. A body over 64 MB is
+  refused. A cached chunk that arrived but fails to decode is removed from
+  the cache and fetched once more; a failed read is not. Opened archives
   are kept for the session, so only the first track pays their metadata
   requests.
 

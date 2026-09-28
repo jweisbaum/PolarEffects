@@ -276,7 +276,7 @@ const catalogue: Record<string, string> = {
   "Maximum current": "Courant maximal",
   "Leave out samples in more current than this.": "Écarter les points où le courant est plus fort.",
   "Leave out currents without tide": "Écarter les courants sans marée",
-  "Leave out samples whose current comes from GlobCurrent, which has no tide.": "Écarter les points dont le courant vient de GlobCurrent, qui n’a pas de marée.",
+  "Leave out samples whose current comes from a source marked without tide (none of today's sources is).": "Écarter les points dont le courant vient d’une source marquée sans marée (aucune des sources actuelles ne l’est).",
   "Estimating the download": "Estimation du téléchargement",
   "Fetch wind, waves and current": "Récupérer le vent, les vagues et le courant",
   "Reanalysis wind, waves and current for {count} samples, from the archives named in Help.": "Vent, vagues et courant de réanalyse pour {count} points, depuis les archives citées dans l’aide.",

@@ -108,10 +108,10 @@ function backend() {
       case "set_theme": settings = { ...settings, theme: args?.theme as string }; return settings;
       case "chunk_cache_status": return { path: "/cache/chunks", bytes: 0 };
       case "quit_app": return null;
-      case "env_jobs": return { tracks: [], failure: null };
+      case "env_jobs": return { tracks: [], failure: null, warning: null };
       case "cancel_env_fetch": {
         // Rust stops the fetch and reports the emptied queue.
-        const idle = { tracks: [], failure: null };
+        const idle = { tracks: [], failure: null, warning: null };
         (events.get("env://progress") as ((e: { payload: unknown }) => void) | undefined)?.({ payload: idle });
         return idle;
       }
@@ -322,7 +322,7 @@ describe("the environment fetch (spec.md 7.7)", () => {
     await progress({ tracks: [
       { source_id: 8, label: "Fastnet 2025", state: "fetching", fraction: 0.25 },
       { source_id: 9, label: "Other", state: "queued", fraction: 0 },
-    ], failure: null });
+    ], failure: null, warning: null });
     expect(q(".statusbar")!.textContent).toContain("Fetching wind, waves and current: Fastnet 2025 25 %");
     expect(q(".statusbar")!.textContent).toContain("(1 more waiting)");
     await click(feature("shell:cancel-fetch"));
@@ -338,14 +338,16 @@ describe("the environment fetch (spec.md 7.7)", () => {
     await settle(400);
     // Two writes close together are one refresh.
     expect(calls.filter(([c]) => c === "project_summary").length).toBe(before + 1);
-    await progress({ tracks: [], failure: ["Fastnet 2025", "the archive answered 500"] });
+    await progress({ tracks: [], failure: ["Fastnet 2025", "the archive answered 500"], warning: null });
     expect(q(".statusbar")!.textContent).toContain("The environment fetch of Fastnet 2025 stopped: the archive answered 500");
+    await progress({ tracks: [], failure: null, warning: ["Fastnet 2025", "the current source cmems-nws-my-uv-geo could not be opened"] });
+    expect(q(".statusbar")!.textContent).toContain("The environment fetch of Fastnet 2025 left out a current source that would not open.");
   });
 
   it("asks to cancel a running fetch before closing the project, and keeps both on No", async () => {
     project = summary(false, "/p.wpsproj");
     await mount();
-    await progress({ tracks: [{ source_id: 8, label: "Fastnet 2025", state: "fetching", fraction: 0.5 }], failure: null });
+    await progress({ tracks: [{ source_id: 8, label: "Fastnet 2025", state: "fetching", fraction: 0.5 }], failure: null, warning: null });
     await click(feature("shell:project-menu"));
     await click(feature("project:close"));
     expect(q("[role=dialog]")?.textContent).toContain("Cancel the environment fetch?");

@@ -13,4 +13,9 @@ tracks: Array<EnvJobTrack>,
  * The last fetch that failed: `[label, message]`, until the next
  * fetch starts.
  */
-failure: Array<string> | null, };
+failure: Array<string> | null,
+/**
+ * The last fetch that had to leave a current source out (it would not
+ * open): `[label, messages]`, until the next fetch starts.
+ */
+warning: Array<string> | null, };

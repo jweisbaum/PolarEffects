@@ -12,8 +12,8 @@
 
 use std::io::Read;
 use std::str::FromStr;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use reqwest::header::{CONTENT_LENGTH, HeaderValue, RANGE};
@@ -110,6 +110,36 @@ impl Failure {
     }
 }
 
+/// The cancel flag of whatever job is reading through a store right now.
+///
+/// Stores are opened once and shared across jobs, while each job has its
+/// own flag; the reader installs its flag here for the length of its read,
+/// so a store's retry pauses stop as soon as the user cancels rather than
+/// sleeping out their backoff.
+#[derive(Debug, Default)]
+pub struct Interrupt(Mutex<Option<Arc<AtomicBool>>>);
+
+impl Interrupt {
+    /// Watches `flag` from now on (`None`: nothing to watch).
+    pub fn watch(&self, flag: Option<Arc<AtomicBool>>) {
+        if let Ok(mut slot) = self.0.lock() {
+            *slot = flag;
+        }
+    }
+
+    /// Whether the watched flag is set.
+    pub fn is_set(&self) -> bool {
+        self.0
+            .lock()
+            .ok()
+            .and_then(|slot| slot.as_ref().map(|f| f.load(Ordering::SeqCst)))
+            .unwrap_or(false)
+    }
+}
+
+/// How often a retry pause looks at the cancel flag.
+const PAUSE_SLICE: Duration = Duration::from_millis(50);
+
 /// A Zarr store read over HTTPS.
 #[derive(Debug)]
 pub struct HttpStore {
@@ -117,6 +147,7 @@ pub struct HttpStore {
     client: reqwest::blocking::Client,
     stats: Arc<NetStats>,
     backoff: Duration,
+    interrupt: Arc<Interrupt>,
 }
 
 impl HttpStore {
@@ -133,7 +164,14 @@ impl HttpStore {
             client: crate::net::client(timeout)?,
             stats: Arc::new(NetStats::default()),
             backoff: FIRST_BACKOFF,
+            interrupt: Arc::new(Interrupt::default()),
         })
+    }
+
+    /// The same store, stopping its retries when `interrupt` is set.
+    pub fn with_interrupt(mut self, interrupt: Arc<Interrupt>) -> Self {
+        self.interrupt = interrupt;
+        self
     }
 
     /// The same store with a different first retry pause (tests use a short
@@ -203,14 +241,25 @@ impl HttpStore {
     ) -> std::result::Result<T, StorageError> {
         let mut pause = self.backoff;
         let mut tries = 0;
+        let cancelled = || StorageError::Other(format!("{what}: cancelled"));
         loop {
+            if self.interrupt.is_set() {
+                return Err(cancelled());
+            }
             self.stats.requests.fetch_add(1, Ordering::Relaxed);
             match attempt() {
                 Ok(value) => return Ok(value),
                 Err(failure) if failure.transient && tries < RETRIES => {
                     tries += 1;
                     self.stats.retries.fetch_add(1, Ordering::Relaxed);
-                    std::thread::sleep(pause);
+                    // Paused in slices, so a cancel ends the wait at once.
+                    let until = std::time::Instant::now() + pause;
+                    while std::time::Instant::now() < until {
+                        if self.interrupt.is_set() {
+                            return Err(cancelled());
+                        }
+                        std::thread::sleep(PAUSE_SLICE.min(until - std::time::Instant::now()));
+                    }
                     pause = pause.saturating_mul(2);
                 }
                 Err(failure) => {
@@ -465,6 +514,38 @@ mod tests {
         assert_eq!(store.get(&key).expect("read"), None);
         assert_eq!(store.stats.snapshot().2, 1);
         assert_eq!(server.join().expect("server"), 2);
+    }
+
+    /// A cancel ends a retry pause at once instead of sleeping out the
+    /// backoff (here 30 s).
+    #[test]
+    fn a_cancel_cuts_a_retry_pause_short() {
+        let (url, _server) = serve(vec![reply("503 Service Unavailable", ""); 4]);
+        let interrupt = Arc::new(Interrupt::default());
+        let flag = Arc::new(AtomicBool::new(false));
+        interrupt.watch(Some(Arc::clone(&flag)));
+        let store = HttpStore::new(&url, Duration::from_secs(5))
+            .expect("a store")
+            .with_backoff(Duration::from_secs(30))
+            .with_interrupt(Arc::clone(&interrupt));
+        let canceller = {
+            let flag = Arc::clone(&flag);
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(300));
+                flag.store(true, Ordering::SeqCst);
+            })
+        };
+        let start = std::time::Instant::now();
+        let err = store
+            .get(&StoreKey::new("u/0.0.0").expect("a key"))
+            .expect_err("cancelled");
+        assert!(err.to_string().contains("cancelled"), "{err}");
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            start.elapsed()
+        );
+        canceller.join().expect("canceller");
     }
 
     /// A body announced larger than the cap is refused without reading it.

@@ -528,7 +528,7 @@ jieter/orc-data MIT), user guide.
 | Vendors change formats (Geovoile especially) | Imports break | Plausibility checks, clear "unsupported" errors, weekly live tests |
 | Scraping terms of use | Legal or blocking | Only user-initiated single-event fetches, polite concurrency, no credentials (D5); ask before adding trackers |
 | WeatherBench2 frozen at 2023-01-10 | No wind for recent races from WB2 | ARCO-ERA5 fallback (D12, Q2) |
-| No global tides before 2020-11 | Current correction weaker for older races | Regional tidal reanalyses; "no tide" flag and filter; Q1 |
+| Coarse tides before 2020-11 outside NW Europe/IBI | Current correction weaker for older races (GlobCurrent's 0.25° FES2022 tide) | Regional tidal reanalyses first; Q1, Q7 (settled: GlobCurrent includes the tide) |
 | Windows ARM64 toolchain | Build failures | CI job from M0; no C deps (D6) |
 | 3D performance with large tracks | Janky editing | Instanced points, binary IPC, M3 spike |
 | ORC schema drift across years | Missing boats | Builder reports dropped records |
@@ -556,7 +556,7 @@ jieter/orc-data MIT), user guide.
 | D17 | Edits stored as overlays (cell overrides, exclusions) | Invariant 1; reversible, auditable |
 | D18 | Track segment cell statistic defaults to the 90th percentile, minimum 5 samples | Polars describe good sailing; the mean undershoots |
 | D19 | Reanalysis sampling hourly by default, 3-hourly option; the pre-flight dialog preselects 3-hourly when the hourly download would exceed half the chunk-cache limit | Confirmed by M3: a 5-day race hourly is ≈ 1.2 GB and ≈ 40 s cold at 8 requests in flight, and a warm chunk is 3 ms. Hourly resolves wind shifts and tidal streams that 3-hourly smooths. A long race is different: the Vendée Globe hourly would be ≈ 19 GB, about the whole default cache, which is when 3-hourly is the better default |
-| D20 | Current tiers: regional tidal reanalysis → global merged (uo + utide, 2020-11+) → GlobCurrent without tides | Only anonymous sources; tides everywhere from 2020-11 and in NW Europe/IBI since 1993 |
+| D20 | Current tiers: regional tidal reanalysis → global merged (uo + utide, 2020-11+) → GlobCurrent (geostrophic + Ekman + FES2022 tide, 1993+; its 202411 metadata, checked 2026-09-28, Q7) | Only anonymous sources; tides everywhere from 2020-11 and in NW Europe/IBI since 1993 |
 | D21 | 2D polar plot (M6): "All" draws one curve per visible source per wind speed that source's grid has; curves are read at each source's own TWA points; the full-size view is a Map-stage overlay toggled by the shell, closed by its own button, Escape or a stage switch | Spec §9.2 named the slider's "all" state and the full-size overlay without saying what either draws or how the overlay opens and closes |
 
 ## 6. Settled before coding started
@@ -565,6 +565,8 @@ The user accepted the proposals below on 2026-09-27 ("all good").
 
 - **Q1 — Tides before November 2020 outside NW Europe/IBI:** accept "no
   tide" for those samples, flagged and filterable. FES2014 stays deferred.
+  *Superseded by Q7 (M9):* GlobCurrent 202411 already includes a FES2022
+  tide, so those samples have tides and none is flagged.
 - **Q2 — Wind after 2023-01-10:** ARCO-ERA5 supplies it (D12).
 - **Q3 — Stokes drift:** excluded by default (`uo + utide`), with a setting
   to include it.
@@ -574,15 +576,14 @@ The user accepted the proposals below on 2026-09-27 ("all good").
 - **Q6 — Terms of use:** the user accepts the risk; imports stay
   user-initiated, one event at a time, with polite concurrency.
 
-### Open (raised in M9)
+### Settled in M9
 
-- **Q7 — GlobCurrent and tides:** the 202411 GlobCurrent store's own
-  metadata describes `uo`/`vo` as "absolute geostrophic velocity + depth
-  Ekman + tide velocity", and it also publishes `utide`/`vtide`. Spec §7.5.1
-  (D20) treats the tier as "no tide", so its samples are marked
-  `has_tide: false` and can be filtered out. If the tide is really in, the
-  mark should go, and tier 3 would give tidal currents everywhere from 1993.
-  Needs a decision before M14.
+- **Q7 — GlobCurrent and tides:** settled by the stores' metadata on
+  2026-09-28 (controller ruling): GlobCurrent 202411 `uo`/`vo` are "absolute
+  geostrophic velocity + depth Ekman + tide velocity" (FES2022) in both the
+  multi-year and near-real-time stores, so the tier is recorded
+  `has_tide: true` and nothing is labelled "no tide". The tier order is
+  unchanged.
 
 ---
 

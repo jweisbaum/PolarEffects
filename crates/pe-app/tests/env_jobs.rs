@@ -12,8 +12,8 @@
 
 mod common;
 
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use common::TempRoot;
 use pe_app::commands::AppState;
@@ -116,6 +116,8 @@ struct Fake<'a> {
     app: Option<&'a AppState>,
     cancel_on: Option<usize>,
     fail_on: Option<usize>,
+    /// Said once, as a real provider says a tier would not open.
+    warning: Mutex<Option<String>>,
 }
 
 impl<'a> Fake<'a> {
@@ -126,6 +128,7 @@ impl<'a> Fake<'a> {
             app: None,
             cancel_on: None,
             fail_on: None,
+            warning: Mutex::new(None),
         }
     }
 }
@@ -134,8 +137,8 @@ impl Provider for Fake<'_> {
     fn sample(
         &self,
         points: &[Point],
-        _options: &Options,
-        cancel: &AtomicBool,
+        options: &Options,
+        cancel: &Arc<AtomicBool>,
     ) -> pe_env::Result<Vec<EnvPoint>> {
         let call = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
         if Some(call) == self.cancel_on
@@ -152,7 +155,22 @@ impl Provider for Fake<'_> {
             return Err(EnvError::OutOfRange("the archive answered 500".to_owned()));
         }
         self.points.fetch_add(points.len(), Ordering::SeqCst);
-        Ok(points.iter().map(truth).collect())
+        // Stokes drift adds to the current, as it does in the real store.
+        let stokes = if options.stokes_drift { 1.0 } else { 0.0 };
+        Ok(points
+            .iter()
+            .map(|p| {
+                let mut env = truth(p);
+                if let Some(c) = &mut env.current {
+                    c.u += stokes;
+                }
+                env
+            })
+            .collect())
+    }
+
+    fn take_warnings(&self) -> Vec<String> {
+        self.warning.lock().unwrap().take().into_iter().collect()
     }
 }
 
@@ -174,8 +192,13 @@ impl JobSink for Sink {
 
 /// Runs the queue dry.
 fn drain(app: &AppState, provider: &dyn Provider, sink: &Sink) -> Vec<Outcome> {
+    drain_at(app, provider, sink, NOW)
+}
+
+/// Runs the queue dry with the clock at `now`.
+fn drain_at(app: &AppState, provider: &dyn Provider, sink: &Sink, now: i64) -> Vec<Outcome> {
     let mut outcomes = Vec::new();
-    while let Some(outcome) = env::run_next(app, provider, sink, NOW, false) {
+    while let Some(outcome) = env::run_next(app, provider, sink, now, false) {
         outcomes.push(outcome);
     }
     outcomes
@@ -228,7 +251,7 @@ fn a_fetch_fills_every_sample_in_project_units() {
         [
             ("wb2-era5-1h", None),
             ("arco-era5", None),
-            ("globcurrent-my-geo", Some(false)),
+            ("globcurrent-my-geo", Some(true)),
             ("cmems-nws-my-uv-geo", Some(true)),
         ]
     );
@@ -508,4 +531,109 @@ fn current_correction_and_stokes_drift_are_undoable_settings() {
     edit::undo_last(&app).unwrap();
     let back = edit::undo_last(&app).unwrap();
     assert!(back.use_corrected && !back.stokes_drift);
+}
+
+/// Toggling Stokes drift between a cancelled fetch and its Refetch starts
+/// over, so no track mixes currents with and without it, and the track
+/// records which it has (review round 1).
+#[test]
+fn a_stokes_change_between_cancel_and_refetch_starts_over() {
+    let root = TempRoot::new("env-stokes");
+    let (app, id) = fetched(&root, true);
+    assert_eq!(track(&app, id).env_meta.stokes_drift, Some(false));
+    env::stokes_drift_set(&app, true).unwrap();
+    env::queue_fetch(&app, &[id], "hourly", false).unwrap();
+    let again = Fake::new();
+    assert_eq!(drain(&app, &again, &Sink::default()), vec![Outcome::Done]);
+    assert_eq!(
+        again.points.load(Ordering::SeqCst),
+        61,
+        "every sample again"
+    );
+    let t = track(&app, id);
+    assert_eq!(t.env_meta.stokes_drift, Some(true));
+    // Every current carries the drift: none is left from the first fetch.
+    let expected = |s: &pe_core::track::Sample| {
+        let c = truth(&Point {
+            t: s.t,
+            lat: s.lat,
+            lon: s.lon,
+        })
+        .current
+        .unwrap();
+        (c.u + 1.0).hypot(c.v) * 3600.0 / 1852.0
+    };
+    assert!(
+        t.samples
+            .iter()
+            .all(|s| (s.current_speed.unwrap() - expected(s)).abs() < 1e-9)
+    );
+}
+
+/// A restart that is cancelled leaves a track partly fetched at the new
+/// settings and otherwise empty: no value, dataset record or fetch time of
+/// the earlier fetch survives beside the new ones (review round 1).
+#[test]
+fn a_cancelled_restart_never_mixes_two_fetches() {
+    let root = TempRoot::new("env-restart-cancel");
+    let (app, id) = fetched(&root, false);
+    const LATER: i64 = NOW + 86_400;
+    env::queue_fetch(&app, &[id], "three_hourly", false).unwrap();
+    let cancelling = Fake {
+        app: Some(&app),
+        cancel_on: Some(2),
+        ..Fake::new()
+    };
+    assert_eq!(
+        drain_at(&app, &cancelling, &Sink::default(), LATER),
+        vec![Outcome::Cancelled]
+    );
+    let t = track(&app, id);
+    assert_eq!(t.env_meta.status, EnvStatus::Partial);
+    assert_eq!(t.env_meta.interval_s, Some(10_800));
+    let (fetched, rest): (Vec<_>, Vec<_>) = t.samples.iter().partition(|s| s.env_fetched);
+    assert!(!fetched.is_empty() && !rest.is_empty());
+    for s in &rest {
+        assert_eq!(
+            (
+                s.tws,
+                s.twa,
+                s.hs_m,
+                s.current_speed,
+                s.bsp_corrected,
+                s.wind_dataset,
+                s.current_dataset
+            ),
+            (None, None, None, None, None, None, None)
+        );
+    }
+    // Only the new fetch's records, each one used.
+    assert!(t.env_meta.datasets.iter().all(|d| d.fetched_at == LATER));
+    let used: std::collections::BTreeSet<u16> = fetched
+        .iter()
+        .flat_map(|s| [s.wind_dataset, s.wave_dataset, s.current_dataset])
+        .flatten()
+        .collect();
+    assert_eq!(used.len(), t.env_meta.datasets.len());
+}
+
+/// A provider's warning (a current source left out) reaches the job's
+/// status with the track's name, and the fetch still completes.
+#[test]
+fn a_provider_warning_reaches_the_status() {
+    let root = TempRoot::new("env-warning");
+    let (app, id) = imported(&root);
+    env::queue_fetch(&app, &[id], "hourly", false).unwrap();
+    let warning = Fake::new();
+    *warning.warning.lock().unwrap() = Some("the current source x could not be opened".to_owned());
+    assert_eq!(drain(&app, &warning, &Sink::default()), vec![Outcome::Done]);
+    let status = app.env_jobs.status();
+    assert_eq!(
+        status.warning,
+        Some(vec![
+            "Alpha".to_owned(),
+            "the current source x could not be opened".to_owned()
+        ])
+    );
+    assert!(status.failure.is_none());
 }
