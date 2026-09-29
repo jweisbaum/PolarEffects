@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  hatchLines,
   dotPositions, inside, lassoSelect, place, project, surfaceMesh, syntheticGrid, syntheticSamples,
 } from "./geometry3d";
 
@@ -43,6 +44,17 @@ describe("the surface of a polar grid", () => {
   it("draws grid lines along each TWS curve and each TWA ray", () => {
     // 30 segments on each of 14 curves + 13 segments on each of 31 rays.
     expect(mesh.lines.length / 2).toBe(30 * 14 + 13 * 31);
+  });
+});
+
+describe("the hatch over cells only one operand covers (spec.md 11)", () => {
+  it("crosses each drawn quad that touches a marked node, and no other", () => {
+    // 3 × 2 nodes, all with a value but (2, 1): two quads could be drawn,
+    // only the first is whole.
+    const grid = { twa: [30, 60, 90], tws: [8, 12], bsp: [[5, 6, 7], [6, 7, null]] };
+    expect([...hatchLines(grid, [0, 1, 0, 0, 0, 0])]).toEqual([0, 4, 1, 3]);
+    expect([...hatchLines(grid, [0, 0, 1, 0, 0, 0])]).toEqual([]);
+    expect([...hatchLines(grid, new Uint8Array(6))]).toEqual([]);
   });
 });
 

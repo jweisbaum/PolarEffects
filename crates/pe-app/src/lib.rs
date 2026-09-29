@@ -2,7 +2,7 @@
 //!
 //! Rust owns the entire domain; the webview is a view layer. Everything the
 //! frontend can reach goes through a Tauri command in [`commands`],
-//! [`projects`], [`edit`], [`env`], [`polar_files`], [`tracks`], [`trackers`], [`map_tracks`], [`polar_plot`], [`polar3d`], [`polar_edit`], [`blend`], [`orc`], [`settings`], [`basemap`],
+//! [`projects`], [`edit`], [`env`], [`polar_files`], [`tracks`], [`trackers`], [`map_tracks`], [`polar_plot`], [`polar3d`], [`polar_edit`], [`blend`], [`compare`], [`orc`], [`settings`], [`basemap`],
 //! [`quit`] or [`autosave`], and every failure it can see is an
 //! [`error::AppError`].
 
@@ -10,6 +10,7 @@ pub mod autosave;
 pub mod basemap;
 pub mod blend;
 pub mod commands;
+pub mod compare;
 pub mod derived;
 pub mod edit;
 pub mod env;
@@ -128,6 +129,7 @@ pub fn run() -> anyhow::Result<()> {
             blend::set_blend_settings,
             blend::export_preview,
             blend::export_polar,
+            compare::compare_polars,
             orc::orc_catalogue_info,
             orc::orc_search,
             orc::orc_add,

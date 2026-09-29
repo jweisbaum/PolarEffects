@@ -125,7 +125,7 @@ Rules:
 | `PE_DRIVER_YELLOWBRICK=http://127.0.0.1:<port>` | `pe-app/src/trackers.rs` | `webdriver` feature, loopback only | The tracker dialog end to end without the network |
 | `window.__peDialogAnswers` | `ui/src/automation.ts`, `project/dialogs.ts` | dev builds | A native file picker is outside the webview |
 | `window.__peOpen(path)` | `ui/src/App.tsx` | dev builds | Opening through the app's own path, not a bare `open_project` |
-| `canvas.__peRedraw()` | `automation.ts`, `MapView`, `PolarView` | dev builds | A WebGL canvas reads back empty after its frame is shown |
+| `canvas.__peRedraw()` | `automation.ts`, `MapView`, `PolarView`, `CompareView` | dev builds | A WebGL canvas reads back empty after its frame is shown |
 
 Adding one: gate Rust on `#[cfg(feature = "webdriver")]`, TypeScript on
 `import.meta.env.DEV`, add no user-visible text, and add it to this table.

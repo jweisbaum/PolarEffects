@@ -12,6 +12,7 @@ use pe_app::blend::{
     BlendSettingsInput, BlendSummary, ExportAxes, ExportPreview, ExportProblemView, ExportResult,
 };
 use pe_app::commands::AppInfo;
+use pe_app::compare::CompareOperand;
 use pe_app::env::{EnvEstimate, EnvJobTrack, EnvJobsStatus};
 use pe_app::error::AppErrorPayload;
 use pe_app::orc::{OrcCatalogueInfo, OrcFilters, OrcHit, OrcSearchResult, OrcThumbCurve};
@@ -64,6 +65,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ExportProblemView::export_all(&cfg)?;
     ExportResult::export_all(&cfg)?;
     PolarNodeRef::export_all(&cfg)?;
+    CompareOperand::export_all(&cfg)?;
     TrackSummary::export_all(&cfg)?;
     TrackerBoatRow::export_all(&cfg)?;
     TrackerEventView::export_all(&cfg)?;

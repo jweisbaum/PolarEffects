@@ -17,7 +17,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
-import { dotPositions, lassoSelect, project, surfaceMesh, type Layout, type PolarGrid } from "./geometry3d";
+import { dotPositions, hatchLines, lassoSelect, project, surfaceMesh, type Layout, type PolarGrid } from "./geometry3d";
 
 /** A disc: a sample or a node in the blend. */
 export const SHAPE_DISC = 0;
@@ -39,6 +39,15 @@ export interface SurfaceInput {
   opacity?: number;
   /** Its grid lines' colour instead of one derived from `color`: the outline of a blend lost on the background. */
   lineColor?: string;
+  /**
+   * A colour per grid node, (r, g, b) in 0–1, indexed `j * ni + i`: the
+   * Compare stage's difference surface (spec.md 11). `color` is then unused
+   * for the faces.
+   */
+  vertexColors?: Float32Array;
+  /** Nodes (indexed `j * ni + i`, non-zero marked) whose quads are hatched, in `hatchColor`. */
+  hatched?: Uint8Array;
+  hatchColor?: string;
 }
 
 /** What the scene draws. */
@@ -208,9 +217,23 @@ export class PolarScene {
       // and the dots inside them stay visible. The blend is opaque.
       const opaque = surface.opaque === true;
       const opacity = surface.opacity ?? 0.18;
+      const painted = surface.vertexColors !== undefined && surface.vertexColors.length === mesh.positions.length;
+      if (painted) faces.setAttribute("color", new THREE.BufferAttribute(surface.vertexColors!, 3));
       this.surfaces.add(new THREE.Mesh(faces, new THREE.MeshBasicMaterial({
-        color, transparent: !opaque, opacity: opaque ? 1 : opacity, side: THREE.DoubleSide, depthWrite: opaque,
+        color: painted ? new THREE.Color(0xffffff) : color, vertexColors: painted,
+        transparent: !opaque, opacity: opaque ? 1 : opacity, side: THREE.DoubleSide, depthWrite: opaque,
       })));
+      if (surface.hatched) {
+        const hatch = hatchLines(surface.grid, surface.hatched);
+        if (hatch.length > 0) {
+          const crossing = new THREE.BufferGeometry();
+          crossing.setAttribute("position", shared);
+          crossing.setIndex(new THREE.BufferAttribute(hatch, 1));
+          this.surfaces.add(new THREE.LineSegments(crossing, new THREE.LineBasicMaterial({
+            color: new THREE.Color(surface.hatchColor ?? "#888888"), transparent: true, opacity: 0.9, depthWrite: false,
+          })));
+        }
+      }
       this.surfaces.add(new THREE.LineSegments(lines, new THREE.LineBasicMaterial({
         // On an opaque surface the grid lines are lightened, or they vanish into it.
         color: surface.lineColor !== undefined ? new THREE.Color(surface.lineColor)

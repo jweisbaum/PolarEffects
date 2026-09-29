@@ -25,6 +25,7 @@ use std::time::{Duration, Instant};
 
 use common::TempRoot;
 use pe_app::commands::AppState;
+use pe_app::compare::{self, CompareOperand};
 use pe_app::polar_edit::{self, EditOp, PolarCell};
 use pe_app::{polar_plot, polar3d, projects};
 use pe_core::polar::{PolarFileFormat, PolarGrid};
@@ -149,6 +150,15 @@ fn views(app: &AppState, held: u64, tws: f64, focus: u64) -> Vec<(&'static str, 
     let surface = polar_edit::edit_surface(app, focus).unwrap();
     let json = serde_json::to_vec(&surface).unwrap();
     out.push(("table", ms(t.elapsed()), json.len()));
+    // The Compare stage: the edited source against the blend (spec.md 11).
+    let operand = if focus >= 100 {
+        CompareOperand::Segment { source_id: focus }
+    } else {
+        CompareOperand::Polar { source_id: focus }
+    };
+    let t = Instant::now();
+    let compared = compare::compare_bytes(app, operand, CompareOperand::Blend, 0.05).unwrap();
+    out.push(("compare", ms(t.elapsed()), compared.len()));
     out
 }
 

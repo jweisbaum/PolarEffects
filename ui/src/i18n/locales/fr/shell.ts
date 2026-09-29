@@ -10,7 +10,6 @@ const catalogue: Record<string, string> = {
   "Settings ({chord})": "Réglages ({chord})",
   "Stage": "Vue",
   "Compare": "Comparer",
-  "Comparing two polars arrives in a later version.": "La comparaison de deux polaires arrivera dans une version ultérieure.",
   "Show the navigation": "Afficher la navigation",
   "Hide the navigation": "Masquer la navigation",
   "Show the sources and polar plot": "Afficher les sources et le diagramme polaire",

@@ -13,6 +13,7 @@
 //! every platform (invariant 5).
 
 pub mod blend;
+pub mod compare;
 pub mod edit;
 pub mod export;
 pub mod format;
@@ -26,6 +27,7 @@ mod expedition;
 mod table;
 
 pub use blend::{Blend, BlendOptions, BlendSource, CellOrigin, Confidence, Coverage, blend};
+pub use compare::{CellClass, CompareError, Comparison, Faster, Region, compare};
 pub use export::{ExportProblem, export};
 pub use format::{PolarError, Reason, detect, read, read_as, write};
 pub use grid::{cell_count, fold_twa, interpolate, interpolate_from, resample};

@@ -6,6 +6,9 @@
  * a language switch relabels everything with no reload, and every control is
  * found by the search in each language and flashed after it is revealed.
  */
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -14,6 +17,7 @@ import type { AppSettings } from "./generated/AppSettings";
 import type { OrcHit } from "./generated/OrcHit";
 import type { ProjectSummary } from "./generated/ProjectSummary";
 import type { SourceSummary } from "./generated/SourceSummary";
+import { resetCompareChoices } from "./compare/compareState";
 import { TEST_BLEND } from "./testBlend";
 
 const invoke = vi.hoisted(() => vi.fn());
@@ -125,6 +129,11 @@ function backend() {
         new DataView(header).setUint32(0, 0x44334550, true);
         new DataView(header).setUint32(4, 2, true);
         return header;
+      }
+      case "compare_polars": {
+        // The comparison the Rust packing test pins (layout in compare/comparePacket.ts).
+        const bytes = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "compare/fixtures/compare-v1.bin"));
+        return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
       }
       case "polar_plot_dots": {
         // No dots: the header alone (layout in panels/dotPacket.ts).
@@ -239,6 +248,7 @@ beforeEach(() => {
   backend();
 });
 afterEach(async () => {
+  resetCompareChoices();
   await act(async () => root.unmount());
   host.remove();
   document.body.innerHTML = "";
@@ -355,7 +365,9 @@ describe("the project window", () => {
     expect(feature("view3d:layout")).not.toBeNull();
     expect(calls.some(([command]) => command === "polar_scene")).toBe(true);
     await click(feature("stage:compare"));
-    expect(q(".stage-placeholder h2")?.textContent).toBe("Compare");
+    expect(feature("view3d:layout")).toBeNull();
+    expect(feature("compare:operand-a")).not.toBeNull();
+    expect(calls.some(([command]) => command === "compare_polars")).toBe(true);
     await click(feature("stage:map"));
     expect(feature("map:projection")).not.toBeNull();
   });
@@ -640,8 +652,9 @@ describe("finding every control (plan.md M2 acceptance)", () => {
         // section's Remove (and a track's filters) are on screen.
         project = summary(false, "/p.wpsproj", [POLAR, ORC, TRACKED]);
         await mount();
-        // The map and 3D stages are hidden behind the Compare stage, to be revealed.
-        await click(feature("stage:compare"));
+        // The map and 3D stages are hidden behind the Compare stage, to be
+        // revealed; the Compare stage's own controls behind the 3D stage.
+        await click(feature(entry.id.startsWith("compare:") ? "stage:3d" : "stage:compare"));
         if (entry.reveal?.length) {
           expect(feature(entry.id), `${entry.id} starts hidden`).toBeNull();
         }
@@ -717,7 +730,26 @@ describe("polar files and the source list (plan.md M4)", () => {
     expect(rows[0]!.textContent).toContain("0 direct, 0 filled");
     expect((feature("sources:blend-settings") as HTMLButtonElement).disabled).toBe(false);
     expect((feature("sources:edit") as HTMLButtonElement).disabled).toBe(false);
-    expect((feature("sources:compare") as HTMLButtonElement).disabled).toBe(true);
+    expect((feature("sources:compare") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("opens the Compare stage with a source as A and the blend as B (spec.md 8, 11)", async () => {
+    await open([POLAR, TRACK]);
+    const buttons = document.querySelectorAll<HTMLButtonElement>('[data-feature="sources:compare"]');
+    await click(buttons[1]!);
+    await settle();
+    expect(feature("compare:operand-a")).not.toBeNull();
+    expect(commands("compare_polars").at(-1)).toMatchObject({
+      a: { kind: "segment", source_id: TRACK.id }, b: { kind: "blend" }, thresholdKn: 0.05,
+    });
+    expect(feature("compare:operand-a")!.textContent).toContain(TRACK.label);
+    // Swap exchanges them; the choice is view state, sent with the next request.
+    await click(feature("compare:swap"));
+    await settle();
+    expect(commands("compare_polars").at(-1)).toMatchObject({ a: { kind: "blend" }, b: { kind: "segment", source_id: TRACK.id } });
+    // The summary and the heat map show what Rust sent.
+    expect(q(".compare-summary")!.textContent).toContain("1 cells compared");
+    expect(document.querySelectorAll(".compare-heat-cell").length).toBe(2);
   });
 
   it("outlines a blend colour lost on the theme's background (M14 review)", async () => {

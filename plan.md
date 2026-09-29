@@ -884,10 +884,52 @@ migration and damaged-column tests, the legacy removal, UI and `npm run ux
 
 ---
 
-### M15 — Compare
+### M15 — Compare · **complete**
 
 **Deliverables:** Compare stage (spec §11): operand pickers, difference
 surface, overlap rules, summary, 2D Δ heat map.
+
+Built as specified (spec.md §8, §11, D28). `pe-polar::compare` compares two
+grids on the same axes: cells both cover get Δ = A − B (rounded to 1e-6
+kn) and Δ % of B (none where B is 0 kn); cells one covers are counted A
+only / B only; the 0° row is never compared; mean and max |Δ| (with its
+cell) and the signed range in both units; regions per TWS as runs of
+neighbouring TWA cells over +threshold or under −threshold.
+`pe-app/src/compare.rs` reads each operand (`CompareOperand`: `blend`,
+`polar` of an ORC or file source, `segment` of a track, hidden sources
+included) onto the output grid through the session's derived cache — a
+polar source as the blend reads it (`blend::on_grid`, excluded nodes
+empty), a segment with its overrides, the cached blend — and answers
+`compare_polars` with one packed buffer ("PECM" v1, pinned by
+`ui/src/compare/fixtures/compare-v1.bin`). Frontend: `CompareView`
+replaces the placeholder (A and B translucent in their colours, the
+difference surface midway between them with per-vertex colours on a
+blue–orange OKLab scale with one set of stops per theme scheme, grey
+hatched quads where one operand only; legend with the symmetric scale
+and range; heat map TWA × TWS with an SVG hatch and a hover readout;
+summary with regions), colour-and-name operand pickers, swap, Δ %
+toggle, threshold in the display unit; choices are view state per
+project (`compareState.ts`); the source row's Compare opens the stage
+with that source as A and the blend as B. `scene3d.ts` surfaces gain
+vertex colours and a hatch (`geometry3d.hatchLines`). Help topic in
+en/fr/de, fifteen registry entries, every string in fr/de; the
+placeholder stage component and its strings are gone. Tests:
+`pe-polar` compare units (hand-worked grid, threshold equality, runs,
+zero B, refusals, identity), `pe-app/tests/compare.rs` (overlap against a
+segment worked by hand, overlays, blend, hidden source, refusals, nothing
+written), layout and fixture tests both sides, model/state/palette tests,
+the shell test, and `npm run ux -- compare` (three polar files, Compare
+from a source row, picker, Δ %, swap, Paper theme; hatched cells counted
+against the summary).
+
+*Measured 2026-09-29* (Intel i9, debug build, `perf_edit`, 20 polar sources
+and 20 tracks × 10,000 samples): the comparison after an edit 0.2–0.4 ms
+(a source against the blend, 4.3 KB). It replaces the 3D scene while the
+Compare stage is shown (one stage at a time), so it adds nothing to the
+edit-to-view budget; the other views measured 85, 100 and 126 ms this
+run against 73, 73 and 92 ms in M14 with the machine under other load
+(the 3D scene alone 42–46 ms), which should be re-measured on a quiet
+machine.
 
 ---
 
@@ -978,6 +1020,7 @@ jieter/orc-data MIT), user guide.
 | D25 | Agent-driven UI testing: `pe-app`'s optional `webdriver` feature compiles in `tauri-plugin-webdriver-automation`, an endpoint on `127.0.0.1` at a random port that drives the whole interface. Off by default, never in `npm run build`; `tests/webdriver_optional.rs` holds the manifest to that (check:offline cannot see a listener). Under the feature only: `PE_AUTOMATION_ROOT` redirects the settings, recent list, autosave and cache to a driver's temporary directory, and `PE_DRIVER_YELLOWBRICK` (a `http://127.0.0.1:<port>` origin only) serves the YellowBrick dialog from a local fixture server. In development builds only (`import.meta.env.DEV`): queued answers for native file dialogs, `__peOpen`, and a synchronous redraw on the WebGL canvases for screenshots. The suite runs the dev build (StrictMode) | Settled with the user 2026-09-28: "ensure that the project is set up with webkit testing so that all agents can interact with ui elements, take screen shots, and run ux tests agentically". Copied from VectorEffects (M71); the inbound exception to invariant 4 is worded as VectorEffects words its invariant 5 |
 | D26 | ORC search by field: under the all-fields box, a "Search by field" disclosure (folded by default, remembered per user in `localStorage`) with boat name, sail number, country, model / type, builder, designer, year built from–to (the former year and country filters, moved in) and certificate year. Every filled field and the main box must match; a field's words must start words of that field only (same folding and compact forms); the certificate year matches from its start. A field equal to its whole field ranks above every other tier. The field boxes are not saved; Clear empties them and keeps the main box | Settled with the user 2026-09-28: "in the orc section, add some ux to search each field independently." |
 | D27 | Weather downloads read only the blosc blocks of each archive chunk that hold a track's rows (HTTP Range: a 64-byte head, then the blocks), for ERA5 and the current geoChunks alike; nothing downloaded is kept on disk, only an in-memory LRU of blocks for the session (256 MB default, 16–4096 MB), and an earlier version's chunk cache is removed once with a status-line notice. A project stores per sample only its non-derived values by column, the environment rounded to 0.01 kn, 0.1° and 0.01 m (schema 2; derived angles recomputed on load). D19 re-evaluated: hourly stays the default (a 5-day race ≈ 150 MB); 3-hourly is preselected above 1 GB hourly instead of half the old cache limit | Settled with the user 2026-09-28: "The weather download should not be so many gigabytes. do not store the entire time step of data, simply store the wind speed and direction (and current, and wave height and direction) interpolated to each position in the track. It should be kilobytes per track." No anonymous point-chunked ERA5 exists; the blocks are the finest unit the archives allow (≈ 1/8 of an ERA5 field, 1/5–1/7 of a geoChunk) |
+| D28 | Compare (M15, controller rulings): computed in Rust from the derived cache, operands read on the output grid as the other views read them (a polar source as the blend reads it, excluded nodes empty; a segment with its overrides; the cached blend; hidden sources allowed), one binary packet; Δ rounded to 1e-6 kn, Δ % of B absent where B is 0 kn; the 0° row takes no part; a region is a per-TWS run of TWA cells beyond ±threshold (0.05 kn default, a Compare setting); the difference surface lies midway between A and B, one-only cells at that operand's speed, grey and hatched; the diverging scale is blue–orange in OKLab, symmetric about zero, with dark- and light-scheme stops and not the flash orange; A, B, % and threshold are view state per project, not undoable or saved; a source row's Compare opens A = source, B = blend | Spec §11 named the operands, the surfaces, the overlap rule and the summary without saying how operands are read, where the difference surface lies, what a region is, or how choices persist |
 | D22 | Polar edits and segments (M13): one `EditCells` command for every edit tool (overrides before/after per cell, the tool naming the undo entry, drags coalescing); segment bins are half-steps around each output-grid node with nothing beyond the outer half-steps, and nothing is binned into a 0° TWA node (samples nearest 0° are dropped, not moved: the 0° row is 0 kn, spec §12.3; controller ruling); spread is the sample standard deviation; smooth is the 3×3 binomial kernel over neighbours with a value as the blend reads them (excluded nodes take no part; controller ruling); the 3D samples key mixes a per-opening nonce, so two openings never share one; views show sources as edited, and the 2D curves also leave excluded nodes out | Spec §10.4 and §12.1 named the tools, the statistic and "count and spread" without the binning edges, the spread measure, the kernel or how undo groups them |
 
 ## 6. Settled before coding started

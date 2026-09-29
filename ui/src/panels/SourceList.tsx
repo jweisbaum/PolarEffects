@@ -7,6 +7,7 @@ import type { SourceSummary } from "../generated/SourceSummary";
 import { onReveal } from "../help/highlight";
 import { msg, useT } from "../i18n";
 import { api } from "../ipc";
+import { compareSource } from "../compare/compareState";
 import { editSource } from "../polar/editFocus";
 import { onThemeChange } from "../settings/themes";
 import BlendSettingsDialog from "./BlendSettingsDialog";
@@ -208,8 +209,9 @@ export default function SourceList({ project, onProject }: {
                 onClick={() => editSource(source.id)}>
                 {t("Edit")}{source.edits > 0 && <span className="muted" title={t("{count} edits", { count: source.edits })}> ✎</span>}
               </button>
-              <button className="small" disabled data-feature="sources:compare"
-                title={t("Compare this source with another or with the blend. Arrives in a later version.")}>{t("Compare")}</button>
+              <button className="small" data-feature="sources:compare"
+                title={t("Compare this source with the blend in the Compare stage; pick another operand there")}
+                onClick={() => compareSource(project, source.id)}>{t("Compare")}</button>
               <button className="small" data-feature="sources:remove"
                 title={t("Remove this source from the project (undoable)")}
                 onClick={() => void run(api.removeSource(source.id))}>{t("Remove")}</button>

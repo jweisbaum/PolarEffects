@@ -20,6 +20,8 @@ import MapView from "./map/MapView";
 import LeftNav from "./panels/LeftNav";
 import { formatBytes } from "./panels/trackImport";
 import PolarPlot from "./panels/PolarPlot";
+import CompareView from "./compare/CompareView";
+import { onCompareSource } from "./compare/compareState";
 import PolarView from "./polar/PolarView";
 import { editFocus, editSource, onEditSource } from "./polar/editFocus";
 import RightPanel from "./panels/RightPanel";
@@ -34,7 +36,6 @@ import StartScreen from "./project/StartScreen";
 import UnsavedChangesDialog from "./project/UnsavedChangesDialog";
 import SettingsDialog from "./settings/SettingsDialog";
 import { applyTheme } from "./settings/themes";
-import Placeholder from "./stage/Placeholder";
 import StageSwitcher, { type Stage } from "./stage/StageSwitcher";
 import { onFocusMap, resetSelection } from "./selection";
 
@@ -162,6 +163,7 @@ function Shell() {
       onReveal("stage:map", () => setStage("map")),
       onReveal("stage:3d", () => setStage("3d")),
       onReveal("stage:compare", () => setStage("compare")),
+      onCompareSource(() => { setStage("compare"); setPlotFull(false); }),
       onReveal("overlay:plot", () => { setStage("map"); setPlotFull(true); }),
       onReveal("settings:", () => setShowSettings(true)),
     ];
@@ -517,8 +519,7 @@ function Shell() {
         <main className="centre-stage" aria-label={t("Stage")}>
           {stage === "map" && <MapView project={project} settings={settings} onSettings={setSettings} />}
           {stage === "3d" && <PolarView project={project} settings={settings} onProject={setProject} />}
-          {stage === "compare" && <Placeholder title={msg("Compare")}
-            body={msg("Comparing two polars arrives in a later version.")} />}
+          {stage === "compare" && <CompareView project={project} settings={settings} />}
           {stage === "map" && plotFull && (
             <div className="polar-plot-overlay" role="dialog" aria-label={t("Polar plot")}>
               <PolarPlot project={project} variant="overlay" onClose={() => setPlotFull(false)} />

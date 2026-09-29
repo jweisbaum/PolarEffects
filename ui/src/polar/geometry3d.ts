@@ -108,6 +108,31 @@ export function surfaceMesh(grid: PolarGrid, layout: Layout): SurfaceMesh {
 }
 
 /**
+ * A hatch over the quads of a surface that touch a marked node: both
+ * diagonals of every drawn quad (all four corners with a value) with at
+ * least one corner in `marked` (indexed `j * ni + i`, as the mesh's
+ * vertices). The Compare stage marks the cells only one operand covers
+ * (spec.md 11), so they read as a pattern, not only as a colour.
+ */
+export function hatchLines(grid: PolarGrid, marked: ArrayLike<number>): Uint32Array<ArrayBuffer> {
+  const ni = grid.twa.length;
+  const nj = grid.tws.length;
+  const has = (i: number, j: number) => {
+    const v = grid.bsp[j]?.[i];
+    return v !== null && v !== undefined && Number.isFinite(v);
+  };
+  const out: number[] = [];
+  for (let j = 0; j + 1 < nj; j++) {
+    for (let i = 0; i + 1 < ni; i++) {
+      if (!(has(i, j) && has(i + 1, j) && has(i, j + 1) && has(i + 1, j + 1))) continue;
+      const a = j * ni + i, b = a + 1, c = a + ni, d = a + ni + 1;
+      if (marked[a] || marked[b] || marked[c] || marked[d]) out.push(a, d, b, c);
+    }
+  }
+  return Uint32Array.from(out);
+}
+
+/**
  * Projects model-space points to screen pixels with a column-major 4×4
  * model-view-projection matrix (three.js `Matrix4.elements`). Points behind
  * the camera or outside the depth range get NaN, so no lasso can take them.

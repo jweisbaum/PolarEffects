@@ -1071,7 +1071,8 @@ The right panel lists every source (ORC, file, track) in one list:
 - Label (rename in place), kind icon, and a count (cells for polars,
   samples/used samples for tracks).
 - Actions: Edit (opens the 3D stage focused on this source, §10.4; a ✎
-  after it means the source holds edits), Compare (§11), Remove.
+  after it means the source holds edits), Compare (opens the Compare stage
+  with this source as A and the blend as B, §11), Remove.
 - Drag to reorder (display order only).
 - A **Blend** entry at the top represents the current blend: its colour
   (the same picker as a source's; a new project's is `#e0457b`, seen on
@@ -1267,16 +1268,53 @@ Every source can be edited on its own (D17):
 ## 11. Compare
 
 - The Compare stage takes two operands, A and B. Each is any source's polar,
-  any track's polar segment, or the current blend.
-- 3D: A and B as surfaces, plus a **difference surface** coloured by
-  ΔBSP = A − B with a diverging scale (A faster / B faster), centred on zero,
-  with its range shown in the legend. A toggle shows Δ as percent of B.
+  any track's polar segment, or the current blend. A hidden source can be
+  compared too: hiding takes it out of the blend and the plots, not out of
+  reach. Compare on a source row (§8) opens the stage with that source as A
+  and the blend as B.
+- Both are read onto the project output grid as the other views read them,
+  and never extrapolated: a polar source with its edits written in, read
+  bilinearly (§12.2) with every cell read from an excluded node empty, as
+  the blend reads it (§12.3); a track through its segment with its
+  overrides; the blend as the views draw it. Rust computes everything — A,
+  B, Δ, the classes, the statistics and the regions — and sends it as one
+  packed binary buffer (layout in `pe-app/src/compare.rs` and
+  `ui/src/compare/comparePacket.ts`, pinned by a shared fixture); the
+  interface never computes a difference. An edit anywhere refetches it.
+- 3D: A and B as translucent surfaces in their colours, plus a **difference
+  surface** midway between them, coloured by ΔBSP = A − B with a diverging
+  scale (orange: A faster; blue: B faster; a hue-less grey at zero),
+  centred on zero and symmetric (its ends are ± the largest |Δ|), with its
+  range shown in the legend. A toggle shows Δ as percent of B, (A − B) / B;
+  a cell where B is 0 kn has no percentage. The scale is linear in OKLab
+  with both poles at the same lightness, colour-blind safe (poles ≥ 20 ΔE
+  apart under simulated protan, deutan and tritan vision), and has one set
+  of stops for dark themes (arms lighten away from zero) and one for light
+  themes (arms darken); neither pole is the feature search's flash orange.
+  Each surface can be shown or hidden; the layouts and preset cameras are
+  the 3D view's (§10.1).
 - **Overlap**: only cells where both A and B have a value are coloured.
-  Cells covered by only one are drawn in neutral grey with a pattern and
-  counted in the summary.
-- Summary: overlap cell count, mean and max |Δ|, the TWS/TWA regions where A
-  is faster and where B is faster, and a 2D Δ heat map (TWA × TWS).
-- A swap button, and each operand's picker lists sources by colour and name.
+  Cells covered by only one are drawn in neutral grey with a pattern (a
+  hatch: crossed quads in 3D, diagonal stripes in the heat map) at that
+  operand's speed, and counted in the summary ("N only A, M only B"). The 0°
+  row is 0 kn by definition (§12.3), not a measurement: it takes no part in
+  the overlap, the statistics, the regions or the heat map.
+- Summary: overlap cell count, mean and max |Δ| (with where the max is),
+  the TWS/TWA regions where A is faster and where B is faster, and a 2D Δ
+  heat map (TWA rows × TWS columns; hovering a cell shows TWA, TWS, A, B and
+  Δ). A **region** is, for one TWS, a run of neighbouring TWA cells where
+  Δ > +threshold (A faster) or Δ < −threshold (B faster); a cell not
+  compared or within the threshold ends a run. The threshold is a Compare
+  setting, 0.05 kn by default, in the display speed unit; Δ is rounded to
+  1e-6 kn first, so a difference of exactly the threshold is not over it on
+  any platform.
+- A swap button, and each operand's picker lists the blend and every source
+  by colour and name (a track standing for its polar segment; a hidden
+  source marked hidden).
+- What is compared, the percent toggle and the threshold are view state:
+  not undoable, not saved, kept in memory per project while the application
+  runs. An operand whose source is removed falls back (A to the first
+  source, B to the blend).
 
 ---
 

@@ -9,6 +9,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 import { beginBusy } from "./busy";
 import { msg } from "./i18n/msg";
+import { unpackCompare, type ComparePacket } from "./compare/comparePacket";
 import { unpackTracks, type TrackPacket } from "./map/trackPacket";
 import { unpackDots, type DotPacket } from "./panels/dotPacket";
 import { unpackScene, type ScenePacket } from "./polar/scenePacket";
@@ -18,6 +19,7 @@ import type { AppSettings } from "./generated/AppSettings";
 import type { AutosaveMode } from "./generated/AutosaveMode";
 import type { BlendSettingsInput } from "./generated/BlendSettingsInput";
 import type { BoatInput } from "./generated/BoatInput";
+import type { CompareOperand } from "./generated/CompareOperand";
 import type { CsvMappingInput } from "./generated/CsvMappingInput";
 import type { EditOp } from "./generated/EditOp";
 import type { EditSurface } from "./generated/EditSurface";
@@ -301,6 +303,16 @@ export const api = {
   polarScene: async (focus: number | null = null, held: ScenePacket | null = null): Promise<ScenePacket> => {
     const bytes = await call<ArrayBuffer | number[]>("polar_scene", { focus, samplesKey: held?.samplesKey ?? null });
     return unpackScene(bytes instanceof ArrayBuffer ? bytes : new Uint8Array(bytes).buffer, held ?? undefined);
+  },
+  /**
+   * Compares two operands on the project output grid (spec.md 11), packed
+   * as binary (layout in `compare/comparePacket.ts`): A, B, Δ in knots and
+   * percent of B, who covers each cell, the summary and the regions where
+   * each is faster by more than `thresholdKn`.
+   */
+  comparePolars: async (a: CompareOperand, b: CompareOperand, thresholdKn: number): Promise<ComparePacket> => {
+    const bytes = await call<ArrayBuffer | number[]>("compare_polars", { a, b, thresholdKn });
+    return unpackCompare(bytes instanceof ArrayBuffer ? bytes : new Uint8Array(bytes).buffer);
   },
   /** One source's editable surface (spec.md 10.4): its cells as imported or binned and as edited. */
   polarEditSurface: (sourceId: number) => call<EditSurface>("polar_edit_surface", { sourceId }),
