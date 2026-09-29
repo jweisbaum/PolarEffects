@@ -27,6 +27,14 @@ pub struct AppPaths {
 impl AppPaths {
     /// Resolves the platform directories, creating them if needed.
     pub fn resolve() -> Result<Self> {
+        // A driven run (D25) must never touch the person's own settings,
+        // recent list or recovery files; the driver points this at a fresh
+        // temporary directory. Compiled only with the WebDriver feature, so a
+        // shipped build has no way to be redirected.
+        #[cfg(feature = "webdriver")]
+        if let Some(root) = std::env::var_os("PE_AUTOMATION_ROOT") {
+            return Self::in_directory(Path::new(&root));
+        }
         let dirs = ProjectDirs::from("com", "PolarEffects", "PolarEffects")
             .ok_or_else(|| AppError::Internal("could not determine a home directory".to_owned()))?;
         let data = dirs.data_dir();

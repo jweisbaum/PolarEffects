@@ -36,8 +36,20 @@ pub fn run() -> anyhow::Result<()> {
     let paths = paths::AppPaths::resolve()?;
     // Fail loudly at startup rather than showing a blank map later.
     basemap::inspect(basemap::EMBEDDED)?;
-    let app = tauri::Builder::default()
-        .plugin(tauri_plugin_dialog::init())
+    let builder = tauri::Builder::default().plugin(tauri_plugin_dialog::init());
+    // The WebDriver endpoint (D25): an inbound socket on loopback that drives
+    // the whole interface — invariant 4 in the other direction — so a shipped
+    // build must not carry it, and the feature being off by default is what
+    // makes sure of that (`tests/webdriver_optional.rs`).
+    #[cfg(feature = "webdriver")]
+    let builder = {
+        eprintln!(
+            "the WebDriver automation endpoint is compiled in; this build is for \
+             testing and must not be shipped"
+        );
+        builder.plugin(tauri_plugin_webdriver_automation::init())
+    };
+    let app = builder
         .manage(commands::AppState::new(paths))
         .setup(|app| {
             let language = app

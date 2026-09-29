@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 
+import { registerRedraw } from "../automation";
 import { needsOutline } from "../colourContrast";
 import { reportFailure } from "../errors";
 import type { AppSettings } from "../generated/AppSettings";
@@ -118,25 +119,30 @@ export default function PolarView({ project, settings, onProject }: {
   const focus = requested !== null && project.sources.some((s) => s.id === requested) ? requested : null;
   useEffect(() => { if (requested !== null && focus === null) editSource(null); }, [requested, focus]);
 
-  /** Renders on the next frame, once, and moves the axis labels to where their points now are. */
+  /** Renders now, and moves the axis labels to where their points now are. */
+  const paint = useCallback(() => {
+    const current = scene.current;
+    if (!current) return;
+    current.render();
+    const host = labelsHost.current;
+    if (!host) return;
+    labels.current.forEach((label, k) => {
+      const span = host.children[k] as HTMLElement | undefined;
+      if (!span) return;
+      const at = current.toScreen(...label.at);
+      span.style.display = at ? "" : "none";
+      if (at) span.style.transform = `translate(${at[0]}px, ${at[1]}px)`;
+    });
+  }, []);
+
+  /** Paints on the next frame, once. */
   const draw = useCallback(() => {
     if (frame.current !== 0) return;
     frame.current = requestAnimationFrame(() => {
       frame.current = 0;
-      const current = scene.current;
-      if (!current) return;
-      current.render();
-      const host = labelsHost.current;
-      if (!host) return;
-      labels.current.forEach((label, k) => {
-        const span = host.children[k] as HTMLElement | undefined;
-        if (!span) return;
-        const at = current.toScreen(...label.at);
-        span.style.display = at ? "" : "none";
-        if (at) span.style.transform = `translate(${at[0]}px, ${at[1]}px)`;
-      });
+      paint();
     });
-  }, []);
+  }, [paint]);
 
   // The scene lives as long as the stage: made on mount, disposed on unmount.
   useEffect(() => {
@@ -150,6 +156,8 @@ export default function PolarView({ project, settings, onProject }: {
       return;
     }
     scene.current = made;
+    // The WebDriver screenshot's synchronous redraw (development builds only).
+    const offRedraw = registerRedraw(element, paint);
     made.setBackground(cssColour("--inset", "#1f2c3c"));
     made.enableControls(element, draw);
     const resize = () => {
@@ -166,12 +174,13 @@ export default function PolarView({ project, settings, onProject }: {
     return () => {
       observer?.disconnect();
       offTheme();
+      offRedraw();
       cancelAnimationFrame(frame.current);
       frame.current = 0;
       made.dispose();
       scene.current = null;
     };
-  }, [draw]);
+  }, [draw, paint]);
 
   // A new project is framed afresh when its first dots arrive.
   useEffect(() => { fitted.current = false; }, [project.id]);

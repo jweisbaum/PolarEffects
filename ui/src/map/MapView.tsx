@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { registerRedraw } from "../automation";
 import type { AppSettings } from "../generated/AppSettings";
 import type { ProjectSummary } from "../generated/ProjectSummary";
 import type { SampleDetails } from "../generated/SampleDetails";
@@ -76,24 +77,36 @@ export default function MapView({ project, settings, onSettings }: {
   const [hoverFix, setHoverFix] = useState(-1);
   const selection = useSampleSelection();
 
+  /** Draws the map now. */
+  const paint = useCallback(() => {
+    const element = canvas.current;
+    if (!element || !renderer.current) return;
+    const ratio = window.devicePixelRatio || 1;
+    const width = Math.max(1, element.clientWidth);
+    const height = Math.max(1, element.clientHeight);
+    if (element.width !== Math.round(width * ratio) || element.height !== Math.round(height * ratio)) {
+      element.width = Math.round(width * ratio);
+      element.height = Math.round(height * ratio);
+    }
+    view.current = { width, height };
+    camera.current ??= fitCamera(projectionRef.current, view.current);
+    renderer.current.render(projectionRef.current, camera.current, view.current, ratio, colours());
+  }, []);
+
+  /** Draws the map on the next frame, once. */
   const draw = useCallback(() => {
     if (frame.current !== 0) return;
     frame.current = requestAnimationFrame(() => {
       frame.current = 0;
-      const element = canvas.current;
-      if (!element || !renderer.current) return;
-      const ratio = window.devicePixelRatio || 1;
-      const width = Math.max(1, element.clientWidth);
-      const height = Math.max(1, element.clientHeight);
-      if (element.width !== Math.round(width * ratio) || element.height !== Math.round(height * ratio)) {
-        element.width = Math.round(width * ratio);
-        element.height = Math.round(height * ratio);
-      }
-      view.current = { width, height };
-      camera.current ??= fitCamera(projectionRef.current, view.current);
-      renderer.current.render(projectionRef.current, camera.current, view.current, ratio, colours());
+      paint();
     });
-  }, []);
+  }, [paint]);
+
+  // The WebDriver screenshot's synchronous redraw (development builds only).
+  useEffect(() => {
+    const element = canvas.current;
+    return element ? registerRedraw(element, paint) : undefined;
+  }, [paint]);
 
   const fit = useCallback(() => {
     camera.current = fitCamera(projectionRef.current, view.current);

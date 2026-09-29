@@ -92,6 +92,27 @@ cost the user saw, the weather step opened automatically after every
 import (a 5-day race is ≈ 1.2 GB hourly, D19), is gone: importing makes no
 reanalysis request (`importing_issues_no_reanalysis_request`).
 
+**2026-09-28: M14c — agent-driven UI testing through WebDriver (D25).** A
+user request. `npm run ux` builds `pe-app` with `--features webdriver`, then
+for each of five tests starts the real development build (Vite on a free
+port, the window 1440 × 900 without focus, a fresh `PE_AUTOMATION_ROOT`),
+drives it and saves a picture per step under `target/ux-shots/<test>/`:
+new project → Map stage; Polar files Import… (picker answered by the
+dev-only queue) → row → curve pixels in the plot → 3D surface pixels; help
+search in en/fr/de → result → orange flash around Fit the world; YellowBrick
+from a local fixture server → boat list while positions download → loaded,
+exactly one Cancel → a boat imported and drawn on the map; Settings → French
+labels and `settings.json` written in the run's own root. Five pass in
+3 min 50 s – 4 min 45 s on the Intel i9 (≈ 35–50 s each, mostly start-up).
+Screenshots do not use the plugin's `/screenshot` (every canvas blank) or
+`screencapture` (the wallpaper without the Screen Recording permission):
+the client serialises the DOM into an SVG, then paints each canvas —
+redrawn synchronously, since a WebGL buffer is not preserved — clipped to
+itself, with whatever is positioned over it drawn again on top. Animations
+are shown at rest. The MCP server (`pe-driver`) and the CLI share the
+client; `npm run tools:test` covers the port-line parser, file names and
+the MCP handshake.
+
 ---
 
 ## 1. Sequencing strategy
@@ -751,6 +772,26 @@ tests, and the live `tracker_speed` measurements.
 
 ---
 
+### M14c — Agent-driven UI testing (WebDriver) · **complete**
+
+User request, 2026-09-28: "ensure that the project is set up with webkit
+testing so that all agents can interact with ui elements, take screen
+shots, and run ux tests agentically" (D25).
+
+**Deliverables:** VectorEffects' optional `webdriver` feature on `pe-app`
+(off by default, `tests/webdriver_optional.rs`); `tools/webdriver/` —
+client, CLI, MCP server (`pe-driver` in `.mcp.json`); a UX suite
+(`npm run ux`) over the real development build with a screenshot per step;
+`docs/AGENT-UI-TESTING.md`.
+
+**Acceptance:** `npm run tools:test` and `npm run ux` pass; the feature
+test passes and `cargo tree -p pe-app -e normal` has no WebDriver crate;
+the MCP server answers the handshake and lists its tools.
+
+*Done 2026-09-28.* See the M14c changelog entry at the top.
+
+---
+
 ### M15 — Compare
 
 **Deliverables:** Compare stage (spec §11): operand pickers, difference
@@ -842,6 +883,7 @@ jieter/orc-data MIT), user guide.
 | D23 | Blend and export (M14): an output cell read from an excluded node of a polar source is empty for that source (not read across it); the fill steps interpolate only between known values and the 0° row takes no part in them (set to 0 kn last, "filled" unless a source had it); sources are summed in id order and cells rounded to 1e-6 kn; the Blend settings dialog applies as one undo entry, the Blend entry's switch and colour as their own; the grid editor takes two decimals at most (≥ 0.01 apart); a custom export grid is the project-grid blend resampled; export refuses axis collisions, > 60 kn and an empty blend, naming the values | Spec §12.3 named the rule and the fill order without saying how exclusions reach a resampled cell, whether the 0° row anchors the fill, the summation order or how settings are undone; §12.2 and the M4 carry left the grid editor's precision open |
 | D23a | M14 review round 1 (controller rulings): a track cell with an override counts with confidence 1 whatever its sample count, 0 included; the 0° row is no evidence — it counts in no coverage, and a blend with no value off it is empty and refused by export; a custom export grid does not anchor on the 0° row (output 0° row 0 kn); new projects' blend colour is `#e0457b` and a colour lost on the background is outlined; out-of-range sample counts are clamped on load; the blend cache keys sources by id | Review of M14 |
 | D24 | Tracker and file imports download tracks only, never weather. The boat list shows as soon as the tracker names the boats (YellowBrick's RaceSetup, Geovoile's config), while the positions download; independent requests run at once and are asked for gzipped. Weather is a separate step the user starts per track (Fetch weather…) or for ticked tracks (Fetch weather for selected tracks…); its estimate dialog opens at once and calculates in the background | Settled with the user 2026-09-28: "the yellowbrick downloader is too slow. it should first download just the tracks with no weather info. then prompt the user to pick a track and then download the weather separately"; "do the same for the other tracker scrapers they need to download the tracks super fast". Supersedes "import starts the fetch" in spec §7.5 (M9) and the post-import pre-flight of M10 |
+| D25 | Agent-driven UI testing: `pe-app`'s optional `webdriver` feature compiles in `tauri-plugin-webdriver-automation`, an endpoint on `127.0.0.1` at a random port that drives the whole interface. Off by default, never in `npm run build`; `tests/webdriver_optional.rs` holds the manifest to that (check:offline cannot see a listener). Under the feature only: `PE_AUTOMATION_ROOT` redirects the settings, recent list, autosave and cache to a driver's temporary directory, and `PE_DRIVER_YELLOWBRICK` (a `http://127.0.0.1:<port>` origin only) serves the YellowBrick dialog from a local fixture server. In development builds only (`import.meta.env.DEV`): queued answers for native file dialogs, `__peOpen`, and a synchronous redraw on the WebGL canvases for screenshots. The suite runs the dev build (StrictMode) | Settled with the user 2026-09-28: "ensure that the project is set up with webkit testing so that all agents can interact with ui elements, take screen shots, and run ux tests agentically". Copied from VectorEffects (M71); the inbound exception to invariant 4 is worded as VectorEffects words its invariant 5 |
 | D22 | Polar edits and segments (M13): one `EditCells` command for every edit tool (overrides before/after per cell, the tool naming the undo entry, drags coalescing); segment bins are half-steps around each output-grid node with nothing beyond the outer half-steps, and nothing is binned into a 0° TWA node (samples nearest 0° are dropped, not moved: the 0° row is 0 kn, spec §12.3; controller ruling); spread is the sample standard deviation; smooth is the 3×3 binomial kernel over neighbours with a value as the blend reads them (excluded nodes take no part; controller ruling); the 3D samples key mixes a per-opening nonce, so two openings never share one; views show sources as edited, and the 2D curves also leave excluded nodes out | Spec §10.4 and §12.1 named the tools, the statistic and "count and spread" without the binning edges, the spread measure, the kernel or how undo groups them |
 
 ## 6. Settled before coding started

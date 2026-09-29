@@ -6,8 +6,14 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
   clearScreen: false,
-  // The port is fixed so the Tauri config's devUrl can name it.
-  server: { port: 5173, strictPort: true },
+  // The port is fixed so the Tauri config's devUrl can name it, and
+  // `PE_DEV_PORT` moves both together: a WebDriver run (D25) then starts
+  // beside a `tauri dev` somebody is already using, rather than failing on
+  // the port in use or killing what holds it.
+  server: { port: Number(process.env.PE_DEV_PORT ?? 5173), strictPort: true },
+  // A driver run keeps its dependency pre-bundle apart from the person's own
+  // dev server, so two servers never rewrite one cache under each other.
+  ...(process.env.PE_VITE_CACHE_DIR ? { cacheDir: process.env.PE_VITE_CACHE_DIR } : {}),
   build: {
     outDir: "dist",
     target: "es2022",

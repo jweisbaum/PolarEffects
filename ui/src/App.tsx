@@ -294,6 +294,24 @@ function Shell() {
     enter(await api.openProject(path, discardUnsaved));
   }, [enter]);
 
+  // The WebDriver tools' way to open a project (development builds only,
+  // `automation.ts`): through the application's own opening, since invoking
+  // `open_project` alone moves the backend and leaves the interface on the
+  // start screen. Unsaved changes are discarded without asking.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const hooks = window as unknown as { __peOpen?: (path: string) => Promise<string> };
+    const hook = async (path: string) => {
+      const summary = await api.openProject(path, true);
+      enter(summary);
+      return summary.name;
+    };
+    hooks.__peOpen = hook;
+    return () => {
+      if (hooks.__peOpen === hook) delete hooks.__peOpen;
+    };
+  }, [enter]);
+
   const openProject = useCallback(async () => {
     // Asked before the file dialog: nothing is discarded by asking, since the
     // answer travels with the open call, so cancelling the dialog costs nothing.

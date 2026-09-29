@@ -74,6 +74,9 @@ These are repeated from `CLAUDE.md`, which is authoritative:
 2. The blend is derived, never stored as truth.
 3. Fetched environment samples are project data; rendered views are not.
 4. Nothing is fetched that the user did not ask for, and nothing reaches in.
+   The one inbound socket, a WebDriver endpoint on loopback for agent-driven
+   UI tests, is compiled in only with `pe-app`'s `webdriver` feature, which
+   no shipped build enables (D25).
 5. Export is deterministic and byte-reproducible.
 6. Interaction stays fast; imports and fetches may be slow.
 7. Every string is translatable and every control is findable.

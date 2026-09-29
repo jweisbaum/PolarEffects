@@ -7,8 +7,19 @@
  */
 import { open, save } from "@tauri-apps/plugin-dialog";
 
-import { whileChoosing } from "../busy";
+import { takeDialogAnswer } from "../automation";
+import { whileChoosing as choosing } from "../busy";
 import { msg, t } from "../i18n";
+
+/**
+ * Shows a native dialog, unless the WebDriver tools queued its answer
+ * (development builds only, `automation.ts`).
+ */
+function whileChoosing<T>(busy: string, dialog: () => Promise<T>): Promise<T> {
+  const queued = takeDialogAnswer();
+  if (queued !== undefined) return Promise.resolve(queued as T);
+  return choosing(busy, dialog);
+}
 
 /** The project file extension (spec.md 4.3). */
 export const EXTENSION = "wpsproj";

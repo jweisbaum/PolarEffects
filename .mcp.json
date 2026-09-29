@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "pe-driver": {
+      "command": "node",
+      "args": ["tools/webdriver/mcp.mjs"],
+      "env": {}
+    }
+  }
+}

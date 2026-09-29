@@ -159,10 +159,35 @@ fn tracker_name(tracker: Tracker) -> &'static str {
 }
 
 fn client_of(tracker: Tracker) -> Result<Box<dyn TrackerClient>> {
+    #[cfg(feature = "webdriver")]
+    if let Some(client) = automation_client(tracker) {
+        return Ok(client);
+    }
     pe_trackers::event::client(tracker).ok_or_else(|| AppError::BadOption {
         field: "Tracker",
         value: pe_trackers::event::name(tracker).to_owned(),
     })
+}
+
+/// YellowBrick served by the UX suite's local fixture server (D25): the
+/// dialog is driven end to end with recorded responses and no live network.
+///
+/// Only with the WebDriver feature, only for YellowBrick, and only for a
+/// loopback `http://127.0.0.1:<port>` origin, so even a test build cannot be
+/// pointed at a host invariant 4 does not allow.
+#[cfg(feature = "webdriver")]
+fn automation_client(tracker: Tracker) -> Option<Box<dyn TrackerClient>> {
+    if tracker != Tracker::YellowBrick {
+        return None;
+    }
+    let origin = std::env::var("PE_DRIVER_YELLOWBRICK").ok()?;
+    let port = origin.strip_prefix("http://127.0.0.1:")?;
+    if port.is_empty() || !port.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some(Box::new(pe_trackers::yellowbrick::YellowBrick::at(
+        &origin, &origin,
+    )))
 }
 
 /// How far a download is (spec.md 7.7).

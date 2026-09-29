@@ -1,0 +1,122 @@
+/**
+ * What every UX test shares (D25): a step that photographs, the assertions,
+ * and the flows more than one test walks through.
+ *
+ * A test is a module under `tools/webdriver/ux/` named `NN-name.test.mjs`
+ * whose default export is `{ name, env?, setup?, run }`:
+ *
+ * - `setup()` runs before the application starts and may return
+ *   `{ env, teardown }` (the tracker test starts its fixture server here).
+ * - `run(t)` drives the application through `t.driver` (see `client.mjs`)
+ *   and calls `await t.shot("label")` after each step worth seeing. The
+ *   pictures land in `target/ux-shots/<test>/NN-label.png`.
+ *
+ * Every test gets its own application and its own data root, so no test
+ * sees another's settings, recent list or session.
+ */
+
+import assert from "node:assert/strict";
+import { join, resolve } from "node:path";
+
+import { ROOT, safeName } from "../client.mjs";
+
+export { assert };
+
+/** Where a test's pictures go. Under `target/`, which git ignores. */
+export function shotsDir(test) {
+  return join(ROOT, "target", "ux-shots", safeName(test));
+}
+
+/** The context a test's `run` receives. */
+export function context(test, driver) {
+  let n = 0;
+  const shots = [];
+  return {
+    driver,
+    root: ROOT,
+    shots,
+    /** Photographs the window as step `label`. Returns the file's path. */
+    async shot(label) {
+      n += 1;
+      const file = join(shotsDir(test), `${String(n).padStart(2, "0")}-${safeName(label)}.png`);
+      await driver.screenshot(file);
+      shots.push(file);
+      return file;
+    },
+    /** A repository file's absolute path. */
+    path(relative) {
+      return resolve(ROOT, relative);
+    },
+  };
+}
+
+/**
+ * From the start screen, creates a project called `name` through the form and
+ * waits for the project window (the Map stage, the default).
+ */
+export async function newProject(driver, name = "UX test") {
+  await driver.waitFor('[data-feature="new:create"]');
+  await driver.type('[data-feature="new:name"] input', name);
+  await driver.click('[data-feature="new:create"]');
+  await driver.waitFor('[data-feature="stage:map"][aria-selected="true"]', { timeoutMs: 30_000 });
+  await driver.waitFor("canvas.map-canvas", { visible: true });
+}
+
+/**
+ * How many pixels of a canvas are close to `hex` (`#rrggbb`), read through
+ * the page's own 2D context. A WebGL canvas is redrawn first and copied, in
+ * the same task, as the screenshot does.
+ */
+export function colourPixels(driver, selector, hex, tolerance = 40) {
+  return driver.run(
+    `var c = document.querySelector(arguments[0]);
+     if (!c) { done(-1); return; }
+     if (typeof c.__peRedraw === "function") c.__peRedraw();
+     var copy = document.createElement("canvas");
+     copy.width = c.width; copy.height = c.height;
+     var ctx = copy.getContext("2d");
+     ctx.drawImage(c, 0, 0);
+     var data = ctx.getImageData(0, 0, copy.width, copy.height).data;
+     var hex = arguments[1], tol = arguments[2];
+     var r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
+     var n = 0;
+     for (var i = 0; i < data.length; i += 4) {
+       if (Math.abs(data[i] - r) <= tol && Math.abs(data[i + 1] - g) <= tol && Math.abs(data[i + 2] - b) <= tol) n++;
+     }
+     done(n);`,
+    [selector, hex, tolerance],
+  );
+}
+
+/** How many distinct colours a canvas shows (coarsely): a blank canvas has one. */
+export function distinctColours(driver, selector) {
+  return driver.run(
+    `var c = document.querySelector(arguments[0]);
+     if (!c) { done(-1); return; }
+     if (typeof c.__peRedraw === "function") c.__peRedraw();
+     var copy = document.createElement("canvas");
+     copy.width = c.width; copy.height = c.height;
+     var ctx = copy.getContext("2d");
+     ctx.drawImage(c, 0, 0);
+     var data = ctx.getImageData(0, 0, copy.width, copy.height).data;
+     var seen = new Set();
+     for (var i = 0; i < data.length; i += 16) seen.add((data[i] >> 4) + "," + (data[i + 1] >> 4) + "," + (data[i + 2] >> 4));
+     done(seen.size);`,
+    [selector],
+  );
+}
+
+/** A CSS colour as `#rrggbb` (the swatches carry `rgb(…)` once rendered). */
+export function toHex(css) {
+  const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(css ?? "");
+  if (!m) return css;
+  return `#${[m[1], m[2], m[3]].map((v) => Number(v).toString(16).padStart(2, "0")).join("")}`;
+}
+
+/** Changes the interface language through Settings, as a person would. */
+export async function setLanguageInSettings(driver, language) {
+  await driver.click('[data-feature="shell:settings"]');
+  await driver.waitFor('[data-feature="settings:language"]');
+  await driver.type('[data-feature="settings:language"]', language);
+  await driver.waitFor(`html[lang="${language}"]`, { timeoutMs: 10_000 });
+}

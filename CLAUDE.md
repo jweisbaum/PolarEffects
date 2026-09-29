@@ -47,6 +47,17 @@ stop and raise it rather than working around it.
    Blue Water Tracks), each for its allow-listed hosts only.
    `npm run check:offline` enforces this. The ORC catalogue is bundled at
    build time and never fetched at run time.
+   **The invariant runs both ways** (D25): an *inbound* socket that drives the
+   application is the same promise broken from the other side. `pe-app`'s
+   optional `webdriver` feature compiles in a WebDriver endpoint on loopback
+   for agent-driven UI tests; it is off by default, `npm run build` does not
+   pass it, and `tests/webdriver_optional.rs` reads the manifest to hold it
+   that way. `npm run check:offline` **cannot** see a listener — it reads
+   source URLs, remote references in the built bundle and the CSP — so for
+   anything inbound the enforcement is that the dependency is not compiled in.
+   Its seams (`PE_AUTOMATION_ROOT`, `PE_DRIVER_YELLOWBRICK`) are compiled only
+   with the feature; the frontend's (`ui/src/automation.ts`) only in
+   development builds. Never ship the WebDriver feature.
 5. **Export is deterministic and byte-reproducible** across machines and
    platforms: the same project gives the same `.txt`, `.pol`, `.csv` and
    `.grib2` bytes.
@@ -90,7 +101,9 @@ ui/             React + TypeScript + Vite front end
   src/i18n/     Catalogues (en, fr, de), glossary, coverage tests
   src/generated/ ts-rs bindings. Never edit by hand
 assets/         Natural Earth basemap, ORC catalogue build input, samples
-tools/          orc-catalogue-builder, basemap-builder, check-offline.sh
+tools/          orc-catalogue-builder, basemap-builder, check-offline.sh,
+                webdriver/ (driver client, CLI, MCP server, ux/ suite)
+docs/           AGENT-UI-TESTING.md
 ```
 
 **Dependency direction:** `pe-app` → everything. `pe-polar`, `pe-tracks`,
@@ -131,6 +144,21 @@ PE_TEST_LIVE=1 cargo test -p pe-env --test live -- --ignored --nocapture
 PE_TEST_LIVE=1 cargo test -p pe-trackers --test live -- --ignored --nocapture
 
 npm run build               # tauri build for the host target
+npm run dev:webdriver       # the app with the WebDriver endpoint (macOS).
+                            # NEVER shipped: see `pe-app`'s [features]
+
+# Driving the running application (D25; docs/AGENT-UI-TESTING.md). An MCP
+# server, `pe-driver` in `.mcp.json`, and the same client from a shell.
+# MCP servers load when the client starts, so a session that adds one cannot
+# use it until it restarts. Every driven run has its own Vite port and its
+# own data root; it never touches the person's `tauri dev` or settings.
+npm run ux                  # the UX suite: pictures in target/ux-shots/<test>/
+npm run ux -- tracker       # only the tests whose file name contains "tracker"
+node tools/webdriver/cli.mjs shot NAME     # start, capture, stop; prints the path
+node tools/webdriver/cli.mjs serve         # start and hold, printing the port
+PE_DRIVER_PORT=<port> node tools/webdriver/cli.mjs click|type|text|wait|dialog|eval|shot …
+PE_DRIVER_OPEN=path/to/project.wpsproj     # open a project before `shot`
+npm run tools:test                         # the driver's parsing and the MCP handshake
 ```
 
 ---
@@ -197,6 +225,14 @@ and, in CI, ecCodes.
 
 ## Environment gotchas
 
+- **Driving the app** (details in `docs/AGENT-UI-TESTING.md`): a driver
+  script hands its answer to `done(…)` — never `window.__WEBDRIVER__.resolve`,
+  and never longer than 30 s (either bricks the endpoint for the life of the
+  process); start long work and poll. Stop a driven app by its process group
+  or pid, **never `pkill -f pe-app`**: the person very likely has their own
+  `tauri dev` running. Editing Rust restarts *their* `tauri dev` app too (its
+  watcher rebuilds), so batch Rust edits.
+
 - The whole back end is Rust. No Python, Node or browser sidecars, and no
   headless browser for scraping. Tracker formats are decoded in Rust.
 - Use `rustls` with the `ring` provider and `reqwest` blocking with
@@ -249,7 +285,10 @@ and, in CI, ecCodes.
 
 ## Definition of done
 
-fmt, clippy, all tests and `check:offline` pass. The relevant recipe is
+fmt, clippy, all tests and `check:offline` pass. A change to the UI is
+exercised in the real app with the driver: a UX test in
+`tools/webdriver/ux/`, or a screenshot the agent has opened and looked at
+(`docs/AGENT-UI-TESTING.md`). The relevant recipe is
 followed. `spec.md` is updated in the same commit as any behaviour change.
 Every new string is translated into French and German. Every new control is
 in the help search. `plan.md` milestone status is updated.
