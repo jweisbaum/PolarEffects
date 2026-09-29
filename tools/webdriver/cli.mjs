@@ -27,6 +27,7 @@
 import { join } from "node:path";
 
 import { connect, launch, ROOT, safeName } from "./client.mjs";
+import { AppHolder } from "./holder.mjs";
 
 const [command, ...rest] = process.argv.slice(2);
 const held = process.env.PE_DRIVER_PORT;
@@ -85,16 +86,21 @@ try {
       print(await withDriver((driver) => driver.queueDialog(rest.length > 1 ? rest : (rest[0] ?? null))));
       break;
     case "serve": {
-      const driver = await launch({ onLog: (line) => process.stderr.write(`${line}\n`) });
-      await driver.ready();
-      print(String(driver.port));
-      process.stderr.write(`held; data root ${driver.automationRoot}. Ctrl-C stops it.\n`);
-      const stop = async () => {
-        await driver.close();
-        process.exit(0);
+      // Through the holder, so Ctrl-C during a cold start cancels the start
+      // and a failed `ready()` stops what was started (`holder.mjs`).
+      const holder = new AppHolder({
+        launch: (options) => launch({ ...options, onLog: (line) => process.stderr.write(`${line}\n`) }),
+      });
+      let closing = null;
+      const stop = () => {
+        closing ??= holder.stop().finally(() => process.exit(0));
+        return closing;
       };
       process.on("SIGINT", stop);
       process.on("SIGTERM", stop);
+      const driver = await holder.get();
+      print(String(driver.port));
+      process.stderr.write(`held; data root ${driver.automationRoot}. Ctrl-C stops it.\n`);
       await new Promise(() => {});
       break;
     }

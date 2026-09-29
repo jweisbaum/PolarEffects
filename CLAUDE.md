@@ -51,8 +51,10 @@ stop and raise it rather than working around it.
    application is the same promise broken from the other side. `pe-app`'s
    optional `webdriver` feature compiles in a WebDriver endpoint on loopback
    for agent-driven UI tests; it is off by default, `npm run build` does not
-   pass it, and `tests/webdriver_optional.rs` reads the manifest to hold it
-   that way. `npm run check:offline` **cannot** see a listener — it reads
+   pass it, and `tests/webdriver_optional.rs` reads every workspace manifest
+   (optional in every dependency table, no default reaching it, named by no
+   other crate), `package.json`'s build scripts and the Tauri configs to hold
+   it that way. `npm run check:offline` **cannot** see a listener — it reads
    source URLs, remote references in the built bundle and the CSP — so for
    anything inbound the enforcement is that the dependency is not compiled in.
    Its seams (`PE_AUTOMATION_ROOT`, `PE_DRIVER_YELLOWBRICK`) are compiled only

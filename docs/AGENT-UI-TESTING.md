@@ -33,7 +33,9 @@ Everything in `tools/webdriver/` talks to it through one client,
 
 **The MCP server** (`pe-driver`, registered in `.mcp.json`): tools
 `screenshot`, `click`, `type`, `key`, `text`, `wait`, `dialog`, `evaluate`,
-`open`, `stop`. The app starts on the first call and is held until `stop`.
+`open`, `stop`. The app starts on the first call and is held until `stop`;
+`stop` during a start cancels it, and the client going away stops whatever
+is running or starting (`holder.mjs`), so no detached app is left behind.
 MCP servers are loaded when a Claude session starts, so a session that added
 or changed the server cannot use it until it restarts — use the CLI
 meanwhile.
@@ -157,6 +159,15 @@ Adding one: gate Rust on `#[cfg(feature = "webdriver")]`, TypeScript on
   write `target/debug/pe-app`; cargo keeps both sets of artifacts, so
   switching costs one link, not a rebuild (the first `--features webdriver`
   build recompiles Tauri once, about 4 minutes).
+- **`CARGO_INCREMENTAL=0` is the driver's default** (`client.mjs` for the
+  app it starts, `ux/run.mjs` for its prebuild), kept on purpose and
+  overridable by setting the variable yourself. This machine's disk is
+  tight and incremental caches grow fast (the repository's constraint: every
+  cargo command runs with it). The catch is the person's own `tauri dev`: if
+  theirs runs *with* incremental compilation, cargo sees a different setting
+  and may recompile the workspace's own crates each time the two alternate
+  (only those: dependencies are never built incrementally). Run
+  `CARGO_INCREMENTAL=1 npm run ux` to match a `tauri dev` that uses it.
 - **A window that is not composited throttles `requestAnimationFrame` and
   timers.** The app's draws are scheduled on frames; the screenshot redraws
   synchronously, and a gesture must be dispatched synchronously too.

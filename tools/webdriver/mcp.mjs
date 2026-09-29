@@ -26,34 +26,13 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
-import { connect, launch, ROOT, safeName } from "./client.mjs";
+import { ROOT, safeName } from "./client.mjs";
+import { AppHolder } from "./holder.mjs";
 
-let driver = null;
-let starting = null;
-
-/** The application, started if it is not already running. */
-async function app() {
-  if (driver) return driver;
-  if (process.env.PE_DRIVER_PORT) {
-    driver = connect(process.env.PE_DRIVER_PORT);
-    return driver;
-  }
-  // One start even if several tools are called at once: a second `npm run
-  // dev:webdriver` would build the same crate into the same target directory
-  // and block on the lock.
-  starting ??= launch({ cwd: ROOT })
-    .then(async (started) => {
-      await started.ready();
-      driver = started;
-      starting = null;
-      return started;
-    })
-    .catch((error) => {
-      starting = null;
-      throw error;
-    });
-  return starting;
-}
+// The held application and any start in flight (`holder.mjs`): a start is
+// never lost track of, so `stop` and the client going away both stop it.
+const holder = new AppHolder({ port: process.env.PE_DRIVER_PORT || null });
+const app = () => holder.get();
 
 const server = new McpServer({ name: "pe-driver", version: "0.1.0" });
 
@@ -196,22 +175,22 @@ server.registerTool(
 
 server.registerTool(
   "stop",
-  { title: "Stop the application", description: "Close the application this server started, and its data root." },
-  async () => {
-    if (!driver) return text("nothing was running");
-    await driver.close();
-    driver = null;
-    return text("stopped");
+  {
+    title: "Stop the application",
+    description:
+      "Close the application this server started, and its data root — or cancel a start still in progress.",
   },
+  async () => text(await holder.stop()),
 );
 
-const shutdown = async () => {
-  await driver?.close();
-  process.exit(0);
+let closing = null;
+const shutdown = () => {
+  closing ??= holder.stop().finally(() => process.exit(0));
+  return closing;
 };
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
-// The client closing stdin is the ordinary end of a session.
+// The client closing stdin is the ordinary end of a session, cold start or not.
 process.stdin.on("close", shutdown);
 
 await server.connect(new StdioServerTransport());

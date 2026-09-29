@@ -139,7 +139,8 @@ async function stopTree(child) {
  * - **A failure here stops the tree before it rethrows**: the group is
  *   detached, and a caller with no `Driver` has nothing to stop it with.
  */
-export async function launch({ cwd = ROOT, onLog, env = {}, timeoutMs = START_TIMEOUT_MS } = {}) {
+export async function launch({ cwd = ROOT, onLog, env = {}, timeoutMs = START_TIMEOUT_MS, signal } = {}) {
+  signal?.throwIfAborted();
   const devPort = String(env.PE_DEV_PORT ?? process.env.PE_DEV_PORT ?? (await freePort()));
   let madeRoot = null;
   let automationRoot = env.PE_AUTOMATION_ROOT ?? process.env.PE_AUTOMATION_ROOT;
@@ -192,19 +193,36 @@ export async function launch({ cwd = ROOT, onLog, env = {}, timeoutMs = START_TI
     if (port !== null) done(port);
     else waiters.push(done);
   });
-  const timeout = new Promise((_, reject) =>
-    setTimeout(
+  let timer = null;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(
       () => reject(new Error(`no automation port announced within ${timeoutMs} ms`)),
       timeoutMs,
-    ).unref(),
-  );
+    );
+    timer.unref();
+  });
+  // `signal` cancels a start in flight (the MCP server's `stop`, the CLI's
+  // Ctrl-C): the tree is stopped below like any other failure.
+  let onAbort = null;
+  const cancelled = new Promise((_, reject) => {
+    if (!signal) return;
+    onAbort = () => reject(new Error("the launch was cancelled"));
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+  });
+  // The losers of the race must not reject later with nobody listening: in
+  // a long-lived process (the MCP server) that is an unhandled rejection.
+  for (const loser of [exited, timeout, cancelled]) loser.catch(() => {});
 
   try {
-    await Promise.race([announced, exited, timeout]);
+    await Promise.race([announced, exited, timeout, cancelled]);
   } catch (failure) {
     await stopTree(child);
     if (madeRoot) await rm(madeRoot, { recursive: true, force: true });
     throw failure;
+  } finally {
+    clearTimeout(timer);
+    if (onAbort) signal.removeEventListener("abort", onAbort);
   }
   exited.catch(() => {});
   const driver = new Driver(port, child);
@@ -441,9 +459,10 @@ export class Driver {
    * before the window exists, and the window exists before Vite has served
    * the page and React has rendered into `#root`.
    */
-  async ready({ timeoutMs = 120_000 } = {}) {
+  async ready({ timeoutMs = 120_000, signal } = {}) {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
+      signal?.throwIfAborted();
       try {
         const handles = await this.call("/window/handles");
         if (Array.isArray(handles) && handles.length > 0) {

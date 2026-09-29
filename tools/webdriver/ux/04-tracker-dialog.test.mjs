@@ -59,10 +59,17 @@ export default {
     await d.waitGone(".tracker-import .tracker-progress", { timeoutMs: 20_000 });
     const rows = await d.count('[data-feature="tracker-import:boats"] tbody tr');
     assert.ok(rows >= 3, `the boat list shows the event's boats (${rows})`);
-    const cancels = await d.run(
-      `done(Array.prototype.filter.call(document.querySelectorAll(".modal.tracker-import button"),
-         function (b) { return b.textContent.trim() === "Cancel"; }).length);`);
-    assert.equal(cancels, 1, "exactly one Cancel");
+    // Exactly one Cancel, found by structure rather than by its English
+    // label: the dialog's answer buttons carry no data-feature (they are
+    // exempt from the help registry), so every untagged, non-primary button
+    // in the dialog is a dismiss button, and the only one must be the first
+    // in its action row. A second Cancel (a8cf1dd) would be a second one.
+    const dismiss = await d.run(
+      `var dialog = document.querySelector(".modal.tracker-import");
+       var untagged = dialog.querySelectorAll("button:not([data-feature]):not(.primary)");
+       var first = dialog.querySelector(".modal-actions > button:first-child");
+       done({ count: untagged.length, isFirst: untagged.length === 1 && untagged[0] === first });`);
+    assert.deepEqual(dismiss, { count: 1, isFirst: true }, "exactly one Cancel, the action row's first button");
     assert.ok(fixture.requests.includes("/JSON/rmsr2024/RaceSetup"), `the fixture server was asked: ${fixture.requests}`);
     await t.shot("positions-loaded");
 
