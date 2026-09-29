@@ -292,6 +292,9 @@ button.icon-button { padding: 0 5px; line-height: 16px; font-size: 11px; }
 .track-wave-sectors legend { padding: 0; }
 .track-env-options { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; margin: 0 0 6px; }
 .env-fetch-interval { border: none; margin: 8px 0; padding: 0; display: grid; gap: 4px; }
+.grib-parts, .grib-interval { border: none; margin: 8px 0; padding: 0; display: grid; gap: 4px; }
+.grib-export .grib-area { margin-top: 0; }
+.grib-parts legend, .grib-interval legend { padding: 0; white-space: nowrap; }
 .env-jobs { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; white-space: nowrap; }
 .env-jobs-bar { display: inline-block; width: 60px; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; }
 .env-jobs-bar > span { display: block; height: 100%; background: var(--accent); }

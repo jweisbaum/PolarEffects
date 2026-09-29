@@ -123,6 +123,7 @@ Rules:
 |---|---|---|---|
 | `PE_AUTOMATION_ROOT` | `pe-app/src/paths.rs` | `webdriver` feature | A run must not write the person's settings or recovery files |
 | `PE_DRIVER_YELLOWBRICK=http://127.0.0.1:<port>` | `pe-app/src/trackers.rs` | `webdriver` feature, loopback only | The tracker dialog end to end without the network |
+| `PE_DRIVER_REANALYSIS=http://127.0.0.1:<port>` | `pe-app/src/grib.rs` | `webdriver` feature, loopback only, GRIB export only | The reanalysis GRIB export end to end without the network: each dataset at `<origin>/<dataset id>` (`09-grib-export.test.mjs`) |
 | `window.__peDialogAnswers` | `ui/src/automation.ts`, `project/dialogs.ts` | dev builds | A native file picker is outside the webview |
 | `window.__peOpen(path)` | `ui/src/App.tsx` | dev builds | Opening through the app's own path, not a bare `open_project` |
 | `canvas.__peRedraw()` | `automation.ts`, `MapView`, `PolarView`, `CompareView` | dev builds | A WebGL canvas reads back empty after its frame is shown |

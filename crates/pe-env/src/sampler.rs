@@ -73,6 +73,34 @@ impl Interval {
     }
 }
 
+/// Which of wind, waves and current a read asks for. A fetch for a track
+/// asks for all three; a GRIB export only for what the user ticked, and
+/// for the current apart from the rest (spec.md 7.8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Parts {
+    /// 10 m wind.
+    pub wind: bool,
+    /// Wave height and direction.
+    pub waves: bool,
+    /// Surface current.
+    pub current: bool,
+}
+
+impl Parts {
+    /// Everything: what a track's fetch reads.
+    pub const ALL: Self = Self {
+        wind: true,
+        waves: true,
+        current: true,
+    };
+}
+
+impl Default for Parts {
+    fn default() -> Self {
+        Self::ALL
+    }
+}
+
 /// What a fetch reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Options {
@@ -81,6 +109,8 @@ pub struct Options {
     /// Add Stokes drift to the global merged current (spec.md 7.5.1; off by
     /// default, Q3).
     pub stokes_drift: bool,
+    /// What is read; the rest is left `None`.
+    pub parts: Parts,
 }
 
 /// A horizontal vector, m/s: `u` east, `v` north. Wind "from" and current
@@ -169,6 +199,15 @@ pub enum Access {
     /// From recorded stores in folders (tests). A dataset without a folder
     /// is unavailable, as if it had no data anywhere.
     Dirs(BTreeMap<Dataset, PathBuf>),
+    /// Over HTTP from other addresses than the archives' (tests, and the
+    /// UX suite's local server: a loopback address only, checked by the
+    /// caller). A dataset without an address is unavailable.
+    Urls {
+        /// Per-request timeout.
+        timeout: Duration,
+        /// Each dataset's store root.
+        urls: BTreeMap<Dataset, String>,
+    },
 }
 
 /// The real provider: the archives of spec.md 7.5 and 7.5.1.
@@ -330,6 +369,15 @@ fn direction_of((stamps, values): &Placed) -> Vec<Option<f64>> {
         .iter()
         .map(|stamp| {
             let s = stamp.as_ref()?;
+            // On a grid node at an archive hour the direction is the
+            // archive's, read as it is rather than through sin, cos and
+            // atan2, whose last bit differs between platforms' maths
+            // libraries: a GRIB export of these nodes is byte-identical
+            // everywhere (invariant 5).
+            if s.a == s.b && s.stencil.lat_frac == 0.0 && s.stencil.lon_frac == 0.0 {
+                let node = corners_of(values, s.a, &s.stencil)[0];
+                return node.is_finite().then(|| f64::from(node).rem_euclid(360.0));
+            }
             let first = unit(s, s.a);
             let (x, y) = if s.a == s.b {
                 first?
@@ -426,6 +474,10 @@ impl Reanalysis {
                 Some(dir) => open_dir(dir)?,
                 None => return Ok(None),
             },
+            Access::Urls { timeout, urls } => match urls.get(&dataset) {
+                Some(url) => open_http_interruptible(url, *timeout, Arc::clone(&self.interrupt))?,
+                None => return Ok(None),
+            },
         };
         stores.insert(dataset, store.clone());
         Ok(Some(store))
@@ -509,7 +561,36 @@ impl Reanalysis {
     /// direction), the wind's positions and dataset per pair, and whether
     /// the waves are among them. Wind comes from WeatherBench2 while both
     /// bracketing steps are in it, else ARCO-ERA5 (D12).
-    fn era5_wants(&self, points: &[Point], every: i64) -> Result<Era5Plan> {
+    fn era5_wants(&self, points: &[Point], every: i64, parts: Parts) -> Result<Era5Plan> {
+        let mut wants: Vec<(Arc<OpenVariable>, Vec<usize>)> = Vec::new();
+        let mut winds: Vec<(Vec<usize>, Dataset)> = Vec::new();
+        if parts.wind {
+            self.wind_wants(points, every, &mut wants, &mut winds)?;
+        }
+        let all: Vec<usize> = (0..points.len()).collect();
+        let waves = if parts.waves {
+            match (self.var(vars::ARCO_SWH)?, self.var(vars::ARCO_MWD)?) {
+                (Some(swh), Some(mwd)) => {
+                    wants.push((swh, all.clone()));
+                    wants.push((mwd, all));
+                    true
+                }
+                _ => false,
+            }
+        } else {
+            false
+        };
+        Ok((wants, winds, waves))
+    }
+
+    /// The wind part of [`Self::era5_wants`].
+    fn wind_wants(
+        &self,
+        points: &[Point],
+        every: i64,
+        wants: &mut Vec<(Arc<OpenVariable>, Vec<usize>)>,
+        winds: &mut Vec<(Vec<usize>, Dataset)>,
+    ) -> Result<()> {
         let wb2 = self.var(vars::WB2_U10)?;
         let (mut on_wb2, mut on_arco) = (Vec::new(), Vec::new());
         for (i, p) in points.iter().enumerate() {
@@ -523,8 +604,6 @@ impl Reanalysis {
                 on_arco.push(i);
             }
         }
-        let mut wants: Vec<(Arc<OpenVariable>, Vec<usize>)> = Vec::new();
-        let mut winds: Vec<(Vec<usize>, Dataset)> = Vec::new();
         for (idx, u, v, dataset) in [
             (on_wb2, vars::WB2_U10, vars::WB2_V10, Dataset::Wb2Era5Hourly),
             (on_arco, vars::ARCO_U10, vars::ARCO_V10, Dataset::ArcoEra5),
@@ -539,16 +618,7 @@ impl Reanalysis {
             wants.push((v, idx.clone()));
             winds.push((idx, dataset));
         }
-        let all: Vec<usize> = (0..points.len()).collect();
-        let waves = match (self.var(vars::ARCO_SWH)?, self.var(vars::ARCO_MWD)?) {
-            (Some(swh), Some(mwd)) => {
-                wants.push((swh, all.clone()));
-                wants.push((mwd, all));
-                true
-            }
-            _ => false,
-        };
-        Ok((wants, winds, waves))
+        Ok(())
     }
 
     /// Wind and waves together, their chunks on one pool: wind u and v,
@@ -557,10 +627,14 @@ impl Reanalysis {
         &self,
         points: &[Point],
         every: i64,
+        parts: Parts,
         out: &mut [EnvPoint],
         cancel: &AtomicBool,
     ) -> Result<()> {
-        let (wants, winds, waves) = self.era5_wants(points, every)?;
+        if !parts.wind && !parts.waves {
+            return Ok(());
+        }
+        let (wants, winds, waves) = self.era5_wants(points, every, parts)?;
         let read = self.read_all(&wants, points, every, cancel)?;
         for (k, (idx, dataset)) in winds.iter().enumerate() {
             let found = sum_vectors(&read[2 * k..2 * k + 2], idx.len());
@@ -751,9 +825,16 @@ impl Provider for Reanalysis {
         // `concurrency` requests in flight, so one's latency hides the
         // other's.
         let mut run = || -> Result<()> {
+            let parts = options.parts;
             let (currents, ()) = crate::parallel::try_join(
-                || self.current(points, options.stokes_drift, cancel),
-                || self.era5(points, every, &mut out, cancel),
+                || {
+                    if parts.current {
+                        self.current(points, options.stokes_drift, cancel)
+                    } else {
+                        Ok(vec![None; points.len()])
+                    }
+                },
+                || self.era5(points, every, parts, &mut out, cancel),
             )?;
             for (slot, current) in out.iter_mut().zip(currents) {
                 slot.current = current;
@@ -780,7 +861,7 @@ impl Provider for Reanalysis {
         let _watching = Watching(&self.interrupt);
         let every = options.interval.seconds();
         let heads = || -> Result<usize> {
-            let (wants, ..) = self.era5_wants(points, every)?;
+            let (wants, ..) = self.era5_wants(points, every, options.parts)?;
             let placed: Vec<Vec<Cell>> = wants
                 .iter()
                 .map(|(var, idx)| place(var, points, idx, every).1)
@@ -1022,6 +1103,110 @@ pub fn estimate(points: &[Point], memory: Option<&BlockCache>) -> Estimate {
     out
 }
 
+/// What a reanalysis GRIB export is expected to download, by part (spec.md
+/// 7.8, 13).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ExportEstimate {
+    /// Wind: each hour's chunk heads and the blocks holding the area's rows.
+    pub wind_bytes: u64,
+    /// Wave height and direction, likewise.
+    pub waves_bytes: u64,
+    /// The current tiers' blocks over the area.
+    pub current_bytes: u64,
+    /// Wind and wave bytes already in memory this session (not counted
+    /// above).
+    pub cached_bytes: u64,
+}
+
+/// Expected download for a GRIB export: the ERA5 blocks holding `edges`
+/// (for each row of the area, its western and eastern node: every block
+/// between them holds nodes of the area) at each of `times` (whole hours),
+/// and the current blocks under `lattice` (points close enough together
+/// to fall in every current chunk box they cover; 0.1° is closer than the
+/// smallest box). The same approximations as [`estimate`].
+pub fn estimate_export(
+    edges: &[(f64, f64)],
+    lattice: &[(f64, f64)],
+    times: &[i64],
+    memory: Option<&BlockCache>,
+) -> ExportEstimate {
+    use crate::dataset::HEAD_REQUEST;
+    use crate::memory::Part;
+    let mut out = ExportEstimate::default();
+    let mut blocks: Vec<usize> = edges
+        .iter()
+        .flat_map(|(lat, lon)| era5_blocks(*lat, *lon))
+        .collect();
+    blocks.sort_unstable();
+    blocks.dedup();
+    let held = |dataset: Dataset, key: &str, part: Part| {
+        memory.is_some_and(|m| m.contains(dataset.id(), key, part))
+    };
+    for &hour in times {
+        let (wind_ds, wind_index) = if (WB2_FIRST..=WB2_LAST).contains(&hour) {
+            (Dataset::Wb2Era5Hourly, (hour - WB2_FIRST) / 3600)
+        } else {
+            (Dataset::ArcoEra5, (hour - ARCO_FIRST) / 3600)
+        };
+        let arco_index = (hour - ARCO_FIRST) / 3600;
+        let chunks = [
+            (wind_ds, vars::WB2_U10.array, wind_index, &WIND_BLOCKS, true),
+            (wind_ds, vars::WB2_V10.array, wind_index, &WIND_BLOCKS, true),
+            (
+                Dataset::ArcoEra5,
+                vars::ARCO_SWH.array,
+                arco_index,
+                &SWH_BLOCKS,
+                false,
+            ),
+            (
+                Dataset::ArcoEra5,
+                vars::ARCO_MWD.array,
+                arco_index,
+                &MWD_BLOCKS,
+                false,
+            ),
+        ];
+        for (dataset, array, index, sizes, wind) in chunks {
+            let key = format!("{array}/{index}.0.0");
+            let total = if wind {
+                &mut out.wind_bytes
+            } else {
+                &mut out.waves_bytes
+            };
+            if held(dataset, &key, Part::Head) {
+                out.cached_bytes += HEAD_REQUEST;
+            } else {
+                *total += HEAD_REQUEST;
+            }
+            for &block in &blocks {
+                let bytes = sizes.get(block).copied().unwrap_or_default();
+                if held(dataset, &key, Part::Block(block as u32)) {
+                    out.cached_bytes += bytes;
+                } else {
+                    *total += bytes;
+                }
+            }
+        }
+    }
+    // The current blocks: the lattice at the first time and every 1,024
+    // hours on (no tier's blocks are shorter), and at the last.
+    let (Some(&first), Some(&last)) = (times.first(), times.last()) else {
+        return out;
+    };
+    let mut at: Vec<i64> = (0..)
+        .map(|k| first + k * 1024 * 3600)
+        .take_while(|t| *t < last)
+        .collect();
+    at.push(last);
+    let points: Vec<Point> = at
+        .iter()
+        .flat_map(|&t| lattice.iter().map(move |&(lat, lon)| Point { t, lat, lon }))
+        .collect();
+    out.current_bytes = current_bytes(&points);
+    out
+}
+
 /// The current part of [`estimate`].
 fn current_bytes(points: &[Point]) -> u64 {
     let mut blocks: Vec<(u8, i64, i64, i64)> = points
@@ -1144,6 +1329,26 @@ mod tests {
         assert_eq!(era5_blocks(0.0, 359.9), era5_blocks(0.0, 359.8));
         // 44.375N 13E: rows 182–183, columns 52–53.
         assert_eq!(era5_blocks(44.375, 13.0), vec![1, 2]);
+    }
+
+    /// Hand-counted: an export over rows 50–51N at 5W for two WeatherBench2
+    /// hours is block 1 of each chunk (its stencil rows 156–161 are values 224,640
+    /// to 233,261): per hour, u and v 2 × (64 + 432,731), waves 64 +
+    /// 173,816 and 64 + 165,715. The current is the NW Shelf box of 50N
+    /// 5W, one block of hours (8,192), two variables.
+    #[test]
+    fn the_export_estimate_counts_blocks_per_hour_and_part() {
+        let t = crate::time::parse_utc("2020-07-27T00:00Z").expect("a time");
+        let edges = [(51.0, -5.0), (50.0, -5.0)];
+        let e = estimate_export(&edges, &[(50.1, -4.9)], &[t, t + 3600], None);
+        assert_eq!(e.wind_bytes, 2 * 2 * (64 + 432_731));
+        assert_eq!(e.waves_bytes, 2 * (64 + 173_816 + 64 + 165_715));
+        assert_eq!(e.current_bytes, 2 * (150_000 + 64));
+        assert_eq!(e.cached_bytes, 0);
+        assert_eq!(
+            estimate_export(&edges, &[], &[], None),
+            ExportEstimate::default()
+        );
     }
 
     /// Blocks already downloaded this session are not counted again: the

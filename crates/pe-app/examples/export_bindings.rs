@@ -15,6 +15,7 @@ use pe_app::commands::AppInfo;
 use pe_app::compare::CompareOperand;
 use pe_app::env::{EnvEstimate, EnvJobTrack, EnvJobsStatus};
 use pe_app::error::AppErrorPayload;
+use pe_app::grib::{GribExportStatus, GribPreview};
 use pe_app::orc::{OrcCatalogueInfo, OrcFilters, OrcHit, OrcSearchResult, OrcThumbCurve};
 use pe_app::polar_edit::{EditOp, EditSurface, PolarCell};
 use pe_app::polar_files::{PolarImportFailure, PolarImportResult};
@@ -73,6 +74,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     EnvEstimate::export_all(&cfg)?;
     EnvJobTrack::export_all(&cfg)?;
     EnvJobsStatus::export_all(&cfg)?;
+    GribPreview::export_all(&cfg)?;
+    GribExportStatus::export_all(&cfg)?;
     TrackFilters::export_all(&cfg)?;
     CsvMappingInput::export_all(&cfg)?;
     CsvPreview::export_all(&cfg)?;

@@ -106,3 +106,18 @@ export async function pickExportPath(format: string, suggestedName: string): Pro
   );
   return typeof chosen === "string" ? chosen : null;
 }
+
+/**
+ * Asks where to write a track's reanalysis GRIB (spec.md 7.8), suggesting
+ * `<track>.grib2`. Returns null if the user cancelled.
+ */
+export async function pickGribPath(suggestedName: string): Promise<string | null> {
+  const chosen = await whileChoosing(msg("Choosing where to export"), () =>
+    save({
+      title: t("Export reanalysis GRIB"),
+      defaultPath: `${suggestedName.replace(/[\\/:*?"<>|]/g, "_")}.grib2`,
+      filters: [{ name: t("GRIB file"), extensions: ["grib2", "grb2", "grib"] }],
+    }),
+  );
+  return typeof chosen === "string" ? chosen : null;
+}

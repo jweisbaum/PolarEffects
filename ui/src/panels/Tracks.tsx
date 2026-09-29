@@ -16,6 +16,7 @@ import { envJobOf, useEnvJobs } from "../jobs";
 import { pickTrackFiles } from "../project/dialogs";
 import { focusMap } from "../selection";
 import EnvFetchDialog from "./EnvFetchDialog";
+import GribExportDialog from "./GribExportDialog";
 import TrackImportDialog from "./TrackImportDialog";
 import TrackerImportDialog from "./TrackerImportDialog";
 import type { TrackerId } from "./trackerImport";
@@ -50,6 +51,9 @@ export default function Tracks({ project, onProject }: {
   // The fetch pre-flight: which tracks, and whether to fetch every sample again.
   const [fetching, setFetching] = useState<{ ids: number[]; restart: boolean } | null>(null);
   const closeFetch = useCallback(() => setFetching(null), []);
+  // The track whose reanalysis GRIB export dialog is open.
+  const [exporting, setExporting] = useState<{ id: number; label: string } | null>(null);
+  const closeExport = useCallback(() => setExporting(null), []);
   const tracks = project.sources.filter((s) => s.track !== null);
   const selectedIds = tracks.filter((s) => selected.has(s.id)).map((s) => s.id);
   const select = (id: number, on: boolean) => setSelected((old) => {
@@ -142,7 +146,8 @@ export default function Tracks({ project, onProject }: {
               selected={selected.has(source.id)} onSelect={(on) => select(source.id, on)}
               onToggle={() => setOpen(open === source.id ? null : source.id)}
               onRemove={() => remove(source.id)} onProject={onProject}
-              onRefetch={() => setFetching({ ids: [source.id], restart: source.track!.env_status === "ready" })} />
+              onRefetch={() => setFetching({ ids: [source.id], restart: source.track!.env_status === "ready" })}
+              onExport={() => setExporting({ id: source.id, label: source.label })} />
           ))}
         </ul>}
       {inspections !== null && (
@@ -160,6 +165,7 @@ export default function Tracks({ project, onProject }: {
           }} />
       )}
       {fetching !== null && <EnvFetchDialog sourceIds={fetching.ids} restart={fetching.restart} onClose={closeFetch} />}
+      {exporting !== null && <GribExportDialog sourceId={exporting.id} label={exporting.label} onClose={closeExport} />}
     </>
   );
 }
@@ -188,7 +194,7 @@ function EnvOptions({ project, onProject }: { project: ProjectSummary; onProject
   );
 }
 
-function TrackItem({ source, track, open, selected, onSelect, onToggle, onRemove, onProject, onRefetch }: {
+function TrackItem({ source, track, open, selected, onSelect, onToggle, onRemove, onProject, onRefetch, onExport }: {
   source: SourceSummary;
   track: TrackSummary;
   open: boolean;
@@ -198,9 +204,9 @@ function TrackItem({ source, track, open, selected, onSelect, onToggle, onRemove
   onRemove: () => void;
   onProject: (project: ProjectSummary) => void;
   onRefetch: () => void;
+  onExport: () => void;
 }) {
   const t = useT();
-  const later = t("Arrives in a later version");
   const job = envJobOf(useEnvJobs(), source.id);
   return (
     <li className="track-item">
@@ -248,7 +254,10 @@ function TrackItem({ source, track, open, selected, onSelect, onToggle, onRemove
           <TrackFiltersEditor id={source.id} track={track} onProject={onProject} />
           <DerivationEditor id={source.id} track={track} onProject={onProject} />
           <div className="section-actions">
-            <button className="small" data-feature="tracks:export-grib" disabled title={later}>{t("Export reanalysis GRIB…")}</button>
+            <button className="small" data-feature="tracks:export-grib" onClick={onExport}
+              title={t("Write the reanalysis wind, and waves and current if you want them, over this track's area and hours to a GRIB file")}>
+              {t("Export reanalysis GRIB…")}
+            </button>
           </div>
         </div>
       )}

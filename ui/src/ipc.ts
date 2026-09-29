@@ -25,6 +25,8 @@ import type { EditOp } from "./generated/EditOp";
 import type { EditSurface } from "./generated/EditSurface";
 import type { EnvEstimate } from "./generated/EnvEstimate";
 import type { EnvJobsStatus } from "./generated/EnvJobsStatus";
+import type { GribExportStatus } from "./generated/GribExportStatus";
+import type { GribPreview } from "./generated/GribPreview";
 import type { ExportAxes } from "./generated/ExportAxes";
 import type { ExportPreview } from "./generated/ExportPreview";
 import type { ExportResult } from "./generated/ExportResult";
@@ -285,6 +287,20 @@ export const api = {
   /** Includes Stokes drift in the global merged current from the next fetch (undoable). */
   setStokesDrift: (on: boolean) => call<ProjectSummary>("set_stokes_drift", { on }),
 
+  // Reanalysis GRIB export (spec.md 7.8). Progress arrives as
+  // `GRIB_PROGRESS` events; one export runs at a time.
+
+  /** The area, times, file size and download of exporting a track's reanalysis. */
+  gribPreview: (sourceId: number, interval: "hourly" | "three_hourly", waves: boolean, current: boolean) =>
+    call<GribPreview>("grib_preview", { sourceId, interval, waves, current }),
+  /** Starts writing a track's reanalysis to `path` in the background. */
+  startGribExport: (sourceId: number, path: string, interval: "hourly" | "three_hourly", waves: boolean, current: boolean) =>
+    call<GribExportStatus>("start_grib_export", { sourceId, path, interval, waves, current }),
+  /** Stops the running export; nothing is written. */
+  cancelGribExport: () => call<GribExportStatus>("cancel_grib_export"),
+  /** The running or last export. */
+  gribExportStatus: () => call<GribExportStatus>("grib_export_status"),
+
   /** Every visible track for the map, packed as binary (layout in `map/trackPacket.ts`). */
   mapTracks: async (): Promise<TrackPacket> => {
     const bytes = await call<ArrayBuffer | number[]>("map_tracks");
@@ -396,6 +412,9 @@ export const api = {
 export const ENV_PROGRESS = "env://progress";
 /** The event saying a fetch wrote into the open project. */
 export const ENV_CHANGED = "env://changed";
+
+/** The event carrying the GRIB export's progress. */
+export const GRIB_PROGRESS = "grib://progress";
 
 /** The event carrying a tracker download's progress. */
 export const TRACKER_PROGRESS = "tracker://progress";

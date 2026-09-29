@@ -31,7 +31,7 @@ use std::sync::atomic::AtomicBool;
 
 use pe_env::dataset::Dataset;
 use pe_env::time::parse_utc;
-use pe_env::{Access, EnvPoint, Interval, Options, Point, Provider, Reanalysis};
+use pe_env::{Access, EnvPoint, Interval, Options, Parts, Point, Provider, Reanalysis};
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -55,6 +55,7 @@ fn sample(p: &Reanalysis, points: &[Point], options: Options) -> Vec<EnvPoint> {
 const HOURLY: Options = Options {
     interval: Interval::Hourly,
     stokes_drift: false,
+    parts: Parts::ALL,
 };
 
 /// The M9 acceptance test: sampled u10 at 2020-07-27 12Z, 50N 5W matches
@@ -464,4 +465,56 @@ fn a_tier_that_will_not_open_is_left_out_with_a_warning() {
     );
     assert!(p.take_warnings().is_empty());
     let _ = std::fs::remove_dir_all(empty);
+}
+
+/// A GRIB export reads only the parts it was asked for (spec.md 7.8):
+/// wind alone leaves waves and current `None`; waves alone leave the wind `None`; and a part asked for alone
+/// gives the value it gives among the rest.
+#[test]
+fn only_the_parts_asked_for_are_read() {
+    let (p, root) = era5_pair("parts");
+    let point = [at(4.0, 50.5, -4.5)];
+    let all = sample(&p, &point, HOURLY)[0];
+    let wind_only = sample(
+        &p,
+        &point,
+        Options {
+            parts: Parts {
+                wind: true,
+                waves: false,
+                current: false,
+            },
+            ..HOURLY
+        },
+    )[0];
+    assert_eq!(wind_only.wind, all.wind);
+    assert_eq!(wind_only.waves, None);
+    assert_eq!(wind_only.current, None);
+    let waves_only = sample(
+        &p,
+        &point,
+        Options {
+            parts: Parts {
+                wind: false,
+                waves: true,
+                current: false,
+            },
+            ..HOURLY
+        },
+    )[0];
+    assert_eq!(waves_only.wind, None);
+    assert_eq!(waves_only.waves, all.waves);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// On a grid node at an archive hour the wave direction is the archive's
+/// value exactly (no trigonometry to differ between platforms, invariant
+/// 5): 350° on the west column, 10° on the next.
+#[test]
+fn a_direction_on_a_node_is_the_archive_value_exactly() {
+    let (p, root) = era5_pair("node-direction");
+    let got = sample(&p, &[at(4.0, 50.0, -5.0), at(4.0, 50.0, -4.0)], HOURLY);
+    assert_eq!(got[0].waves.and_then(|w| w.from), Some(350.0));
+    assert_eq!(got[1].waves.and_then(|w| w.from), Some(10.0));
+    let _ = std::fs::remove_dir_all(root);
 }

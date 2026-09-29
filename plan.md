@@ -933,7 +933,7 @@ machine.
 
 ---
 
-### M16 — Reanalysis GRIB export
+### M16 — Reanalysis GRIB export · **complete**
 
 **Deliverables:** `pe-grib` ported from `ve-grib::writer` and `packing`,
 regional template 3.0 grids across the antimeridian, optional waves
@@ -943,6 +943,46 @@ currents; the per-track export dialog (spec §7.8).
 **Acceptance:** ecCodes `grib_dump` and wgrib2 read every message with
 correct times, grid and values in CI; output hashes identical across
 targets.
+
+Built as specified (spec.md §7.8, D14). `pe-grib`: `packing` ported as is
+(16 bits), `writer` ported with a regional `GridSpec` (La1/Lo1 in
+micro-degrees, `Lo1`/`Lo2` in 0–360 so a prime-meridian box has `Lo2` <
+`Lo1`), wave height and direction (10/0/3, 10/0/4 at the surface) beside
+wind and current, a bitmap only where a value is missing, the local-use
+section "Created with PolarEffects"; `region` (bounding box + 2° on the
+0.25° grid, the shortest longitude arc, global when the margins close the
+circle, poles clamped) and `times`; `file::GribFile` (messages streamed to
+`<name>.tmp`, synced and renamed; dropped uncommitted, it removes the
+temporary); `reader` (test-only, `testing` feature) ported with a bitmap
+and `decode_all`; `examples/emit.rs` for ecCodes. `pe-env`: `Options`
+gained `parts` (wind, waves, current) so an export reads only what it
+writes, `Access::Urls` (stores at other addresses: tests and the UX
+suite), `estimate_export` (per part, blocks of the area's rows per hour;
+current boxes from a 0.1° lattice), and a wave direction on a grid node
+at an archive hour is the archive's value with no trigonometry (libm's
+last bit differs between platforms; invariant 5). `pe-app/src/grib.rs`:
+the plan from a track's fixes, the preview, the export (the current tile
+by tile over every time into a spool beside the export, then wind and
+waves up to six hours a read, each hour's messages written as they
+arrive), one job at a time with `grib://progress` and cancel; the
+`webdriver`-only `PE_DRIVER_REANALYSIS` loopback seam. Frontend:
+`GribExportDialog` (area, times, per-part download, file size, Save…,
+progress, Cancel export), the track's button enabled, four registry
+entries, the environment help topic extended in en/fr/de, every string in
+fr/de. Tests: region and writer units (hand-assembled section 3, sign
+magnitude, calendar dates, parameter tables), `tests/roundtrip.rs` (both
+seams, bitmap, constant and all-missing fields through the reader),
+`pe-env` parts and node-direction tests, `pe-app/tests/grib_export.rs`
+(archives served over HTTP with `Range`: the real `wb2-crop` blosc chunk
+for wind — numcodecs' 9.382978 m/s at 50N 5W — and synthetic waves and
+GlobCurrent; golden file `crates/pe-grib/tests/golden/reanalysis.grib2`
+pinned by SHA-256; wind-only equals the golden's wind; cancel leaves the
+path and no temporary; the job through a project), UX flow
+`09-grib-export.test.mjs`. CI job `grib` runs ecCodes (`grib_ls`,
+`grib_dump`, `grib_count`, every value by `grib_get_data` in
+`tools/check-grib.sh`) on the emitted sample and the golden file; wgrib2
+is not packaged for the CI image and is not run (ecCodes is the
+independent decoder, as in VectorEffects).
 
 ---
 

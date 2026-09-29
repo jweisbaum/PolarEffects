@@ -2743,6 +2743,8 @@ name = "pe-grib"
 version = "0.1.0"
 dependencies = [
  "pe-core",
+ "pe-grib",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

@@ -991,9 +991,10 @@ Filtered-out samples stay in the project and appear dimmed in the plots when
 
 Scraping, reanalysis fetches and GRIB exports are **jobs**: they run on a
 worker pool, show progress in the status bar and the track list, and can be
-cancelled. The one exception is a tracker event's download, whose progress
-and Cancel show in the tracker dialog that started it (§7.2), since nothing
-else can go on in the dialog meanwhile; the boat list it sends ahead can be
+cancelled. The exceptions are a tracker event's download, whose progress
+and Cancel show in the tracker dialog that started it (§7.2), and a GRIB
+export, whose progress and Cancel export show in its dialog (§7.8), since
+nothing else can go on in the dialog meanwhile; the boat list it sends ahead can be
 searched and ticked while it runs. A tracker download never includes weather
 (D24). A cancelled or failed fetch keeps whatever samples completed
 (status "partial") and can be resumed with Fetch weather…. Jobs for tracks from the
@@ -1040,22 +1041,65 @@ The environment fetch in detail (M9):
 
 ### 7.8 Reanalysis GRIB export
 
-Per track: **Export reanalysis GRIB…** writes the 10 m wind (u, v) along the
-track to a `.grib2` file:
+Per track: **Export reanalysis GRIB…** (in the track's unfolded details)
+writes the 10 m wind (u, v) over the track's area to a `.grib2` file
+(M16):
 
-- Area: the track's bounding box plus a 2° margin, on the native 0.25° grid,
-  handling the antimeridian.
-- Times: every hour from the first fix to the last.
-- Options: include wave height and direction, include current.
+- Area: the track's bounding box plus a 2° margin, on the native 0.25° grid
+  (the north and east edges rounded up, the south and west down to grid
+  lines), handling the antimeridian: the box is the shortest arc of
+  longitude holding every fix, so a race across 180° gets a box a few
+  degrees wide there, and one whose longitudes and margins go all the way
+  round is global from 0°E. Latitudes stop at the poles.
+- Times: every hour from the first fix to the last (the hour at or before
+  the first fix to the hour at or after the last), or every third hour
+  (00, 03, … UTC) if chosen.
+- Options: include wave height and direction, include current (both
+  offered with what they add to the download).
+- Values are the archives': at a grid node and a whole hour the wind and
+  waves are ERA5's own values (WeatherBench2 until it ends, then
+  ARCO-ERA5, as §7.5), in m/s, metres and degrees "from". The current
+  comes from the same tier chain as sampling (§7.5.1, with the project's
+  Stokes-drift choice) and is regridded to the 0.25° nodes by bilinear
+  interpolation, land corners left out (so a coastal node may take its sea
+  neighbours' value). A node with no value — land for waves and current,
+  or an hour an archive does not have — is written as missing with a
+  bitmap, never as zero.
+- Messages: at each time, in this order, wind u and v (discipline 0,
+  category 2, parameters 2 and 3, 10 m above ground), wave height and
+  mean wave direction (discipline 10, category 0, parameters 3 and 4, the
+  surface), current u and v (discipline 10, category 1, parameters 2 and
+  3, 0 m below the sea surface). Time convention (VectorEffects'): the
+  reference time is the first time written, and each message carries its
+  offset from it in hours as the forecast hour.
 - **Writer** (D14): the VectorEffects approach, native Rust with a fixed
   message template. Sections 0–8 are laid out once with constant values
   (shape of earth 6, template 3.0 lat/lon grid, template 4.0, template 5.0
-  simple packing at 16 bits, no bitmap unless NaN is present). Per message
+  simple packing at 16 bits, no bitmap unless a value is missing, the
+  local-use section "Created with PolarEffects", centre 255). Per message
   only the reference time, forecast hour, grid corners, parameter and data
-  array change. Ported from `ve-grib::writer` with regional grids added.
+  array change. Ported from `ve-grib::writer` with regional grids added:
+  `Lo1` and `Lo2` in 0–360°, so a box across the prime meridian has `Lo2`
+  < `Lo1` and one across the antimeridian `Lo2` past 180°.
 - The data is fetched at export time, only the blocks covering the box's
-  rows for each hour (as §7.5), with nothing cached on disk.
-- Output is byte-reproducible (invariant 5) and validated by ecCodes in CI.
+  rows for each hour (as §7.5), into the session's memory, with nothing
+  cached on disk. The current's geoChunks hold months of a small box each,
+  so it is read first, tile by tile (16 × 16 nodes over every time), into
+  a temporary file beside the export; then the wind and waves a few hours
+  at a time, each hour's messages written as its values arrive. Neither
+  the file nor the current is held whole in memory.
+- The dialog shows the area, the number of times with the first and last,
+  what the wind, the waves and the current would download (§13's
+  estimate, less what this session holds) and the file's size, before
+  anything is fetched. Save… asks for the file, then the export runs as a
+  job with its progress (and the bytes downloaded) in the dialog; Cancel
+  export stops it. One export runs at a time.
+- The file is written to `<name>.tmp` and renamed into place when
+  complete: a cancelled or failed export writes nothing and leaves what
+  was at the path. On success the status line says where it went, and how
+  many fields had no data at all.
+- Output is byte-reproducible (invariant 5; a golden file pins it) and
+  validated by ecCodes in CI.
 
 ---
 

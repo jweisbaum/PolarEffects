@@ -15,6 +15,7 @@ pub mod derived;
 pub mod edit;
 pub mod env;
 pub mod error;
+pub mod grib;
 pub mod map_tracks;
 pub mod menu;
 pub mod orc;
@@ -118,6 +119,10 @@ pub fn run() -> anyhow::Result<()> {
             env::env_jobs,
             env::set_use_corrected,
             env::set_stokes_drift,
+            grib::grib_preview,
+            grib::start_grib_export,
+            grib::cancel_grib_export,
+            grib::grib_export_status,
             map_tracks::map_tracks,
             polar3d::polar_scene,
             polar3d::set_excluded,

@@ -332,6 +332,7 @@ fn provider_end_to_end() {
     let options = Options {
         interval: Interval::Hourly,
         stokes_drift: false,
+        parts: pe_env::Parts::ALL,
     };
     let start = Instant::now();
     let got = p

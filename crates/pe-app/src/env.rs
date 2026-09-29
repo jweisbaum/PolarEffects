@@ -449,6 +449,7 @@ fn run(
     let options = Options {
         interval: task.interval,
         stokes_drift: stokes,
+        parts: pe_env::Parts::ALL,
     };
     let total = todo.len().max(1);
     let mut done = 0;

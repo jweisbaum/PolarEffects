@@ -120,6 +120,39 @@ jobs:
         shell: pwsh
         run: ./tools/check-windows-manifest.ps1 -Exe target/aarch64-pc-windows-msvc/debug/pe-app.exe
 
+  grib:
+    name: grib validated by ecCodes
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.97"
+      - uses: Swatinem/rust-cache@v2
+
+      # An *independent* decoder (spec.md 7.8), ported from VectorEffects'
+      # CI. The in-repo reader checks the writer against its own
+      # understanding of the format; this checks it against someone
+      # else's, which is what catches a shared misreading of the spec.
+      - name: Install ecCodes
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libeccodes-tools
+
+      - name: Emit a sample across both seams
+        run: cargo run -p pe-grib --example emit -- sample.grib2
+
+      - name: ecCodes reads every message, grid, time and value
+        run: tools/check-grib.sh sample.grib2 crates/pe-grib/tests/golden/reanalysis.grib2
+
+      # The golden export (pinned by crates/pe-app/tests/grib_export.rs)
+      # holds WeatherBench2's u10 at 50N 5W, 2020-07-27T12Z, as numcodecs
+      # decodes it from the recorded chunk: 9.382978 m/s.
+      - name: The golden export holds the archive's value
+        run: |
+          grib_get_data -w count=7 crates/pe-grib/tests/golden/reanalysis.grib2 \
+            | awk '$1 + 0 == 50 && $2 + 0 == 355 { d = $3 - 9.382978; if (d < 0) d = -d; if (d < 0.001) ok = 1 } END { exit !ok }'
+
   bindings:
     name: typescript bindings are current
     runs-on: ubuntu-22.04

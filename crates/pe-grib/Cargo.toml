@@ -8,6 +8,15 @@ description = "PolarEffects GRIB2 writer."
 
 [dependencies]
 pe-core = { workspace = true }
+thiserror = { workspace = true }
+
+[features]
+# A minimal reader for verifying what the writer produces. Never enabled for
+# the shipped binary; see src/reader.rs.
+testing = []
+
+[dev-dependencies]
+pe-grib = { path = ".", features = ["testing"] }
 
 [lints]
 workspace = true
