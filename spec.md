@@ -592,7 +592,10 @@ In detail (M10):
   dates, every boat with its sail number, model, division, status, own
   start and finish, and full track). A tracker that names its boats in a
   response of its own hands that list over first (`fetch_listed`,
-  `tracker://listed`, a view with `positions: false`): YellowBrick after
+  `tracker://listed`, a view with `positions: false` under the key the
+  dialog gave that download: a listing for any other download is ignored,
+  and the boats ticked from it stay ticked only if the final event has
+  them with positions): YellowBrick after
   RaceSetup, Geovoile after its config; Blue Water Tracks answers everything
   in one response. The responses an event needs are requested at once
   where they do not depend on each other (YellowBrick's RaceSetup and
@@ -823,6 +826,8 @@ Every track sample can be matched against reanalysis, as a background job
 (§7.7), **when the user asks for it** (D24): a track's **Fetch weather…**, or
 **Fetch weather for selected tracks…** over the ticked tracks, opens the
 fetch's pre-flight (§13) for those tracks, with Fetch as its default answer.
+A ticked track already queued or fetching is left out, and the ticks are
+cleared once the fetch starts.
 Importing a track (from a file or a tracker) never starts it and makes no
 reanalysis request; Not now leaves the tracks "not fetched". The pre-flight
 opens at once: the estimate is computed off
@@ -1151,7 +1156,9 @@ pointer on the flat map and about the centre on the globe; "Fit the world"
 shows everything again. The globe's land is drawn through an equirectangular
 mask texture, so no land triangle folds across the horizon.
 
-- Every visible track is drawn in its source colour. Filtered-out fixes are
+- Every visible track is drawn in its source colour, two device pixels
+  wide (a WebGL line is one: half a CSS pixel on a high-density screen).
+  Filtered-out fixes are
   drawn dimmed (excluded ones less so). A track crossing the antimeridian is
   one continuous line: longitudes are unwrapped along each track.
 - Hovering a fix shows time (UTC), BSP and heading (each marked given or
@@ -1194,6 +1201,9 @@ overlay on demand):
   off the 0° row. Those wind speeds join the slider's range. Hovering it
   shows "Blend". A hidden blend is not drawn.
 - Hover shows the source, TWA, TWS and BSP.
+- Ring values (BSP) sit just under the 90° spoke and angle labels just
+  outside the outermost ring; no two labels overlap, and a ring value that
+  would touch another label is left out.
 - Full size opens the same plot as a large overlay owned by the Map stage
   (D21): the panel's "Full size" button switches to the Map stage and opens
   it; its own button, Escape, or switching stage again closes it.
@@ -1286,7 +1296,9 @@ Every source can be edited on its own (D17):
     axis as it appears on screen (straight up when that axis is seen end
     on); Shift snaps to 0.05 kn. The value is kept to 0–60 kn, and one drag
     is one undo entry;
-  - a **table editor** (TWA rows × TWS columns, knots) beside the 3D view,
+  - a **table editor** (TWA rows × TWS columns, values and wind speeds in
+    the display speed unit, stored in knots; a value typed at the table's
+    two decimals shows back unchanged) beside the 3D view,
     with the same cells; typing a value (Enter or leaving the cell) is an
     edit, one undo entry each; emptying an edited cell resets it; a value
     typed into an empty cell fills it. Clicking a cell selects it (Shift
@@ -1524,7 +1536,8 @@ shows the expected download at both intervals and "stored in the project:
 about N kB" (8 bytes a sample), and lets the user pick hourly or 3-hourly
 (D19). Hourly is the default; when the hourly download would exceed 1 GB (a
 long ocean race: the Vendée Globe is ≈ 2.4 GB hourly, ≈ 0.8 GB 3-hourly),
-3-hourly is preselected. The estimate counts, per ERA5 hour the samples
+3-hourly is preselected, with a note saying why that goes once the user
+chooses an interval. The estimate counts, per ERA5 hour the samples
 need, four heads and the blocks holding their stencil rows (one hour's
 measured block sizes), leaves out blocks already in memory, and adds one
 typical current block per variable per box and block of hours crossed in

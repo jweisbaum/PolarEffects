@@ -92,7 +92,10 @@ export default {
       drawn = await colourPixels(d, "canvas.map-canvas", colour, 30);
       if (drawn < 200) await new Promise((r) => setTimeout(r, 200));
     }
+    // Drawn two device pixels wide since M17a; the count is logged to
+    // compare runs.
     assert.ok(drawn >= 200, `the track is drawn on the map in ${colour} (${drawn} pixels)`);
+    console.log(`track pixels in ${colour}: ${drawn}`);
     await t.shot("track-on-map");
   },
 };

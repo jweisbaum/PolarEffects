@@ -161,9 +161,10 @@ describe("the Compare stage's model", () => {
     expect(surface.vertexColors!.length).toBe(cells * 3);
     expect(t1 - t0).toBeLessThan(100);
     expect((t2 - t1) / 1000).toBeLessThan(1);
-    // The 3D side at this size is over the budget (see the M15 fix report):
-    // held here to its measured scale so it does not grow unnoticed.
-    expect(t3 - t2).toBeLessThan(250);
+    // The three surfaces' input: 68-76 ms on nested rows before M17a,
+    // about 35 ms on the packet's flat arrays (the difference surface's
+    // colours are most of it).
+    expect(t3 - t2).toBeLessThan(100);
   });
 
   it("names operands by the source's colour and label, and the blend by its entry", () => {

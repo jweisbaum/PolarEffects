@@ -87,6 +87,11 @@ export default {
     const hourly = Number(/Hourly: about (\d+) MB/.exec(text)?.[1]);
     assert.ok(hourly > 50 && hourly < 400, text);
     assert.ok(/Stored in the project: about \d+ kB/.test(text), text);
+    // The interval legend is one line, not a word a line (M17a).
+    const legend = await d.run(
+      `var l = document.querySelector(".env-fetch-interval legend");
+       done({ height: l.getBoundingClientRect().height, line: parseFloat(getComputedStyle(l).lineHeight) || 20 });`);
+    assert.ok(legend.height < legend.line * 1.5, `the legend is ${legend.height} px tall`);
     await t.shot("fetch-estimate");
     await d.click(".modal-actions button", { text: "Not now" });
     await d.waitGone("[role=dialog]");

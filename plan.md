@@ -150,6 +150,32 @@ are shown at rest. The MCP server (`pe-driver`) and the CLI share the
 client; `npm run tools:test` covers the port-line parser, file names and
 the MCP handshake.
 
+**2026-09-29: M17a — carried polish, robustness and performance.** Sixteen
+items earlier reviews deferred (report: `.superpowers/sdd/plan/task-17a-report.md`).
+UI: plot labels laid out without collisions (`axisLabels`); the weather
+pre-flight's legend on one line and its 3-hourly note only until the user
+chooses; Fetch weather for selected tracks skips tracks already fetching
+and clears the ticks; a shorter ORC placeholder (en/fr/de); the edit table
+in the display speed unit; map tracks two device pixels wide (the Middle
+Sea boat: 4,802 → 9,087 pixels of its colour in `npm run ux`); the 3D
+"step" near 30 kn is the half-cup's rim seen in perspective over Farr 40's
+own data (its 30° cell drops from 5.15 kn at 25 kn to 3.89 kn at 30 kn),
+not a mesh fault — the side view shows the 30 kn rim level at every angle.
+Robustness: gunzip preallocation bounded by the body cap; a dropped
+`Pending` stops its own download; `tracker://listed` carries the dialog's
+download key; a GRIB export panicking mid-way leaves no temporary (tested).
+Tooling: the compositor clips each canvas to what the window shows.
+*3D at 512 × 512* (two surfaces, packet arrays → `setData`, stand-in
+renderer): Node 102–162 ms before, 19–48 ms after; in the WKWebView of the
+dev build 51–88 ms before, 13–40 ms after. *Edit to every view* (spec
+§13), re-measured in a release build (`perf_edit`, 20 polar sources, 20
+tracks × 10,000 samples, Intel i9; 1-min load 3.4 at the first run, 7–12
+during later ones from other processes): Rust's side of an edit 15.7–36.2
+ms in total over three edit kinds and five runs (a polar source edit
+15.7–23.5, a segment drag step 23.2–25.2, excluding 1,000 samples
+29.8–36.2), of which the 3D scene 9.8–16.4 ms; blend after an edit 0.6 ms.
+Within the 100 ms budget with the frontend's rebuild (above) on top.
+
 ---
 
 ## 1. Sequencing strategy
