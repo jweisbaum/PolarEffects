@@ -4,6 +4,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type Dispatch,
 import { describeError, reportFailure } from "../errors";
 import type { TrackerBoatRow } from "../generated/TrackerBoatRow";
 import type { TrackerEventView } from "../generated/TrackerEventView";
+import type { TrackerListed } from "../generated/TrackerListed";
 import type { TrackerProgress } from "../generated/TrackerProgress";
 import type { TrackImportResult } from "../generated/TrackImportResult";
 import { t, useLanguage, useT, type Language } from "../i18n";
@@ -62,6 +63,10 @@ export default function TrackerImportDialog({ tracker, onDone, onCancel }: {
   // Which download is current: a later one (another leg, Download again)
   // makes an earlier one's answer, or its cancellation, stale.
   const generation = useRef(0);
+  // The key of the current download, named by this dialog: a boat list sent
+  // ahead for any other download (an earlier address, or a download a
+  // closed dialog left finishing) is not this one's (M17a).
+  const downloadKey = useRef("");
 
   const close = () => {
     if (loading) void api.cancelTrackerEvent().catch(() => undefined);
@@ -85,9 +90,9 @@ export default function TrackerImportDialog({ tracker, onDone, onCancel }: {
       if (!live.current) return;
       setPhase((p) => (p.kind === "downloading" || (p.kind === "event" && !p.event.positions) ? { ...p, progress: e.payload } : p));
     }).catch(() => null);
-    const listed = listen<TrackerEventView>(TRACKER_LISTED, (e) => {
-      if (!live.current) return;
-      setPhase((p) => (p.kind === "downloading" ? { kind: "event", event: e.payload, progress: p.progress } : p));
+    const listed = listen<TrackerListed>(TRACKER_LISTED, (e) => {
+      if (!live.current || e.payload.download !== downloadKey.current) return;
+      setPhase((p) => (p.kind === "downloading" ? { kind: "event", event: e.payload.event, progress: p.progress } : p));
     }).catch(() => null);
     return () => {
       void progress.then((off) => off?.());
@@ -98,16 +103,19 @@ export default function TrackerImportDialog({ tracker, onDone, onCancel }: {
   const download = async (refresh: boolean, address = url) => {
     if (address.trim() === "") return;
     const mine = ++generation.current;
+    const key = `${DIALOG_ID}.${++downloads}`;
+    downloadKey.current = key;
     setPhase({ kind: "downloading", progress: null });
     setChosen(new Set());
     setQuery("");
     try {
-      const event = await api.trackerEvent(tracker, address.trim(), refresh);
+      const event = await api.trackerEvent(tracker, address.trim(), refresh, key);
       if (!live.current || mine !== generation.current) return;
-      // Boats ticked from the list sent ahead stay ticked, unless the
-      // tracker turned out to have no positions for them.
-      const empty = new Set(event.boats.filter((b) => b.fixes === 0).map((b) => b.id));
-      setChosen((old) => new Set([...old].filter((id) => !empty.has(id))));
+      // Boats ticked from the list sent ahead stay ticked if the final
+      // event has them, with positions; an id it does not name (a listing
+      // that was not quite this event) is dropped, never imported.
+      const pickable = new Set(event.boats.filter((b) => b.fixes > 0).map((b) => b.id));
+      setChosen((old) => new Set([...old].filter((id) => pickable.has(id))));
       setPhase({ kind: "event", event, progress: null });
     } catch (error) {
       if (!live.current || mine !== generation.current) return;
@@ -216,6 +224,11 @@ export default function TrackerImportDialog({ tracker, onDone, onCancel }: {
  * It takes the language as a prop rather than subscribing to it: 444
  * subscriptions doubled the table's first draw.
  */
+/** This page load, in download keys: a reload's downloads never match an older one's. */
+const DIALOG_ID = Date.now().toString(36);
+/** Downloads started from this page, across dialogs: each gets its own key. */
+let downloads = 0;
+
 const BoatRow = memo(function BoatRow({ boat, checked, loading, onToggle }: {
   boat: TrackerBoatRow;
   checked: boolean;

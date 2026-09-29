@@ -119,7 +119,7 @@ export default function OrcPolars({ project, onProject }: {
   return (
     <>
       <input type="search" className="orc-search" value={query} data-feature="orc:search"
-        placeholder={t("Name, sail number, model, builder, year…")}
+        placeholder={t("Name, sail number, model, year…")}
         aria-label={t("Search the ORC catalogue")}
         title={t("Every word must match a field: name, sail number, country, model, builder, designer or year")}
         onChange={(event) => setQuery(event.target.value)} />

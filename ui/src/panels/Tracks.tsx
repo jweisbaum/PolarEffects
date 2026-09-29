@@ -49,13 +49,17 @@ export default function Tracks({ project, onProject }: {
   // The tracks ticked for Fetch weather for selected tracks…
   const [selected, setSelected] = useState<ReadonlySet<number>>(new Set());
   // The fetch pre-flight: which tracks, and whether to fetch every sample again.
-  const [fetching, setFetching] = useState<{ ids: number[]; restart: boolean } | null>(null);
+  const [fetching, setFetching] = useState<{ ids: number[]; restart: boolean; fromSelection?: boolean } | null>(null);
   const closeFetch = useCallback(() => setFetching(null), []);
   // The track whose reanalysis GRIB export dialog is open.
   const [exporting, setExporting] = useState<{ id: number; label: string } | null>(null);
   const closeExport = useCallback(() => setExporting(null), []);
   const tracks = project.sources.filter((s) => s.track !== null);
-  const selectedIds = tracks.filter((s) => selected.has(s.id)).map((s) => s.id);
+  // A ticked track already queued or fetching is left out: asking again
+  // would only queue it twice (M17a).
+  const jobs = useEnvJobs();
+  const selectedIds = tracks.filter((s) => selected.has(s.id) && envJobOf(jobs, s.id) === undefined).map((s) => s.id);
+  const clearSelection = useCallback(() => setSelected(new Set()), []);
   const select = (id: number, on: boolean) => setSelected((old) => {
     const next = new Set(old);
     if (on) next.add(id); else next.delete(id);
@@ -120,7 +124,7 @@ export default function Tracks({ project, onProject }: {
             title={selectedIds.length === 0
               ? t("Tick tracks in the list first, then fetch their wind, waves and current together")
               : t("Fetch the wind, waves and current the ticked tracks' samples do not have yet")}
-            onClick={() => setFetching({ ids: selectedIds, restart: false })}>
+            onClick={() => setFetching({ ids: selectedIds, restart: false, fromSelection: true })}>
             {selectedIds.length === 0
               ? t("Fetch weather for selected tracks…")
               : t("Fetch weather for {count} selected tracks…", { count: selectedIds.length })}
@@ -164,7 +168,10 @@ export default function Tracks({ project, onProject }: {
             afterImport(result);
           }} />
       )}
-      {fetching !== null && <EnvFetchDialog sourceIds={fetching.ids} restart={fetching.restart} onClose={closeFetch} />}
+      {fetching !== null && (
+        <EnvFetchDialog sourceIds={fetching.ids} restart={fetching.restart} onClose={closeFetch}
+          onStarted={fetching.fromSelection ? clearSelection : undefined} />
+      )}
       {exporting !== null && <GribExportDialog sourceId={exporting.id} label={exporting.label} onClose={closeExport} />}
     </>
   );

@@ -24,19 +24,24 @@ type Interval = "hourly" | "three_hourly";
  * its answer buttons (Not now, Fetch) are not, as in every transient
  * dialog (spec.md 3.6).
  */
-export default function EnvFetchDialog({ sourceIds, restart, onClose }: {
+export default function EnvFetchDialog({ sourceIds, restart, onClose, onStarted }: {
   sourceIds: number[];
   /** Fetch every sample again, not only the missing ones. */
   restart: boolean;
   onClose: () => void;
+  /** Once the fetch has started: Fetch weather for selected tracks… clears the ticks (M17a). */
+  onStarted?: (() => void) | undefined;
 }) {
   const t = useT();
   const [estimate, setEstimate] = useState<EnvEstimate | null>(null);
   const [choice, setChoice] = useState<Interval>("hourly");
   const [busy, setBusy] = useState(false);
-  // A choice made while the estimate is calculated is kept when it arrives.
+  // A choice made while the estimate is calculated is kept when it arrives,
+  // and once the user has chosen, the note saying why 3-hourly was
+  // preselected no longer applies (M17a).
   const chosen = useRef(false);
-  const choose = (interval: Interval) => { chosen.current = true; setChoice(interval); };
+  const [userChose, setUserChose] = useState(false);
+  const choose = (interval: Interval) => { chosen.current = true; setUserChose(true); setChoice(interval); };
   const close = useRef(onClose);
   close.current = onClose;
   const fetchButton = useRef<HTMLButtonElement>(null);
@@ -73,6 +78,7 @@ export default function EnvFetchDialog({ sourceIds, restart, onClose }: {
     setBusy(true);
     try {
       await api.startEnvFetch(sourceIds, choice, restart);
+      onStarted?.();
       onClose();
     } catch (error) {
       reportFailure(error);
@@ -114,7 +120,7 @@ export default function EnvFetchDialog({ sourceIds, restart, onClose }: {
         {estimate !== null && estimate.cached_bytes > 0 && (
           <p className="muted">{t("{size} of it was already downloaded this session.", { size: formatBytes(estimate.cached_bytes) })}</p>
         )}
-        {estimate !== null && estimate.recommended === "three_hourly" && (
+        {estimate !== null && estimate.recommended === "three_hourly" && !userChose && (
           <p className="muted">{t("Hourly would download more than {limit}, so every 3 hours is chosen.", { limit: formatBytes(estimate.three_hourly_above_bytes) })}</p>
         )}
         <p className="muted">{t("It runs in the background; the status bar shows its progress and can cancel it. Samples already fetched are kept.")}</p>

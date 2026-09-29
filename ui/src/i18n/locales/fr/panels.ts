@@ -123,7 +123,7 @@ const catalogue: Record<string, string> = {
   "Loading the ORC catalogue": "Chargement du catalogue ORC",
   "Polar at {speeds} kn": "Polaire à {speeds} kn",
   "Added {name}.": "{name} ajouté.",
-  "Name, sail number, model, builder, year…": "Nom, numéro de voile, modèle, chantier, année…",
+  "Name, sail number, model, year…": "Nom, n° de voile, modèle, année…",
   "Search the ORC catalogue": "Rechercher dans le catalogue ORC",
   "Every word must match a field: name, sail number, country, model, builder, designer or year": "Chaque mot doit correspondre à un champ : nom, numéro de voile, pays, modèle, chantier, architecte ou année",
   "Built from": "Construit à partir de",

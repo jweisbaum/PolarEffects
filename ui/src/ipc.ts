@@ -246,8 +246,8 @@ export const api = {
    * "tracker-decode", "tracker-unsupported", "tracker-legacy",
    * "tracker-network" or "cancelled".
    */
-  trackerEvent: (tracker: "yellowbrick" | "geovoile" | "bluewater", url: string, refresh = false) =>
-    call<TrackerEventView>("tracker_event", { tracker, url, refresh }),
+  trackerEvent: (tracker: "yellowbrick" | "geovoile" | "bluewater", url: string, refresh = false, download = "") =>
+    call<TrackerEventView>("tracker_event", { tracker, url, refresh, download }),
   /** Stops the running event download. */
   cancelTrackerEvent: () => call<void>("cancel_tracker_event"),
   /** Imports the chosen boats of a downloaded event, one source per boat, as one undoable change. */

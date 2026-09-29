@@ -261,6 +261,19 @@ pub struct TrackerEventView {
     pub boats: Vec<TrackerBoatRow>,
 }
 
+/// The boat list sent ahead of the positions ([`LISTED_EVENT`]), with the
+/// key of the download it belongs to: the dialog names each download it
+/// starts, and a listing for any other (an earlier address, a closed
+/// dialog's download still finishing) is ignored (M17a).
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[ts(export_to = "TrackerListed.ts")]
+pub struct TrackerListed {
+    /// The key the dialog gave [`tracker_event`] for this download.
+    pub download: String,
+    /// The event, `positions` false.
+    pub event: TrackerEventView,
+}
+
 /// Up to [`PREVIEW_POINTS`] evenly spaced positions, the last included.
 fn preview(fixes: &[pe_core::track::Fix]) -> Vec<f64> {
     let n = fixes.len();
@@ -461,6 +474,7 @@ pub async fn tracker_event(
     tracker: String,
     url: String,
     refresh: bool,
+    download: String,
 ) -> Result<TrackerEventView> {
     use tauri::{Emitter, Manager};
     let tracker = tracker_of(&tracker)?;
@@ -476,7 +490,13 @@ pub async fn tracker_event(
                 let _ = app.emit(PROGRESS_EVENT, &p);
             },
             |listing| {
-                let _ = app.emit(LISTED_EVENT, listing);
+                let _ = app.emit(
+                    LISTED_EVENT,
+                    TrackerListed {
+                        download: download.clone(),
+                        event: listing.clone(),
+                    },
+                );
             },
         )
     })

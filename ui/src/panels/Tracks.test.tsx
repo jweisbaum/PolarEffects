@@ -200,6 +200,11 @@ it("preselects 3-hourly for a download over 1 GB (D19, D27)", async () => {
   expect(text).toContain("1.0 GB of it was already downloaded this session.");
   expect(text).toContain("Hourly would download more than 1.0 GB, so every 3 hours is chosen.");
   expect(text).toContain("Stored in the project: about 72 kB");
+  // Once the user picks an interval, the note on why 3-hourly was chosen goes (M17a).
+  await click(q('[data-feature="env-fetch:hourly"]'));
+  expect(q("[role=dialog]")!.textContent).not.toContain("so every 3 hours is chosen");
+  await click(q('[data-feature="env-fetch:three-hourly"]'));
+  expect(q("[role=dialog]")!.textContent).not.toContain("so every 3 hours is chosen");
   // Not now fetches nothing.
   await click([...host.querySelectorAll(".modal-actions button")].find((b) => b.textContent === "Not now")!);
   expect(calls.filter(([n]) => n === "startEnvFetch")).toEqual([]);
@@ -305,7 +310,7 @@ it("downloads a YellowBrick event, searches and picks boats, and imports them wi
   });
   await click(q('[data-feature="tracker-import:open"]'));
   await settle();
-  expect(calls.find(([n]) => n === "trackerEvent")?.[1]).toEqual(["yellowbrick", "yb.tl/rmsr2024", false]);
+  expect(calls.find(([n]) => n === "trackerEvent")?.[1]).toEqual(["yellowbrick", "yb.tl/rmsr2024", false, expect.any(String)]);
   const dialog = q("[role=dialog]")!;
   expect(dialog.textContent).toContain("Rolex Middle Sea Race 2024");
   expect(dialog.textContent).toContain("3 boats");
@@ -348,7 +353,7 @@ it("says a tracker is not answering and retries", async () => {
   responses.trackerEvent = EVENT;
   await click(q('[data-feature="tracker-import:retry"]'));
   await settle();
-  expect(calls.filter(([n]) => n === "trackerEvent").at(-1)?.[1]).toEqual(["yellowbrick", "nosuchrace", true]);
+  expect(calls.filter(([n]) => n === "trackerEvent").at(-1)?.[1]).toEqual(["yellowbrick", "nosuchrace", true, expect.any(String)]);
   expect(q("[role=dialog]")!.textContent).toContain("Rolex Middle Sea Race 2024");
 });
 
@@ -382,7 +387,7 @@ it("offers the other legs of a Geovoile race in legs and downloads the one chose
   });
   await settle();
   expect(calls.filter(([n]) => n === "trackerEvent").at(-1)?.[1])
-    .toEqual(["geovoile", "lasolitaire.geovoile.com/2024/tracker/?leg=2", false]);
+    .toEqual(["geovoile", "lasolitaire.geovoile.com/2024/tracker/?leg=2", false, expect.any(String)]);
   expect(q("[role=dialog]")!.textContent).toContain("Solitaire du Figaro (2/3)");
   // A race in one leg has no leg choice.
   responses.trackerEvent = EVENT;
@@ -447,17 +452,29 @@ it("lists the boats while the positions download, keeps the ticks, and imports o
   await typeAddress("yb.tl/rmsr2024");
   await click(q('[data-feature="tracker-import:open"]'));
   await settle();
-  // The boat list arrives ahead of the positions.
-  const listing = { ...EVENT, positions: false, boats: EVENT.boats.map((b) => ({ ...b, fixes: 0, first: null, last: null, preview: [] })) };
-  await act(async () => { handlers.get("tracker://listed")!({ payload: listing }); });
+  // The boat list arrives ahead of the positions, under this download's
+  // key; one sent for another download is not this dialog's (M17a).
+  const download = calls.find(([n]) => n === "trackerEvent")![1] as unknown[];
+  const key = download[3] as string;
+  expect(key).not.toBe("");
+  const unlisted = (b: (typeof EVENT.boats)[number]) => ({ ...b, fixes: 0, first: null, last: null, preview: [] });
+  const stray = { ...EVENT, title: "Another race", positions: false, boats: [unlisted(boat("9", "Stray", "GBR 1", "IRC 1", 0))] };
+  await act(async () => { handlers.get("tracker://listed")!({ payload: { download: `${key}-other`, event: stray } }); });
+  expect(q("[role=dialog]")!.textContent).not.toContain("Another race");
+  expect(q("[role=dialog] tbody")).toBeNull();
+  // The listing names a boat the final event will not have (id 9).
+  const listing = { ...EVENT, positions: false, boats: [...EVENT.boats, boat("9", "Ghost", "GBR 9", "IRC 1", 0)].map(unlisted) };
+  await act(async () => { handlers.get("tracker://listed")!({ payload: { download: key, event: listing } }); });
   const dialog = q("[role=dialog]")!;
-  expect(dialog.textContent).toContain("3 boats");
+  expect(dialog.textContent).toContain("4 boats");
   expect(dialog.textContent).toContain("you can search and tick boats meanwhile");
   const rows = () => [...dialog.querySelectorAll("tbody tr")];
-  expect(rows()).toHaveLength(3);
+  expect(rows()).toHaveLength(4);
   // Every boat can be ticked meanwhile, none imported yet.
   await click(rows()[0]!.querySelector("input"));
   await click(rows()[2]!.querySelector("input"));
+  await click(rows().find((r) => r.textContent!.includes("Ghost"))!.querySelector("input"));
+  expect(q(".modal-actions")!.textContent).toContain("3 boats ticked");
   const importButton = () => q(".modal-actions button.primary") as HTMLButtonElement;
   expect(importButton().disabled).toBe(true);
   expect(q(".tracker-preview")).toBeNull();
@@ -466,6 +483,9 @@ it("lists the boats while the positions download, keeps the ticks, and imports o
   await settle();
   expect((rows()[0]!.querySelector("input") as HTMLInputElement).checked).toBe(true);
   expect((rows()[2]!.querySelector("input") as HTMLInputElement).checked).toBe(false);
+  // The ghost is gone from the list and from the ticks.
+  expect(rows()).toHaveLength(3);
+  expect(q(".modal-actions")!.textContent).toContain("1 boats ticked");
   expect(dialog.querySelector(".tracker-preview-line.chosen")!.getAttribute("data-lines")).toBe("1");
   expect(importButton().disabled).toBe(false);
   await click(importButton());
@@ -502,4 +522,46 @@ it("fetches the weather of the ticked tracks together", async () => {
   await click(q(".modal-actions button.primary"));
   await settle();
   expect(calls.find(([n]) => n === "startEnvFetch")?.[1]).toEqual([[5, 8], "three_hourly", false]);
+});
+
+it("fetches the ticked tracks not already fetching, then clears the ticks (M17a)", async () => {
+  const { setEnvJobs, resetEnvJobs } = await import("../jobs");
+  const bravo: SourceSummary = { ...SOURCE, id: 6, label: "Bravo" };
+  const charlie: SourceSummary = { ...SOURCE, id: 7, label: "Charlie" };
+  responses.envEstimate = {
+    samples: 240, hourly_bytes: 25_000_000, three_hourly_bytes: 9_000_000, cached_bytes: 0,
+    stored_bytes: 960, three_hourly_above_bytes: 1e9, recommended: "hourly",
+  };
+  responses.startEnvFetch = { tracks: [], failure: null, warning: null };
+  setEnvJobs({ tracks: [{ source_id: 6, label: "Bravo", state: "fetching", fraction: 0.5 }], failure: null, warning: null });
+  await act(async () => root.render(<Tracks project={project([SOURCE, bravo, charlie])} onProject={() => undefined} />));
+  const boxes = () => [...host.querySelectorAll<HTMLInputElement>('[data-feature="tracks:select"]')];
+  for (const box of boxes()) await click(box);
+  const button = q('[data-feature="tracks:fetch-weather-selected"]') as HTMLButtonElement;
+  // Bravo is fetching: two of the three ticked tracks are asked for.
+  expect(button.textContent).toBe("Fetch weather for 2 selected tracks…");
+  await click(button);
+  await settle();
+  expect(calls.find(([n]) => n === "envEstimate")?.[1]).toEqual([[5, 7], false]);
+  await click(q(".modal-actions button.primary"));
+  await settle();
+  expect(calls.find(([n]) => n === "startEnvFetch")?.[1]).toEqual([[5, 7], "hourly", false]);
+  expect(q("[role=dialog]")).toBeNull();
+  expect(boxes().map((box) => box.checked)).toEqual([false, false, false]);
+  expect(button.disabled).toBe(true);
+  await act(async () => resetEnvJobs());
+});
+
+it("keeps the ticks when the fetch is not started", async () => {
+  const bravo: SourceSummary = { ...SOURCE, id: 6, label: "Bravo" };
+  responses.envEstimate = {
+    samples: 240, hourly_bytes: 25_000_000, three_hourly_bytes: 9_000_000, cached_bytes: 0,
+    stored_bytes: 960, three_hourly_above_bytes: 1e9, recommended: "hourly",
+  };
+  await act(async () => root.render(<Tracks project={project([SOURCE, bravo])} onProject={() => undefined} />));
+  for (const box of host.querySelectorAll<HTMLInputElement>('[data-feature="tracks:select"]')) await click(box);
+  await click(q('[data-feature="tracks:fetch-weather-selected"]'));
+  await settle();
+  await click([...host.querySelectorAll(".modal-actions button")].find((b) => b.textContent === "Not now")!);
+  expect([...host.querySelectorAll<HTMLInputElement>('[data-feature="tracks:select"]')].map((b) => b.checked)).toEqual([true, true]);
 });

@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import type { PolarCurve } from "../generated/PolarCurve";
 import type { DotPacket } from "./dotPacket";
-import { fitLayout, maxBoatSpeed, nearestPoint, niceTicks, project } from "./plotGeometry";
+import {
+  axisLabels, fitLayout, labelsOverlap, maxBoatSpeed, nearestPoint, niceTicks, project,
+} from "./plotGeometry";
 
 /** One dot of one source, as the packet carries it. */
 const dot = (sourceId: number, twa: number, tws: number, bsp: number): DotPacket => ({
@@ -110,5 +112,55 @@ describe("nearestPoint", () => {
     const dots = dot(99, 40, 10, 6);
     const { x, y } = project(40, 6, layout);
     expect(nearestPoint([], dots, new Map(), x, y, layout, 5)).toBeNull();
+  });
+});
+
+describe("axisLabels", () => {
+  /** A 10 px sans-serif advance, roughly: 6 px a character. */
+  const measure = (text: string) => text.length * 6;
+
+  it("never lets two labels overlap, whatever the size and speed range", () => {
+    for (const [width, height] of [[180, 160], [260, 300], [340, 420], [600, 800], [1200, 700]] as const) {
+      for (const maxBsp of [0.8, 3, 7.3, 9.9, 12, 16.4, 20, 23.7, 31, 48]) {
+        const labels = axisLabels(fitLayout(width, height, maxBsp), maxBsp, measure);
+        for (let i = 0; i < labels.length; i++) {
+          for (let j = i + 1; j < labels.length; j++) {
+            expect(labelsOverlap(labels[i]!, labels[j]!), `${width}x${height} ${maxBsp} kn: "${labels[i]!.text}" / "${labels[j]!.text}"`).toBe(false);
+          }
+        }
+      }
+    }
+  });
+
+  it("keeps both 90° and the outermost ring's value in the panel case that collided", () => {
+    // The panel plot of the UX shots: 20 kn is the outermost ring and the
+    // 90° label sat on the same line just past it.
+    const labels = axisLabels(fitLayout(300, 260, 19.2), 19.2, measure);
+    const texts = labels.map((label) => label.text);
+    expect(texts).toContain("90°");
+    expect(texts).toContain("20");
+    const ninety = labels.find((label) => label.text === "90°")!;
+    const twenty = labels.find((label) => label.text === "20")!;
+    expect(ninety.y + ninety.height).toBeLessThanOrEqual(twenty.y);
+  });
+
+  it("puts every angle label outside the outermost ring", () => {
+    const layout = fitLayout(400, 400, 12);
+    const outer = 12 * layout.scale; // ticks 2..12, the last is 12
+    for (const label of axisLabels(layout, 12, measure).filter((l) => l.text.endsWith("°"))) {
+      const farthest = Math.max(
+        ...[[label.x, label.y], [label.x + label.width, label.y], [label.x, label.y + label.height],
+          [label.x + label.width, label.y + label.height]].map(([x, y]) => Math.hypot(x! - layout.centerX, y! - layout.centerY)),
+      );
+      expect(farthest).toBeGreaterThan(outer);
+    }
+  });
+
+  it("drops a ring value rather than drawing it over its neighbour", () => {
+    // Rings 4 px apart cannot each carry a 6–12 px label.
+    const layout = { centerX: 10, centerY: 100, scale: 2 };
+    const labels = axisLabels(layout, 10, measure).filter((l) => !l.text.endsWith("°"));
+    expect(labels.length).toBeLessThan(niceTicks(10).length);
+    expect(labels.length).toBeGreaterThan(0);
   });
 });

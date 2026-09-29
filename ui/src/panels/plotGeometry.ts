@@ -69,6 +69,71 @@ export function niceTicks(max: number, targetCount = 5): number[] {
 /** The angular gridlines a classic polar diagram draws, degrees. */
 export const ANGLE_TICKS: readonly number[] = [0, 30, 60, 90, 120, 150, 180];
 
+/** One axis label as drawn: its text and the box it occupies, canvas pixels. */
+export interface AxisLabel {
+  text: string;
+  /** Left edge of the text. */
+  x: number;
+  /** Top edge of the text. */
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** Whether two label boxes overlap (touching edges do not). */
+export function labelsOverlap(a: AxisLabel, b: AxisLabel): boolean {
+  return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+}
+
+/**
+ * Where the angle (TWA) and ring (BSP) labels go, laid out so no two overlap.
+ *
+ * Both used to sit on the 90° spoke's line, so the outermost ring's value and
+ * "90°" ran into each other (M17a). Ring values now sit just under that spoke
+ * and angle labels just outside the outermost ring; a ring label that would
+ * still touch one already placed (rings closer together than their text is
+ * wide) is left out rather than drawn over it. `measure` is the text width in
+ * pixels (the canvas's `measureText` in the view, a fixed advance in tests).
+ */
+export function axisLabels(
+  layout: PlotLayout,
+  maxBsp: number,
+  measure: (text: string) => number,
+  fontSize = 10,
+): AxisLabel[] {
+  const gap = 3;
+  const labels: AxisLabel[] = [];
+  const ticks = niceTicks(maxBsp);
+  const outer = Math.max(maxBsp, ticks[ticks.length - 1] ?? 0) * layout.scale;
+  const angleRadius = Math.max(maxBsp * 1.06 * layout.scale, outer + gap + fontSize / 2);
+  for (const angle of ANGLE_TICKS) {
+    const text = `${angle}°`;
+    const width = measure(text);
+    const rad = angle * RAD;
+    const cx = layout.centerX + angleRadius * Math.sin(rad);
+    const cy = layout.centerY - angleRadius * Math.cos(rad);
+    // Centred over the spoke at 0° and 180°; otherwise starting at it, and
+    // at 90° lifted clear of the ring labels under the spoke.
+    const x = angle === 0 || angle === 180 ? cx - width / 2 : cx;
+    const y = angle === 90 ? cy - gap - fontSize : cy - fontSize / 2;
+    labels.push({ text, x, y, width, height: fontSize });
+  }
+  const placed = [...labels];
+  for (const tick of ticks) {
+    const text = String(tick);
+    const label: AxisLabel = {
+      text,
+      x: layout.centerX + tick * layout.scale + gap,
+      y: layout.centerY + gap,
+      width: measure(text),
+      height: fontSize,
+    };
+    if (placed.some((other) => labelsOverlap(label, other))) continue;
+    placed.push(label);
+  }
+  return placed;
+}
+
 /** What hovering one point on the plot shows (spec.md 9.2). */
 export interface Hover {
   label: string;

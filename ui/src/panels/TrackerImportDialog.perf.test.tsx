@@ -13,9 +13,13 @@ import type { TrackerBoatRow } from "../generated/TrackerBoatRow";
 import type { TrackerEventView } from "../generated/TrackerEventView";
 
 let answer: (view: TrackerEventView) => void = () => undefined;
+let downloadKey = "";
 vi.mock("../ipc", () => ({
   api: {
-    trackerEvent: () => new Promise<TrackerEventView>((resolve) => { answer = resolve; }),
+    trackerEvent: (...args: unknown[]) => {
+      downloadKey = args[3] as string;
+      return new Promise<TrackerEventView>((resolve) => { answer = resolve; });
+    },
     cancelTrackerEvent: () => Promise.resolve(),
     importTrackerBoats: () => Promise.resolve(),
   },
@@ -84,7 +88,7 @@ it("shows, ticks and searches a 444-boat event interactively", async () => {
   const listing: TrackerEventView = {
     ...view, positions: false, boats: view.boats.map((b) => ({ ...b, fixes: 0, first: null, last: null, preview: [] })),
   };
-  const listed = await timed(() => act(async () => { handlers.get("tracker://listed")!({ payload: listing }); }));
+  const listed = await timed(() => act(async () => { handlers.get("tracker://listed")!({ payload: { download: downloadKey, event: listing } }); }));
   expect(host.querySelectorAll("tbody tr")).toHaveLength(BOATS);
   expect((host.querySelector(".modal-actions button.primary") as HTMLButtonElement).disabled).toBe(true);
   const show = await timed(() => act(async () => { answer(view); await Promise.resolve(); }));

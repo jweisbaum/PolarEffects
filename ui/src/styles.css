@@ -291,7 +291,11 @@ button.icon-button { padding: 0 5px; line-height: 16px; font-size: 11px; }
 .track-wave-sectors { border: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: 11px; }
 .track-wave-sectors legend { padding: 0; }
 .track-env-options { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; margin: 0 0 6px; }
-.env-fetch-interval { border: none; margin: 8px 0; padding: 0; display: grid; gap: 4px; }
+/* A block fieldset, not a grid one: WebKit sizes the legend of a grid
+   fieldset to its min-content, one word per line (M17a). */
+.env-fetch-interval { border: none; margin: 8px 0; padding: 0; min-width: 0; }
+.env-fetch-interval legend { padding: 0; margin-bottom: 4px; }
+.env-fetch-interval > label { display: block; margin-top: 4px; }
 .grib-parts, .grib-interval { border: none; margin: 8px 0; padding: 0; display: grid; gap: 4px; }
 .grib-export .grib-area { margin-top: 0; }
 .grib-parts legend, .grib-interval legend { padding: 0; white-space: nowrap; }

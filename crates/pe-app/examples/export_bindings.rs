@@ -25,7 +25,7 @@ use pe_app::projects::{
     BoatInput, OrcSourceSummary, PolarFileSummary, ProjectSummary, RecentProject, SourceSummary,
 };
 use pe_app::settings::{AutosaveMode, LegacyCacheNotice, Settings};
-use pe_app::trackers::{TrackerBoatRow, TrackerEventView, TrackerProgress};
+use pe_app::trackers::{TrackerBoatRow, TrackerEventView, TrackerListed, TrackerProgress};
 use pe_app::tracks::{
     CsvMappingInput, CsvPreview, SampleDetails, TrackBoatPreview, TrackFileInspection,
     TrackFileRequest, TrackFilters, TrackImportFailure, TrackImportLine, TrackImportResult,
@@ -70,6 +70,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     TrackSummary::export_all(&cfg)?;
     TrackerBoatRow::export_all(&cfg)?;
     TrackerEventView::export_all(&cfg)?;
+    TrackerListed::export_all(&cfg)?;
     TrackerProgress::export_all(&cfg)?;
     EnvEstimate::export_all(&cfg)?;
     EnvJobTrack::export_all(&cfg)?;

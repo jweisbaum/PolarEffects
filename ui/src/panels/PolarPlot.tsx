@@ -11,7 +11,7 @@ import { useSampleSelection } from "../selection";
 import { onThemeChange } from "../settings/themes";
 import { DOT_EXCLUDED, DOT_FILTERED, dotSampleId, emptyDots, type DotPacket } from "./dotPacket";
 import {
-  ANGLE_TICKS, fitLayout, maxBoatSpeed, nearestPoint, niceTicks, project as projectPoint,
+  ANGLE_TICKS, axisLabels, fitLayout, maxBoatSpeed, nearestPoint, niceTicks, project as projectPoint,
   type Hover, type SourceStyle,
 } from "./plotGeometry";
 
@@ -80,7 +80,8 @@ function draw(canvas: HTMLCanvasElement, result: PolarPlotResult | null, dots: D
   const layout = fitLayout(width, height, maxBsp);
 
   ctx.font = "10px sans-serif";
-  ctx.textBaseline = "middle";
+  ctx.textBaseline = "top";
+  ctx.textAlign = "left";
   ctx.lineWidth = 1;
   ctx.strokeStyle = line;
   ctx.fillStyle = muted;
@@ -89,7 +90,6 @@ function draw(canvas: HTMLCanvasElement, result: PolarPlotResult | null, dots: D
     ctx.beginPath();
     ctx.arc(layout.centerX, layout.centerY, r, -Math.PI / 2, Math.PI / 2);
     ctx.stroke();
-    ctx.fillText(String(tick), layout.centerX + r + 3, layout.centerY);
   }
   for (const angle of ANGLE_TICKS) {
     const edge = projectPoint(angle, maxBsp, layout);
@@ -97,9 +97,9 @@ function draw(canvas: HTMLCanvasElement, result: PolarPlotResult | null, dots: D
     ctx.moveTo(layout.centerX, layout.centerY);
     ctx.lineTo(edge.x, edge.y);
     ctx.stroke();
-    const label = projectPoint(angle, maxBsp * 1.06, layout);
-    ctx.textAlign = angle === 0 || angle === 180 ? "center" : "left";
-    ctx.fillText(`${angle}°`, label.x, label.y);
+  }
+  for (const label of axisLabels(layout, maxBsp, (text) => ctx.measureText(text).width)) {
+    ctx.fillText(label.text, label.x, label.y);
   }
 
   for (const curve of curves) strokeCurve(ctx, curve, layout, 1.5);
