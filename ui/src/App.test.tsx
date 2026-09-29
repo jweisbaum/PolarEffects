@@ -960,11 +960,19 @@ describe("ORC polars (plan.md M5)", () => {
     expect(feature("orc:field-name")).not.toBeNull();
   });
 
-  it("lists nothing when every field is empty or holds only spaces", async () => {
+  it("lists nothing when every field is empty or holds only spaces or punctuation", async () => {
     await open([]);
     await click(feature("orc:fields"));
     await type(feature("orc:field-model") as HTMLInputElement, "   ");
+    await type(feature("orc:field-sail") as HTMLInputElement, " / ");
     await settle();
+    expect(feature("orc:fields")!.textContent).not.toContain("(");
+    // Every box keeps a visible label, filled or not, in reading order.
+    expect([...document.querySelectorAll(".orc-field > span")].map((label) => label.textContent)).toEqual([
+      "Boat name", "Sail number", "Model / type", "Builder", "Designer", "Country",
+      "Built from", "Built until", "Certificate year",
+    ]);
+    expect((feature("orc:field-sail") as HTMLInputElement).closest("label")!.textContent).toContain("Sail number");
     expect(commands("orc_search")).toEqual([]);
     expect(q(".orc-results")).toBeNull();
   });

@@ -131,36 +131,55 @@ export default function OrcPolars({ project, onProject }: {
       </button>
       {fieldsOpen && (
         <div className="orc-fields" id="orc-fields" role="group" aria-label={t("Search by field")}>
-          <input type="search" {...field("name")} data-feature="orc:field-name"
-            placeholder={t("Boat name")} aria-label={t("Boat name")}
-            title={t("Every word must start a word of the boat name")} />
-          <input type="search" {...field("sail_no")} data-feature="orc:field-sail"
-            placeholder={t("Sail number")} aria-label={t("Sail number")}
-            title={t("With or without the country: GBR1124, GBR 1124 and GBR/1124 are the same")} />
-          <select {...field("country")} data-feature="orc:country" aria-label={t("Country")}
-            title={t("Only certificates from this country")}>
-            <option value="">{t("All countries")}</option>
-            {(info?.countries ?? []).map((code) => <option key={code} value={code}>{code}</option>)}
-          </select>
-          <input type="search" {...field("model")} data-feature="orc:field-model"
-            placeholder={t("Model / type")} aria-label={t("Model / type")}
-            title={t("Every word must start a word of the model or type")} />
-          <input type="search" {...field("builder")} data-feature="orc:field-builder"
-            placeholder={t("Builder")} aria-label={t("Builder")}
-            title={t("Every word must start a word of the builder")} />
-          <input type="search" {...field("designer")} data-feature="orc:field-designer"
-            placeholder={t("Designer")} aria-label={t("Designer")}
-            title={t("Every word must start a word of the designer")} />
-          <input type="number" inputMode="numeric" {...field("year_from")} data-feature="orc:year-from"
-            min={info?.year_min ?? undefined} max={info?.year_max ?? undefined}
-            placeholder={t("Built from")} aria-label={t("Built from")} title={t("Earliest year built")} />
-          <input type="number" inputMode="numeric" {...field("year_to")} data-feature="orc:year-to"
-            min={info?.year_min ?? undefined} max={info?.year_max ?? undefined}
-            placeholder={t("Built until")} aria-label={t("Built until")} title={t("Latest year built")} />
-          <input type="search" inputMode="numeric" maxLength={4} {...field("certificate_year")}
-            data-feature="orc:field-certificate-year"
-            placeholder={t("Certificate year")} aria-label={t("Certificate year")}
-            title={t("The certificate year, or its start: 202 finds 2020 to 2029")} />
+          {/* Pairs in reading order; each label stays in sight once its box is filled. */}
+          <label className="orc-field">
+            <span>{t("Boat name")}</span>
+            <input type="text" {...field("name")} data-feature="orc:field-name"
+              title={t("Every word must start a word of the boat name")} />
+          </label>
+          <label className="orc-field">
+            <span>{t("Sail number")}</span>
+            <input type="text" {...field("sail_no")} data-feature="orc:field-sail"
+              title={t("With or without the country: GBR1124, GBR 1124 and GBR/1124 are the same")} />
+          </label>
+          <label className="orc-field">
+            <span>{t("Model / type")}</span>
+            <input type="text" {...field("model")} data-feature="orc:field-model"
+              title={t("Every word must start a word of the model or type")} />
+          </label>
+          <label className="orc-field">
+            <span>{t("Builder")}</span>
+            <input type="text" {...field("builder")} data-feature="orc:field-builder"
+              title={t("Every word must start a word of the builder")} />
+          </label>
+          <label className="orc-field">
+            <span>{t("Designer")}</span>
+            <input type="text" {...field("designer")} data-feature="orc:field-designer"
+              title={t("Every word must start a word of the designer")} />
+          </label>
+          <label className="orc-field">
+            <span>{t("Country")}</span>
+            <select {...field("country")} data-feature="orc:country" title={t("Only certificates from this country")}>
+              <option value="">{t("All countries")}</option>
+              {(info?.countries ?? []).map((code) => <option key={code} value={code}>{code}</option>)}
+            </select>
+          </label>
+          <label className="orc-field">
+            <span>{t("Built from")}</span>
+            <input type="number" inputMode="numeric" {...field("year_from")} data-feature="orc:year-from"
+              min={info?.year_min ?? undefined} max={info?.year_max ?? undefined} title={t("Earliest year built")} />
+          </label>
+          <label className="orc-field">
+            <span>{t("Built until")}</span>
+            <input type="number" inputMode="numeric" {...field("year_to")} data-feature="orc:year-to"
+              min={info?.year_min ?? undefined} max={info?.year_max ?? undefined} title={t("Latest year built")} />
+          </label>
+          <label className="orc-field">
+            <span>{t("Certificate year")}</span>
+            <input type="text" inputMode="numeric" maxLength={4} {...field("certificate_year")}
+              data-feature="orc:field-certificate-year"
+              title={t("The certificate year, or its start: 202 finds 2020 to 2029")} />
+          </label>
           <button type="button" className="small" data-feature="orc:fields-clear" disabled={active === 0}
             title={t("Empty every field box; the search box above is kept")}
             onClick={() => setFields(NO_FIELDS)}>

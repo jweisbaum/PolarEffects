@@ -34,18 +34,33 @@ export function year(text: string): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
+/**
+ * Whether a box holds a word: a letter or a digit, as `pe_orc::fold::words`
+ * splits text (Rust's `char::is_alphanumeric`: Alphabetic or Numeric). A
+ * box of only punctuation or spaces is no condition there, so it is none
+ * here either.
+ */
+export function hasWord(text: string): boolean {
+  return /[\p{Alphabetic}\p{N}]/u.test(text);
+}
+
+/** A text box's query: trimmed, or empty when it holds no word. */
+function query(text: string): string {
+  return hasWord(text) ? text.trim() : "";
+}
+
 /** What `orc_search` receives for these boxes. */
 export function toFilters(fields: FieldQueries): OrcFilters {
   return {
     year_min: year(fields.year_from),
     year_max: year(fields.year_to),
     country: fields.country === "" ? null : fields.country,
-    name: fields.name.trim(),
-    sail_no: fields.sail_no.trim(),
-    model: fields.model.trim(),
-    builder: fields.builder.trim(),
-    designer: fields.designer.trim(),
-    certificate_year: fields.certificate_year.trim(),
+    name: query(fields.name),
+    sail_no: query(fields.sail_no),
+    model: query(fields.model),
+    builder: query(fields.builder),
+    designer: query(fields.designer),
+    certificate_year: query(fields.certificate_year),
   };
 }
 

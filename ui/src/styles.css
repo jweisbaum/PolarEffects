@@ -317,8 +317,15 @@ button.icon-button { padding: 0 5px; line-height: 16px; font-size: 11px; }
 .orc-fields-toggle { display: flex; align-items: center; gap: 4px; width: 100%; margin: 4px 0; padding: 1px 0;
   border: 0; background: transparent; color: var(--muted); font-size: 11px; text-align: left; }
 .orc-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin: 0 0 6px; }
-.orc-fields input, .orc-fields select { width: 100%; min-width: 0; box-sizing: border-box; padding: 1px 4px; }
-.orc-fields button { justify-self: end; align-self: center; }
+.orc-field { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.orc-field > span { font-size: 11px; color: var(--muted); }
+/* Every box the same height and without native adornments (spinners), so the grid lines up. */
+.orc-fields input, .orc-fields select { width: 100%; min-width: 0; height: 22px; box-sizing: border-box;
+  padding: 1px 4px; font-size: 12px; }
+.orc-fields input[type="number"] { appearance: textfield; -moz-appearance: textfield; }
+.orc-fields input[type="number"]::-webkit-inner-spin-button,
+.orc-fields input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.orc-fields button { justify-self: end; align-self: end; }
 .orc-count { margin: 0 0 4px; font-size: 11px; }
 .orc-results { list-style: none; margin: 0 0 8px; padding: 0; max-height: 320px; overflow-y: auto;
   border-top: 1px solid var(--border-subtle); border-bottom: 1px solid var(--border-subtle); }
