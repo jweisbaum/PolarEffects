@@ -7,7 +7,8 @@
 //!
 //! **Bulk data lives outside `project.json`.** `fixes` and `samples` are
 //! skipped by serde here and written to `tracks/<id>.json` by [`crate::io`],
-//! so the project document stays small and diffable (spec.md 4.3).
+//! so the project document stays small and diffable (spec.md 4.3). Samples
+//! are written by column ([`SampleColumns`]) with only what is not derived.
 
 use serde::{Deserialize, Serialize};
 
@@ -54,11 +55,14 @@ impl Track {
     }
 
     /// The bulk half, as written to `tracks/<id>.json`.
-    pub fn bulk(&self) -> TrackBulkRef<'_> {
-        TrackBulkRef {
+    ///
+    /// # Errors
+    /// [`crate::CoreError::Invalid`] if a stored value is not finite.
+    pub fn bulk(&self) -> crate::Result<TrackBulkRef<'_>> {
+        Ok(TrackBulkRef {
             fixes: &self.fixes,
-            samples: &self.samples,
-        }
+            samples: SampleColumns::of(&self.samples)?,
+        })
     }
 }
 
@@ -67,11 +71,11 @@ impl Track {
 pub struct TrackBulkRef<'a> {
     /// See [`Track::fixes`].
     pub fixes: &'a [Fix],
-    /// See [`Track::samples`].
-    pub samples: &'a [Sample],
+    /// See [`Track::samples`], by column.
+    pub samples: SampleColumns,
 }
 
-/// [`TrackBulkRef`] as read back.
+/// [`TrackBulkRef`] as read back (schema 2 on).
 #[derive(Debug, Default, Deserialize)]
 pub struct TrackBulk {
     /// See [`Track::fixes`].
@@ -79,7 +83,289 @@ pub struct TrackBulk {
     pub fixes: Vec<Fix>,
     /// See [`Track::samples`].
     #[serde(default)]
+    pub samples: SampleColumns,
+}
+
+/// A track's bulk entry as schema 1 wrote it: one object per sample with
+/// every value, derived ones included. Read only, to migrate.
+#[derive(Debug, Default, Deserialize)]
+pub struct TrackBulkV1 {
+    /// See [`Track::fixes`].
+    #[serde(default)]
+    pub fixes: Vec<Fix>,
+    /// Every field of every sample.
+    #[serde(default)]
     pub samples: Vec<Sample>,
+}
+
+impl TrackBulkV1 {
+    /// The fixes and samples, the samples as schema 2 keeps them: the
+    /// environment rounded to its stored precision and every derived value
+    /// recomputed.
+    pub fn into_parts(self) -> crate::Result<(Vec<Fix>, Vec<Sample>)> {
+        let samples = self
+            .samples
+            .into_iter()
+            .map(|mut s| {
+                let fix = self.fixes.get(s.fix as usize).ok_or_else(|| {
+                    crate::CoreError::Invalid(format!(
+                        "sample #{} refers to fix {} of {}",
+                        s.id.raw(),
+                        s.fix,
+                        self.fixes.len()
+                    ))
+                })?;
+                (s.t, s.lat, s.lon) = (fix.t, fix.lat, fix.lon);
+                s.quantise_env();
+                s.relate();
+                Ok(s)
+            })
+            .collect::<crate::Result<Vec<_>>>()?;
+        Ok((self.fixes, samples))
+    }
+}
+
+/// A track's samples by column (spec.md 4.3, D27): what a sample has that
+/// its fix does not — its id, its motion, the environment found for it and
+/// which dataset supplied each part. Its time and place are its fix's, and
+/// everything that relates the motion to the environment (TWA, tack, the
+/// current-corrected values, the wave angle) is recomputed on load, so none
+/// of it is written.
+///
+/// Columns of like values compress far better than objects of mixed ones:
+/// at the environment's stored precision a thousand samples of wind, waves
+/// and current are a few kilobytes in the file.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SampleColumns {
+    /// Sample ids as runs of consecutive ids: `[first, count]`.
+    pub ids: Vec<[u64; 2]>,
+    /// Fix indices, as runs like `ids`.
+    pub fixes: Vec<[u64; 2]>,
+    /// Heading over the ground, degrees (canonical precision).
+    pub heading: Vec<Option<f64>>,
+    /// Where each heading came from: `g` given, `d` derived, `-` none.
+    pub heading_origin: String,
+    /// Speed over the ground, knots (canonical precision).
+    pub speed: Vec<Option<f64>>,
+    /// Where each speed came from, as [`Self::heading_origin`].
+    pub speed_origin: String,
+    /// Whether the environment fetch has answered: `1` or `0`.
+    pub fetched: String,
+    /// True wind speed, knots, to 0.01.
+    pub tws: Vec<Option<f64>>,
+    /// True wind direction ("from"), degrees, to 0.1.
+    pub twd_from: Vec<Option<f64>>,
+    /// Significant wave height, metres, to 0.01.
+    pub hs_m: Vec<Option<f64>>,
+    /// Mean wave direction ("from"), degrees, to 0.1.
+    pub wave_from: Vec<Option<f64>>,
+    /// Current speed, knots, to 0.01.
+    pub current_speed: Vec<Option<f64>>,
+    /// Current direction ("toward"), degrees, to 0.1.
+    pub current_toward: Vec<Option<f64>>,
+    /// Which dataset supplied the wind (index into the track's datasets).
+    pub wind_dataset: Vec<Option<u16>>,
+    /// Which dataset supplied the waves.
+    pub wave_dataset: Vec<Option<u16>>,
+    /// Which dataset supplied the current.
+    pub current_dataset: Vec<Option<u16>>,
+}
+
+/// Runs of consecutive values: `[first, count]`.
+fn runs(values: impl Iterator<Item = u64>) -> Vec<[u64; 2]> {
+    let mut out: Vec<[u64; 2]> = Vec::new();
+    for v in values {
+        match out.last_mut() {
+            Some([first, count]) if first.checked_add(*count) == Some(v) => *count += 1,
+            _ => out.push([v, 1]),
+        }
+    }
+    out
+}
+
+/// The values runs stand for, refusing more than `limit` of them.
+fn unrun(runs: &[[u64; 2]], limit: usize, what: &str) -> crate::Result<Vec<u64>> {
+    let total = runs.iter().fold(0u64, |t, [_, n]| t.saturating_add(*n));
+    if total > limit as u64 {
+        return Err(crate::CoreError::Invalid(format!(
+            "the {what} column holds {total} values, more than the {limit} allowed"
+        )));
+    }
+    Ok(runs
+        .iter()
+        .flat_map(|&[first, n]| (0..n).map(move |k| first.saturating_add(k)))
+        .collect())
+}
+
+/// One character per origin.
+fn origin_code(origin: Option<ValueOrigin>) -> char {
+    match origin {
+        Some(ValueOrigin::Given) => 'g',
+        Some(ValueOrigin::Derived) => 'd',
+        None => '-',
+    }
+}
+
+fn origin_of(code: char) -> crate::Result<Option<ValueOrigin>> {
+    match code {
+        'g' => Ok(Some(ValueOrigin::Given)),
+        'd' => Ok(Some(ValueOrigin::Derived)),
+        '-' => Ok(None),
+        other => Err(crate::CoreError::Invalid(format!(
+            "{other:?} is not a value origin (g, d or -)"
+        ))),
+    }
+}
+
+/// A column of optional values rounded by `round`, refusing a non-finite
+/// one (it would be written as `null` and read back as missing).
+fn column(
+    samples: &[Sample],
+    what: &str,
+    value: impl Fn(&Sample) -> Option<f64>,
+    round: fn(f64) -> f64,
+) -> crate::Result<Vec<Option<f64>>> {
+    samples
+        .iter()
+        .map(|s| match value(s) {
+            Some(v) if !v.is_finite() => Err(crate::CoreError::Invalid(format!(
+                "sample #{} has a {what} of {v}; only finite numbers can be stored",
+                s.id.raw()
+            ))),
+            v => Ok(v.map(round)),
+        })
+        .collect()
+}
+
+impl SampleColumns {
+    /// The columns of `samples`.
+    ///
+    /// # Errors
+    /// [`crate::CoreError::Invalid`] if a value is not finite.
+    pub fn of(samples: &[Sample]) -> crate::Result<Self> {
+        use crate::canonical::{degrees, env_degrees, env_knots, env_metres, knots};
+        Ok(Self {
+            ids: runs(samples.iter().map(|s| s.id.raw())),
+            fixes: runs(samples.iter().map(|s| u64::from(s.fix))),
+            heading: column(samples, "heading", |s| s.heading, degrees)?,
+            heading_origin: samples
+                .iter()
+                .map(|s| origin_code(s.heading_origin))
+                .collect(),
+            speed: column(samples, "speed", |s| s.speed, knots)?,
+            speed_origin: samples
+                .iter()
+                .map(|s| origin_code(s.speed_origin))
+                .collect(),
+            fetched: samples
+                .iter()
+                .map(|s| if s.env_fetched { '1' } else { '0' })
+                .collect(),
+            tws: column(samples, "wind speed", |s| s.tws, env_knots)?,
+            twd_from: column(samples, "wind direction", |s| s.twd_from, env_degrees)?,
+            hs_m: column(samples, "wave height", |s| s.hs_m, env_metres)?,
+            wave_from: column(samples, "wave direction", |s| s.wave_from, env_degrees)?,
+            current_speed: column(samples, "current speed", |s| s.current_speed, env_knots)?,
+            current_toward: column(
+                samples,
+                "current direction",
+                |s| s.current_toward,
+                env_degrees,
+            )?,
+            wind_dataset: samples.iter().map(|s| s.wind_dataset).collect(),
+            wave_dataset: samples.iter().map(|s| s.wave_dataset).collect(),
+            current_dataset: samples.iter().map(|s| s.current_dataset).collect(),
+        })
+    }
+
+    /// The samples these columns hold, placed on `fixes`, the environment
+    /// rounded as stored and every derived value recomputed.
+    ///
+    /// # Errors
+    /// [`crate::CoreError::Invalid`] naming the column if the columns
+    /// disagree in length, a sample names a fix that is not there, or an
+    /// origin or fetched flag is not one of its codes.
+    pub fn into_samples(self, fixes: &[Fix]) -> crate::Result<Vec<Sample>> {
+        use crate::canonical::{degrees, knots};
+        // A column may not claim more samples than there are fixes: each
+        // fix has at most one sample.
+        let ids = unrun(&self.ids, fixes.len(), "ids")?;
+        let fix_index = unrun(&self.fixes, fixes.len(), "fixes")?;
+        let n = ids.len();
+        let check = |what: &str, len: usize| {
+            if len == n {
+                Ok(())
+            } else {
+                Err(crate::CoreError::Invalid(format!(
+                    "the {what} column has {len} values for {n} samples"
+                )))
+            }
+        };
+        check("fixes", fix_index.len())?;
+        check("heading", self.heading.len())?;
+        check("heading_origin", self.heading_origin.chars().count())?;
+        check("speed", self.speed.len())?;
+        check("speed_origin", self.speed_origin.chars().count())?;
+        check("fetched", self.fetched.chars().count())?;
+        check("tws", self.tws.len())?;
+        check("twd_from", self.twd_from.len())?;
+        check("hs_m", self.hs_m.len())?;
+        check("wave_from", self.wave_from.len())?;
+        check("current_speed", self.current_speed.len())?;
+        check("current_toward", self.current_toward.len())?;
+        check("wind_dataset", self.wind_dataset.len())?;
+        check("wave_dataset", self.wave_dataset.len())?;
+        check("current_dataset", self.current_dataset.len())?;
+        let mut heading_origin = self.heading_origin.chars();
+        let mut speed_origin = self.speed_origin.chars();
+        let mut fetched = self.fetched.chars();
+        let mut out = Vec::with_capacity(n);
+        for k in 0..n {
+            let index = fix_index[k];
+            let fix = usize::try_from(index)
+                .ok()
+                .and_then(|i| fixes.get(i))
+                .ok_or_else(|| {
+                    crate::CoreError::Invalid(format!(
+                        "sample #{} refers to fix {index} of {}",
+                        ids[k],
+                        fixes.len()
+                    ))
+                })?;
+            let mut s = Sample::at(
+                crate::id::SampleId(ids[k]),
+                u32::try_from(index).unwrap_or(u32::MAX),
+                fix,
+            );
+            s.heading = self.heading[k].map(degrees);
+            s.heading_origin = origin_of(heading_origin.next().unwrap_or('-'))?;
+            s.speed = self.speed[k].map(knots);
+            s.speed_origin = origin_of(speed_origin.next().unwrap_or('-'))?;
+            s.env_fetched = match fetched.next() {
+                Some('1') => true,
+                Some('0') | None => false,
+                Some(other) => {
+                    return Err(crate::CoreError::Invalid(format!(
+                        "{other:?} is not a fetched flag (1 or 0)"
+                    )));
+                }
+            };
+            s.tws = self.tws[k];
+            s.twd_from = self.twd_from[k];
+            s.hs_m = self.hs_m[k];
+            s.wave_from = self.wave_from[k];
+            s.current_speed = self.current_speed[k];
+            s.current_toward = self.current_toward[k];
+            s.wind_dataset = self.wind_dataset[k];
+            s.wave_dataset = self.wave_dataset[k];
+            s.current_dataset = self.current_dataset[k];
+            s.quantise_env();
+            s.relate();
+            out.push(s);
+        }
+        Ok(out)
+    }
 }
 
 /// Which tracker a track was scraped from.
@@ -354,6 +640,20 @@ impl Sample {
         self.heading_origin = motion.heading_origin;
         self.speed = motion.speed;
         self.speed_origin = motion.speed_origin;
+    }
+
+    /// Rounds the environment to the precision it is stored at (spec.md
+    /// 7.5, [`crate::canonical::ENV_KNOT_PLACES`]), so what is in memory is
+    /// exactly what a save and a load give back. The fetch calls it when it
+    /// stores what it found, before relating it to the motion.
+    pub fn quantise_env(&mut self) {
+        use crate::canonical::{env_degrees, env_knots, env_metres};
+        self.tws = self.tws.map(env_knots);
+        self.twd_from = self.twd_from.map(env_degrees);
+        self.hs_m = self.hs_m.map(env_metres);
+        self.wave_from = self.wave_from.map(env_degrees);
+        self.current_speed = self.current_speed.map(env_knots);
+        self.current_toward = self.current_toward.map(env_degrees);
     }
 
     /// Forgets everything the environment fetch stored for this sample —

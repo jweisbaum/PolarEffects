@@ -139,12 +139,11 @@ pub fn run() -> anyhow::Result<()> {
             settings::set_theme,
             settings::set_units,
             settings::set_autosave_mode,
-            settings::set_chunk_cache,
+            settings::set_weather_memory,
             settings::set_network,
             settings::set_projection,
             settings::set_plot_band,
-            settings::chunk_cache_status,
-            settings::clear_chunk_cache,
+            settings::legacy_cache_notice,
             quit::quit_app,
         ])
         .build(tauri::generate_context!())?;

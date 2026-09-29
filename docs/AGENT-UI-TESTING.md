@@ -24,7 +24,7 @@ Everything in `tools/webdriver/` talks to it through one client,
   person's own `tauri dev` on 5173 without touching it;
 - uses **its own data root** (`PE_AUTOMATION_ROOT`, a fresh temporary
   directory, removed afterwards): settings, recent projects, autosave and
-  the chunk cache never touch the person's own;
+  the old chunk cache never touch the person's own;
 - opens a **1440 × 900 window that does not take focus**, so pictures
   compare across machines and the person's keyboard is not stolen. It does
   appear on screen.

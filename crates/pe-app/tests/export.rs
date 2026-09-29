@@ -12,7 +12,10 @@
 //! exported in all three formats, and the SHA-256 of each file is pinned
 //! here. Every target that runs the suite (macOS Intel and Apple silicon,
 //! Windows x64, Linux) must produce the same bytes. Changing them is
-//! changing export output (CLAUDE.md, "Changing export output").
+//! changing export output (CLAUDE.md, "Changing export output"). They
+//! were re-pinned in M14e only because the fixture's track now holds its
+//! wind and current and derives TWA and the corrected values from them on
+//! load, as every saved track does (D27); the writers did not change.
 
 mod common;
 
@@ -29,9 +32,9 @@ use sha2::{Digest, Sha256};
 const EXPEDITION: &[u8] = include_bytes!("../../pe-polar/tests/golden/expedition.txt");
 
 /// The pinned SHA-256 of the fixed project's exports.
-const EXPEDITION_SHA256: &str = "018cc7a603f6944f18489019d4aed41a3062d35bab6e16d6aea65752bd720005";
-const ADRENA_SHA256: &str = "b1dff1adb1a65b2e238bca7ed09bbd4aba290d624815fb5d45f6c474057a1052";
-const CSV_SHA256: &str = "6e50ad6c2333f697848c0ce08d68a9348c9b406f181e3f5802969964aec3a910";
+const EXPEDITION_SHA256: &str = "504aba8479df506ec9461c61ea47d782e816a2d2ff7dbee7233eea499cde6d82";
+const ADRENA_SHA256: &str = "735104c2a0a35d521f84feade4fe6f8d3f6b9d671906525f95b39c30ed63d220";
+const CSV_SHA256: &str = "47f9fbd5fef3684b1fdb09483faaee0b0f71db543a5ba857471035a99ca1f461";
 
 fn orc() -> OrcRecord {
     let angles = vec![52.0, 60.0, 75.0, 90.0, 110.0, 120.0, 135.0, 150.0];
@@ -77,7 +80,11 @@ fn orc() -> OrcRecord {
 }
 
 /// A track of 600 samples over the polar, every second one with a current
-/// correction, all from integer arithmetic.
+/// correction, all from integer arithmetic. The samples hold what a track
+/// stores — motion, wind and current — and the TWA, TWS and corrected
+/// values the blend reads are derived from them when the project is read
+/// back (schema 2, D27): heading 000° at the boat speed, the wind from the
+/// TWA, and on every second sample 0.2 kn of current setting north.
 fn track() -> Track {
     let mut track = Track::new(
         TrackId(20),
@@ -99,14 +106,15 @@ fn track() -> Track {
         let tws = 5.0 + f64::from(k * 3 % 22) + 0.25;
         let bsp =
             (300.0 + tws * 30.0 + (twa - 30.0) * 1.2 + f64::from(k % 5) * 10.0).round() / 100.0;
-        sample.twa = Some(twa);
-        sample.tws = Some(tws);
+        sample.heading = Some(0.0);
         sample.speed = Some(bsp);
+        sample.twd_from = Some(twa);
+        sample.tws = Some(tws);
         if k % 2 == 0 {
-            sample.twa_corrected = Some(twa + 1.0);
-            sample.tws_corrected = Some(tws - 0.5);
-            sample.bsp_corrected = Some(bsp - 0.2);
+            sample.current_speed = Some(0.2);
+            sample.current_toward = Some(0.0);
         }
+        sample.relate();
         track.fixes.push(fix);
         track.samples.push(sample);
     }

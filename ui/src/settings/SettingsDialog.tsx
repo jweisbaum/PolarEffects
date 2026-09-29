@@ -9,24 +9,13 @@ import { useEffect, useState } from "react";
 
 import type { AppSettings } from "../generated/AppSettings";
 import type { AutosaveMode } from "../generated/AutosaveMode";
-import type { ChunkCacheStatus } from "../generated/ChunkCacheStatus";
 import type { Units } from "../generated/Units";
 import { onReveal } from "../help/highlight";
 import { useT } from "../i18n";
 import LanguagePicker from "../i18n/LanguagePicker";
 import { describeError } from "../errors";
 import { api } from "../ipc";
-import ConfirmDialog from "../project/ConfirmDialog";
-import { pickCacheFolder } from "../project/dialogs";
 import ThemePicker from "./ThemePicker";
-
-/** A byte count as the dialog shows it. */
-export function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(0)} kB`;
-  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
-  return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
-}
 
 /**
  * A whole number typed in and committed on Enter or on leaving the field,
@@ -62,8 +51,6 @@ export default function SettingsDialog({ settings, onSettings, onClose }: {
   const t = useT();
   /** The last failure, described at render so a language switch relabels it. */
   const [error, setError] = useState<unknown>(null);
-  const [cache, setCache] = useState<ChunkCacheStatus | null>(null);
-  const [confirmClear, setConfirmClear] = useState(false);
 
   const report = (err: unknown) => setError(err ?? new Error("unknown"));
   const save = (change: Promise<AppSettings>) => {
@@ -72,21 +59,15 @@ export default function SettingsDialog({ settings, onSettings, onClose }: {
   };
 
   useEffect(() => {
-    let live = true;
-    api.chunkCacheStatus().then((status) => { if (live) setCache(status); }).catch(() => undefined);
-    return () => { live = false; };
-  }, [settings.chunk_cache.location]);
-
-  useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !confirmClear) {
+      if (event.key === "Escape") {
         event.preventDefault();
         onClose();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, confirmClear]);
+  }, [onClose]);
 
   /**
    * The search's second reveal step (spec.md 3.6): `settings:` opened the
@@ -101,14 +82,13 @@ export default function SettingsDialog({ settings, onSettings, onClose }: {
       onReveal("settings:appearance", show),
       onReveal("settings:units", show),
       onReveal("settings:autosave", show),
-      onReveal("settings:cache", show),
+      onReveal("settings:weather", show),
       onReveal("settings:network", show),
     ];
     return () => { for (const off of offs) off(); };
   }, []);
 
   const units = (change: Partial<Units>) => save(api.setUnits({ ...settings.units, ...change }));
-  const chunkCache = settings.chunk_cache;
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -182,43 +162,18 @@ export default function SettingsDialog({ settings, onSettings, onClose }: {
           </label>
         </section>
 
-        <section data-section="settings:cache">
-          <h3>{t("Chunk cache")}</h3>
+        <section data-section="settings:weather">
+          <h3>{t("Downloaded weather")}</h3>
           <p className="muted">
-            {t("Downloaded wind, wave and current data is kept here so it is not fetched twice. Clearing it loses nothing: every value a project uses is saved in the project.")}
+            {t("A fetch downloads only the parts of the archives that hold a track's positions, and the project keeps only the wind, waves and current at each position: kilobytes per track. Nothing downloaded is kept on disk.")}
           </p>
-          <div className="settings-field">
-            <span>{t("Location")}</span>
-            <span className="settings-path" title={cache?.path ?? undefined}>{cache?.path ?? "…"}</span>
-          </div>
-          <div className="settings-buttons">
-            <button data-feature="settings:cache-location" title={t("Keep the chunk cache in another folder")}
-              onClick={() => void pickCacheFolder().then((folder) => {
-                if (folder !== null) save(api.setChunkCache({ ...chunkCache, location: folder }));
-              }).catch(report)}>
-              {t("Choose folder…")}
-            </button>
-            <button data-feature="settings:cache-default" disabled={chunkCache.location === ""}
-              title={t("Keep the chunk cache in the application's own cache folder")}
-              onClick={() => save(api.setChunkCache({ ...chunkCache, location: "" }))}>
-              {t("Use the default folder")}
-            </button>
-          </div>
           <label className="settings-field">
-            {t("Size limit (GB)")}
-            <IntegerField data-feature="settings:cache-limit" aria-label={t("Size limit (GB)")}
-              title={t("The oldest chunks are removed when the cache grows past this")}
-              value={chunkCache.size_limit_gb} min={1} max={2000}
-              onCommit={(value) => save(api.setChunkCache({ ...chunkCache, size_limit_gb: value }))} />
+            {t("Keep downloaded weather in memory for this session (MB)")}
+            <IntegerField data-feature="settings:weather-memory" aria-label={t("Keep downloaded weather in memory for this session (MB)")}
+              title={t("Other boats of the same race reuse it instead of downloading it again. It is forgotten when PolarEffects quits (16–4096 MB).")}
+              value={settings.weather_memory_mb} min={16} max={4096}
+              onCommit={(value) => save(api.setWeatherMemory(value))} />
           </label>
-          <div className="settings-field">
-            <span>{t("Current size: {size}", { size: cache === null ? "…" : formatBytes(cache.bytes) })}</span>
-            <button data-feature="settings:cache-clear" disabled={cache === null || cache.bytes === 0}
-              title={t("Delete every cached chunk. Projects keep their data.")}
-              onClick={() => setConfirmClear(true)}>
-              {t("Clear cache")}
-            </button>
-          </div>
         </section>
 
         <section data-section="settings:network">
@@ -243,22 +198,6 @@ export default function SettingsDialog({ settings, onSettings, onClose }: {
           <button data-feature="settings:close" onClick={onClose} title={t("Close the settings (Esc)")}>{t("Close")}</button>
         </div>
       </div>
-
-      {confirmClear && (
-        <div onClick={(event) => event.stopPropagation()}>
-          <ConfirmDialog
-            title={t("Clear the chunk cache?")}
-            body={t("This deletes {size} of downloaded data. Projects keep every value they use; data is fetched again only if you ask for it.", { size: formatBytes(cache?.bytes ?? 0) })}
-            confirmLabel={t("Clear cache")}
-            onConfirm={() => {
-              setConfirmClear(false);
-              setError(null);
-              api.clearChunkCache().then(setCache).catch(report);
-            }}
-            onCancel={() => setConfirmClear(false)}
-          />
-        </div>
-      )}
     </div>
   );
 }

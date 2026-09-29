@@ -45,7 +45,7 @@ fn close(a: f64, b: f64, tol: f64) -> bool {
 /// column 1420 of the global chunk.
 #[test]
 fn wb2_wind_at_a_grid_node_matches_numcodecs() {
-    let store = open_dir(&fixture("wb2-crop")).unwrap().store;
+    let store = open_dir(&fixture("wb2-crop")).unwrap();
     let t = parse_utc("2020-07-27T12:00Z").unwrap();
     let u = OpenVariable::open(&store, vars::WB2_U10).unwrap();
     let v = OpenVariable::open(&store, vars::WB2_V10).unwrap();
@@ -65,7 +65,7 @@ fn wb2_wind_at_a_grid_node_matches_numcodecs() {
 /// Weights 0.24, 0.16, 0.36, 0.24 on the numcodecs corner values.
 #[test]
 fn wb2_wind_between_nodes_is_bilinear() {
-    let store = open_dir(&fixture("wb2-crop")).unwrap().store;
+    let store = open_dir(&fixture("wb2-crop")).unwrap();
     let u = OpenVariable::open(&store, vars::WB2_U10).unwrap();
     let t = parse_utc("2020-07-27T12:00Z").unwrap();
     let corners = [
@@ -84,7 +84,7 @@ fn wb2_wind_between_nodes_is_bilinear() {
 /// cropped grid is outside.
 #[test]
 fn wb2_a_missing_chunk_and_outside_the_grid_are_missing() {
-    let store = open_dir(&fixture("wb2-crop")).unwrap().store;
+    let store = open_dir(&fixture("wb2-crop")).unwrap();
     let u = OpenVariable::open(&store, vars::WB2_U10).unwrap();
     let t = parse_utc("2020-07-27T14:00Z").unwrap();
     assert_eq!(u.sample(t, 50.0, -5.0).unwrap(), None);
@@ -102,7 +102,7 @@ fn wb2_a_missing_chunk_and_outside_the_grid_are_missing() {
 /// hour -0.1474609375; half past is their mean.
 #[test]
 fn cmems_current_at_a_node_and_between_hours() {
-    let store = open_dir(&fixture("cmems-merged-geo")).unwrap().store;
+    let store = open_dir(&fixture("cmems-merged-geo")).unwrap();
     let u = OpenVariable::open(&store, vars::CMEMS_UTOTAL).unwrap();
     assert_eq!(u.time().first, parse_utc("2020-11-01").unwrap());
     assert_eq!(u.chunk_shape().unwrap(), vec![4272, 1, 16, 8]);
@@ -122,7 +122,7 @@ fn cmems_current_at_a_node_and_between_hours() {
 /// four corners on land the value is missing.
 #[test]
 fn cmems_land_corners_are_left_out_and_all_land_is_missing() {
-    let store = open_dir(&fixture("cmems-merged-geo")).unwrap().store;
+    let store = open_dir(&fixture("cmems-merged-geo")).unwrap();
     let u = OpenVariable::open(&store, vars::CMEMS_UTOTAL).unwrap();
     let t = parse_utc("2025-08-03T00:00Z").unwrap();
     let got = u.sample(t, 50.05, -5.2).unwrap().expect("two sea corners");
@@ -136,7 +136,7 @@ fn cmems_land_corners_are_left_out_and_all_land_is_missing() {
 /// fill is missing, never 9.97e36 m/s.
 #[test]
 fn cmems_an_absent_chunk_is_missing() {
-    let store = open_dir(&fixture("cmems-merged-geo")).unwrap().store;
+    let store = open_dir(&fixture("cmems-merged-geo")).unwrap();
     let u = OpenVariable::open(&store, vars::CMEMS_UTOTAL).unwrap();
     let t = parse_utc("2025-08-03T00:00Z").unwrap();
     assert_eq!(u.sample(t, 40.0, -20.0).unwrap(), None);
@@ -145,49 +145,83 @@ fn cmems_an_absent_chunk_is_missing() {
 /// A variable the store does not have is an open error, not a panic.
 #[test]
 fn an_absent_variable_is_refused() {
-    let store = open_dir(&fixture("cmems-merged-geo")).unwrap().store;
+    let store = open_dir(&fixture("cmems-merged-geo")).unwrap();
     assert!(OpenVariable::open(&store, vars::CMEMS_VTIDE).is_err());
 }
 
-/// A cached chunk that no longer decodes (a damaged file) is evicted and
-/// fetched once more from the archive, rather than failing every read
-/// after it (M3 carry).
+/// A chunk that arrives but does not decode is an error naming it, not
+/// a wrong value, and nothing of it is kept for the next read.
 #[test]
-fn a_cached_chunk_that_fails_to_decode_is_evicted_and_fetched_again() {
+fn a_chunk_that_does_not_decode_is_an_error() {
     use std::sync::Arc;
 
-    use pe_env::cache::{CachedStore, ChunkCache};
-    use zarrs::storage::ReadableStorage;
+    use pe_env::memory::Part;
+    use pe_env::store::open_storage;
+    use zarrs::storage::{ReadableStorage, ReadableStorageTraits, StorageError, StoreKey};
+    use zarrs_storage::byte_range::ByteRangeIterator;
+    use zarrs_storage::{Bytes, MaybeBytes, MaybeBytesIterator};
 
-    let dir = std::env::temp_dir().join(format!("pe-evict-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    let cache = ChunkCache::open(&dir, 1 << 30).unwrap();
-    let key = "10m_u_component_of_wind/539724.0.0";
-    cache.put("wb2", key, b"not a blosc container").unwrap();
-    pe_env::codec::register();
-    let inner = zarrs::filesystem::FilesystemStore::new(fixture("wb2-crop")).unwrap();
-    let store: ReadableStorage = Arc::new(CachedStore::new(inner, Arc::clone(&cache), "wb2"));
-    let u = OpenVariable::open(&store, vars::WB2_U10)
+    /// The fixture store, its one chunk's blocks overwritten with junk.
+    #[derive(Debug)]
+    struct Damaged(zarrs::filesystem::FilesystemStore);
+    impl Damaged {
+        fn spoil(key: &StoreKey, bytes: Bytes) -> Bytes {
+            if !key.as_str().ends_with("539724.0.0") {
+                return bytes;
+            }
+            let mut v = bytes.to_vec();
+            let from = 16 + 4 * 2;
+            for b in v.iter_mut().skip(from + 40) {
+                *b = 0xff;
+            }
+            Bytes::from(v)
+        }
+    }
+    impl ReadableStorageTraits for Damaged {
+        fn get(&self, key: &StoreKey) -> Result<MaybeBytes, StorageError> {
+            Ok(self.0.get(key)?.map(|b| Self::spoil(key, b)))
+        }
+        fn get_partial_many<'a>(
+            &'a self,
+            key: &StoreKey,
+            ranges: ByteRangeIterator<'a>,
+        ) -> Result<MaybeBytesIterator<'a>, StorageError> {
+            // Metadata and axes only: the chunk is read whole.
+            self.0.get_partial_many(key, ranges)
+        }
+        fn size_key(&self, key: &StoreKey) -> Result<Option<u64>, StorageError> {
+            self.0.size_key(key)
+        }
+        fn supports_get_partial(&self) -> bool {
+            false
+        }
+    }
+
+    let store: ReadableStorage = Arc::new(Damaged(
+        zarrs::filesystem::FilesystemStore::new(fixture("wb2-crop")).unwrap(),
+    ));
+    let open = open_storage(store);
+    let memory = pe_env::BlockCache::new(1 << 20);
+    let u = OpenVariable::open(&open, vars::WB2_U10)
         .unwrap()
-        .with_cache(Arc::clone(&cache), "wb2");
+        .with_memory(Arc::clone(&memory));
+    assert!(u.reads_blocks());
     let t = parse_utc("2020-07-27T12:00Z").unwrap();
-    let got = u.sample(t, 50.0, -5.0).unwrap().expect("inside");
-    assert!(close(got, 9.382_978_439_331_055, 1e-6), "{got}");
-    // The good bytes replaced the damaged ones.
-    let recached = cache.get("wb2", key).expect("cached again");
-    assert_ne!(&recached[..], b"not a blosc container");
-    let _ = std::fs::remove_dir_all(&dir);
+    let err = u.sample(t, 50.0, -5.0).expect_err("junk does not decode");
+    assert!(err.to_string().contains("blosc"), "{err}");
+    let key = "10m_u_component_of_wind/539724.0.0";
+    assert!(!memory.contains("wb2-era5-1h", key, Part::Head));
+    assert!(!memory.contains("wb2-era5-1h", key, Part::Block(0)));
 }
 
-/// A read that fails in the store (the network, not the bytes) does not
-/// evict anything or try again: only a chunk that arrived and would not
-/// decode is suspect (review round 1).
+/// A read that fails in the store (the network, not the bytes) is
+/// reported as it is, asked once.
 #[test]
-fn a_failed_read_is_not_retried_as_a_damaged_chunk() {
+fn a_failed_read_is_reported_and_asked_once() {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use pe_env::cache::{CachedStore, ChunkCache};
+    use pe_env::store::open_storage;
     use zarrs::storage::{ReadableStorage, ReadableStorageTraits, StorageError, StoreKey};
     use zarrs_storage::byte_range::ByteRangeIterator;
     use zarrs_storage::{MaybeBytes, MaybeBytesIterator};
@@ -217,25 +251,18 @@ fn a_failed_read_is_not_retried_as_a_damaged_chunk() {
             self.inner.size_key(key)
         }
         fn supports_get_partial(&self) -> bool {
-            self.inner.supports_get_partial()
+            false
         }
     }
 
-    let dir = std::env::temp_dir().join(format!("pe-noevict-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    let cache = ChunkCache::open(&dir, 1 << 30).unwrap();
-    pe_env::codec::register();
     let reads = Arc::new(AtomicUsize::new(0));
-    let offline = Offline {
+    let offline: ReadableStorage = Arc::new(Offline {
         inner: zarrs::filesystem::FilesystemStore::new(fixture("wb2-crop")).unwrap(),
         chunk_reads: Arc::clone(&reads),
-    };
-    let store: ReadableStorage = Arc::new(CachedStore::new(offline, Arc::clone(&cache), "wb2"));
-    let u = OpenVariable::open(&store, vars::WB2_U10)
-        .unwrap()
-        .with_cache(Arc::clone(&cache), "wb2");
+    });
+    let u = OpenVariable::open(&open_storage(offline), vars::WB2_U10).unwrap();
     let t = parse_utc("2020-07-27T12:00Z").unwrap();
-    assert!(u.sample(t, 50.0, -5.0).is_err());
+    let err = u.sample(t, 50.0, -5.0).expect_err("offline");
+    assert!(err.to_string().contains("connection reset"), "{err}");
     assert_eq!(reads.load(Ordering::SeqCst), 1, "asked once");
-    let _ = std::fs::remove_dir_all(&dir);
 }

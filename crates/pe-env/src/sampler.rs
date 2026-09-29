@@ -23,13 +23,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::cache::ChunkCache;
 use crate::dataset::{
     Cell, Dataset, OpenVariable, Variable, corner_cells, corners_of, lerp_time, vars,
 };
 use crate::error::Result;
 use crate::grid::Stencil;
 use crate::http::Interrupt;
+use crate::memory::BlockCache;
 use crate::store::{OpenStore, TimeAxis, open_dir, open_http_interruptible};
 
 /// One track position to sample.
@@ -145,13 +145,10 @@ const TIER_RETRY: Duration = Duration::from_secs(600);
 /// How [`Reanalysis`] reaches the archives.
 #[derive(Debug, Clone)]
 pub enum Access {
-    /// Over HTTPS, through the chunk cache (the app).
+    /// Over HTTPS (the app).
     Http {
         /// Per-request timeout (spec.md 3.4).
         timeout: Duration,
-        /// The shared chunk cache: every track of every event reads
-        /// through it, so the second boat of a race costs almost nothing.
-        cache: Arc<ChunkCache>,
     },
     /// From recorded stores in folders (tests). A dataset without a folder
     /// is unavailable, as if it had no data anywhere.
@@ -165,6 +162,10 @@ pub enum Access {
 /// several tracks would otherwise pay per track.
 pub struct Reanalysis {
     access: Access,
+    /// What this session has downloaded: every track of every event reads
+    /// through it, so the second boat of a race costs little. In memory
+    /// only (invariant 3).
+    memory: Arc<BlockCache>,
     concurrency: usize,
     stores: Mutex<BTreeMap<Dataset, OpenStore>>,
     opened: Mutex<BTreeMap<(Dataset, &'static str), Arc<OpenVariable>>>,
@@ -244,17 +245,115 @@ fn side(stencil: &Stencil, corners: [f32; 4]) -> Option<f64> {
     stencil.interpolate(corners)
 }
 
+/// Places `idx` of `points` on `var`: each position's stencil and time
+/// steps, and every cell they need.
+fn place(
+    var: &OpenVariable,
+    points: &[Point],
+    idx: &[usize],
+    every: i64,
+) -> (Vec<Option<Stamp>>, Vec<Cell>) {
+    let grid = var.grid();
+    let time = var.time();
+    let stamps: Vec<Option<Stamp>> = idx
+        .iter()
+        .map(|&i| {
+            let p = points[i];
+            let stencil = grid.stencil(p.lat, p.lon)?;
+            let (a, b, w) = bracket_every(&time, p.t, every)?;
+            Some(Stamp { stencil, a, b, w })
+        })
+        .collect();
+    let mut cells: Vec<Cell> = Vec::new();
+    for stamp in stamps.iter().flatten() {
+        cells.extend(corner_cells(stamp.a, &stamp.stencil));
+        if stamp.b != stamp.a {
+            cells.extend(corner_cells(stamp.b, &stamp.stencil));
+        }
+    }
+    cells.sort_unstable();
+    cells.dedup();
+    (stamps, cells)
+}
+
+/// A scalar at each placed position.
+fn scalar_of((stamps, values): &Placed) -> Vec<Option<f64>> {
+    stamps
+        .iter()
+        .map(|stamp| {
+            let s = stamp.as_ref()?;
+            let first = side(&s.stencil, corners_of(values, s.a, &s.stencil));
+            if s.a == s.b {
+                return first;
+            }
+            let second = side(&s.stencil, corners_of(values, s.b, &s.stencil));
+            lerp_time(first, second, s.w)
+        })
+        .collect()
+}
+
+/// A direction in degrees at each placed position, interpolated as a unit
+/// vector so 350° and 10° average to 0°, not 180°.
+fn direction_of((stamps, values): &Placed) -> Vec<Option<f64>> {
+    let unit = |s: &Stamp, step: u64| -> Option<(f64, f64)> {
+        let corners = corners_of(values, step, &s.stencil);
+        let sin = corners.map(|d| (f64::from(d).to_radians().sin()) as f32);
+        let cos = corners.map(|d| (f64::from(d).to_radians().cos()) as f32);
+        Some((side(&s.stencil, sin)?, side(&s.stencil, cos)?))
+    };
+    stamps
+        .iter()
+        .map(|stamp| {
+            let s = stamp.as_ref()?;
+            let first = unit(s, s.a);
+            let (x, y) = if s.a == s.b {
+                first?
+            } else {
+                let second = unit(s, s.b);
+                (
+                    lerp_time(first.map(|f| f.0), second.map(|f| f.0), s.w)?,
+                    lerp_time(first.map(|f| f.1), second.map(|f| f.1), s.w)?,
+                )
+            };
+            if x.hypot(y) < 1e-9 {
+                return None;
+            }
+            Some(x.atan2(y).to_degrees().rem_euclid(360.0))
+        })
+        .collect()
+}
+
+/// The sum of (u, v) pairs read in order (u, v, u, v, …) at `n` positions:
+/// `None` wherever any part is missing.
+fn sum_vectors(read: &[Placed], n: usize) -> Vectors {
+    let mut sum: Vectors = vec![Some((0.0, 0.0)); n];
+    for pair in read.chunks(2) {
+        let [u, v] = pair else {
+            continue;
+        };
+        for ((acc, u), v) in sum.iter_mut().zip(scalar_of(u)).zip(scalar_of(v)) {
+            *acc = match (*acc, u, v) {
+                (Some((su, sv)), Some(u), Some(v)) => Some((su + u, sv + v)),
+                _ => None,
+            };
+        }
+    }
+    sum
+}
+
 impl Reanalysis {
-    /// A provider reading the archives over HTTPS through `cache`, with at
-    /// most `concurrency` chunk reads at once (spec.md 3.4).
-    pub fn http(timeout: Duration, cache: Arc<ChunkCache>, concurrency: usize) -> Self {
-        Self::new(Access::Http { timeout, cache }, concurrency)
+    /// A provider reading the archives over HTTPS, keeping what it
+    /// downloads in `memory`, with at most `concurrency` chunk reads at once
+    /// (spec.md 3.4).
+    pub fn http(timeout: Duration, memory: Arc<BlockCache>, concurrency: usize) -> Self {
+        Self::new(Access::Http { timeout }, concurrency).with_memory(memory)
     }
 
-    /// A provider over recorded stores.
+    /// A provider with its own memory of the default size.
     pub fn new(access: Access, concurrency: usize) -> Self {
         Self {
             access,
+            memory: BlockCache::new(crate::memory::DEFAULT_LIMIT),
             concurrency: concurrency.max(1),
             stores: Mutex::new(BTreeMap::new()),
             opened: Mutex::new(BTreeMap::new()),
@@ -264,12 +363,26 @@ impl Reanalysis {
         }
     }
 
-    /// The chunk cache it reads through, when it reads over HTTPS.
-    pub fn cache(&self) -> Option<&Arc<ChunkCache>> {
-        match &self.access {
-            Access::Http { cache, .. } => Some(cache),
-            Access::Dirs(_) => None,
-        }
+    /// The same provider keeping its downloads in `memory`.
+    pub fn with_memory(mut self, memory: Arc<BlockCache>) -> Self {
+        self.memory = memory;
+        self
+    }
+
+    /// `(requests, bytes)` sent to and received from the archives so far.
+    pub fn net_totals(&self) -> (u64, u64) {
+        self.stores.lock().map_or((0, 0), |stores| {
+            stores
+                .values()
+                .filter_map(|s| s.net.as_ref())
+                .map(|n| n.snapshot())
+                .fold((0, 0), |(r, b), (r1, b1, _)| (r + r1, b + b1))
+        })
+    }
+
+    /// What it keeps of its downloads.
+    pub fn memory(&self) -> &Arc<BlockCache> {
+        &self.memory
     }
 
     fn store(&self, dataset: Dataset) -> Result<Option<OpenStore>> {
@@ -281,12 +394,9 @@ impl Reanalysis {
             return Ok(Some(store.clone()));
         }
         let store = match &self.access {
-            Access::Http { timeout, cache } => open_http_interruptible(
-                dataset.url(),
-                *timeout,
-                Some((Arc::clone(cache), dataset.id())),
-                Arc::clone(&self.interrupt),
-            )?,
+            Access::Http { timeout } => {
+                open_http_interruptible(dataset.url(), *timeout, Arc::clone(&self.interrupt))?
+            }
             Access::Dirs(dirs) => match dirs.get(&dataset) {
                 Some(dir) => open_dir(dir)?,
                 None => return Ok(None),
@@ -310,115 +420,45 @@ impl Reanalysis {
         let Some(store) = self.store(spec.dataset)? else {
             return Ok(None);
         };
-        let mut variable =
-            OpenVariable::open(&store.store, spec)?.with_concurrency(self.concurrency);
-        if let Some((cache, namespace)) = &store.cache {
-            variable = variable.with_cache(Arc::clone(cache), namespace);
-        }
-        let variable = Arc::new(variable);
+        let variable = Arc::new(
+            OpenVariable::open(&store, spec)?
+                .with_concurrency(self.concurrency)
+                .with_memory(Arc::clone(&self.memory)),
+        );
         if let Ok(mut opened) = self.opened.lock() {
             opened.insert(key, Arc::clone(&variable));
         }
         Ok(Some(variable))
     }
 
-    /// Places `idx` of `points` on `var` and reads every corner they need.
-    fn read(
+    /// Places `idx` of `points` on each variable and reads every corner
+    /// they need, all variables' chunks on one pool.
+    fn read_all(
         &self,
-        var: &OpenVariable,
+        wants: &[(Arc<OpenVariable>, Vec<usize>)],
         points: &[Point],
-        idx: &[usize],
         every: i64,
         cancel: &AtomicBool,
-    ) -> Result<Placed> {
-        let grid = var.grid();
-        let time = var.time();
-        let stamps: Vec<Option<Stamp>> = idx
+    ) -> Result<Vec<Placed>> {
+        let placed: Vec<(Vec<Option<Stamp>>, Vec<Cell>)> = wants
             .iter()
-            .map(|&i| {
-                let p = points[i];
-                let stencil = grid.stencil(p.lat, p.lon)?;
-                let (a, b, w) = bracket_every(&time, p.t, every)?;
-                Some(Stamp { stencil, a, b, w })
-            })
+            .map(|(var, idx)| place(var, points, idx, every))
             .collect();
-        let mut cells: Vec<Cell> = Vec::new();
-        for stamp in stamps.iter().flatten() {
-            cells.extend(corner_cells(stamp.a, &stamp.stencil));
-            if stamp.b != stamp.a {
-                cells.extend(corner_cells(stamp.b, &stamp.stencil));
-            }
-        }
-        cells.sort_unstable();
-        cells.dedup();
-        let values = var.read_cells(&cells, cancel)?;
-        Ok((stamps, values))
-    }
-
-    /// A scalar at each of `idx`.
-    fn scalar(
-        &self,
-        var: &OpenVariable,
-        points: &[Point],
-        idx: &[usize],
-        every: i64,
-        cancel: &AtomicBool,
-    ) -> Result<Vec<Option<f64>>> {
-        let (stamps, values) = self.read(var, points, idx, every, cancel)?;
-        Ok(stamps
+        let requests: Vec<(&OpenVariable, &[Cell])> = wants
             .iter()
-            .map(|stamp| {
-                let s = stamp.as_ref()?;
-                let first = side(&s.stencil, corners_of(&values, s.a, &s.stencil));
-                if s.a == s.b {
-                    return first;
-                }
-                let second = side(&s.stencil, corners_of(&values, s.b, &s.stencil));
-                lerp_time(first, second, s.w)
-            })
+            .zip(&placed)
+            .map(|((var, _), (_, cells))| (var.as_ref(), cells.as_slice()))
+            .collect();
+        let values = crate::dataset::read_cells_of(&requests, cancel, self.concurrency)?;
+        Ok(placed
+            .into_iter()
+            .zip(values)
+            .map(|((stamps, _), values)| (stamps, values))
             .collect())
     }
 
-    /// A direction in degrees at each of `idx`, interpolated as a unit
-    /// vector so 350° and 10° average to 0°, not 180°.
-    fn direction(
-        &self,
-        var: &OpenVariable,
-        points: &[Point],
-        idx: &[usize],
-        every: i64,
-        cancel: &AtomicBool,
-    ) -> Result<Vec<Option<f64>>> {
-        let (stamps, values) = self.read(var, points, idx, every, cancel)?;
-        let unit = |s: &Stamp, step: u64| -> Option<(f64, f64)> {
-            let corners = corners_of(&values, step, &s.stencil);
-            let sin = corners.map(|d| (f64::from(d).to_radians().sin()) as f32);
-            let cos = corners.map(|d| (f64::from(d).to_radians().cos()) as f32);
-            Some((side(&s.stencil, sin)?, side(&s.stencil, cos)?))
-        };
-        Ok(stamps
-            .iter()
-            .map(|stamp| {
-                let s = stamp.as_ref()?;
-                let first = unit(s, s.a);
-                let (x, y) = if s.a == s.b {
-                    first?
-                } else {
-                    let second = unit(s, s.b);
-                    (
-                        lerp_time(first.map(|f| f.0), second.map(|f| f.0), s.w)?,
-                        lerp_time(first.map(|f| f.1), second.map(|f| f.1), s.w)?,
-                    )
-                };
-                if x.hypot(y) < 1e-9 {
-                    return None;
-                }
-                Some(x.atan2(y).to_degrees().rem_euclid(360.0))
-            })
-            .collect())
-    }
-
-    /// Sums of components at `idx`: `None` wherever any is missing.
+    /// Sums of components at `idx`: `None` wherever any is missing, and
+    /// `None` in all when a part's store is unavailable.
     fn vector(
         &self,
         parts: &[(Variable, Variable)],
@@ -427,26 +467,23 @@ impl Reanalysis {
         every: i64,
         cancel: &AtomicBool,
     ) -> Result<Option<Vectors>> {
-        let mut sum: Vectors = vec![Some((0.0, 0.0)); idx.len()];
+        let mut wants = Vec::new();
         for (u_spec, v_spec) in parts {
             let (Some(u), Some(v)) = (self.var(*u_spec)?, self.var(*v_spec)?) else {
                 return Ok(None);
             };
-            let us = self.scalar(&u, points, idx, every, cancel)?;
-            let vs = self.scalar(&v, points, idx, every, cancel)?;
-            for ((acc, u), v) in sum.iter_mut().zip(us).zip(vs) {
-                *acc = match (*acc, u, v) {
-                    (Some((su, sv)), Some(u), Some(v)) => Some((su + u, sv + v)),
-                    _ => None,
-                };
-            }
+            wants.push((u, idx.to_vec()));
+            wants.push((v, idx.to_vec()));
         }
-        Ok(Some(sum))
+        let read = self.read_all(&wants, points, every, cancel)?;
+        Ok(Some(sum_vectors(&read, idx.len())))
     }
 
-    /// Wind: WeatherBench2 while both bracketing steps are in it, else
-    /// ARCO-ERA5 (D12).
-    fn wind(
+    /// Wind and waves together, their chunks on one pool: wind from
+    /// WeatherBench2 while both bracketing steps are in it, else ARCO-ERA5
+    /// (D12); wave height as a scalar and direction as a unit vector, from
+    /// ARCO-ERA5.
+    fn era5(
         &self,
         points: &[Point],
         every: i64,
@@ -466,6 +503,8 @@ impl Reanalysis {
                 on_arco.push(i);
             }
         }
+        let mut wants: Vec<(Arc<OpenVariable>, Vec<usize>)> = Vec::new();
+        let mut winds: Vec<(Vec<usize>, Dataset)> = Vec::new();
         for (idx, u, v, dataset) in [
             (on_wb2, vars::WB2_U10, vars::WB2_V10, Dataset::Wb2Era5Hourly),
             (on_arco, vars::ARCO_U10, vars::ARCO_V10, Dataset::ArcoEra5),
@@ -473,37 +512,45 @@ impl Reanalysis {
             if idx.is_empty() {
                 continue;
             }
-            let Some(found) = self.vector(&[(u, v)], points, &idx, every, cancel)? else {
+            let (Some(u), Some(v)) = (self.var(u)?, self.var(v)?) else {
                 continue;
             };
+            wants.push((u, idx.clone()));
+            wants.push((v, idx.clone()));
+            winds.push((idx, dataset));
+        }
+        let all: Vec<usize> = (0..points.len()).collect();
+        let waves = match (self.var(vars::ARCO_SWH)?, self.var(vars::ARCO_MWD)?) {
+            (Some(swh), Some(mwd)) => {
+                wants.push((swh, all.clone()));
+                wants.push((mwd, all));
+                true
+            }
+            _ => false,
+        };
+        let read = self.read_all(&wants, points, every, cancel)?;
+        for (k, (idx, dataset)) in winds.iter().enumerate() {
+            let found = sum_vectors(&read[2 * k..2 * k + 2], idx.len());
             for (&i, value) in idx.iter().zip(found) {
-                out[i].wind = value.map(|(u, v)| Vector { u, v, dataset });
+                out[i].wind = value.map(|(u, v)| Vector {
+                    u,
+                    v,
+                    dataset: *dataset,
+                });
             }
         }
-        Ok(())
-    }
-
-    /// Waves from ARCO-ERA5: height as a scalar, direction as a unit vector.
-    fn waves(
-        &self,
-        points: &[Point],
-        every: i64,
-        out: &mut [EnvPoint],
-        cancel: &AtomicBool,
-    ) -> Result<()> {
-        let (Some(swh), Some(mwd)) = (self.var(vars::ARCO_SWH)?, self.var(vars::ARCO_MWD)?) else {
-            return Ok(());
-        };
-        let idx: Vec<usize> = (0..points.len()).collect();
-        let hs = self.scalar(&swh, points, &idx, every, cancel)?;
-        let from = self.direction(&mwd, points, &idx, every, cancel)?;
-        for ((slot, hs), from) in out.iter_mut().zip(hs).zip(from) {
-            if hs.is_some() || from.is_some() {
-                slot.waves = Some(Waves {
-                    hs,
-                    from,
-                    dataset: Dataset::ArcoEra5,
-                });
+        if waves {
+            let n = read.len();
+            let hs = scalar_of(&read[n - 2]);
+            let from = direction_of(&read[n - 1]);
+            for ((slot, hs), from) in out.iter_mut().zip(hs).zip(from) {
+                if hs.is_some() || from.is_some() {
+                    slot.waves = Some(Waves {
+                        hs,
+                        from,
+                        dataset: Dataset::ArcoEra5,
+                    });
+                }
             }
         }
         Ok(())
@@ -516,9 +563,9 @@ impl Reanalysis {
         &self,
         points: &[Point],
         stokes: bool,
-        out: &mut [EnvPoint],
         cancel: &AtomicBool,
-    ) -> Result<()> {
+    ) -> Result<Vec<Option<Vector>>> {
+        let mut out: Vec<Option<Vector>> = vec![None; points.len()];
         let hourly = Interval::Hourly.seconds();
         let mut merged = vec![
             (vars::CMEMS_UO, vars::CMEMS_VO),
@@ -583,15 +630,15 @@ impl Reanalysis {
             };
             for (&i, value) in inside.iter().zip(found) {
                 if let Some((u, v)) = value {
-                    out[i].current = Some(Vector { u, v, dataset });
+                    out[i] = Some(Vector { u, v, dataset });
                 }
             }
-            remaining.retain(|&i| out[i].current.is_none());
+            remaining.retain(|&i| out[i].is_none());
             if remaining.is_empty() {
                 break;
             }
         }
-        Ok(())
+        Ok(out)
     }
 }
 
@@ -666,10 +713,19 @@ impl Provider for Reanalysis {
         self.interrupt.watch(Some(Arc::clone(cancel)));
         let _watching = Watching(&self.interrupt);
         let every = options.interval.seconds();
+        // Wind and waves come from Google Cloud, currents from Copernicus
+        // Marine: the two are read side by side, each archive with at most
+        // `concurrency` requests in flight, so one's latency hides the
+        // other's.
         let mut run = || -> Result<()> {
-            self.wind(points, every, &mut out, cancel)?;
-            self.waves(points, every, &mut out, cancel)?;
-            self.current(points, options.stokes_drift, &mut out, cancel)
+            let (currents, ()) = crate::parallel::try_join(
+                || self.current(points, options.stokes_drift, cancel),
+                || self.era5(points, every, &mut out, cancel),
+            )?;
+            for (slot, current) in out.iter_mut().zip(currents) {
+                slot.current = current;
+            }
+            Ok(())
         };
         match run() {
             // A read that failed because the user cancelled is a cancel.
@@ -689,13 +745,25 @@ impl Provider for Reanalysis {
 
 // ------------------------------------------------------------ estimate
 
-/// Measured download sizes of one hour of one ERA5 variable (M3, spec.md
-/// 13): wind 3.3 MB, wave height 1.8 MB, wave direction 1.7 MB.
-const WIND_CHUNK_BYTES: u64 = 3_300_000;
-const SWH_CHUNK_BYTES: u64 = 1_800_000;
-const MWD_CHUNK_BYTES: u64 = 1_700_000;
-/// One current geoChunk of one variable, about (M3).
-const CURRENT_CHUNK_BYTES: u64 = 800_000;
+/// Compressed bytes of each of the eight blocks of one ERA5 global field,
+/// read from the block offsets of one hour of each (2026-09-28; wind:
+/// WeatherBench2 u10 2020-07-27T12Z, waves: ARCO-ERA5 hour 1,100,000). A
+/// block is 131,072 values, about 91 rows from the north. Wave blocks over
+/// the Arctic ice and Antarctica are mostly land (NaN) and compress to
+/// little.
+const WIND_BLOCKS: [u64; 8] = [
+    402_870, 432_731, 433_423, 428_413, 421_244, 420_944, 414_999, 371_403,
+];
+const SWH_BLOCKS: [u64; 8] = [
+    74_490, 173_816, 241_555, 306_573, 309_805, 340_609, 284_882, 3_439,
+];
+const MWD_BLOCKS: [u64; 8] = [
+    74_127, 165_715, 240_127, 295_265, 296_882, 312_942, 260_184, 3_406,
+];
+/// Values per ERA5 block (524,288 bytes of float32), and the grid.
+const ERA5_BLOCK_VALUES: usize = 131_072;
+const ERA5_ROWS: usize = 721;
+const ERA5_COLS: usize = 1440;
 
 /// WeatherBench2's time axis: hours since 1959-01-01, 561,264 of them, so
 /// its last hour is 2023-01-10T23Z.
@@ -703,15 +771,73 @@ const WB2_FIRST: i64 = -347_155_200;
 const WB2_LAST: i64 = WB2_FIRST + (561_264 - 1) * 3600;
 /// ARCO-ERA5's time axis: hours since 1900-01-01.
 const ARCO_FIRST: i64 = -2_208_988_800;
+/// The global merged current starts on 2020-11-01.
+const MERGED_FIRST: i64 = 1_604_188_800;
 
-/// What a fetch is expected to download (spec.md 13, D19).
+/// How one current tier's geoChunks divide space and time, for the
+/// estimate: the box one chunk covers (degrees), the hours one block of it
+/// covers, a block's typical compressed size (measured 2026-09-28 from
+/// block offsets of one chunk each) and the variables read.
+struct CurrentTier {
+    lat0: f64,
+    lon0: f64,
+    box_lat: f64,
+    box_lon: f64,
+    block_hours: i64,
+    block_bytes: u64,
+    variables: u64,
+}
+
+/// NW Shelf: 4 × 4 cells of 1/15° × 1/9°, int16, 8,192 hours a block.
+const NWS_TIER: CurrentTier = CurrentTier {
+    lat0: 40.0,
+    lon0: -20.0,
+    box_lat: 4.0 / 15.0,
+    box_lon: 4.0 / 9.0,
+    block_hours: 8192,
+    block_bytes: 150_000,
+    variables: 2,
+};
+/// IBI: 4 × 4 cells of 1/36°, float32, 8,192 hours a block.
+const IBI_TIER: CurrentTier = CurrentTier {
+    lat0: 26.0,
+    lon0: -19.0,
+    box_lat: 4.0 / 36.0,
+    box_lon: 4.0 / 36.0,
+    block_hours: 8192,
+    block_bytes: 430_000,
+    variables: 2,
+};
+/// Global merged: 16 × 8 cells of 1/12°, float32, 1,024 hours a block;
+/// uo, vo, utide, vtide.
+const MERGED_TIER: CurrentTier = CurrentTier {
+    lat0: -80.0,
+    lon0: -180.0,
+    box_lat: 16.0 / 12.0,
+    box_lon: 8.0 / 12.0,
+    block_hours: 1024,
+    block_bytes: 190_000,
+    variables: 4,
+};
+/// GlobCurrent: 8 × 4 cells of 0.25°, int16, 4,096 hours a block.
+const GLOBCURRENT_TIER: CurrentTier = CurrentTier {
+    lat0: -90.0,
+    lon0: -180.0,
+    box_lat: 2.0,
+    box_lon: 1.0,
+    block_hours: 4096,
+    block_bytes: 100_000,
+    variables: 2,
+};
+
+/// What a fetch is expected to download (spec.md 13, D19, D27).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Estimate {
-    /// Bytes to download sampling hourly, chunks already cached left out.
+    /// Bytes to download sampling hourly, blocks already in memory left out.
     pub hourly_bytes: u64,
     /// Bytes to download sampling 3-hourly.
     pub three_hourly_bytes: u64,
-    /// Bytes of the hourly fetch already in the cache.
+    /// Bytes of the hourly fetch already downloaded this session.
     pub hourly_cached_bytes: u64,
 }
 
@@ -721,61 +847,102 @@ fn era5_hours(t: i64, every: i64) -> [i64; 2] {
     if a == t { [a, a] } else { [a, a + every] }
 }
 
-/// Expected download for sampling `points`: the ERA5 hours they need (wind
-/// from WeatherBench2 or ARCO-ERA5, waves from ARCO-ERA5), less those the
-/// cache already holds, plus the currents.
+/// The ERA5 blocks holding the four stencil corners around a position.
+fn era5_blocks(lat: f64, lon: f64) -> Vec<usize> {
+    let row = ((90.0 - lat) / 0.25)
+        .floor()
+        .clamp(0.0, (ERA5_ROWS - 1) as f64) as usize;
+    let col = (lon.rem_euclid(360.0) / 0.25).floor() as usize % ERA5_COLS;
+    let mut blocks: Vec<usize> = [row, (row + 1).min(ERA5_ROWS - 1)]
+        .into_iter()
+        .flat_map(|r| [col, (col + 1) % ERA5_COLS].map(|c| (r * ERA5_COLS + c) / ERA5_BLOCK_VALUES))
+        .collect();
+    blocks.sort_unstable();
+    blocks.dedup();
+    blocks
+}
+
+/// Expected download for sampling `points`: for each ERA5 hour they need
+/// (wind from WeatherBench2 or ARCO-ERA5, waves from ARCO-ERA5), each
+/// chunk's first bytes and the blocks holding the positions' rows, less
+/// what `memory` already holds; plus the current blocks.
 ///
 /// An estimate, not a promise. Its approximations:
-/// - **Sizes** are the per-chunk averages measured in M3; real chunks vary
-///   with the weather (compression).
+/// - **Sizes** are one hour's measured block sizes; real blocks vary with
+///   the weather (compression).
 /// - **The WeatherBench2 → ARCO boundary** is decided per hour here, while
 ///   the sampler decides per position (both bracketing hours in
-///   WeatherBench2); a position in the last hour before the switch is
-///   counted against WeatherBench2 but read from ARCO.
-/// - **Currents** are counted as about one 0.8 MB chunk per variable for
-///   four variables per 1.3° × 0.7° box and half year crossed, whatever the
-///   tier: the regional stores chunk finer boxes over longer spans, Stokes
-///   drift adds two variables, GlobCurrent has two, and land and positions
-///   answered by an earlier tier cost nothing. Currents are not checked
-///   against the cache.
-/// - **The cache** check is by key presence at estimate time; eviction
-///   during the fetch can make some of it download again.
-pub fn estimate(points: &[Point], cache: Option<&ChunkCache>) -> Estimate {
+///   WeatherBench2).
+/// - **Currents** are counted for the first tier whose box holds the
+///   position (NW Shelf, IBI, the global merged current from 2020-11, else
+///   GlobCurrent), one typical block per variable per box and block of
+///   hours crossed; land, positions a tier passes on, Stokes drift and
+///   chunk edges are not counted, nor is memory.
+pub fn estimate(points: &[Point], memory: Option<&BlockCache>) -> Estimate {
+    use crate::dataset::HEAD_REQUEST;
+    use crate::memory::Part;
     let mut out = Estimate::default();
     for (every, total) in [
         (3600, &mut out.hourly_bytes),
         (3 * 3600, &mut out.three_hourly_bytes),
     ] {
-        let mut hours: Vec<i64> = points.iter().flat_map(|p| era5_hours(p.t, every)).collect();
-        hours.sort_unstable();
+        // (hour, block) pairs, then each variable's chunk for that hour.
+        let mut wanted: Vec<(i64, usize)> = points
+            .iter()
+            .flat_map(|p| {
+                let blocks = era5_blocks(p.lat, p.lon);
+                era5_hours(p.t, every)
+                    .into_iter()
+                    .flat_map(move |h| blocks.clone().into_iter().map(move |b| (h, b)))
+            })
+            .collect();
+        wanted.sort_unstable();
+        wanted.dedup();
+        let mut hours: Vec<i64> = wanted.iter().map(|(h, _)| *h).collect();
         hours.dedup();
         let mut cached = 0;
-        for hour in hours {
+        let chunks = |hour: i64| {
             let (wind_ds, wind_index) = if (WB2_FIRST..=WB2_LAST).contains(&hour) {
                 (Dataset::Wb2Era5Hourly, (hour - WB2_FIRST) / 3600)
             } else {
                 (Dataset::ArcoEra5, (hour - ARCO_FIRST) / 3600)
             };
             let arco_index = (hour - ARCO_FIRST) / 3600;
-            let chunks = [
-                (wind_ds, vars::WB2_U10.array, wind_index, WIND_CHUNK_BYTES),
-                (wind_ds, vars::WB2_V10.array, wind_index, WIND_CHUNK_BYTES),
+            [
+                (wind_ds, vars::WB2_U10.array, wind_index, &WIND_BLOCKS),
+                (wind_ds, vars::WB2_V10.array, wind_index, &WIND_BLOCKS),
                 (
                     Dataset::ArcoEra5,
                     vars::ARCO_SWH.array,
                     arco_index,
-                    SWH_CHUNK_BYTES,
+                    &SWH_BLOCKS,
                 ),
                 (
                     Dataset::ArcoEra5,
                     vars::ARCO_MWD.array,
                     arco_index,
-                    MWD_CHUNK_BYTES,
+                    &MWD_BLOCKS,
                 ),
-            ];
-            for (dataset, array, index, bytes) in chunks {
+            ]
+        };
+        let held = |dataset: Dataset, key: &str, part: Part| {
+            memory.is_some_and(|m| m.contains(dataset.id(), key, part))
+        };
+        for &hour in &hours {
+            for (dataset, array, index, _) in chunks(hour) {
                 let key = format!("{array}/{index}.0.0");
-                if cache.is_some_and(|c| c.contains(dataset.id(), &key)) {
+                if held(dataset, &key, Part::Head) {
+                    cached += HEAD_REQUEST;
+                } else {
+                    *total += HEAD_REQUEST;
+                }
+            }
+        }
+        for &(hour, block) in &wanted {
+            for (dataset, array, index, sizes) in chunks(hour) {
+                let key = format!("{array}/{index}.0.0");
+                let bytes = sizes.get(block).copied().unwrap_or_default();
+                if held(dataset, &key, Part::Block(block as u32)) {
                     cached += bytes;
                 } else {
                     *total += bytes;
@@ -786,24 +953,44 @@ pub fn estimate(points: &[Point], cache: Option<&ChunkCache>) -> Estimate {
             out.hourly_cached_bytes = cached;
         }
     }
-    // Currents: a geoChunk is about 16 × 8 cells of 1/12° (1.3° × 0.7°) and
-    // half a year; four variables (uo, vo, utide, vtide).
-    let mut boxes: Vec<(i64, i64, i64)> = points
-        .iter()
-        .map(|p| {
-            (
-                (p.lat / 0.7).floor() as i64,
-                (p.lon / 1.3).floor() as i64,
-                p.t.div_euclid(182 * 86_400),
-            )
-        })
-        .collect();
-    boxes.sort_unstable();
-    boxes.dedup();
-    let current = boxes.len() as u64 * 4 * CURRENT_CHUNK_BYTES;
+    let current = current_bytes(points);
     out.hourly_bytes += current;
     out.three_hourly_bytes += current;
     out
+}
+
+/// The current part of [`estimate`].
+fn current_bytes(points: &[Point]) -> u64 {
+    let mut blocks: Vec<(u8, i64, i64, i64)> = points
+        .iter()
+        .map(|p| {
+            let (which, tier) = if in_box(p, NWS_BOX) {
+                (0, &NWS_TIER)
+            } else if in_box(p, IBI_BOX) {
+                (1, &IBI_TIER)
+            } else if p.t >= MERGED_FIRST {
+                (2, &MERGED_TIER)
+            } else {
+                (3, &GLOBCURRENT_TIER)
+            };
+            let lon = (p.lon + 180.0).rem_euclid(360.0) - 180.0;
+            (
+                which,
+                ((p.lat - tier.lat0) / tier.box_lat).floor() as i64,
+                ((lon - tier.lon0) / tier.box_lon).floor() as i64,
+                p.t.div_euclid(3600).div_euclid(tier.block_hours),
+            )
+        })
+        .collect();
+    blocks.sort_unstable();
+    blocks.dedup();
+    blocks
+        .iter()
+        .map(|(which, ..)| {
+            let tier = [&NWS_TIER, &IBI_TIER, &MERGED_TIER, &GLOBCURRENT_TIER][usize::from(*which)];
+            tier.variables * (tier.block_bytes + crate::dataset::HEAD_REQUEST)
+        })
+        .sum()
 }
 
 #[cfg(test)]
@@ -856,12 +1043,15 @@ mod tests {
         assert!(!in_box(&far, NWS_BOX));
     }
 
-    /// Hand-counted: a 24-hour track sampled every 10 minutes needs 25
-    /// hours hourly (00Z to 24Z) and 9 three-hourly (00Z to 24Z); each hour
-    /// is 3.3 × 2 + 1.8 + 1.7 = 10.1 MB of ERA5. The whole track sits in one
-    /// current box: 4 × 0.8 MB.
+    /// Hand-counted: a 24-hour track at 50.1N 4.9W sampled every 10
+    /// minutes needs 25 hours hourly (00Z to 24Z) and 9 three-hourly. Its
+    /// stencil is rows 159–160, columns 1420–1421: values 230,380 to
+    /// 231,821, all in block 1 (131,072 to 262,143). Each hour is four
+    /// 64-byte heads and block 1 of u, v (432,731 each), wave height
+    /// (173,816) and direction (165,715): 1,205,249 bytes. The current is
+    /// one NW Shelf box and block of hours: 2 × (150,000 + 64).
     #[test]
-    fn the_estimate_counts_era5_hours_and_current_boxes() {
+    fn the_estimate_counts_heads_blocks_and_current_boxes() {
         let t0 = crate::time::parse_utc("2020-07-27T00:00Z").expect("a time");
         let points: Vec<Point> = (0..=144)
             .map(|k| Point {
@@ -870,37 +1060,57 @@ mod tests {
                 lon: -4.9,
             })
             .collect();
+        assert_eq!(era5_blocks(50.1, -4.9), vec![1]);
         let e = estimate(&points, None);
-        let current = 4 * CURRENT_CHUNK_BYTES;
-        assert_eq!(e.hourly_bytes, 25 * 10_100_000 + current);
-        assert_eq!(e.three_hourly_bytes, 9 * 10_100_000 + current);
+        let hour = 4 * 64 + 2 * 432_731 + 173_816 + 165_715;
+        assert_eq!(hour, 1_205_249);
+        let current = 2 * (150_000 + 64);
+        assert_eq!(e.hourly_bytes, 25 * hour + current);
+        assert_eq!(e.three_hourly_bytes, 9 * hour + current);
         assert_eq!(e.hourly_cached_bytes, 0);
     }
 
-    /// A chunk in the cache is not counted again: the second boat of a race.
+    /// The poles, the 0/360 seam and a stencil across a block boundary:
+    /// row 182 runs from value 262,080 to 263,519, so columns before 64
+    /// are in block 1 and the row below in block 2.
     #[test]
-    fn cached_hours_are_not_counted() {
-        let dir = std::env::temp_dir().join(format!("pe-estimate-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        let cache = ChunkCache::open(&dir, 1 << 30).expect("opens");
+    fn era5_blocks_follow_the_rows_the_stencil_needs() {
+        assert_eq!(era5_blocks(90.0, 0.0), vec![0]);
+        assert_eq!(era5_blocks(-90.0, 10.0), vec![7]);
+        // 359.9E wraps to column 0 on the same rows.
+        assert_eq!(era5_blocks(0.0, 359.9), era5_blocks(0.0, 359.8));
+        // 44.375N 13E: rows 182–183, columns 52–53.
+        assert_eq!(era5_blocks(44.375, 13.0), vec![1, 2]);
+    }
+
+    /// Blocks already downloaded this session are not counted again: the
+    /// second boat of a race.
+    #[test]
+    fn blocks_in_memory_are_not_counted() {
+        use crate::memory::{Held, Part};
+        let memory = BlockCache::new(1 << 30);
         let t = crate::time::parse_utc("2020-07-27T12:00Z").expect("a time");
         // 539724: the WB2 index of that hour (time.rs test).
-        cache
-            .put("wb2-era5-1h", "10m_u_component_of_wind/539724.0.0", b"x")
-            .expect("put");
+        let key = "10m_u_component_of_wind/539724.0.0";
+        memory.put("wb2-era5-1h", key, Part::Head, Held::Missing);
+        memory.put(
+            "wb2-era5-1h",
+            key,
+            Part::Block(1),
+            Held::Compressed(zarrs_storage::Bytes::from_static(b"x")),
+        );
         let e = estimate(
             &[Point {
                 t,
                 lat: 50.0,
                 lon: -5.0,
             }],
-            Some(&cache),
+            Some(&memory),
         );
-        assert_eq!(e.hourly_cached_bytes, WIND_CHUNK_BYTES);
+        assert_eq!(e.hourly_cached_bytes, 64 + 432_731);
         assert_eq!(
             e.hourly_bytes,
-            WIND_CHUNK_BYTES + SWH_CHUNK_BYTES + MWD_CHUNK_BYTES + 4 * CURRENT_CHUNK_BYTES
+            3 * 64 + 432_731 + 173_816 + 165_715 + 2 * (150_000 + 64)
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

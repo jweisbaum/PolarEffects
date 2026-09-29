@@ -20,6 +20,7 @@ use pe_app::commands::AppState;
 use pe_app::env::{self, EnvJobsStatus, JobSink, Outcome};
 use pe_app::tracks::{self, TrackFileRequest};
 use pe_app::{edit, projects};
+use pe_core::canonical::{env_degrees, env_knots};
 use pe_core::track::{EnvStatus, Track};
 use pe_env::dataset::Dataset;
 use pe_env::{EnvError, EnvPoint, Options, Point, Provider, Vector, Waves};
@@ -259,14 +260,16 @@ fn a_fetch_fills_every_sample_in_project_units() {
     let first = &t.samples[0];
     assert_eq!(first.wind_dataset, Some(0));
     assert_eq!(first.current_dataset, Some(2));
-    // u = 5, v = -3 + 0.495 m/s: speed √(u² + v²) × 3600/1852 kn.
+    // u = 5, v = -3 + 0.495 m/s: speed √(u² + v²) × 3600/1852 kn, kept
+    // to 0.01 kn (D27).
     let (u, v) = (5.0f64, -3.0 + 0.01 * 49.5);
-    assert!((first.tws.unwrap() - u.hypot(v) * 3600.0 / 1852.0).abs() < 1e-12);
+    assert_eq!(first.tws.unwrap(), env_knots(u.hypot(v) * 3600.0 / 1852.0));
     // The wind blows toward the east-south-east, so it comes from the
-    // west-north-west.
+    // west-north-west; kept to 0.1°.
     let from = first.twd_from.unwrap();
-    assert!(
-        (from - (270.0 + (v.abs() / u).atan().to_degrees())).abs() < 1e-9,
+    assert_eq!(
+        from,
+        env_degrees(270.0 + (v.abs() / u).atan().to_degrees()),
         "{from}"
     );
     // Related to the motion: the boat heads north, so TWA is the angle to it.
@@ -508,10 +511,20 @@ fn the_estimate_prefers_three_hourly_only_for_a_long_race() {
     let (app, id) = imported(&root);
     let e = env::estimate_for(&app, &[id], false, None).unwrap();
     assert_eq!(e.samples, 61);
-    // Hours 12Z to 22Z: 11 hourly steps of 10.1 MB of ERA5.
-    assert!(e.hourly_bytes >= 11 * 10_100_000);
+    // Hours 12Z to 22Z: 11 hourly steps, each four 64-byte heads and one
+    // block of u, v, wave height and direction (pe-env's estimate test):
+    // 1,205,249 bytes, about a tenth of the whole chunks (10.1 MB).
+    assert!(e.hourly_bytes >= 11 * 1_205_249, "{}", e.hourly_bytes);
+    assert!(
+        e.hourly_bytes < 11 * 1_205_249 + 2_000_000,
+        "{}",
+        e.hourly_bytes
+    );
     assert!(e.three_hourly_bytes < e.hourly_bytes);
     assert_eq!(e.recommended, "hourly");
+    assert_eq!(e.three_hourly_above_bytes, env::THREE_HOURLY_ABOVE_BYTES);
+    // What the project grows by: bytes per sample, not megabytes.
+    assert_eq!(e.stored_bytes, 61 * env::STORED_BYTES_PER_SAMPLE);
     assert!(env::queue_fetch(&app, &[id], "weekly", false).is_err());
 }
 
@@ -561,12 +574,12 @@ fn a_stokes_change_between_cancel_and_refetch_starts_over() {
         })
         .current
         .unwrap();
-        (c.u + 1.0).hypot(c.v) * 3600.0 / 1852.0
+        env_knots((c.u + 1.0).hypot(c.v) * 3600.0 / 1852.0)
     };
     assert!(
         t.samples
             .iter()
-            .all(|s| (s.current_speed.unwrap() - expected(s)).abs() < 1e-9)
+            .all(|s| s.current_speed.unwrap() == expected(s))
     );
 }
 

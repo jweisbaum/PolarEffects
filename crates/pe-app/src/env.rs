@@ -1,13 +1,14 @@
 //! The environment of every track sample, fetched as a job (spec.md 7.5,
 //! 7.7, 13).
 //!
-//! **Jobs.** Importing a track, or Refetch, queues one task per track. One
-//! runner thread takes them in order and asks a [`Provider`] for a batch
-//! of samples at a time; each batch's chunk reads run on the provider's
-//! worker pool (network concurrency, spec.md 3.4). Tracks run one after
-//! another rather than side by side, so the second boat of a race reads
-//! the chunks the first one just put in the shared cache instead of
-//! downloading them again at the same moment.
+//! **Jobs.** Fetch weather… queues one task per track. One runner thread
+//! takes them in order and asks a [`Provider`] for a batch of samples at a
+//! time; each batch's block reads run on the provider's worker pool
+//! (network concurrency, spec.md 3.4). Tracks run one after another rather
+//! than side by side, so the second boat of a race reads the blocks the
+//! first one just kept in memory instead of downloading them again at the
+//! same moment. Nothing downloaded reaches the disk; the project keeps the
+//! values interpolated at each sample (invariant 3).
 //!
 //! **Partial results are kept.** Every finished batch is written into the
 //! project at once, under the session lock, and marks its samples
@@ -22,7 +23,9 @@
 //! its jobs (spec.md 3.3).
 //!
 //! Units are converted here, once, on ingest: m/s to knots, u/v to speed
-//! and direction, wind "from" and current "toward" (CLAUDE.md conventions).
+//! and direction, wind "from" and current "toward" (CLAUDE.md conventions),
+//! and rounded to the precision the project stores (D27), so what is in
+//! memory is what a save and a load give back.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -54,8 +57,8 @@ const BATCH_SAMPLES: usize = 400;
 
 /// The longest stretch of track time one batch covers: three wind hours
 /// hourly, or three 3-hourly steps. Short enough that a cold batch (about
-/// a dozen global chunks) finishes in seconds, so progress moves and a
-/// cancel loses little.
+/// sixteen chunks, a block or two of each) finishes in seconds, so
+/// progress moves and a cancel loses little.
 fn batch_span_s(interval: Interval) -> i64 {
     3 * interval.seconds()
 }
@@ -294,6 +297,7 @@ fn ingest(sample: &mut Sample, meta: &mut EnvMeta, env: &EnvPoint, now: i64) {
         }
     }
     sample.env_fetched = true;
+    sample.quantise_env();
     sample.relate();
 }
 
@@ -545,8 +549,7 @@ pub fn run_next(
 /// What the provider was built from; a settings change builds a new one.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProviderKey {
-    dir: std::path::PathBuf,
-    limit_bytes: u64,
+    memory_bytes: u64,
     timeout_s: u64,
     concurrency: u32,
 }
@@ -557,8 +560,7 @@ pub fn provider(state: &AppState) -> Result<Arc<Reanalysis>> {
     let key = state.with_session(|session| {
         let s = &session.settings;
         Ok(ProviderKey {
-            dir: s.chunk_cache_dir(&state.paths.cache_dir),
-            limit_bytes: u64::from(s.chunk_cache.size_limit_gb) << 30,
+            memory_bytes: s.weather_memory_bytes(),
             timeout_s: u64::from(s.network.timeout_s),
             concurrency: s.network.concurrency,
         })
@@ -572,23 +574,13 @@ pub fn provider(state: &AppState) -> Result<Arc<Reanalysis>> {
     {
         return Ok(Arc::clone(p));
     }
-    let cache = pe_env::ChunkCache::open(&key.dir, key.limit_bytes).map_err(|e| {
-        AppError::Internal(format!("the chunk cache at {}: {e}", key.dir.display()))
-    })?;
     let reanalysis = Arc::new(Reanalysis::http(
         std::time::Duration::from_secs(key.timeout_s),
-        cache,
+        pe_env::BlockCache::new(key.memory_bytes),
         key.concurrency as usize,
     ));
     *slot = Some((key, Arc::clone(&reanalysis)));
     Ok(reanalysis)
-}
-
-/// Forgets the provider, so the next fetch reopens the cache (after Clear).
-pub fn reset_provider(state: &AppState) {
-    if let Ok(mut slot) = state.env_provider.lock() {
-        *slot = None;
-    }
 }
 
 /// The frontend, as a [`JobSink`].
@@ -620,8 +612,8 @@ pub fn start(app: tauri::AppHandle) {
             let sink = Frontend(app.clone());
             loop {
                 let state = app.state::<AppState>();
-                // Wait for work before building the provider: opening the
-                // cache walks its folder, which nobody asked for yet.
+                // Wait for work before building the provider: nothing is
+                // opened before someone asks for weather.
                 let (task, cancel) = match state.env_jobs.take(true) {
                     Some(next) => next,
                     None => continue,
@@ -708,7 +700,7 @@ fn positions(state: &AppState, sources: &[u64], restart: bool) -> Result<Gathere
     })
 }
 
-/// What a fetch would download, before it starts (spec.md 13, D19).
+/// What a fetch would download, before it starts (spec.md 13, D19, D27).
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[ts(export_to = "EnvEstimate.ts")]
 pub struct EnvEstimate {
@@ -718,34 +710,46 @@ pub struct EnvEstimate {
     pub hourly_bytes: u64,
     /// Bytes to download sampling 3-hourly.
     pub three_hourly_bytes: u64,
-    /// Bytes of the hourly fetch already in the chunk cache.
+    /// Bytes of the hourly fetch already downloaded this session.
     pub cached_bytes: u64,
-    /// The chunk cache's size limit, bytes.
-    pub cache_limit_bytes: u64,
+    /// About how much the project file grows by: the values stored per
+    /// sample, compressed.
+    pub stored_bytes: u64,
+    /// The hourly download above which 3-hourly is preselected.
+    pub three_hourly_above_bytes: u64,
     /// `"hourly"`, or `"three_hourly"` when the hourly download would
-    /// exceed half the cache limit (D19).
+    /// exceed [`THREE_HOURLY_ABOVE_BYTES`] (D19, D27).
     pub recommended: String,
 }
 
-/// [`env_estimate`] without a Tauri handle; `cache` is the chunk cache to
-/// count as already downloaded.
+/// The hourly download above which the pre-flight preselects 3-hourly
+/// (D27): a long ocean race. A 5-day race is about 150 MB hourly; the
+/// Vendée Globe about 2.4 GB hourly and 0.8 GB 3-hourly.
+pub const THREE_HOURLY_ABOVE_BYTES: u64 = 1_000_000_000;
+
+/// About what one fetched sample adds to the project file, bytes: its wind,
+/// waves and current at their stored precision, by column and deflated
+/// (measured on real tracks, M14e: see plan.md).
+pub const STORED_BYTES_PER_SAMPLE: u64 = 8;
+
+/// [`env_estimate`] without a Tauri handle; `memory` holds what this
+/// session has already downloaded.
 pub fn estimate_for(
     state: &AppState,
     sources: &[u64],
     restart: bool,
-    cache: Option<&pe_env::ChunkCache>,
+    memory: Option<&pe_env::BlockCache>,
 ) -> Result<EnvEstimate> {
     let points = positions(state, sources, restart)?.points;
-    let limit =
-        state.with_session(|s| Ok(u64::from(s.settings.chunk_cache.size_limit_gb) << 30))?;
-    let e = pe_env::estimate(&points, cache);
+    let e = pe_env::estimate(&points, memory);
     Ok(EnvEstimate {
         samples: u32::try_from(points.len()).unwrap_or(u32::MAX),
         hourly_bytes: e.hourly_bytes,
         three_hourly_bytes: e.three_hourly_bytes,
         cached_bytes: e.hourly_cached_bytes,
-        cache_limit_bytes: limit,
-        recommended: if e.hourly_bytes > limit / 2 {
+        stored_bytes: points.len() as u64 * STORED_BYTES_PER_SAMPLE,
+        three_hourly_above_bytes: THREE_HOURLY_ABOVE_BYTES,
+        recommended: if e.hourly_bytes > THREE_HOURLY_ABOVE_BYTES {
             "three_hourly"
         } else {
             "hourly"
@@ -762,12 +766,7 @@ pub fn env_estimate(
     restart: bool,
 ) -> Result<EnvEstimate> {
     let provider = provider(&state)?;
-    estimate_for(
-        &state,
-        &source_ids,
-        restart,
-        provider.cache().map(|c| c.as_ref()),
-    )
+    estimate_for(&state, &source_ids, restart, Some(provider.memory()))
 }
 
 /// [`start_env_fetch`] without a Tauri handle: queues one task per track.
@@ -890,7 +889,8 @@ mod tests {
 
     /// Hand-computed: u = −3, v = −4 m/s is 5 m/s blowing toward the
     /// south-west, so from 36.87° (north-east); 5 m/s = 9.7192 kn. A
-    /// current of u = 1, v = 0 m/s sets toward 090° at 1.9438 kn.
+    /// current of u = 1, v = 0 m/s sets toward 090° at 1.9438 kn. Each is
+    /// kept to 0.01 kn or 0.1°.
     #[test]
     fn ingest_converts_units_and_senses() {
         let fix = pe_core::track::Fix {
@@ -916,10 +916,11 @@ mod tests {
             }),
         };
         ingest(&mut sample, &mut meta, &env, 42);
-        assert!((sample.tws.unwrap() - 5.0 * KN_PER_MS).abs() < 1e-12);
-        assert!((sample.twd_from.unwrap() - 36.869_897_645_844_02).abs() < 1e-9);
-        assert!((sample.current_toward.unwrap() - 90.0).abs() < 1e-9);
-        assert!((sample.current_speed.unwrap() - KN_PER_MS).abs() < 1e-12);
+        // Kept at the stored precision (D27): 9.72 kn, 36.9°, 1.94 kn.
+        assert_eq!(sample.tws, Some(9.72));
+        assert_eq!(sample.twd_from, Some(36.9));
+        assert_eq!(sample.current_toward, Some(90.0));
+        assert_eq!(sample.current_speed, Some(1.94));
         assert_eq!(sample.wind_dataset, Some(0));
         assert_eq!(sample.current_dataset, Some(1));
         assert!(sample.env_fetched);

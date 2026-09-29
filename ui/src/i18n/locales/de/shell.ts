@@ -71,8 +71,6 @@ const catalogue: Record<string, string> = {
   "Opening project": "Projekt wird geöffnet",
   "Recovering project": "Projekt wird wiederhergestellt",
   "Saving": "Speichern",
-  "Measuring the cache": "Cache wird gemessen",
-  "Clearing the cache": "Cache wird geleert",
   "Change nothing": "Nichts ändern",
   "Cancel": "Abbrechen",
   "Close without creating a project": "Schließen, ohne ein Projekt anzulegen",
@@ -99,8 +97,6 @@ const catalogue: Record<string, string> = {
   "PolarEffects project": "PolarEffects-Projekt",
   "Choosing a project": "Projekt wird ausgewählt",
   "Choosing where to save": "Speicherort wird ausgewählt",
-  "Choosing a folder": "Ordner wird ausgewählt",
-  "Choose where to keep the chunk cache": "Wählen, wo der Datenblock-Cache liegt",
   "The world map with the tracks": "Die Weltkarte mit den Tracks",
   "The polar as a 3D surface, with the samples": "Die Polare als 3D-Fläche, mit den Punkten",
   "The difference between two polars": "Der Unterschied zwischen zwei Polaren",
@@ -141,6 +137,7 @@ const catalogue: Record<string, string> = {
   "stop": "anhalten",
   "job": "Auftrag",
   "The environment fetch of {label} left out a current source that would not open.": "Der Abruf der Umweltdaten von {label} hat eine Strömungsquelle ausgelassen, die sich nicht öffnen ließ.",
+  "Downloaded weather is no longer kept on disk: removing {size} an earlier version left in {path}. Projects keep every value they use.": "Heruntergeladenes Wetter wird nicht mehr auf der Festplatte gespeichert: {size}, die eine frühere Version in {path} hinterlassen hat, werden entfernt. Projekte behalten jeden Wert, den sie verwenden.",
 };
 
 export default catalogue;

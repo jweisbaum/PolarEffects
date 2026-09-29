@@ -18,8 +18,6 @@ import type { AppSettings } from "./generated/AppSettings";
 import type { AutosaveMode } from "./generated/AutosaveMode";
 import type { BlendSettingsInput } from "./generated/BlendSettingsInput";
 import type { BoatInput } from "./generated/BoatInput";
-import type { ChunkCacheSettings } from "./generated/ChunkCacheSettings";
-import type { ChunkCacheStatus } from "./generated/ChunkCacheStatus";
 import type { CsvMappingInput } from "./generated/CsvMappingInput";
 import type { EditOp } from "./generated/EditOp";
 import type { EditSurface } from "./generated/EditSurface";
@@ -28,6 +26,7 @@ import type { EnvJobsStatus } from "./generated/EnvJobsStatus";
 import type { ExportAxes } from "./generated/ExportAxes";
 import type { ExportPreview } from "./generated/ExportPreview";
 import type { ExportResult } from "./generated/ExportResult";
+import type { LegacyCacheNotice } from "./generated/LegacyCacheNotice";
 import type { MapProjection } from "./generated/MapProjection";
 import type { NetworkSettings } from "./generated/NetworkSettings";
 import type { OrcCatalogueInfo } from "./generated/OrcCatalogueInfo";
@@ -77,8 +76,6 @@ const LONG_RUNNING: Readonly<Record<string, string>> = {
   open_recovered: msg("Recovering project"),
   save_project: msg("Saving"),
   save_project_as: msg("Saving"),
-  chunk_cache_status: msg("Measuring the cache"),
-  clear_chunk_cache: msg("Clearing the cache"),
   import_polar_files: msg("Importing polar files"),
   inspect_track_files: msg("Reading track files"),
   inspect_csv_track: msg("Reading track files"),
@@ -349,18 +346,20 @@ export const api = {
   setUnits: (units: Units) => call<AppSettings>("set_units", { units }),
   /** Sets what autosave does. */
   setAutosaveMode: (mode: AutosaveMode) => call<AppSettings>("set_autosave_mode", { mode }),
-  /** Sets the chunk cache's folder (empty for the default) and size limit. */
-  setChunkCache: (cache: ChunkCacheSettings) => call<AppSettings>("set_chunk_cache", { cache }),
+  /** Sets how much downloaded weather is kept in memory for the session, megabytes. */
+  setWeatherMemory: (megabytes: number) => call<AppSettings>("set_weather_memory", { megabytes }),
   /** Sets the reanalysis fetcher's concurrency and timeout. */
   setNetwork: (network: NetworkSettings) => call<AppSettings>("set_network", { network }),
   /** Sets the map projection. */
   setProjection: (projection: MapProjection) => call<AppSettings>("set_projection", { projection }),
   /** Sets how far from the 2D plot's wind speed a sample dot may be, knots either side. */
   setPlotBand: (bandKn: number) => call<AppSettings>("set_plot_band", { bandKn }),
-  /** Where the chunk cache is and how big it is. */
-  chunkCacheStatus: () => call<ChunkCacheStatus>("chunk_cache_status"),
-  /** Empties the chunk cache (lossless: samples live in projects). */
-  clearChunkCache: () => call<ChunkCacheStatus>("clear_chunk_cache"),
+  /**
+   * Starts removing the on-disk chunk cache an earlier version kept, the
+   * first time it is asked in a session, and says what it held; null when
+   * there is none (D27).
+   */
+  legacyCacheNotice: () => call<LegacyCacheNotice | null>("legacy_cache_notice"),
 
   // The map (spec.md 9.1).
 

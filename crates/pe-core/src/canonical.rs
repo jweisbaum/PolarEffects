@@ -38,6 +38,34 @@ pub const METRE_PLACES: i32 = 3;
 /// Decimal places kept for dimensionless quantities such as weights.
 pub const RATIO_PLACES: i32 = 6;
 
+/// Decimal places kept for the environment found at a track sample
+/// (spec.md 7.5): wind and current speed to 0.01 kn, directions to 0.1°,
+/// wave height to a centimetre. ERA5 and the current reanalyses resolve
+/// nothing near that fine, and at this precision a track's environment is a
+/// few kilobytes per thousand samples in the project file (D27).
+pub const ENV_KNOT_PLACES: i32 = 2;
+/// See [`ENV_KNOT_PLACES`].
+pub const ENV_DEGREE_PLACES: i32 = 1;
+/// See [`ENV_KNOT_PLACES`].
+pub const ENV_METRE_PLACES: i32 = 2;
+
+/// Rounds a speed found by the environment fetch (wind, current).
+pub fn env_knots(value: f64) -> f64 {
+    round(value, ENV_KNOT_PLACES)
+}
+
+/// Rounds a direction found by the environment fetch into [0, 360): 359.96
+/// is 0.0, not 360.0.
+pub fn env_degrees(value: f64) -> f64 {
+    let d = round(value.rem_euclid(360.0), ENV_DEGREE_PLACES);
+    if d >= 360.0 { 0.0 } else { d }
+}
+
+/// Rounds a wave height found by the environment fetch.
+pub fn env_metres(value: f64) -> f64 {
+    round(value, ENV_METRE_PLACES)
+}
+
 /// Rounds to `places` decimal places.
 ///
 /// Values that are not finite, or large enough that scaling would overflow,
@@ -259,6 +287,20 @@ mod tests {
             assert_eq!(degrees(degrees(v)).to_bits(), degrees(v).to_bits());
             assert_eq!(knots(knots(v)).to_bits(), knots(v).to_bits());
             assert!((degrees(v) - v).abs() <= 5e-10);
+        }
+    }
+
+    #[test]
+    fn environment_values_round_coarsely_and_stay_in_range() {
+        assert_eq!(env_knots(12.345_678), 12.35);
+        assert_eq!(env_metres(1.234_9), 1.23);
+        assert_eq!(env_degrees(359.96), 0.0);
+        assert_eq!(env_degrees(-0.04), 0.0);
+        assert_eq!(env_degrees(-10.0), 350.0);
+        assert_eq!(env_degrees(123.456), 123.5);
+        for v in [0.049, 17.25, 359.94] {
+            assert_eq!(env_degrees(env_degrees(v)), env_degrees(v));
+            assert_eq!(env_knots(env_knots(v)), env_knots(v));
         }
     }
 

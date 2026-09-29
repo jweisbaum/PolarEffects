@@ -9,10 +9,12 @@ import { formatBytes } from "./trackImport";
 type Interval = "hourly" | "three_hourly";
 
 /**
- * The pre-flight of an environment fetch (spec.md 7.5, 13, D19): how many
- * samples it covers and what it will download sampling hourly or every
- * three hours, less what the chunk cache already holds. Hourly is offered
- * first unless its download would exceed half the chunk-cache limit.
+ * The pre-flight of an environment fetch (spec.md 7.5, 13, D19, D27): how
+ * many samples it covers, what it will download sampling hourly or every
+ * three hours (only the blocks of the archives' fields that hold the
+ * track, less what this session already downloaded), and about how much
+ * the project grows by. Hourly is offered first unless its download would
+ * exceed 1 GB (a long ocean race).
  *
  * It opens only when the user asks for weather: Fetch weather… on a track,
  * or Fetch weather for selected tracks… (never by itself after an import,
@@ -106,11 +108,14 @@ export default function EnvFetchDialog({ sourceIds, restart, onClose }: {
               : t("Every 3 hours: about {size} to download", { size: formatBytes(estimate.three_hourly_bytes) })}
           </label>
         </fieldset>
+        {estimate !== null && (
+          <p className="muted">{t("Stored in the project: about {size}, the wind, waves and current at each sample.", { size: formatBytes(estimate.stored_bytes) })}</p>
+        )}
         {estimate !== null && estimate.cached_bytes > 0 && (
-          <p className="muted">{t("{size} of it is already in the chunk cache.", { size: formatBytes(estimate.cached_bytes) })}</p>
+          <p className="muted">{t("{size} of it was already downloaded this session.", { size: formatBytes(estimate.cached_bytes) })}</p>
         )}
         {estimate !== null && estimate.recommended === "three_hourly" && (
-          <p className="muted">{t("Hourly would fill more than half the chunk cache ({limit}), so every 3 hours is chosen.", { limit: formatBytes(estimate.cache_limit_bytes) })}</p>
+          <p className="muted">{t("Hourly would download more than {limit}, so every 3 hours is chosen.", { limit: formatBytes(estimate.three_hourly_above_bytes) })}</p>
         )}
         <p className="muted">{t("It runs in the background; the status bar shows its progress and can cancel it. Samples already fetched are kept.")}</p>
         <div className="modal-actions">

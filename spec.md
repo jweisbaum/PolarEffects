@@ -219,14 +219,15 @@ or a failed write leaves the previous setting in place.
 - **Units**: boat and wind speed (kn default, m/s, km/h), wave height (m,
   ft), distance (nm, km).
 - **Autosave**: recovery (default), save, off.
-- **Chunk cache**: location, size limit (default 20 GB, 1–2000), Clear cache
-  button, current size. The chunks live in a `chunks` folder inside the chosen
-  location (the platform cache directory by default), and Clear removes only
-  that folder, never the rest of a folder the user pointed at. The least
-  recently used chunks are removed to stay under the limit. A chunk being
-  written is a `.partial` file beside its name; opening the cache removes
-  only those older than an hour, since a younger one may be another running
-  PolarEffects writing it.
+- **Downloaded weather**: "Keep downloaded weather in memory for this
+  session (MB)" (default 256, 16–4096). The blocks a fetch downloads (§7.5)
+  are kept in memory, least recently used first to go, so other boats of the
+  same race reuse them; nothing downloaded is ever written to disk, and
+  quitting forgets it (D27). An earlier version's on-disk chunk cache (the
+  `chunks` folder in its settings' `chunk_cache.location`, or in the platform
+  cache directory) is removed in the background the first time a project
+  window opens, only that folder, and the status line says so; its settings
+  are no longer read or written.
 - **Network**: request concurrency (default 8, 1–32), timeout (default 60 s,
   5–600 s).
 - **Map projection** (§9.1), remembered here rather than in the project.
@@ -344,7 +345,9 @@ Same container rules as VectorEffects' `.veproj` (D11):
   - `project.json`: canonical JSON, stable key order, everything except bulk
     track data.
   - `tracks/<track id>.json`: one entry per track, holding its fixes and
-    samples. Kept separate so `project.json` stays small and diffable.
+    its samples by column, only what is not derived (schema 2, §7.5; schema
+    1 wrote one object per sample and is migrated on open). Kept separate so
+    `project.json` stays small and diffable.
 - Every entry has a fixed timestamp, so saving an unchanged project twice
   gives identical bytes.
 - No rendered images and no blend results (invariant 2). A test fails on any
@@ -803,7 +806,7 @@ Every track sample can be matched against reanalysis, as a background job
 fetch's pre-flight (§13) for those tracks, with Fetch as its default answer.
 Importing a track (from a file or a tracker) never starts it and makes no
 reanalysis request; Not now leaves the tracks "not fetched". The pre-flight
-opens at once: the estimate (which opens the chunk cache) is computed off
+opens at once: the estimate is computed off
 the UI thread, the two interval choices read "calculating the download…"
 until it arrives, and a choice made meanwhile is kept over the
 recommendation.
@@ -830,6 +833,25 @@ recommendation.
   whether its current has tides; each sample records which supplied its
   wind, waves and current, and whether the fetch has answered for it
   (what Fetch weather… resumes from).
+- **What is stored** (schema 2, D27): per sample only what is not derived —
+  its id and fix, its motion, TWS, TWD, Hs, wave direction, current speed
+  and direction, the three dataset indices and the fetched flag — by column
+  in `tracks/<id>.json`. The environment is rounded on ingest to 0.01 kn,
+  0.1° and 0.01 m (ERA5 resolves nothing finer), so memory equals what a save
+  and load give back. TWA, tack, the corrected values and the wave angle, and
+  the sample's time and place (its fix's), are recomputed on load. Measured
+  on Fastnet 2025 boats: 7.5–8.8 bytes per sample of environment, deflated.
+- **How it is downloaded** (D27): every ERA5 store is chunked one global
+  field per hour (≈ 3.3 MB), a blosc container of eight blocks that decode
+  independently (131,072 values, ≈ 91 rows, each). A fetch reads each needed
+  chunk's first 64 bytes (header and block offsets) by HTTP Range, then only
+  the blocks holding its positions' stencil rows (adjacent blocks in one
+  request), and decodes those. A stencil across two blocks, the poles, the
+  0/360 seam and an uncompressed (memcpyed) container are handled; a server
+  that answers a Range with 200 and the whole chunk has it used whole (up to
+  the 64 MB body cap) and is then read whole. The current geoChunks are read
+  the same way (a block is 1,024–8,192 hours of a box). About an eighth of
+  the whole-chunk bytes: a 5-day race hourly ≈ 150–160 MB, not ≈ 1.3 GB.
 - TWA is the angle between the heading and where the wind comes from; the
   wind over the starboard side is starboard tack, and head to wind or dead
   downwind is neither. The wave angle is measured off the bow (0° head
@@ -950,8 +972,8 @@ else can go on in the dialog meanwhile; the boat list it sends ahead can be
 searched and ticked while it runs. A tracker download never includes weather
 (D24). A cancelled or failed fetch keeps whatever samples completed
 (status "partial") and can be resumed with Fetch weather…. Jobs for tracks from the
-same event share the chunk cache, so the second boat of a race costs almost
-nothing.
+same event share the session's in-memory blocks, so the second boat of a
+race downloads little.
 
 The environment fetch in detail (M9):
 
@@ -971,6 +993,9 @@ The environment fetch in detail (M9):
   sample's wind, waves and current (raw, corrected and which datasets) and
   the track's dataset records, so a restart that is cancelled leaves a
   track partly fetched at the new settings, never a mix of two fetches.
+- Within a batch, the wind's and waves' chunks share one pool, and the
+  currents (Copernicus Marine) are read beside them (Google Cloud), each
+  host with at most the concurrency setting in flight.
 - The status bar shows the running track, its progress and how many wait,
   with Cancel fetch (all); a track's row has Cancel fetch for it. A
   failure is reported on the status line and leaves "partial" (or "failed"
@@ -982,8 +1007,9 @@ The environment fetch in detail (M9):
   connection) is retried three times, pausing 0.5, 1 and 2 s; anything else
   fails at once. A retry pause ends at once on Cancel. A body over 64 MB is
   refused. A redirect is followed only to the same host or, over HTTPS, to
-  another archive host (invariant 4). A cached chunk that arrived but fails to decode is removed from
-  the cache and fetched once more; a failed read is not. Opened archives
+  another archive host (invariant 4). A block that arrives but fails to
+  decode fails the read and is not kept; a failed read is not retried as
+  one. Opened archives
   are kept for the session, so only the first track pays their metadata
   requests.
 
@@ -1002,7 +1028,8 @@ track to a `.grib2` file:
   simple packing at 16 bits, no bitmap unless NaN is present). Per message
   only the reference time, forecast hour, grid corners, parameter and data
   array change. Ported from `ve-grib::writer` with regional grids added.
-- The data comes from the chunk cache; missing hours are fetched first.
+- The data is fetched at export time, only the blocks covering the box's
+  rows for each hour (as §7.5), with nothing cached on disk.
 - Output is byte-reproducible (invariant 5) and validated by ecCodes in CI.
 
 ---
@@ -1357,23 +1384,26 @@ a Snapdragon X Windows ARM64 laptop):
 | 3D view with 200k dots, 20 surfaces | 60 fps |
 | Open a project with 50 tracks | < 2 s |
 | Reanalysis for a 5-day race, cold cache | reported, not budgeted; progress every second |
-| Second boat from the same event | < 5 s (cache hit) |
+| Second boat from the same event | < 5 s when its blocks are in memory; otherwise only the hours and boxes the first boat did not need |
 | Tracker address to a pickable boat list | as short as the tracker allows: the first response naming the boats, no weather (D24) |
 
-The chunk-cache cost of reanalysis is real: one hour of one variable is a
-global chunk of about 1.7–3.3 MB (measured in M3: wind 3.3 MB, wave height
-1.8 MB, wave direction 1.7 MB). A 5-day race needs about 120 hours × 4
-variables ≈ 1.2 GB. Currents from the geoChunked stores are cheap by
-comparison (about 0.8 MB per variable per 1.3° × 0.7° box per six months).
-The job shows the expected download size before it starts and lets the user
-pick hourly or 3-hourly sampling (D19). Hourly is the default; when the
-hourly download would exceed half the chunk-cache size limit (a long ocean
-race), 3-hourly is preselected instead. The estimate counts the ERA5 hours
-the samples need at each interval (wind 3.3 MB × 2, wave height 1.8 MB,
-wave direction 1.7 MB per hour), leaves out the chunks already in the
-cache, and adds about 0.8 MB per current variable per geoChunk box and half
-year crossed. 3-hourly reads 00, 03, … 21 UTC and interpolates linearly
-between them; currents are always hourly.
+Reanalysis is read by block (§7.5, D27): one hour of one variable is a
+64-byte head and usually one block of its global field — about 0.43 MB of
+wind, 0.17–0.31 MB of wave height or direction at mid-latitudes — instead
+of the 1.7–3.3 MB field. Measured (M14e, debug build, home broadband): a
+Fastnet 2025 boat of 120 h, 1,585 samples, downloaded 159.6 MB in 99 s
+where whole chunks would have been 1,279.5 MB, and adds 13 KB to the
+project; the second boat of the race downloaded 9.6 MB. The pre-flight
+shows the expected download at both intervals and "stored in the project:
+about N kB" (8 bytes a sample), and lets the user pick hourly or 3-hourly
+(D19). Hourly is the default; when the hourly download would exceed 1 GB (a
+long ocean race: the Vendée Globe is ≈ 2.4 GB hourly, ≈ 0.8 GB 3-hourly),
+3-hourly is preselected. The estimate counts, per ERA5 hour the samples
+need, four heads and the blocks holding their stencil rows (one hour's
+measured block sizes), leaves out blocks already in memory, and adds one
+typical current block per variable per box and block of hours crossed in
+the first tier whose box holds the position. 3-hourly reads 00, 03, … 21
+UTC and interpolates linearly between them; currents are always hourly.
 
 ---
 

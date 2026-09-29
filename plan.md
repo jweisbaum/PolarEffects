@@ -92,6 +92,27 @@ cost the user saw, the weather step opened automatically after every
 import (a 5-day race is ≈ 1.2 GB hourly, D19), is gone: importing makes no
 reanalysis request (`importing_issues_no_reanalysis_request`).
 
+**2026-09-28: M14e — small weather downloads, per-position storage only
+(D27).** A user request. Measured live (`PE_TEST_LIVE=1 cargo test -p
+pe-app --test weather_download`, debug build, Intel i9, home broadband),
+fetching hourly through the real archives:
+
+| Track | Downloaded | Whole chunks (before) | Time | Stored (`tracks/<id>.json`, deflated) |
+|---|---|---|---|---|
+| Fastnet 2025 "Black Betty", 120 h, 1,585 samples | 159.6 MB, 1,388 requests | 1,279.5 MB | 99 s | 49.5 KB, of which the environment 13.3 KB (8.4 B/sample) |
+| Second boat "Mare", 120 h, 2,034 samples, same session | 9.6 MB, 116 requests | 46.9 MB more | 16 s | 61.2 KB, environment 15.4 KB (7.5 B/sample) |
+| "Teamwork", 72 h, 970 samples (after wind and waves shared one pool) | 111.1 MB, 1,118 requests | 836.5 MB | 51 s | 32.2 KB, environment 8.5 KB (8.8 B/sample) |
+
+The estimate said 155.1 MB and 104.5 MB for the first and third. The
+provider end to end over every tier: 10.1 MB where whole chunks would be
+69.4 MB. On a synthetic 1,000 samples the track entry went from 120.2 KB
+(schema 1, one object per sample, derived values included) to 33.7 KB
+(schema 2 by column), the environment 7.0 KB of it. The before column is the
+sum of the sizes of every chunk touched, from their headers, not a second
+download (the live budget was 300 MB). Currents dominate the time: the NW
+Shelf boxes are small and Copernicus Marine answers in 0.3–0.8 s, so
+currents are now read beside the wind and waves (not yet measured live).
+
 **2026-09-28: M14c — agent-driven UI testing through WebDriver (D25).** A
 user request. `npm run ux` builds `pe-app` with `--features webdriver`, then
 for each of five tests starts the real development build (Vite on a free
@@ -792,6 +813,43 @@ the MCP server answers the handshake and lists its tools.
 
 ---
 
+### M14e — Small weather downloads, per-position storage only · **complete**
+
+User request, 2026-09-28: "The weather download should not be so many
+gigabytes. do not store the entire time step of data, simply store the wind
+speed and direction (and current, and wave height and direction)
+interpolated to each position in the track. It should be kilobytes per
+track." (D27).
+
+**Deliverables:** block-range reads in `pe-env` (header, then only the
+blosc blocks holding the positions' rows); no chunk cache on disk, an
+in-memory block LRU with its Settings field and the old cache removed once;
+compact per-sample storage (schema 2); the estimate at block level with
+"stored in the project"; currents checked; GRIB export documented.
+
+**Acceptance:** a fixture-backed Range test (a real ARCO chunk served by a
+local server) requests only the head and the needed blocks and equals the
+whole-chunk decode; live bytes before and after for a real track; no file
+under the old cache after a fetch; cancel/resume, tier and provenance tests
+green.
+
+*Done 2026-09-28.* See the M14e entry at the top. `blosc::Header` parses,
+lists block extents and decodes one block; `OpenVariable` reads a blosc
+chunk's first 64 bytes by `HttpStore::get_range`, then runs of needed blocks
+(206 → blocks, 200 → the whole chunk kept and later chunks read whole, 404
+→ no data), keeping heads and compressed blocks in `memory::BlockCache`;
+non-blosc stores go through `zarrs` whole. `cache.rs` is gone. Wind and
+waves share one pool per batch (`dataset::read_cells_of`) and currents run
+beside them. `SampleColumns` stores ids and fixes as runs, motion, the
+rounded environment (`canonical::env_*`), dataset indices and the fetched
+flag; `Sample::quantise_env` at ingest; schema 1 files migrate. Settings:
+`weather_memory_mb` (256), `legacy_cache_notice`. Tests: `tests/ranges.rs`
+(four), blosc block units, memory LRU, the estimate by hand, storage size,
+migration and damaged-column tests, the legacy removal, UI and `npm run ux
+-- weather` (notice, pre-flight, Settings).
+
+---
+
 ### M15 — Compare
 
 **Deliverables:** Compare stage (spec §11): operand pickers, difference
@@ -884,6 +942,7 @@ jieter/orc-data MIT), user guide.
 | D23a | M14 review round 1 (controller rulings): a track cell with an override counts with confidence 1 whatever its sample count, 0 included; the 0° row is no evidence — it counts in no coverage, and a blend with no value off it is empty and refused by export; a custom export grid does not anchor on the 0° row (output 0° row 0 kn); new projects' blend colour is `#e0457b` and a colour lost on the background is outlined; out-of-range sample counts are clamped on load; the blend cache keys sources by id | Review of M14 |
 | D24 | Tracker and file imports download tracks only, never weather. The boat list shows as soon as the tracker names the boats (YellowBrick's RaceSetup, Geovoile's config), while the positions download; independent requests run at once and are asked for gzipped. Weather is a separate step the user starts per track (Fetch weather…) or for ticked tracks (Fetch weather for selected tracks…); its estimate dialog opens at once and calculates in the background | Settled with the user 2026-09-28: "the yellowbrick downloader is too slow. it should first download just the tracks with no weather info. then prompt the user to pick a track and then download the weather separately"; "do the same for the other tracker scrapers they need to download the tracks super fast". Supersedes "import starts the fetch" in spec §7.5 (M9) and the post-import pre-flight of M10 |
 | D25 | Agent-driven UI testing: `pe-app`'s optional `webdriver` feature compiles in `tauri-plugin-webdriver-automation`, an endpoint on `127.0.0.1` at a random port that drives the whole interface. Off by default, never in `npm run build`; `tests/webdriver_optional.rs` holds the manifest to that (check:offline cannot see a listener). Under the feature only: `PE_AUTOMATION_ROOT` redirects the settings, recent list, autosave and cache to a driver's temporary directory, and `PE_DRIVER_YELLOWBRICK` (a `http://127.0.0.1:<port>` origin only) serves the YellowBrick dialog from a local fixture server. In development builds only (`import.meta.env.DEV`): queued answers for native file dialogs, `__peOpen`, and a synchronous redraw on the WebGL canvases for screenshots. The suite runs the dev build (StrictMode) | Settled with the user 2026-09-28: "ensure that the project is set up with webkit testing so that all agents can interact with ui elements, take screen shots, and run ux tests agentically". Copied from VectorEffects (M71); the inbound exception to invariant 4 is worded as VectorEffects words its invariant 5 |
+| D27 | Weather downloads read only the blosc blocks of each archive chunk that hold a track's rows (HTTP Range: a 64-byte head, then the blocks), for ERA5 and the current geoChunks alike; nothing downloaded is kept on disk, only an in-memory LRU of blocks for the session (256 MB default, 16–4096 MB), and an earlier version's chunk cache is removed once with a status-line notice. A project stores per sample only its non-derived values by column, the environment rounded to 0.01 kn, 0.1° and 0.01 m (schema 2; derived angles recomputed on load). D19 re-evaluated: hourly stays the default (a 5-day race ≈ 150 MB); 3-hourly is preselected above 1 GB hourly instead of half the old cache limit | Settled with the user 2026-09-28: "The weather download should not be so many gigabytes. do not store the entire time step of data, simply store the wind speed and direction (and current, and wave height and direction) interpolated to each position in the track. It should be kilobytes per track." No anonymous point-chunked ERA5 exists; the blocks are the finest unit the archives allow (≈ 1/8 of an ERA5 field, 1/5–1/7 of a geoChunk) |
 | D22 | Polar edits and segments (M13): one `EditCells` command for every edit tool (overrides before/after per cell, the tool naming the undo entry, drags coalescing); segment bins are half-steps around each output-grid node with nothing beyond the outer half-steps, and nothing is binned into a 0° TWA node (samples nearest 0° are dropped, not moved: the 0° row is 0 kn, spec §12.3; controller ruling); spread is the sample standard deviation; smooth is the 3×3 binomial kernel over neighbours with a value as the blend reads them (excluded nodes take no part; controller ruling); the 3D samples key mixes a per-opening nonce, so two openings never share one; views show sources as edited, and the 2D curves also leave excluded nodes out | Spec §10.4 and §12.1 named the tools, the statistic and "count and spread" without the binning edges, the spread measure, the kernel or how undo groups them |
 
 ## 6. Settled before coding started

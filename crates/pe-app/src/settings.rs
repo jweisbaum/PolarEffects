@@ -30,11 +30,12 @@ pub const LANGUAGES: &[&str] = &["en", "fr", "de"];
 /// The theme a new install, or an unknown theme id, gets (spec.md 3.1).
 pub const DEFAULT_THEME: &str = "harbour";
 
-/// The default chunk cache size limit, in gigabytes (spec.md 3.4).
-pub const DEFAULT_CACHE_LIMIT_GB: u32 = 20;
-/// The largest cache limit offered: a typo of an extra zero should not ask
-/// for a terabyte.
-pub const MAX_CACHE_LIMIT_GB: u32 = 2_000;
+/// How much downloaded weather is kept in memory for the session by
+/// default, in megabytes (spec.md 3.4): a 5-day race sampled hourly is
+/// about 150 MB of blocks, so the second boat of a race downloads nothing.
+pub const DEFAULT_WEATHER_MEMORY_MB: u32 = 256;
+/// The smallest and largest amounts offered, megabytes.
+pub const WEATHER_MEMORY_RANGE_MB: (u32, u32) = (16, 4096);
 
 /// Default number of archive requests in flight at once (spec.md 3.4).
 pub const DEFAULT_CONCURRENCY: u32 = 8;
@@ -116,29 +117,6 @@ pub struct Units {
     pub distance: DistanceUnit,
 }
 
-/// Where fetched reanalysis chunks are kept, and how much of them
-/// (spec.md 3.4). Deleting the cache is always lossless (invariant 3).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[ts(export_to = "ChunkCacheSettings.ts")]
-#[serde(default)]
-pub struct ChunkCacheSettings {
-    /// A folder chosen by the user, or empty for the platform cache
-    /// directory. The chunks go in a `chunks` folder inside it, so Clear
-    /// never touches anything else in a folder the user pointed at.
-    pub location: String,
-    /// Size limit in gigabytes.
-    pub size_limit_gb: u32,
-}
-
-impl Default for ChunkCacheSettings {
-    fn default() -> Self {
-        Self {
-            location: String::new(),
-            size_limit_gb: DEFAULT_CACHE_LIMIT_GB,
-        }
-    }
-}
-
 /// How the reanalysis fetcher uses the network (spec.md 3.4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export_to = "NetworkSettings.ts")]
@@ -187,8 +165,9 @@ pub struct Settings {
     pub theme: String,
     /// Display units.
     pub units: Units,
-    /// The reanalysis chunk cache.
-    pub chunk_cache: ChunkCacheSettings,
+    /// Downloaded weather kept in memory for the session, megabytes
+    /// (spec.md 3.4). Nothing downloaded is kept on disk.
+    pub weather_memory_mb: u32,
     /// Network use by the reanalysis fetcher.
     pub network: NetworkSettings,
     /// The map projection.
@@ -207,7 +186,7 @@ impl Default for Settings {
             language: LANGUAGES[0].to_owned(),
             theme: DEFAULT_THEME.to_owned(),
             units: Units::default(),
-            chunk_cache: ChunkCacheSettings::default(),
+            weather_memory_mb: DEFAULT_WEATHER_MEMORY_MB,
             network: NetworkSettings::default(),
             projection: MapProjection::default(),
             plot_tws_band_kn: crate::polar_plot::DEFAULT_TWS_BAND_KN,
@@ -263,14 +242,14 @@ impl Settings {
                 read_field(units, "wave_height", &mut settings.units.wave_height);
                 read_field(units, "distance", &mut settings.units.distance);
             }
-            if let Some(serde_json::Value::Object(cache)) = object.get("chunk_cache") {
-                read_field(cache, "location", &mut settings.chunk_cache.location);
-                read_field(
-                    cache,
-                    "size_limit_gb",
-                    &mut settings.chunk_cache.size_limit_gb,
-                );
-            }
+            // An earlier build's `chunk_cache` (a folder and a size limit on
+            // disk) is not read: nothing is cached on disk any more, and its
+            // folder is removed once (`remove_legacy_cache`).
+            read_field(
+                &object,
+                "weather_memory_mb",
+                &mut settings.weather_memory_mb,
+            );
             if let Some(serde_json::Value::Object(network)) = object.get("network") {
                 read_field(network, "concurrency", &mut settings.network.concurrency);
                 read_field(network, "timeout_s", &mut settings.network.timeout_s);
@@ -298,8 +277,10 @@ impl Settings {
         if !known_themes().contains(&self.theme) {
             self.theme = defaults.theme;
         }
-        if !(1..=MAX_CACHE_LIMIT_GB).contains(&self.chunk_cache.size_limit_gb) {
-            self.chunk_cache.size_limit_gb = defaults.chunk_cache.size_limit_gb;
+        if !(WEATHER_MEMORY_RANGE_MB.0..=WEATHER_MEMORY_RANGE_MB.1)
+            .contains(&self.weather_memory_mb)
+        {
+            self.weather_memory_mb = defaults.weather_memory_mb;
         }
         if !(1..=MAX_CONCURRENCY).contains(&self.network.concurrency) {
             self.network.concurrency = defaults.network.concurrency;
@@ -333,14 +314,9 @@ impl Settings {
         self.recent_projects.truncate(MAX_RECENT);
     }
 
-    /// The folder the chunk cache writes into (spec.md 3.4).
-    pub fn chunk_cache_dir(&self, default_cache_dir: &Path) -> PathBuf {
-        let root = if self.chunk_cache.location.trim().is_empty() {
-            default_cache_dir.to_path_buf()
-        } else {
-            PathBuf::from(self.chunk_cache.location.trim())
-        };
-        root.join("chunks")
+    /// The weather memory limit, bytes.
+    pub fn weather_memory_bytes(&self) -> u64 {
+        u64::from(self.weather_memory_mb) << 20
     }
 }
 
@@ -450,37 +426,25 @@ pub fn autosave_mode_set(state: &AppState, mode: AutosaveMode) -> Result<Setting
     })
 }
 
-/// Changes the chunk cache's folder and size limit.
+/// Changes how much downloaded weather is kept in memory for the session.
 #[tauri::command]
-pub fn set_chunk_cache(
-    state: tauri::State<'_, AppState>,
-    cache: ChunkCacheSettings,
-) -> Result<Settings> {
-    chunk_cache_set(&state, cache)
+pub fn set_weather_memory(state: tauri::State<'_, AppState>, megabytes: u32) -> Result<Settings> {
+    weather_memory_set(&state, megabytes)
 }
 
-/// [`set_chunk_cache`] without a Tauri handle. An out-of-range limit is
-/// refused rather than clamped: the user typed it and should see why it did
-/// not take.
-pub fn chunk_cache_set(state: &AppState, cache: ChunkCacheSettings) -> Result<Settings> {
+/// [`set_weather_memory`] without a Tauri handle. An out-of-range amount
+/// is refused rather than clamped: the user typed it and should see why it
+/// did not take. The next fetch starts with an empty memory of the new
+/// size.
+pub fn weather_memory_set(state: &AppState, megabytes: u32) -> Result<Settings> {
     update(state, |settings| {
-        if !(1..=MAX_CACHE_LIMIT_GB).contains(&cache.size_limit_gb) {
+        if !(WEATHER_MEMORY_RANGE_MB.0..=WEATHER_MEMORY_RANGE_MB.1).contains(&megabytes) {
             return Err(AppError::BadOption {
-                field: "Cache size limit",
-                value: cache.size_limit_gb.to_string(),
+                field: "Weather kept in memory",
+                value: megabytes.to_string(),
             });
         }
-        let location = cache.location.trim().to_owned();
-        if !location.is_empty() && !Path::new(&location).is_absolute() {
-            return Err(AppError::BadOption {
-                field: "Cache location",
-                value: location,
-            });
-        }
-        settings.chunk_cache = ChunkCacheSettings {
-            location,
-            size_limit_gb: cache.size_limit_gb,
-        };
+        settings.weather_memory_mb = megabytes;
         Ok(())
     })
 }
@@ -531,13 +495,14 @@ pub fn projection_set(state: &AppState, projection: MapProjection) -> Result<Set
     })
 }
 
-/// Where the chunk cache is and how much it holds.
+/// The on-disk chunk cache an earlier version kept, being removed (spec.md
+/// 3.4, D27): what the status line says once.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
-#[ts(export_to = "ChunkCacheStatus.ts")]
-pub struct ChunkCacheStatus {
-    /// The folder the chunks are written to.
+#[ts(export_to = "LegacyCacheNotice.ts")]
+pub struct LegacyCacheNotice {
+    /// The folder.
     pub path: String,
-    /// Bytes currently in it.
+    /// Bytes it held.
     pub bytes: u64,
 }
 
@@ -556,41 +521,58 @@ fn folder_size(dir: &Path) -> u64 {
         .sum()
 }
 
-/// The chunk cache's folder and size.
-#[tauri::command(async)]
-pub fn chunk_cache_status(state: tauri::State<'_, AppState>) -> Result<ChunkCacheStatus> {
-    cache_status(&state)
+/// Where an earlier version kept downloaded chunks: the `chunks` folder in
+/// the location its settings named (read from the raw settings file, since
+/// these settings no longer have the field), or in the platform cache
+/// directory.
+pub fn legacy_chunk_dir(settings_file: &Path, default_cache_dir: &Path) -> PathBuf {
+    let location = std::fs::read_to_string(settings_file)
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .and_then(|v| v["chunk_cache"]["location"].as_str().map(str::to_owned))
+        .map(|l| l.trim().to_owned())
+        .filter(|l| !l.is_empty() && Path::new(l).is_absolute());
+    location
+        .map_or_else(|| default_cache_dir.to_path_buf(), PathBuf::from)
+        .join("chunks")
 }
 
-/// [`chunk_cache_status`] without a Tauri handle.
-pub fn cache_status(state: &AppState) -> Result<ChunkCacheStatus> {
-    let dir = state
-        .with_session(|session| Ok(session.settings.chunk_cache_dir(&state.paths.cache_dir)))?;
-    Ok(ChunkCacheStatus {
+/// Starts removing an earlier version's chunk cache, once a session, and
+/// says what it is removing; `None` when there is none. Lossless by
+/// invariant 3: every value a project uses is saved in the project. Only
+/// the `chunks` folder goes, never the folder the user chose to hold it.
+///
+/// The handle is for tests, which wait for the removal.
+pub fn remove_legacy_cache(
+    state: &AppState,
+) -> Option<(LegacyCacheNotice, std::thread::JoinHandle<()>)> {
+    use std::sync::atomic::Ordering;
+    if state.legacy_cache_checked.swap(true, Ordering::SeqCst) {
+        return None;
+    }
+    let dir = legacy_chunk_dir(&state.paths.settings_file(), &state.paths.cache_dir);
+    if !dir.is_dir() {
+        return None;
+    }
+    let notice = LegacyCacheNotice {
         path: dir.to_string_lossy().into_owned(),
         bytes: folder_size(&dir),
-    })
+    };
+    let handle = std::thread::Builder::new()
+        .name("old-chunk-cache".to_owned())
+        .spawn(move || {
+            let _ = std::fs::remove_dir_all(&dir);
+        })
+        .ok()?;
+    Some((notice, handle))
 }
 
-/// Empties the chunk cache. Lossless by invariant 3: every sample a project
-/// needs is saved in the project.
+/// Removes an earlier version's on-disk chunk cache in the background and
+/// says so, the first time the frontend asks in a session; `None` when
+/// there is nothing to remove.
 #[tauri::command(async)]
-pub fn clear_chunk_cache(state: tauri::State<'_, AppState>) -> Result<ChunkCacheStatus> {
-    cache_clear(&state)
-}
-
-/// [`clear_chunk_cache`] without a Tauri handle. Removes only the `chunks`
-/// folder, never the folder the user chose to hold it.
-pub fn cache_clear(state: &AppState) -> Result<ChunkCacheStatus> {
-    let dir = state
-        .with_session(|session| Ok(session.settings.chunk_cache_dir(&state.paths.cache_dir)))?;
-    if dir.exists() {
-        std::fs::remove_dir_all(&dir).doing("clear the chunk cache at", dir.display())?;
-    }
-    // The next fetch reopens the (now empty) cache rather than trusting an
-    // index of files that are gone.
-    crate::env::reset_provider(state);
-    cache_status(state)
+pub fn legacy_cache_notice(state: tauri::State<'_, AppState>) -> Result<Option<LegacyCacheNotice>> {
+    Ok(remove_legacy_cache(&state).map(|(notice, _)| notice))
 }
 
 /// Changes the 2D polar plot's TWS band for sample dots, knots.
@@ -662,8 +644,7 @@ mod tests {
         assert_eq!(s.units.wave_height, WaveHeightUnit::M);
         assert_eq!(s.units.distance, DistanceUnit::Nm);
         assert_eq!(s.autosave, AutosaveMode::Recovery);
-        assert_eq!(s.chunk_cache.size_limit_gb, 20);
-        assert!(s.chunk_cache.location.is_empty());
+        assert_eq!(s.weather_memory_mb, 256);
         assert_eq!(s.network.concurrency, 8);
         assert_eq!(s.projection, MapProjection::Equirectangular);
         assert!(known_themes().contains(&s.theme));
@@ -706,7 +687,7 @@ mod tests {
             r#"{ "recent_projects": ["/keep.wpsproj"], "units": { "speed": "furlongs" },
                  "language": "tlh", "theme": "neon", "autosave": "save",
                  "network": { "concurrency": 500, "timeout_s": 1 },
-                 "chunk_cache": { "size_limit_gb": 0 } }"#,
+                 "weather_memory_mb": 1 }"#,
         )
         .unwrap();
         let s = Settings::load(&file);
@@ -718,7 +699,7 @@ mod tests {
         // Out of range is the default, not the nearest allowed value.
         assert_eq!(s.network.concurrency, DEFAULT_CONCURRENCY);
         assert_eq!(s.network.timeout_s, DEFAULT_TIMEOUT_S);
-        assert_eq!(s.chunk_cache.size_limit_gb, DEFAULT_CACHE_LIMIT_GB);
+        assert_eq!(s.weather_memory_mb, DEFAULT_WEATHER_MEMORY_MB);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -732,7 +713,8 @@ mod tests {
             &file,
             r#"{ "units": { "speed": "furlongs", "wave_height": "ft", "distance": "km" },
                  "network": { "concurrency": 12, "timeout_s": "soon" },
-                 "chunk_cache": { "location": 7, "size_limit_gb": 55 } }"#,
+                 "chunk_cache": { "location": "/old", "size_limit_gb": 55 },
+                 "weather_memory_mb": 512 }"#,
         )
         .unwrap();
         let s = Settings::load(&file);
@@ -746,8 +728,11 @@ mod tests {
         );
         assert_eq!(s.network.concurrency, 12);
         assert_eq!(s.network.timeout_s, DEFAULT_TIMEOUT_S);
-        assert!(s.chunk_cache.location.is_empty());
-        assert_eq!(s.chunk_cache.size_limit_gb, 55);
+        assert_eq!(s.weather_memory_mb, 512);
+        // An earlier build's chunk cache settings are not carried: the
+        // next save writes none.
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(!json.contains("chunk_cache"), "{json}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -755,10 +740,7 @@ mod tests {
     #[test]
     fn range_edges_are_kept_and_one_past_is_the_default() {
         let at_edges = Settings {
-            chunk_cache: ChunkCacheSettings {
-                location: String::new(),
-                size_limit_gb: MAX_CACHE_LIMIT_GB,
-            },
+            weather_memory_mb: WEATHER_MEMORY_RANGE_MB.1,
             network: NetworkSettings {
                 concurrency: 1,
                 timeout_s: TIMEOUT_RANGE_S.1,
@@ -767,10 +749,7 @@ mod tests {
         };
         assert_eq!(at_edges.clone().normalised(), at_edges);
         let past = Settings {
-            chunk_cache: ChunkCacheSettings {
-                location: String::new(),
-                size_limit_gb: MAX_CACHE_LIMIT_GB + 1,
-            },
+            weather_memory_mb: WEATHER_MEMORY_RANGE_MB.0 - 1,
             network: NetworkSettings {
                 concurrency: MAX_CONCURRENCY + 1,
                 timeout_s: TIMEOUT_RANGE_S.0 - 1,
@@ -778,22 +757,36 @@ mod tests {
             ..Settings::default()
         }
         .normalised();
-        assert_eq!(past.chunk_cache.size_limit_gb, DEFAULT_CACHE_LIMIT_GB);
+        assert_eq!(past.weather_memory_mb, DEFAULT_WEATHER_MEMORY_MB);
         assert_eq!(past.network.concurrency, DEFAULT_CONCURRENCY);
         assert_eq!(past.network.timeout_s, DEFAULT_TIMEOUT_S);
     }
 
+    /// An earlier version's chunks were in `chunks` inside the location
+    /// its settings named, or inside the platform cache directory.
     #[test]
-    fn the_chunk_folder_sits_inside_the_chosen_location() {
-        let mut s = Settings::default();
+    fn the_legacy_chunk_folder_is_found_where_it_was_kept() {
+        let dir = temp("legacy");
+        let file = dir.join("settings.json");
+        let default = Path::new("/cache");
         assert_eq!(
-            s.chunk_cache_dir(Path::new("/cache")),
+            legacy_chunk_dir(&file, default),
             PathBuf::from("/cache/chunks")
         );
-        s.chunk_cache.location = " /Volumes/big ".to_owned();
+        std::fs::write(
+            &file,
+            r#"{ "chunk_cache": { "location": " /Volumes/big ", "size_limit_gb": 20 } }"#,
+        )
+        .unwrap();
         assert_eq!(
-            s.chunk_cache_dir(Path::new("/cache")),
+            legacy_chunk_dir(&file, default),
             PathBuf::from("/Volumes/big/chunks")
         );
+        std::fs::write(&file, r#"{ "chunk_cache": { "location": "relative" } }"#).unwrap();
+        assert_eq!(
+            legacy_chunk_dir(&file, default),
+            PathBuf::from("/cache/chunks")
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

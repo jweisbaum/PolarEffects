@@ -22,7 +22,7 @@ use pe_app::polar3d::PolarNodeRef;
 use pe_app::projects::{
     BoatInput, OrcSourceSummary, PolarFileSummary, ProjectSummary, RecentProject, SourceSummary,
 };
-use pe_app::settings::{AutosaveMode, ChunkCacheStatus, Settings};
+use pe_app::settings::{AutosaveMode, LegacyCacheNotice, Settings};
 use pe_app::trackers::{TrackerBoatRow, TrackerEventView, TrackerProgress};
 use pe_app::tracks::{
     CsvMappingInput, CsvPreview, SampleDetails, TrackBoatPreview, TrackFileInspection,
@@ -92,7 +92,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     RecoveredProject::export_all(&cfg)?;
     AutosaveMode::export_all(&cfg)?;
     Settings::export_all(&cfg)?;
-    ChunkCacheStatus::export_all(&cfg)?;
+    LegacyCacheNotice::export_all(&cfg)?;
 
     // Keep generated files deterministic and free of ts-rs's trailing spaces.
     for entry in std::fs::read_dir(&out_dir)? {

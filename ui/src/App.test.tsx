@@ -84,6 +84,8 @@ function summary(dirty: boolean, path: string | null = null, sources: SourceSumm
 let settings: AppSettings;
 let project: ProjectSummary | null;
 let calls: [string, unknown][];
+/** What `legacy_cache_notice` answers: an earlier version's chunk cache. */
+let legacyNotice: { path: string; bytes: number } | null;
 
 function backend() {
   invoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
@@ -107,7 +109,7 @@ function backend() {
       case "save_project": project = summary(false, project?.path ?? null); return project;
       case "set_language": settings = { ...settings, language: args?.language as string }; return settings;
       case "set_theme": settings = { ...settings, theme: args?.theme as string }; return settings;
-      case "chunk_cache_status": return { path: "/cache/chunks", bytes: 0 };
+      case "legacy_cache_notice": return legacyNotice;
       case "quit_app": return null;
       case "env_jobs": return { tracks: [], failure: null, warning: null };
       case "cancel_env_fetch": {
@@ -224,10 +226,11 @@ beforeEach(() => {
   setLanguage("en");
   calls = [];
   project = null;
+  legacyNotice = null;
   settings = {
     recent_projects: [], autosave: "recovery", language: "en", theme: "harbour",
     units: { speed: "kn", wave_height: "m", distance: "nm" },
-    chunk_cache: { location: "", size_limit_gb: 20 }, network: { concurrency: 8, timeout_s: 60 },
+    weather_memory_mb: 256, network: { concurrency: 8, timeout_s: 60 },
     projection: "equirectangular", plot_tws_band_kn: 1,
   };
   dialog.open.mockReset().mockResolvedValue(null);
@@ -329,6 +332,16 @@ describe("the project window", () => {
     expect(JSON.parse(localStorage.getItem("pe.panels")!)).toMatchObject({ left: false, tracks: false });
     await click(feature("dock:left"));
     expect(feature("nav:tracks")?.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("says once that an earlier version's chunk cache is being removed (D27)", async () => {
+    project = summary(false, "/p.wpsproj");
+    legacyNotice = { path: "/cache/chunks", bytes: 12_300_000_000 };
+    await mount();
+    await settle();
+    expect(q(".statusbar")!.textContent).toContain(
+      "Downloaded weather is no longer kept on disk: removing 12.3 GB an earlier version left in /cache/chunks.");
+    expect(calls.filter(([c]) => c === "legacy_cache_notice")).toHaveLength(1);
   });
 
   it("switches the stage", async () => {

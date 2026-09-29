@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use reqwest::header::{CONTENT_LENGTH, HeaderValue, RANGE};
+use reqwest::header::{CONTENT_LENGTH, CONTENT_RANGE, HeaderValue, RANGE};
 use reqwest::{StatusCode, Url};
 use zarrs_storage::Bytes;
 use zarrs_storage::byte_range::ByteRangeIterator;
@@ -286,6 +286,86 @@ impl HttpStore {
             transient: classify(status) == Answer::Transient,
             message: format!("the archive answered {status} for {what}"),
         }
+    }
+}
+
+/// What a ranged read got back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Ranged {
+    /// Exactly the bytes asked for (fewer at the end of the object).
+    Part(Bytes),
+    /// The whole object: the server ignored the range.
+    Whole(Bytes),
+}
+
+/// The first byte a `Content-Range: bytes a-b/n` answer says it holds.
+fn content_range_start(response: &reqwest::blocking::Response) -> Option<u64> {
+    let value = response.headers().get(CONTENT_RANGE)?.to_str().ok()?;
+    let range = value.trim().strip_prefix("bytes")?.trim_start();
+    range.split('-').next()?.trim().parse().ok()
+}
+
+impl HttpStore {
+    /// Bytes `start..end` of `key`, with one `Range` request.
+    ///
+    /// A server that ignores the range answers 200 with the whole object,
+    /// which is returned as [`Ranged::Whole`] (still under the body cap)
+    /// so the caller can use it rather than ask again. `None` is a missing
+    /// object, as for a whole read.
+    ///
+    /// # Errors
+    /// As [`ReadableStorageTraits::get`], and a 206 answer that starts
+    /// elsewhere or holds more than was asked for.
+    pub fn get_range(
+        &self,
+        key: &StoreKey,
+        start: u64,
+        end: u64,
+    ) -> std::result::Result<Option<Ranged>, StorageError> {
+        let url = self.url(key)?;
+        let wanted = end.saturating_sub(start);
+        let header = HeaderValue::from_str(&format!("bytes={start}-{}", end.saturating_sub(1)))
+            .map_err(|err| StorageError::Other(err.to_string()))?;
+        self.with_retries(key.as_str(), || {
+            let response = self
+                .client
+                .get(url.clone())
+                .header(RANGE, header.clone())
+                .send()
+                .map_err(|e| Failure::of(&e))?;
+            let status = response.status();
+            match status {
+                StatusCode::PARTIAL_CONTENT => {
+                    if content_range_start(&response).is_some_and(|s| s != start) {
+                        return Err(Failure {
+                            transient: false,
+                            message: format!(
+                                "the archive answered a different range than bytes {start}-"
+                            ),
+                        });
+                    }
+                    let part = self.body(response)?;
+                    if part.len() as u64 > wanted {
+                        return Err(Failure {
+                            transient: false,
+                            message: format!(
+                                "the archive sent {} bytes for a {wanted}-byte range",
+                                part.len()
+                            ),
+                        });
+                    }
+                    Ok(Some(Ranged::Part(part)))
+                }
+                StatusCode::OK => Ok(Some(Ranged::Whole(self.body(response)?))),
+                _ => match classify(status) {
+                    Answer::Missing => {
+                        self.missing();
+                        Ok(None)
+                    }
+                    _ => Err(Self::status_failure(status, key.as_str())),
+                },
+            }
+        })
     }
 }
 

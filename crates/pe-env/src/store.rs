@@ -1,6 +1,7 @@
-//! What every dataset reader shares: opening a store (over HTTPS through the
-//! chunk cache, or from a folder), opening an array, and reading coordinate
-//! and time axes. Adapted from VectorEffects' `ve-zarr/src/store.rs`.
+//! What every dataset reader shares: opening a store (over HTTPS, or from a
+//! folder), reading byte ranges of its objects, opening an array, and
+//! reading coordinate and time axes. Adapted from VectorEffects'
+//! `ve-zarr/src/store.rs`.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -8,25 +9,104 @@ use std::time::Duration;
 
 use zarrs::array::Array;
 use zarrs::config::MetadataRetrieveVersion;
-use zarrs::storage::{ReadableStorage, ReadableStorageTraits};
+use zarrs::storage::{ReadableStorage, ReadableStorageTraits, StoreKey};
+use zarrs_storage::Bytes;
+use zarrs_storage::byte_range::ByteRange;
 
-use crate::cache::{CachedStore, ChunkCache};
 use crate::error::{EnvError, Result};
-use crate::http::{HttpStore, NetStats};
+use crate::http::{HttpStore, NetStats, Ranged};
 use crate::time::TimeUnits;
 
 /// A Zarr array on a read-only store.
 pub type ReadArray = Array<dyn ReadableStorageTraits>;
 
+/// Reads parts of a store's objects: what the block reader uses to fetch a
+/// chunk's header and then only the blocks it needs.
+pub trait RangeSource: Send + Sync {
+    /// Bytes `start..end` of `key` (fewer at the end of the object), or the
+    /// whole object when the store ignored the range; `None` when there is
+    /// no such object.
+    ///
+    /// # Errors
+    /// [`EnvError::Read`] on a failed read.
+    fn range(&self, key: &str, start: u64, end: u64) -> Result<Option<Ranged>>;
+
+    /// The whole of `key`; `None` when there is no such object.
+    ///
+    /// # Errors
+    /// [`EnvError::Read`] on a failed read.
+    fn whole(&self, key: &str) -> Result<Option<Bytes>>;
+}
+
+fn store_key(key: &str) -> Result<StoreKey> {
+    StoreKey::new(key).map_err(|e| EnvError::Read {
+        what: key.to_owned(),
+        source: Box::new(e),
+    })
+}
+
+fn storage_err(key: &str) -> impl FnOnce(zarrs::storage::StorageError) -> EnvError + '_ {
+    move |source| EnvError::Read {
+        what: key.to_owned(),
+        source: Box::new(source),
+    }
+}
+
+impl RangeSource for HttpStore {
+    fn range(&self, key: &str, start: u64, end: u64) -> Result<Option<Ranged>> {
+        self.get_range(&store_key(key)?, start, end)
+            .map_err(storage_err(key))
+    }
+
+    fn whole(&self, key: &str) -> Result<Option<Bytes>> {
+        self.get(&store_key(key)?).map_err(storage_err(key))
+    }
+}
+
+/// Byte ranges of any `zarrs` store (a folder, in tests).
+struct StorageRanges(ReadableStorage);
+
+impl RangeSource for StorageRanges {
+    fn range(&self, key: &str, start: u64, end: u64) -> Result<Option<Ranged>> {
+        let k = store_key(key)?;
+        if !self.0.supports_get_partial() {
+            return Ok(self.0.get(&k).map_err(storage_err(key))?.map(Ranged::Whole));
+        }
+        let Some(size) = self.0.size_key(&k).map_err(storage_err(key))? else {
+            return Ok(None);
+        };
+        let end = end.min(size);
+        if start >= end {
+            return Ok(Some(Ranged::Part(Bytes::new())));
+        }
+        let range = ByteRange::FromStart(start, Some(end - start));
+        let parts = self
+            .0
+            .get_partial_many(&k, Box::new([range].into_iter()))
+            .map_err(storage_err(key))?;
+        let Some(mut parts) = parts else {
+            return Ok(None);
+        };
+        match parts.next() {
+            Some(part) => Ok(Some(Ranged::Part(part.map_err(storage_err(key))?))),
+            None => Ok(None),
+        }
+    }
+
+    fn whole(&self, key: &str) -> Result<Option<Bytes>> {
+        self.0.get(&store_key(key)?).map_err(storage_err(key))
+    }
+}
+
 /// An opened store and the counters for its network use.
 #[derive(Clone)]
 pub struct OpenStore {
-    /// The store, ready for `zarrs`.
+    /// The store, ready for `zarrs` (metadata and axes).
     pub store: ReadableStorage,
+    /// The same objects, read by byte range (chunks).
+    pub ranges: Arc<dyn RangeSource>,
     /// Network counters; `None` for a store on disk.
     pub net: Option<Arc<NetStats>>,
-    /// The chunk cache it reads through, and its namespace there.
-    pub cache: Option<(Arc<ChunkCache>, String)>,
 }
 
 impl std::fmt::Debug for OpenStore {
@@ -37,22 +117,12 @@ impl std::fmt::Debug for OpenStore {
     }
 }
 
-/// Opens an anonymous HTTP store, answering chunk reads from `cache` first
-/// when there is one.
+/// Opens an anonymous HTTP store.
 ///
 /// # Errors
 /// [`EnvError::Open`] if the URL is bad or no client can be built.
-pub fn open_http(
-    url: &str,
-    timeout: Duration,
-    cache: Option<(Arc<ChunkCache>, &str)>,
-) -> Result<OpenStore> {
-    open_http_interruptible(
-        url,
-        timeout,
-        cache,
-        Arc::new(crate::http::Interrupt::default()),
-    )
+pub fn open_http(url: &str, timeout: Duration) -> Result<OpenStore> {
+    open_http_interruptible(url, timeout, Arc::new(crate::http::Interrupt::default()))
 }
 
 /// [`open_http`], its retry pauses ending as soon as `interrupt` is set.
@@ -62,24 +132,26 @@ pub fn open_http(
 pub fn open_http_interruptible(
     url: &str,
     timeout: Duration,
-    cache: Option<(Arc<ChunkCache>, &str)>,
     interrupt: Arc<crate::http::Interrupt>,
 ) -> Result<OpenStore> {
     crate::codec::register();
-    let http = HttpStore::new(url, timeout)?.with_interrupt(interrupt);
-    let net = Some(http.stats());
-    let kept = cache
-        .as_ref()
-        .map(|(cache, namespace)| (Arc::clone(cache), (*namespace).to_owned()));
-    let store: ReadableStorage = match cache {
-        Some((cache, namespace)) => Arc::new(CachedStore::new(http, cache, namespace)),
-        None => Arc::new(http),
-    };
+    let http = Arc::new(HttpStore::new(url, timeout)?.with_interrupt(interrupt));
     Ok(OpenStore {
-        store,
-        net,
-        cache: kept,
+        net: Some(http.stats()),
+        store: Arc::clone(&http) as ReadableStorage,
+        ranges: http,
     })
+}
+
+/// Opens a store over any `zarrs` storage, its chunks read by byte range
+/// where the storage can (tests, and a store wrapped to watch its reads).
+pub fn open_storage(store: ReadableStorage) -> OpenStore {
+    crate::codec::register();
+    OpenStore {
+        ranges: Arc::new(StorageRanges(store.clone())),
+        store,
+        net: None,
+    }
 }
 
 /// Opens a store kept in a folder: a recorded fixture, in tests.
@@ -87,14 +159,9 @@ pub fn open_http_interruptible(
 /// # Errors
 /// [`EnvError::Open`] if the folder cannot be opened.
 pub fn open_dir(path: &Path) -> Result<OpenStore> {
-    crate::codec::register();
     let store = zarrs::filesystem::FilesystemStore::new(path)
         .map_err(|e| EnvError::Open(format!("{}: {e}", path.display())))?;
-    Ok(OpenStore {
-        store: Arc::new(store),
-        net: None,
-        cache: None,
-    })
+    Ok(open_storage(Arc::new(store)))
 }
 
 /// Opens an array, insisting on Zarr V2.

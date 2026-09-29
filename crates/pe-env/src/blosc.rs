@@ -43,7 +43,7 @@ const FLAG_DONT_SPLIT: u8 = 0x10;
 const COMPRESSOR_LZ4: u8 = 1;
 
 /// The fixed container header size.
-const HEADER_LEN: usize = 16;
+pub const HEADER_LEN: usize = 16;
 
 fn u32le(bytes: &[u8], at: usize) -> Result<u32> {
     bytes
@@ -89,118 +89,233 @@ pub enum Expected {
     AtMost(usize),
 }
 
-/// Decompresses one blosc1 container.
+/// A blosc1 container's fixed header, checked.
 ///
-/// The header's sizes come from the archive (or a cache file on disk) and
-/// are not trusted: they are checked against `expected` before anything is
-/// allocated, so a 30-byte container declaring 4 GB is an error, not an
+/// The sizes come from the archive and are not trusted: [`Header::parse`]
+/// checks them against what the caller expects before anything is sized
+/// from them, so a 30-byte container declaring 4 GB is an error, not an
 /// abort.
-///
-/// # Errors
-/// Returns [`EnvError::Blosc`] if the container is truncated, uses a
-/// compressor or filter this decoder does not implement, declares a size
-/// other than the one expected, or does not decode to the size its header
-/// declares.
-pub fn decompress(src: &[u8], expected: Expected) -> Result<Vec<u8>> {
-    if src.len() < HEADER_LEN {
-        return Err(EnvError::Blosc(format!(
-            "container is {} bytes, shorter than the {HEADER_LEN}-byte header",
-            src.len()
-        )));
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Header {
+    flags: u8,
+    /// Bytes per element, as the shuffle saw them.
+    pub typesize: usize,
+    /// Decoded size of the whole container.
+    pub nbytes: usize,
+    /// Decoded size of every block but a short final one.
+    pub blocksize: usize,
+    /// Size of the whole container, header included.
+    pub cbytes: usize,
+}
 
-    let flags = src[2];
-    let typesize = usize::from(src[3]);
-    let nbytes = u32le(src, 4)? as usize;
-    let blocksize = u32le(src, 8)? as usize;
-    let cbytes = u32le(src, 12)? as usize;
-
-    match expected {
-        Expected::Exactly(n) if nbytes != n => {
+impl Header {
+    /// Reads and checks the first [`HEADER_LEN`] bytes of a container.
+    ///
+    /// # Errors
+    /// [`EnvError::Blosc`] if `src` is shorter than the header, declares a
+    /// size other than `expected`, a block larger than the chunk, or a
+    /// compressor or filter this decoder does not implement.
+    pub fn parse(src: &[u8], expected: Expected) -> Result<Self> {
+        if src.len() < HEADER_LEN {
             return Err(EnvError::Blosc(format!(
-                "header declares {nbytes} decoded bytes but the chunk holds {n}"
+                "container is {} bytes, shorter than the {HEADER_LEN}-byte header",
+                src.len()
             )));
         }
-        Expected::AtMost(n) if nbytes > n => {
-            return Err(EnvError::Blosc(format!(
-                "header declares {nbytes} decoded bytes, more than the {n} allowed"
-            )));
-        }
-        _ => {}
-    }
-    if blocksize > nbytes && nbytes > 0 {
-        return Err(EnvError::Blosc(format!(
-            "header declares a {blocksize}-byte block in a {nbytes}-byte chunk"
-        )));
-    }
-
-    if flags & FLAG_BITSHUFFLE != 0 {
-        return Err(EnvError::Blosc("bit shuffle is not supported".into()));
-    }
-    let compressor = flags >> 5;
-    if compressor != COMPRESSOR_LZ4 {
-        return Err(EnvError::Blosc(format!(
-            "compressor id {compressor} is not supported; this decoder handles lz4 only"
-        )));
-    }
-    if cbytes != src.len() {
-        return Err(EnvError::Blosc(format!(
-            "header declares {cbytes} bytes but the chunk is {}",
-            src.len()
-        )));
-    }
-
-    if flags & FLAG_MEMCPYED != 0 {
-        return src
-            .get(HEADER_LEN..HEADER_LEN + nbytes)
-            .map(<[u8]>::to_vec)
-            .ok_or_else(|| EnvError::Blosc("truncated uncompressed payload".into()));
-    }
-
-    if blocksize == 0 {
-        return Err(EnvError::Blosc("header declares a zero blocksize".into()));
-    }
-    if typesize == 0 {
-        return Err(EnvError::Blosc("header declares a zero typesize".into()));
-    }
-
-    let shuffled = flags & FLAG_SHUFFLE != 0;
-    let dont_split = flags & FLAG_DONT_SPLIT != 0;
-    let nblocks = nbytes.div_ceil(blocksize);
-    let mut out = Vec::with_capacity(nbytes);
-
-    for b in 0..nblocks {
-        let start = u32le(src, HEADER_LEN + b * 4)? as usize;
-        let is_final_partial = b == nblocks - 1 && !nbytes.is_multiple_of(blocksize);
-        let block_len = if is_final_partial {
-            nbytes - b * blocksize
-        } else {
-            blocksize
+        let flags = src[2];
+        let header = Self {
+            flags,
+            typesize: usize::from(src[3]),
+            nbytes: u32le(src, 4)? as usize,
+            blocksize: u32le(src, 8)? as usize,
+            cbytes: u32le(src, 12)? as usize,
         };
+        let nbytes = header.nbytes;
+        match expected {
+            Expected::Exactly(n) if nbytes != n => {
+                return Err(EnvError::Blosc(format!(
+                    "header declares {nbytes} decoded bytes but the chunk holds {n}"
+                )));
+            }
+            Expected::AtMost(n) if nbytes > n => {
+                return Err(EnvError::Blosc(format!(
+                    "header declares {nbytes} decoded bytes, more than the {n} allowed"
+                )));
+            }
+            _ => {}
+        }
+        if header.blocksize > nbytes && nbytes > 0 {
+            return Err(EnvError::Blosc(format!(
+                "header declares a {}-byte block in a {nbytes}-byte chunk",
+                header.blocksize
+            )));
+        }
+        if flags & FLAG_BITSHUFFLE != 0 {
+            return Err(EnvError::Blosc("bit shuffle is not supported".into()));
+        }
+        let compressor = flags >> 5;
+        if compressor != COMPRESSOR_LZ4 {
+            return Err(EnvError::Blosc(format!(
+                "compressor id {compressor} is not supported; this decoder handles lz4 only"
+            )));
+        }
+        if !header.memcpyed() {
+            if header.blocksize == 0 && nbytes > 0 {
+                return Err(EnvError::Blosc("header declares a zero blocksize".into()));
+            }
+            if header.typesize == 0 {
+                return Err(EnvError::Blosc("header declares a zero typesize".into()));
+            }
+        }
+        Ok(header)
+    }
 
+    /// Whether the payload is stored uncompressed, straight after the header.
+    pub fn memcpyed(&self) -> bool {
+        self.flags & FLAG_MEMCPYED != 0
+    }
+
+    /// How many blocks the container holds.
+    pub fn nblocks(&self) -> usize {
+        if self.blocksize == 0 {
+            // Only a memcpyed or empty container gets here.
+            usize::from(self.nbytes > 0)
+        } else {
+            self.nbytes.div_ceil(self.blocksize)
+        }
+    }
+
+    /// The decoded size of a memcpyed container's "blocks": the declared
+    /// blocksize when there is one, else the whole payload.
+    fn span(&self) -> usize {
+        if self.blocksize == 0 {
+            self.nbytes
+        } else {
+            self.blocksize
+        }
+    }
+
+    /// How many bytes from the start hold the header and the block offsets:
+    /// what has to be read before any block can be found.
+    pub fn index_len(&self) -> usize {
+        if self.memcpyed() {
+            HEADER_LEN
+        } else {
+            HEADER_LEN + 4 * self.nblocks()
+        }
+    }
+
+    /// The decoded bytes of block `b`, and where they start in the chunk.
+    pub fn block_span(&self, b: usize) -> std::ops::Range<usize> {
+        let start = (b * self.span()).min(self.nbytes);
+        start..(start + self.span()).min(self.nbytes)
+    }
+
+    /// Where each block's compressed bytes lie in the container.
+    ///
+    /// `index` is the start of the container, at least [`Self::index_len`]
+    /// bytes of it. A block runs from its offset to the next larger one (or
+    /// the end of the container): blosc writes them in order, and taking the
+    /// next larger offset rather than the next entry keeps a reordered
+    /// container bounded too.
+    ///
+    /// # Errors
+    /// [`EnvError::Blosc`] if `index` is too short or an offset points
+    /// outside the container.
+    pub fn block_extents(&self, index: &[u8]) -> Result<Vec<std::ops::Range<usize>>> {
+        let n = self.nblocks();
+        if self.memcpyed() {
+            return Ok((0..n)
+                .map(|b| {
+                    let span = self.block_span(b);
+                    HEADER_LEN + span.start..HEADER_LEN + span.end
+                })
+                .collect());
+        }
+        if index.len() < self.index_len() {
+            return Err(EnvError::Blosc(format!(
+                "the block offsets need {} bytes, only {} were read",
+                self.index_len(),
+                index.len()
+            )));
+        }
+        let mut starts = Vec::with_capacity(n);
+        for b in 0..n {
+            let start = u32le(index, HEADER_LEN + b * 4)? as usize;
+            if start < self.index_len() || start >= self.cbytes {
+                return Err(EnvError::Blosc(format!(
+                    "block {b} starts at {start}, outside the {}-byte container",
+                    self.cbytes
+                )));
+            }
+            starts.push(start);
+        }
+        let mut sorted = starts.clone();
+        sorted.sort_unstable();
+        Ok(starts
+            .iter()
+            .map(|&start| {
+                let end = sorted
+                    .iter()
+                    .copied()
+                    .find(|&s| s > start)
+                    .unwrap_or(self.cbytes);
+                start..end
+            })
+            .collect())
+    }
+
+    /// Decodes block `b` from its compressed bytes (its extent, as
+    /// [`Self::block_extents`] gives it).
+    ///
+    /// Blocks decode independently: the byte shuffle and the per-byte
+    /// streams are both within a block. That is what lets a reader fetch
+    /// only the blocks holding the rows it needs.
+    ///
+    /// # Errors
+    /// [`EnvError::Blosc`] if the bytes are short, a stream runs past them,
+    /// or a stream does not decode to its size.
+    pub fn decode_block(&self, b: usize, src: &[u8]) -> Result<Vec<u8>> {
+        if b >= self.nblocks() {
+            return Err(EnvError::Blosc(format!(
+                "block {b} of a {}-block container",
+                self.nblocks()
+            )));
+        }
+        let span = self.block_span(b);
+        let block_len = span.len();
+        if self.memcpyed() {
+            return src
+                .get(..block_len)
+                .map(<[u8]>::to_vec)
+                .ok_or_else(|| EnvError::Blosc(format!("block {b} is truncated")));
+        }
+        let typesize = self.typesize;
+        let is_final_partial = span.end == self.nbytes && block_len < self.blocksize;
         // c-blosc splits a block into one stream per byte of the element, so
         // that each stream sees one shuffle plane. The short final block and
         // an explicit DONT_SPLIT are the exceptions.
-        let nstreams = if !dont_split && !is_final_partial {
+        let nstreams = if self.flags & FLAG_DONT_SPLIT == 0 && !is_final_partial {
             typesize
         } else {
             1
         };
-        if block_len % nstreams != 0 {
+        if !block_len.is_multiple_of(nstreams) {
             return Err(EnvError::Blosc(format!(
                 "block {b} of {block_len} bytes does not divide into {nstreams} streams"
             )));
         }
         let stream_len = block_len / nstreams;
-
         let mut block = Vec::with_capacity(block_len);
-        let mut at = start;
+        let mut at = 0;
         for s in 0..nstreams {
             let compressed_len = u32le(src, at)? as usize;
             at += 4;
-            let payload = src.get(at..at + compressed_len).ok_or_else(|| {
-                EnvError::Blosc(format!("block {b} stream {s} runs past the chunk"))
-            })?;
+            let payload = src
+                .get(at..at.saturating_add(compressed_len))
+                .ok_or_else(|| {
+                    EnvError::Blosc(format!("block {b} stream {s} runs past the block"))
+                })?;
             if compressed_len == stream_len {
                 // blosc stores incompressible streams verbatim.
                 block.extend_from_slice(payload);
@@ -217,21 +332,110 @@ pub fn decompress(src: &[u8], expected: Expected) -> Result<Vec<u8>> {
             }
             at += compressed_len;
         }
-
-        if shuffled {
-            out.extend_from_slice(&unshuffle(&block, typesize));
+        if self.flags & FLAG_SHUFFLE != 0 {
+            Ok(unshuffle(&block, typesize))
         } else {
-            out.extend_from_slice(&block);
+            Ok(block)
         }
     }
+}
 
-    if out.len() != nbytes {
+/// Decompresses one blosc1 container.
+///
+/// # Errors
+/// Returns [`EnvError::Blosc`] if the container is truncated, uses a
+/// compressor or filter this decoder does not implement, declares a size
+/// other than the one expected, or does not decode to the size its header
+/// declares.
+pub fn decompress(src: &[u8], expected: Expected) -> Result<Vec<u8>> {
+    let header = Header::parse(src, expected)?;
+    if header.cbytes != src.len() {
         return Err(EnvError::Blosc(format!(
-            "decoded {} bytes, header declares {nbytes}",
-            out.len()
+            "header declares {} bytes but the chunk is {}",
+            header.cbytes,
+            src.len()
+        )));
+    }
+    let extents = header.block_extents(src)?;
+    let mut out = Vec::with_capacity(header.nbytes);
+    for (b, extent) in extents.into_iter().enumerate() {
+        let bytes = src
+            .get(extent)
+            .ok_or_else(|| EnvError::Blosc(format!("block {b} runs past the chunk")))?;
+        out.extend_from_slice(&header.decode_block(b, bytes)?);
+    }
+    if out.len() != header.nbytes {
+        return Err(EnvError::Blosc(format!(
+            "decoded {} bytes, header declares {}",
+            out.len(),
+            header.nbytes
         )));
     }
     Ok(out)
+}
+
+/// Encodes `data` as a blosc1 container the way the archives are written
+/// (byte shuffle, LZ4, one stream per byte of the element except in a
+/// short final block), with blocks of `blocksize` bytes.
+///
+/// PolarEffects never writes Zarr; this exists so tests can build
+/// multi-block chunks whose every byte they know, and is checked against
+/// the decoder, never used by the application.
+#[doc(hidden)]
+pub fn encode_for_tests(data: &[u8], typesize: usize, blocksize: usize) -> Vec<u8> {
+    let typesize = typesize.max(1);
+    let blocksize = blocksize.max(typesize);
+    let nblocks = data.len().div_ceil(blocksize);
+    let mut body = Vec::new();
+    let mut starts = Vec::new();
+    let index_len = HEADER_LEN + 4 * nblocks;
+    for b in 0..nblocks {
+        starts.push((index_len + body.len()) as u32);
+        let block = &data[b * blocksize..((b + 1) * blocksize).min(data.len())];
+        let partial = block.len() < blocksize;
+        let shuffled = shuffle(block, typesize);
+        let nstreams = if partial { 1 } else { typesize };
+        let stream_len = block.len() / nstreams;
+        for s in 0..nstreams {
+            let stream = &shuffled[s * stream_len..(s + 1) * stream_len];
+            let packed = lz4_flex::block::compress(stream);
+            let (len, bytes) = if packed.len() >= stream_len {
+                (stream_len, stream.to_vec())
+            } else {
+                (packed.len(), packed)
+            };
+            body.extend_from_slice(&(len as u32).to_le_bytes());
+            body.extend_from_slice(&bytes);
+        }
+    }
+    let mut out = vec![2u8, 1, FLAG_SHUFFLE | (COMPRESSOR_LZ4 << 5), typesize as u8];
+    out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    out.extend_from_slice(&(blocksize as u32).to_le_bytes());
+    out.extend_from_slice(&((index_len + body.len()) as u32).to_le_bytes());
+    for start in starts {
+        out.extend_from_slice(&start.to_le_bytes());
+    }
+    out.extend_from_slice(&body);
+    out
+}
+
+/// blosc's byte shuffle, the inverse of [`unshuffle`] (for
+/// [`encode_for_tests`]).
+fn shuffle(src: &[u8], typesize: usize) -> Vec<u8> {
+    let n = src.len();
+    if typesize <= 1 {
+        return src.to_vec();
+    }
+    let nelem = n / typesize;
+    let mut out = vec![0u8; n];
+    for i in 0..nelem {
+        for j in 0..typesize {
+            out[j * nelem + i] = src[i * typesize + j];
+        }
+    }
+    let tail = nelem * typesize;
+    out[tail..].copy_from_slice(&src[tail..]);
+    out
 }
 
 #[cfg(test)]
@@ -367,5 +571,76 @@ mod tests {
         let c = header(flags, 4, 8, 8, 999);
         let err = decompress(&c, Expected::Exactly(8)).expect_err("must reject");
         assert!(format!("{err}").contains("declares"), "{err}");
+    }
+
+    /// Floats that do not compress to nothing: a ramp with a wobble.
+    fn field(n: usize) -> Vec<u8> {
+        (0..n)
+            .flat_map(|i| ((i as f32) * 0.37 + ((i * 7919) % 13) as f32).to_le_bytes())
+            .collect()
+    }
+
+    /// Three whole blocks and a short fourth: the whole container decodes
+    /// to what went in, and so does each block on its own from its extent
+    /// alone, which is what a ranged read relies on.
+    #[test]
+    fn every_block_decodes_alone_from_its_extent() {
+        let data = field(1000); // 4000 bytes
+        let c = encode_for_tests(&data, 4, 1024);
+        assert_eq!(
+            decompress(&c, Expected::Exactly(4000)).expect("decodes"),
+            data
+        );
+        let header = Header::parse(&c, Expected::Exactly(4000)).expect("a header");
+        assert_eq!(header.nblocks(), 4);
+        assert_eq!(header.index_len(), 16 + 16);
+        assert_eq!(header.block_span(3), 3072..4000);
+        let extents = header
+            .block_extents(&c[..header.index_len()])
+            .expect("extents");
+        assert_eq!(extents.last().map(|e| e.end), Some(c.len()));
+        for (b, extent) in extents.into_iter().enumerate() {
+            let alone = c[extent].to_vec();
+            let decoded = header.decode_block(b, &alone).expect("decodes alone");
+            assert_eq!(decoded, data[header.block_span(b)].to_vec(), "block {b}");
+        }
+        assert!(header.decode_block(4, &[]).is_err());
+    }
+
+    /// The offsets need the whole index; fewer bytes is an error, not a
+    /// guess.
+    #[test]
+    fn block_offsets_need_the_whole_index_and_stay_inside() {
+        let c = encode_for_tests(&field(1000), 4, 1024);
+        let header = Header::parse(&c, Expected::AtMost(MAX_UNKNOWN_SIZE)).expect("a header");
+        assert!(header.block_extents(&c[..20]).is_err());
+        let mut bad = c.clone();
+        bad[16..20].copy_from_slice(&(c.len() as u32 + 5).to_le_bytes());
+        assert!(header.block_extents(&bad).is_err());
+        // A block cut short by its extent fails rather than reading on.
+        let extents = header.block_extents(&c).expect("extents");
+        let short = &c[extents[1].start..extents[1].end - 3];
+        assert!(header.decode_block(1, short).is_err());
+    }
+
+    /// A memcpyed container's blocks are plain slices after the header.
+    #[test]
+    fn memcpyed_blocks_are_slices_after_the_header() {
+        let payload: Vec<u8> = (0u8..40).collect();
+        let flags = FLAG_MEMCPYED | (COMPRESSOR_LZ4 << 5);
+        let mut c = header(flags, 4, 40, 16, (HEADER_LEN + 40) as u32);
+        c.extend_from_slice(&payload);
+        let h = Header::parse(&c, Expected::Exactly(40)).expect("a header");
+        assert_eq!(h.index_len(), HEADER_LEN);
+        let extents = h.block_extents(&c[..HEADER_LEN]).expect("extents");
+        assert_eq!(extents, vec![16..32, 32..48, 48..56]);
+        assert_eq!(
+            h.decode_block(2, &c[48..56]).expect("a slice"),
+            payload[32..40].to_vec()
+        );
+        assert_eq!(
+            decompress(&c, Expected::Exactly(40)).expect("decodes"),
+            payload
+        );
     }
 }

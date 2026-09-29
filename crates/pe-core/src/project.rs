@@ -15,7 +15,7 @@ use crate::track::SegmentStatistic;
 ///
 /// Opening a newer version is refused; older versions migrate forward on open
 /// (`io::MIGRATIONS`).
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// The boat the polar is for. Free text.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

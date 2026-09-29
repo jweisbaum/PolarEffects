@@ -37,9 +37,11 @@ stop and raise it rather than working around it.
    sources plus overlays. They may be cached in memory, never persisted as
    project data. Export always recomputes.
 3. **Fetched environment data is project data, rendered views are not.**
-   Wind, wave and current samples at track positions are expensive to fetch,
-   so they are saved in the project with the dataset name and version they
-   came from. Deleting the chunk cache directory must always be lossless.
+   Wind, wave and current values interpolated at each track position are
+   saved in the project with the dataset name and version they came from —
+   only those values, kilobytes per track. Nothing downloaded (fields,
+   chunks, blocks) is ever kept on disk; it lives in memory for the session
+   and quitting is always lossless (D27).
 4. **Nothing is fetched that the user did not ask for, and nothing reaches
    in.** No CDN fonts, no map tiles, no telemetry, no remote schema fetches.
    The webview's CSP stays `'self'`-only. Only two crates may use the network:
@@ -88,8 +90,8 @@ crates/
   pe-trackers/  Network: YellowBrick, Geovoile (hwx decoder), Blue Water
                 Tracks clients and decoders
   pe-env/       Network: zarr readers for WeatherBench2 wind, ARCO-ERA5
-                waves, and ocean currents; pure-Rust blosc/LZ4; chunk cache;
-                space-time sampling
+                waves, and ocean currents; pure-Rust blosc/LZ4 with block
+                reads by HTTP Range; in-memory block LRU; space-time sampling
   pe-grib/      GRIB2 writer (fixed-layout message template, as in
                 VectorEffects' ve-grib), regional grids
   pe-app/       Tauri shell: IPC commands, state, jobs, autosave, settings

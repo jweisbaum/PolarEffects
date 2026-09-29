@@ -153,8 +153,8 @@ it("imports files without fetching weather; Fetch weather… shows the estimate 
   };
   responses.importTrackFiles = { project: project([SOURCE]), imported: [line], failures: [] };
   responses.envEstimate = {
-    samples: 120, hourly_bytes: 250_000_000, three_hourly_bytes: 90_000_000, cached_bytes: 0,
-    cache_limit_bytes: 20 * 2 ** 30, recommended: "hourly",
+    samples: 120, hourly_bytes: 25_000_000, three_hourly_bytes: 9_000_000, cached_bytes: 0,
+    stored_bytes: 960, three_hourly_above_bytes: 1e9, recommended: "hourly",
   };
   responses.startEnvFetch = { tracks: [], failure: null, warning: null };
   await act(async () => root.render(<Tracks project={project([])} onProject={() => undefined} />));
@@ -172,8 +172,10 @@ it("imports files without fetching weather; Fetch weather… shows the estimate 
   expect(calls.find(([n]) => n === "envEstimate")?.[1]).toEqual([[5], false]);
   const text = q("[role=dialog]")!.textContent!;
   expect(text).toContain("120 samples");
-  expect(text).toContain("Hourly: about 250 MB to download");
-  expect(text).toContain("Every 3 hours: about 90 MB to download");
+  expect(text).toContain("Hourly: about 25 MB to download");
+  expect(text).toContain("Every 3 hours: about 9 MB to download");
+  // What the project keeps: kilobytes, not the download (D27).
+  expect(text).toContain("Stored in the project: about 1 kB");
   expect((q('[data-feature="env-fetch:hourly"]') as HTMLInputElement).checked).toBe(true);
   // Fetch, the default answer, has the focus once the estimate is in.
   expect(document.activeElement).toBe(q(".modal-actions button.primary"));
@@ -184,17 +186,20 @@ it("imports files without fetching weather; Fetch weather… shows the estimate 
   expect(q("[role=dialog]")).toBeNull();
 });
 
-it("preselects 3-hourly for a download bigger than half the cache (D19)", async () => {
+it("preselects 3-hourly for a download over 1 GB (D19, D27)", async () => {
   responses.envEstimate = {
-    samples: 9000, hourly_bytes: 19e9, three_hourly_bytes: 6.4e9, cached_bytes: 1e9,
-    cache_limit_bytes: 20 * 2 ** 30, recommended: "three_hourly",
+    samples: 9000, hourly_bytes: 2.4e9, three_hourly_bytes: 0.8e9, cached_bytes: 1e9,
+    stored_bytes: 72_000, three_hourly_above_bytes: 1e9, recommended: "three_hourly",
   };
   await act(async () => root.render(<Tracks project={project([SOURCE])} onProject={() => undefined} />));
   await click(q('[data-feature="tracks:fetch-weather"]'));
   await settle();
   expect(calls.find(([n]) => n === "envEstimate")?.[1]).toEqual([[5], false]);
   expect((q('[data-feature="env-fetch:three-hourly"]') as HTMLInputElement).checked).toBe(true);
-  expect(q("[role=dialog]")!.textContent).toContain("1.0 GB of it is already in the chunk cache.");
+  const text = q("[role=dialog]")!.textContent!;
+  expect(text).toContain("1.0 GB of it was already downloaded this session.");
+  expect(text).toContain("Hourly would download more than 1.0 GB, so every 3 hours is chosen.");
+  expect(text).toContain("Stored in the project: about 72 kB");
   // Not now fetches nothing.
   await click([...host.querySelectorAll(".modal-actions button")].find((b) => b.textContent === "Not now")!);
   expect(calls.filter(([n]) => n === "startEnvFetch")).toEqual([]);
@@ -490,7 +495,7 @@ it("fetches the weather of the ticked tracks together", async () => {
   // A choice made meanwhile is kept when the estimate arrives.
   await click(q('[data-feature="env-fetch:three-hourly"]'));
   await act(async () => {
-    estimate({ samples: 240, hourly_bytes: 5e8, three_hourly_bytes: 2e8, cached_bytes: 0, cache_limit_bytes: 20 * 2 ** 30, recommended: "hourly" });
+    estimate({ samples: 240, hourly_bytes: 5e8, three_hourly_bytes: 2e8, cached_bytes: 0, stored_bytes: 1920, three_hourly_above_bytes: 1e9, recommended: "hourly" });
   });
   expect(q("[role=dialog]")!.textContent).toContain("240 samples");
   expect((q('[data-feature="env-fetch:three-hourly"]') as HTMLInputElement).checked).toBe(true);

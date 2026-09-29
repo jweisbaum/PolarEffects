@@ -109,10 +109,11 @@ export function envStatusText(track: TrackSummary, job?: EnvJobTrack): string {
   return t(ENV_STATUS[track.env_status] ?? ENV_STATUS.not_fetched!);
 }
 
-/** A download size, for the fetch's pre-flight. */
+/** A download or file size, for the fetch's pre-flight. */
 export function formatBytes(bytes: number): string {
   if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
-  return `${Math.max(1, Math.round(bytes / 1e6))} MB`;
+  if (bytes >= 1e6) return `${Math.round(bytes / 1e6)} MB`;
+  return `${Math.max(1, Math.round(bytes / 1e3))} kB`;
 }
 
 /** The column roles of the CSV mapping step, in the order they are shown. */

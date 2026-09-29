@@ -272,8 +272,6 @@ const catalogue: Record<string, string> = {
   "Wind and wave sampling": "Abtastung von Wind und Wellen",
   "Hourly: about {size} to download": "Stündlich: etwa {size} Download",
   "Every 3 hours: about {size} to download": "Alle 3 Stunden: etwa {size} Download",
-  "{size} of it is already in the chunk cache.": "Davon liegen {size} schon im Datenblock-Cache.",
-  "Hourly would fill more than half the chunk cache ({limit}), so every 3 hours is chosen.": "Stündlich würde mehr als die Hälfte des Datenblock-Caches ({limit}) füllen, daher ist alle 3 Stunden gewählt.",
   "It runs in the background; the status bar shows its progress and can cancel it. Samples already fetched are kept.": "Er läuft im Hintergrund; die Statusleiste zeigt den Fortschritt und kann ihn abbrechen. Bereits abgerufene Punkte bleiben erhalten.",
   "Not now": "Nicht jetzt",
   "Start the fetch in the background": "Den Abruf im Hintergrund starten",
@@ -427,6 +425,9 @@ const catalogue: Record<string, string> = {
   "Select {track}": "{track} auswählen",
   "Weather: {status}": "Wetter: {status}",
   "Fetch weather…": "Wetter abrufen…",
+  "Stored in the project: about {size}, the wind, waves and current at each sample.": "Im Projekt gespeichert: etwa {size}, Wind, Wellen und Strömung an jedem Punkt.",
+  "{size} of it was already downloaded this session.": "Davon wurden {size} in dieser Sitzung schon heruntergeladen.",
+  "Hourly would download more than {limit}, so every 3 hours is chosen.": "Stündlich würde mehr als {limit} herunterladen, daher ist alle 3 Stunden gewählt.",
 };
 
 export default catalogue;

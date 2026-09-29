@@ -18,6 +18,7 @@ import { currentEnvJobs, envJobsBusy, setEnvJobs, useEnvJobs } from "./jobs";
 import ConfirmDialog from "./project/ConfirmDialog";
 import MapView from "./map/MapView";
 import LeftNav from "./panels/LeftNav";
+import { formatBytes } from "./panels/trackImport";
 import PolarPlot from "./panels/PolarPlot";
 import PolarView from "./polar/PolarView";
 import { editFocus, editSource, onEditSource } from "./polar/editFocus";
@@ -194,11 +195,29 @@ function Shell() {
     return () => { for (const off of offs) off(); };
   }, []);
 
-  const flash = useCallback((message: string) => {
+  const flash = useCallback((message: string, ms = 2500) => {
     setStatus(message);
     reportError(null);
-    window.setTimeout(() => setStatus((current) => (current === message ? null : current)), 2500);
+    window.setTimeout(() => setStatus((current) => (current === message ? null : current)), ms);
   }, []);
+
+  /**
+   * Downloaded weather is no longer kept on disk (D27): the first time a
+   * project window shows its status line in a session, an earlier
+   * version's chunk cache is removed in the background, and the status
+   * line says so.
+   */
+  const askedLegacy = useRef(false);
+  useEffect(() => {
+    if (project === null || askedLegacy.current) return;
+    askedLegacy.current = true;
+    void api.legacyCacheNotice().then((notice) => {
+      if (notice) {
+        flash(t("Downloaded weather is no longer kept on disk: removing {size} an earlier version left in {path}. Projects keep every value they use.",
+          { size: formatBytes(Number(notice.bytes)), path: notice.path }), 15_000);
+      }
+    }).catch(() => undefined);
+  }, [project, flash, t]);
 
   /** Puts the application into a project, or back to the start screen. */
   const enter = useCallback((next: ProjectSummary | null) => {

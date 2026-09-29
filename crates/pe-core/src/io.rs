@@ -11,7 +11,9 @@
 //!   refused before its document is parsed;
 //! - `project.json`: the document, pretty-printed, everything except bulk
 //!   track data;
-//! - `tracks/<track id>.json`: one per track, its fixes and samples, compact.
+//! - `tracks/<track id>.json`: one per track, its fixes and its samples by
+//!   column (schema 2; schema 1 wrote one object per sample, read to
+//!   migrate).
 //!
 //! **Nothing else, ever.** No rendered images, no blend results (invariant 2).
 //! The writer cannot produce another entry, and the reader refuses an archive
@@ -25,7 +27,7 @@ use serde_json::Value;
 
 use crate::error::{CoreError, Result};
 use crate::project::{Project, SCHEMA_VERSION};
-use crate::track::TrackBulk;
+use crate::track::{TrackBulk, TrackBulkV1};
 
 /// The project document inside the archive.
 pub const PROJECT_ENTRY: &str = "project.json";
@@ -40,9 +42,16 @@ pub const EXTENSION: &str = "wpsproj";
 pub type Migration = fn(&mut Value) -> Result<()>;
 
 /// The migration chain, keyed by the version each step upgrades *from*
-/// (spec.md 4.3). Empty until the first schema change: version 1 is the first
-/// this application wrote.
-pub const MIGRATIONS: &[(u32, Migration)] = &[];
+/// (spec.md 4.3).
+pub const MIGRATIONS: &[(u32, Migration)] = &[(1, samples_by_column)];
+
+/// 1 → 2 (M14e, D27): track samples are stored by column, without what is
+/// derived, and their environment at its stored precision. That lives in
+/// the `tracks/` entries, which [`from_bytes`] reads by the file's version;
+/// `project.json` itself is unchanged.
+fn samples_by_column(_value: &mut Value) -> Result<()> {
+    Ok(())
+}
 
 /// The archive entry holding one track's bulk data.
 pub fn track_entry(id: crate::id::TrackId) -> String {
@@ -173,7 +182,7 @@ pub fn to_bytes(project: &Project) -> Result<Vec<u8>> {
         if let Some(track) = source.track() {
             zip.start_file(track_entry(track.id), options)
                 .map_err(zip_err)?;
-            let bulk = serde_json::to_vec(&track.bulk())?;
+            let bulk = serde_json::to_vec(&track.bulk()?)?;
             zip.write_all(&bulk)?;
         }
     }
@@ -211,9 +220,19 @@ pub fn from_bytes(bytes: &[u8]) -> Result<Project> {
             continue;
         };
         let name = track_entry(track.id);
-        let bulk: TrackBulk = serde_json::from_str(&read_entry(&mut archive, &name)?)?;
-        track.fixes = bulk.fixes;
-        track.samples = bulk.samples;
+        let text = read_entry(&mut archive, &name)?;
+        let in_entry = |err: CoreError| CoreError::Archive(format!("{name}: {err}"));
+        let (fixes, samples) = if version < 2 {
+            serde_json::from_str::<TrackBulkV1>(&text)?
+                .into_parts()
+                .map_err(in_entry)?
+        } else {
+            let bulk: TrackBulk = serde_json::from_str(&text)?;
+            let samples = bulk.samples.into_samples(&bulk.fixes).map_err(in_entry)?;
+            (bulk.fixes, samples)
+        };
+        track.fixes = fixes;
+        track.samples = samples;
         expected.insert(name);
     }
     if let Some(unexpected) = archive
@@ -564,10 +583,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(
-        clippy::reversed_empty_ranges,
-        reason = "empty while SCHEMA_VERSION is 1; the check matters from the first bump"
-    )]
     fn the_shipped_chain_reaches_the_current_version_from_every_older_one() {
         for from in 1..SCHEMA_VERSION {
             assert!(
@@ -615,5 +630,265 @@ mod tests {
 
         assert_eq!(std::fs::read(&path).unwrap(), before);
         assert!(!dir.path("p.wpsproj.tmp").exists());
+    }
+
+    /// A project whose one track has `n` fixes a boat 10 minutes apart and
+    /// a sample for each with its motion and the environment as a fetch
+    /// leaves it: slowly varying wind, waves and current, as interpolated
+    /// reanalysis is. A random walk, so nothing repeats.
+    fn fetched_track_project(n: usize) -> Project {
+        use crate::track::{
+            DatasetRecord, EnvStatus, Fix, Sample, Track, TrackOrigin, ValueOrigin,
+        };
+        let mut p = Project::new(
+            "Sizes".to_owned(),
+            crate::project::Boat {
+                name: "B".to_owned(),
+                notes: String::new(),
+            },
+            1_700_000_000,
+        );
+        let id = p.allocate_source_id();
+        let track_id = p.allocate_track_id();
+        let mut track = Track::new(
+            track_id,
+            TrackOrigin::File {
+                name: "race.csv".to_owned(),
+                boat_name: None,
+            },
+        );
+        let mut state: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state as f64 / u64::MAX as f64) * 2.0 - 1.0
+        };
+        let (mut lat, mut lon, mut tws, mut twd, mut hs, mut wd, mut cs, mut ct) =
+            (50.1, -5.2, 12.0, 240.0, 1.5, 250.0, 0.8, 90.0);
+        let (mut dtws, mut dtwd) = (0.0, 0.0);
+        for i in 0..n {
+            lat += 0.01 * next();
+            lon += 0.01 * next();
+            let fix = Fix {
+                t: 1_753_000_000 + 600 * i as i64,
+                lat: crate::canonical::degrees(lat),
+                lon: crate::canonical::degrees(lon),
+                cog: None,
+                sog: None,
+            };
+            let mut s = Sample::at(p.allocate_sample_id(), i as u32, &fix);
+            s.heading = Some(crate::canonical::degrees(
+                (200.0 + 40.0 * next()).rem_euclid(360.0),
+            ));
+            s.heading_origin = Some(ValueOrigin::Derived);
+            s.speed = Some(crate::canonical::knots(7.0 + next()));
+            s.speed_origin = Some(ValueOrigin::Derived);
+            dtws = 0.9 * dtws + 0.08 * next();
+            dtwd = 0.9 * dtwd + 0.3 * next();
+            tws = f64::max(tws + dtws, 0.0);
+            twd = (twd + dtwd).rem_euclid(360.0);
+            hs = f64::max(hs + 0.005 * next(), 0.0);
+            wd = (wd + 0.2 * next()).rem_euclid(360.0);
+            cs = f64::abs(cs + 0.01 * next());
+            ct = (ct + 1.5 * next()).rem_euclid(360.0);
+            (s.tws, s.twd_from, s.hs_m, s.wave_from) = (Some(tws), Some(twd), Some(hs), Some(wd));
+            (s.current_speed, s.current_toward) = (Some(cs), Some(ct));
+            (s.wind_dataset, s.wave_dataset, s.current_dataset) = (Some(0), Some(1), Some(2));
+            s.env_fetched = true;
+            s.quantise_env();
+            s.relate();
+            track.fixes.push(fix);
+            track.samples.push(s);
+        }
+        for name in ["arco-era5", "arco-era5-waves", "cmems-nws-my-uv-geo"] {
+            track.env_meta.datasets.push(DatasetRecord {
+                name: name.to_owned(),
+                version: "v".to_owned(),
+                fetched_at: 1_760_000_000,
+                has_tide: None,
+            });
+        }
+        track.env_meta.status = EnvStatus::Ready;
+        p.sources.push(crate::Source::new(
+            id,
+            "Boat".to_owned(),
+            crate::Colour::parse("#123456").unwrap(),
+            crate::SourceKind::Track {
+                track: Box::new(track),
+            },
+        ));
+        p
+    }
+
+    /// The compressed size of `name` in an archive.
+    fn stored_size(bytes: &[u8], name: &str) -> u64 {
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        archive.by_name(name).unwrap().compressed_size()
+    }
+
+    /// Schema 1's bulk entry for `track`: one object per sample, every
+    /// field written.
+    fn v1_entry(track: &crate::track::Track) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "fixes": track.fixes,
+            "samples": track.samples,
+        }))
+        .unwrap()
+    }
+
+    /// The same project as schema 1 wrote it.
+    fn as_v1(project: &Project) -> Vec<u8> {
+        let bytes = to_bytes(project).unwrap();
+        rewrite(&bytes, |entries| {
+            for (name, data) in entries.iter_mut() {
+                if name == VERSION_ENTRY {
+                    *data = b"1".to_vec();
+                } else if name == PROJECT_ENTRY {
+                    let mut doc: Value = serde_json::from_slice(data).unwrap();
+                    doc["schema_version"] = Value::from(1);
+                    *data = serde_json::to_vec_pretty(&doc).unwrap();
+                } else if let Some(track) = project
+                    .sources
+                    .iter()
+                    .filter_map(|s| s.track())
+                    .find(|t| *name == track_entry(t.id))
+                {
+                    *data = v1_entry(track);
+                }
+            }
+        })
+    }
+
+    /// D27: a track's samples cost a few kilobytes per thousand in the
+    /// file. Measured here on 1,000 fetched samples, before (schema 1, one
+    /// object per sample) and after (schema 2, by column); printed with
+    /// `--nocapture` for plan.md.
+    #[test]
+    fn a_thousand_fetched_samples_are_a_few_kilobytes() {
+        let project = fetched_track_project(1000);
+        let track = project.sources[0].track().unwrap();
+        let entry = track_entry(track.id);
+        let after = to_bytes(&project).unwrap();
+        let before = as_v1(&project);
+        let (after_z, before_z) = (stored_size(&after, &entry), stored_size(&before, &entry));
+        // The fixes alone, as both schemas write them.
+        let fixes_only = {
+            let mut bare = project.clone();
+            if let Some(t) = bare.sources[0].track_mut() {
+                t.samples.clear();
+            }
+            stored_size(&to_bytes(&bare).unwrap(), &entry)
+        };
+        // Without the environment (never fetched): what the weather adds.
+        let no_env = {
+            let mut bare = project.clone();
+            if let Some(t) = bare.sources[0].track_mut() {
+                for s in &mut t.samples {
+                    s.clear_env();
+                }
+            }
+            stored_size(&to_bytes(&bare).unwrap(), &entry)
+        };
+        println!(
+            "D27 | 1,000 samples, tracks/<id>.json deflated: schema 1 {before_z} B, schema 2 {after_z} B; \
+             fixes alone {fixes_only} B; schema 2 without the environment {no_env} B, so the \
+             environment adds {} B",
+            after_z - no_env
+        );
+        assert!(after_z * 3 < before_z, "{after_z} vs {before_z}");
+        assert!(
+            after_z - no_env < 12_000,
+            "the weather is {} B",
+            after_z - no_env
+        );
+        // And it reads back to the same samples.
+        assert_eq!(from_bytes(&after).unwrap(), project);
+    }
+
+    /// Schema 1 files open: their samples are placed on their fixes, the
+    /// environment rounded to its stored precision and every derived value
+    /// recomputed; the next save is schema 2 and a fixed point.
+    #[test]
+    fn a_schema_1_project_migrates_its_samples() {
+        let project = fetched_track_project(50);
+        let mut unrounded = project.clone();
+        if let Some(t) = unrounded.sources[0].track_mut() {
+            for s in &mut t.samples {
+                s.tws = s.tws.map(|v| v + 0.001_234);
+                s.twa = Some(1.0); // stale derived values, as a v1 file may hold
+            }
+        }
+        let v1 = as_v1(&unrounded);
+        let loaded = from_bytes(&v1).unwrap();
+        assert_eq!(loaded.schema_version, SCHEMA_VERSION);
+        assert_eq!(loaded, project, "rounded back and related again");
+        let saved = to_bytes(&loaded).unwrap();
+        assert_eq!(saved, to_bytes(&project).unwrap());
+        assert_eq!(from_bytes(&saved).unwrap(), loaded);
+    }
+
+    /// Damaged columns are refused naming the entry and what is wrong,
+    /// never a panic or a silently shorter track.
+    #[test]
+    fn damaged_sample_columns_are_refused_by_name() {
+        let project = fetched_track_project(5);
+        let track = project.sources[0].track().unwrap();
+        let entry = track_entry(track.id);
+        let bytes = to_bytes(&project).unwrap();
+        let spoil = |edit: &dyn Fn(&mut Value)| {
+            rewrite(&bytes, |entries| {
+                for (name, data) in entries.iter_mut() {
+                    if *name == entry {
+                        let mut doc: Value = serde_json::from_slice(data).unwrap();
+                        edit(&mut doc["samples"]);
+                        *data = serde_json::to_vec(&doc).unwrap();
+                    }
+                }
+            })
+        };
+        for (edit, says) in [
+            (
+                (|v: &mut Value| v["tws"] = serde_json::json!([1.0])) as fn(&mut Value),
+                "tws column has 1 values for 5 samples",
+            ),
+            (
+                |v| v["heading_origin"] = Value::from("gdxdg"),
+                "not a value origin",
+            ),
+            (
+                |v| v["fetched"] = Value::from("11112"),
+                "not a fetched flag",
+            ),
+            (
+                |v| v["fixes"] = serde_json::json!([[3, 5]]),
+                "refers to fix 5 of 5",
+            ),
+            (
+                |v| v["ids"] = serde_json::json!([[1, 999]]),
+                "more than the 5 allowed",
+            ),
+        ] {
+            let err = from_bytes(&spoil(&edit)).unwrap_err();
+            let text = err.to_string();
+            assert!(text.contains(&entry) && text.contains(says), "{text}");
+        }
+    }
+
+    /// Ids and fixes with gaps (a sample removed, a fix without a sample)
+    /// round-trip through their runs.
+    #[test]
+    fn gaps_in_ids_and_fixes_round_trip() {
+        let mut project = fetched_track_project(12);
+        if let Some(t) = project.sources[0].track_mut() {
+            t.samples.remove(7);
+            t.samples.remove(3);
+        }
+        let bytes = to_bytes(&project).unwrap();
+        assert_eq!(from_bytes(&bytes).unwrap(), project);
+        let track = project.sources[0].track().unwrap();
+        let columns = crate::track::SampleColumns::of(&track.samples).unwrap();
+        assert_eq!(columns.fixes, vec![[0, 3], [4, 3], [8, 4]]);
+        assert_eq!(columns.ids.len(), 3);
     }
 }

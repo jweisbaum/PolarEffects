@@ -12,25 +12,36 @@
 //!   per chunk: a track costs about one chunk per box it crosses, whatever
 //!   its length.
 //!
-//! Values are read a whole chunk at a time ([`OpenVariable::read_cells`]):
-//! every cell a batch of track positions needs is grouped by the chunk that
-//! holds it, and each chunk is fetched and decoded once, on at most
-//! `concurrency` threads.
+//! Neither needs the whole chunk. A blosc chunk is a header, a table of
+//! block offsets, and blocks that decode independently (an ERA5 block is
+//! 131,072 values: about 91 rows of the globe; a geoChunk block about 1,000
+//! to 8,000 hours of its box). [`OpenVariable::read_cells`] groups the cells
+//! a batch of track positions needs by chunk, reads each chunk's first
+//! bytes by HTTP range, then only the blocks holding those cells, adjacent
+//! blocks in one request, on at most `concurrency` threads. What it
+//! downloads is kept in the session's memory ([`crate::memory`]), never on
+//! disk. A server that ignores ranges answers with the whole chunk, which is
+//! then used whole.
 
 use std::collections::BTreeMap;
 use std::ops::Range;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
 
 use zarrs::array::codec::api::CodecOptions;
 use zarrs::config::MetadataRetrieveVersion;
 use zarrs::group::Group;
 use zarrs::storage::ReadableStorage;
+use zarrs_storage::Bytes;
 
-use crate::cache::ChunkCache;
+use crate::blosc;
 use crate::error::{EnvError, Result};
 use crate::grid::{Axis, Grid, Stencil};
-use crate::store::{ReadArray, TimeAxis, dtype_name, open_array, read_axis, read_time_axis};
+use crate::http::Ranged;
+use crate::memory::{BlockCache, Held, Part};
+use crate::store::{
+    OpenStore, RangeSource, ReadArray, TimeAxis, dtype_name, open_array, read_axis, read_time_axis,
+};
 
 /// The WeatherBench2 hourly ERA5 store (D12). Frozen at 2023-01-10.
 pub const WB2_HOURLY_URL: &str = "https://storage.googleapis.com/weatherbench2/datasets/era5/1959-2023_01_10-full_37-1h-0p25deg-chunk-1.zarr";
@@ -366,18 +377,49 @@ impl Unpack {
 /// index)`.
 pub type Cell = (u64, usize, usize);
 
-/// The cells wanted from one chunk, each with its offset inside it.
-type ChunkRequest = (Vec<u64>, Vec<(Cell, usize)>);
+/// The cells wanted from one chunk: its index, its store key, and each
+/// cell with its offset inside it.
+type ChunkRequest = (Vec<u64>, String, Vec<(Cell, usize)>);
 
-/// A decoded chunk: every value of the chunk's full (regular) shape, in C
-/// order; `None` for a chunk the archive does not have.
-type Decoded = Option<Arc<Vec<f32>>>;
+/// How many bytes of a chunk are asked for first: its blosc header and, for
+/// up to 12 blocks, their offsets (an ERA5 chunk has 8, a geoChunk 5 to 7).
+/// A chunk with more blocks costs a second, exact request.
+pub const HEAD_REQUEST: u64 = 64;
 
-/// How many decoded multi-hour chunks a variable keeps in memory. A
-/// geoChunk holds months of a small box, and consecutive batches of one
-/// track read the same one again; an ERA5 chunk is one hour and is never
-/// kept.
-const MEMO_CHUNKS: usize = 4;
+/// How a chunk's bytes become values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Layout {
+    /// A blosc container of little-endian values in C order with no
+    /// filters, every archive here: read one block at a time.
+    Blocks,
+    /// Anything else (the uncompressed stores tests write): whole chunks,
+    /// through `zarrs`.
+    Whole,
+}
+
+/// Decides the [`Layout`] from the array's `.zarray`.
+fn layout_of(store: &ReadableStorage, array: &str) -> Layout {
+    let key = format!("{array}/.zarray");
+    let meta: Option<serde_json::Value> = zarrs::storage::StoreKey::new(key)
+        .ok()
+        .and_then(|k| store.get(&k).ok().flatten())
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok());
+    let Some(meta) = meta else {
+        return Layout::Whole;
+    };
+    let blosc = meta["compressor"]["id"].as_str() == Some("blosc");
+    let no_filters =
+        meta["filters"].is_null() || meta["filters"].as_array().is_some_and(|f| f.is_empty());
+    let c_order = meta["order"].as_str().is_none_or(|o| o == "C");
+    let little = meta["dtype"]
+        .as_str()
+        .is_some_and(|d| d.starts_with('<') || d.starts_with('|'));
+    if blosc && no_filters && c_order && little {
+        Layout::Blocks
+    } else {
+        Layout::Whole
+    }
+}
 
 /// An opened variable: its array, grid and time axis.
 pub struct OpenVariable {
@@ -390,10 +432,14 @@ pub struct OpenVariable {
     middle: Vec<u64>,
     unpack: Unpack,
     concurrency: usize,
-    /// Where the store keeps its chunks, so a chunk that fails to decode can
-    /// be evicted and fetched once more.
-    cache: Option<(Arc<ChunkCache>, String)>,
-    memo: Mutex<Vec<(Vec<u64>, Decoded)>>,
+    layout: Layout,
+    /// The store's objects by byte range.
+    ranges: Arc<dyn RangeSource>,
+    /// What this session has downloaded, shared with every other variable.
+    memory: Arc<BlockCache>,
+    /// Set once the store has answered a range with the whole object: it
+    /// ignores ranges, so every later chunk is read whole at once.
+    whole_only: AtomicBool,
 }
 
 impl std::fmt::Debug for OpenVariable {
@@ -402,6 +448,7 @@ impl std::fmt::Debug for OpenVariable {
             .field("spec", &self.spec)
             .field("grid", &self.grid)
             .field("time", &self.time)
+            .field("layout", &self.layout)
             .finish_non_exhaustive()
     }
 }
@@ -420,7 +467,8 @@ impl OpenVariable {
     /// # Errors
     /// [`EnvError::Layout`] if the array is not `(time, …, latitude,
     /// longitude)` on regular axes, stored as float32, float64 or int16.
-    pub fn open(store: &ReadableStorage, spec: Variable) -> Result<Self> {
+    pub fn open(open: &OpenStore, spec: Variable) -> Result<Self> {
+        let store = &open.store;
         let array = open_array(store, &format!("/{}", spec.array))?;
         let dims: Vec<String> = array
             .attributes()
@@ -514,6 +562,7 @@ impl OpenVariable {
             })
             .collect();
         Ok(Self {
+            layout: layout_of(store, spec.array),
             spec,
             array,
             grid,
@@ -521,8 +570,9 @@ impl OpenVariable {
             middle,
             unpack,
             concurrency: 8,
-            cache: None,
-            memo: Mutex::new(Vec::new()),
+            ranges: Arc::clone(&open.ranges),
+            memory: BlockCache::new(crate::memory::DEFAULT_LIMIT),
+            whole_only: AtomicBool::new(false),
         })
     }
 
@@ -532,10 +582,10 @@ impl OpenVariable {
         self
     }
 
-    /// Names the chunk cache the store reads through, so a cached chunk
-    /// that fails to decode is evicted and fetched once more (M3 carry).
-    pub fn with_cache(mut self, cache: Arc<ChunkCache>, namespace: &str) -> Self {
-        self.cache = Some((cache, namespace.to_owned()));
+    /// Keeps what this variable downloads in `memory`, shared with the
+    /// session's other reads, instead of its own.
+    pub fn with_memory(mut self, memory: Arc<BlockCache>) -> Self {
+        self.memory = memory;
         self
     }
 
@@ -552,6 +602,11 @@ impl OpenVariable {
     /// The time axis, clamped to written data.
     pub fn time(&self) -> TimeAxis {
         self.time
+    }
+
+    /// Whether chunks are read a block at a time (blosc) rather than whole.
+    pub fn reads_blocks(&self) -> bool {
+        self.layout == Layout::Blocks
     }
 
     /// The chunk shape, `(time, …, latitude, longitude)`.
@@ -571,6 +626,12 @@ impl OpenVariable {
         &self.middle
     }
 
+    /// The store key of the chunk at `index`, as the memory and the
+    /// estimate name it.
+    pub fn chunk_key(&self, index: &[u64]) -> String {
+        self.array.chunk_key(index).as_str().to_owned()
+    }
+
     /// The chunk that holds `cell`, and the cell's offset inside it.
     fn locate(&self, chunk: &[u64], cell: Cell) -> (Vec<u64>, usize) {
         let (step, lat, lon) = cell;
@@ -588,77 +649,302 @@ impl OpenVariable {
         (chunk_index, offset as usize)
     }
 
-    /// Fetches and decodes one chunk, once more after evicting it from the
-    /// cache if the first attempt fails (a damaged cache file).
-    fn fetch_chunk(&self, index: &[u64]) -> Result<Decoded> {
+    fn namespace(&self) -> &'static str {
+        self.spec.dataset.id()
+    }
+
+    /// Bytes per stored value.
+    fn typesize(&self) -> usize {
+        match self.unpack.stored {
+            Stored::F32 => 4,
+            Stored::F64 => 8,
+            Stored::I16 { .. } => 2,
+        }
+    }
+
+    /// The value stored at `at` in decoded little-endian bytes.
+    fn value_at(&self, bytes: &[u8], at: usize) -> f32 {
+        let ts = self.typesize();
+        let Some(raw) = bytes.get(at..at + ts) else {
+            return f32::NAN;
+        };
+        match self.unpack.stored {
+            Stored::F32 => raw.try_into().map_or(f32::NAN, |b| {
+                self.unpack.float(f64::from(f32::from_le_bytes(b)))
+            }),
+            Stored::F64 => raw
+                .try_into()
+                .map_or(f32::NAN, |b| self.unpack.float(f64::from_le_bytes(b))),
+            Stored::I16 { fill } => raw
+                .try_into()
+                .map_or(f32::NAN, |b| self.unpack.int(i16::from_le_bytes(b), fill)),
+        }
+    }
+
+    /// Decodes a whole chunk through `zarrs` (a store that is not blosc).
+    fn decode_whole(&self, index: &[u64]) -> Result<Option<Arc<Vec<f32>>>> {
         let what = self.spec.array;
         let err = |e: zarrs::array::ArrayError| EnvError::Read {
             what: format!("{what} chunk {index:?}"),
             source: Box::new(e),
         };
-        match self.decode_chunk(index) {
-            Ok(decoded) => Ok(decoded),
-            // Only a chunk that arrived and would not decode is suspect: a
-            // damaged cache file. A failed read (the network, a timeout, a
-            // cancel) says nothing about the cached bytes and is reported
-            // as it is; evicting would only throw away a good chunk.
-            Err(first) if !is_decode_error(&first) => Err(err(first)),
-            Err(first) => match &self.cache {
-                Some((cache, namespace)) => {
-                    let key = self.array.chunk_key(index);
-                    cache.remove(namespace, key.as_str());
-                    self.decode_chunk(index).map_err(err)
-                }
-                None => Err(err(first)),
-            },
-        }
-    }
-
-    fn decode_chunk(
-        &self,
-        index: &[u64],
-    ) -> std::result::Result<Decoded, zarrs::array::ArrayError> {
         let options = CodecOptions::default();
         let unpack = self.unpack;
         let values: Option<Vec<f32>> = match unpack.stored {
             Stored::F32 => self
                 .array
-                .retrieve_chunk_if_exists_opt::<Vec<f32>>(index, &options)?
+                .retrieve_chunk_if_exists_opt::<Vec<f32>>(index, &options)
+                .map_err(err)?
                 .map(|v| v.into_iter().map(|x| unpack.float(f64::from(x))).collect()),
             Stored::F64 => self
                 .array
-                .retrieve_chunk_if_exists_opt::<Vec<f64>>(index, &options)?
+                .retrieve_chunk_if_exists_opt::<Vec<f64>>(index, &options)
+                .map_err(err)?
                 .map(|v| v.into_iter().map(|x| unpack.float(x)).collect()),
             Stored::I16 { fill } => self
                 .array
-                .retrieve_chunk_if_exists_opt::<Vec<i16>>(index, &options)?
+                .retrieve_chunk_if_exists_opt::<Vec<i16>>(index, &options)
+                .map_err(err)?
                 .map(|v| v.into_iter().map(|x| unpack.int(x, fill)).collect()),
         };
         Ok(values.map(Arc::new))
     }
 
-    /// A chunk, from the in-memory memo when it spans many hours.
-    fn chunk(&self, index: &[u64], multi_hour: bool) -> Result<Decoded> {
-        if multi_hour
-            && let Ok(memo) = self.memo.lock()
-            && let Some((_, decoded)) = memo.iter().find(|(i, _)| i == index)
-        {
-            return Ok(decoded.clone());
-        }
-        let decoded = self.fetch_chunk(index)?;
-        if multi_hour && let Ok(mut memo) = self.memo.lock() {
-            if memo.len() >= MEMO_CHUNKS {
-                memo.remove(0);
+    /// The values at `offsets` of a chunk read whole through `zarrs`.
+    fn whole_values(&self, key: &str, index: &[u64], offsets: &[usize]) -> Result<Vec<f32>> {
+        let ns = self.namespace();
+        let values = match self.memory.get(ns, key, Part::Whole) {
+            Some(Held::Values(values)) => Some(values),
+            Some(_) => None,
+            None => {
+                let decoded = self.decode_whole(index)?;
+                let held = decoded.clone().map_or(Held::Missing, Held::Values);
+                self.memory.put(ns, key, Part::Whole, held);
+                decoded
             }
-            memo.push((index.to_vec(), decoded.clone()));
+        };
+        Ok(offsets
+            .iter()
+            .map(|&o| {
+                values
+                    .as_ref()
+                    .and_then(|v| v.get(o).copied())
+                    .unwrap_or(f32::NAN)
+            })
+            .collect())
+    }
+
+    /// Keeps a whole blosc chunk's header and every block, as served.
+    fn keep_whole(&self, key: &str, bytes: &Bytes) -> Result<Held> {
+        let expected = blosc::Expected::Exactly(self.chunk_bytes()?);
+        let header = blosc::Header::parse(bytes, expected)?;
+        if header.cbytes != bytes.len() {
+            return Err(EnvError::Blosc(format!(
+                "{key}: header declares {} bytes but the chunk is {}",
+                header.cbytes,
+                bytes.len()
+            )));
         }
-        Ok(decoded)
+        let extents = header.block_extents(bytes)?;
+        // Every block is checked before any is kept, so damaged bytes fail
+        // this read and the next one asks the archive again.
+        for (b, extent) in extents.iter().enumerate() {
+            let block = bytes
+                .get(extent.clone())
+                .ok_or_else(|| EnvError::Blosc(format!("{key}: block {b} runs past the chunk")))?;
+            header.decode_block(b, block)?;
+        }
+        let ns = self.namespace();
+        for (b, extent) in extents.iter().enumerate() {
+            let block = bytes.slice(extent.clone());
+            self.memory
+                .put(ns, key, Part::Block(b as u32), Held::Compressed(block));
+        }
+        let head = Held::Head {
+            header,
+            extents: Arc::new(extents),
+        };
+        self.memory.put(ns, key, Part::Head, head.clone());
+        Ok(head)
+    }
+
+    /// Decoded bytes in one whole chunk.
+    fn chunk_bytes(&self) -> Result<usize> {
+        let elements: u64 = self.chunk_shape()?.iter().product();
+        usize::try_from(elements)
+            .ok()
+            .and_then(|n| n.checked_mul(self.typesize()))
+            .filter(|&n| n <= blosc::MAX_UNKNOWN_SIZE)
+            .ok_or_else(|| EnvError::Layout(format!("{}: the chunk is too large", self.spec.array)))
+    }
+
+    /// A chunk's header and block offsets: from memory, or its first bytes
+    /// by range (a second request when it has many blocks).
+    fn head(&self, key: &str) -> Result<Held> {
+        let ns = self.namespace();
+        if let Some(held) = self.memory.get(ns, key, Part::Head) {
+            return Ok(held);
+        }
+        let missing = || {
+            self.memory.put(ns, key, Part::Head, Held::Missing);
+            Ok(Held::Missing)
+        };
+        if self.whole_only.load(Ordering::Relaxed) {
+            return match self.ranges.whole(key)? {
+                Some(bytes) => self.keep_whole(key, &bytes),
+                None => missing(),
+            };
+        }
+        let expected = blosc::Expected::Exactly(self.chunk_bytes()?);
+        let mut first = match self.ranges.range(key, 0, HEAD_REQUEST)? {
+            None => return missing(),
+            Some(Ranged::Whole(bytes)) => {
+                self.whole_only.store(true, Ordering::Relaxed);
+                return self.keep_whole(key, &bytes);
+            }
+            Some(Ranged::Part(bytes)) => bytes,
+        };
+        let header = blosc::Header::parse(&first, expected)?;
+        if first.len() < header.index_len() {
+            first = match self.ranges.range(key, 0, header.index_len() as u64)? {
+                None => return missing(),
+                Some(Ranged::Whole(bytes)) => {
+                    self.whole_only.store(true, Ordering::Relaxed);
+                    return self.keep_whole(key, &bytes);
+                }
+                Some(Ranged::Part(bytes)) => bytes,
+            };
+        }
+        let head = Held::Head {
+            header,
+            extents: Arc::new(header.block_extents(&first)?),
+        };
+        self.memory.put(ns, key, Part::Head, head.clone());
+        Ok(head)
+    }
+
+    /// The values at `offsets` of a blosc chunk, fetching only the blocks
+    /// that hold them.
+    fn block_values(&self, key: &str, offsets: &[usize], cancel: &AtomicBool) -> Result<Vec<f32>> {
+        let Held::Head { header, extents } = self.head(key)? else {
+            return Ok(vec![f32::NAN; offsets.len()]);
+        };
+        let ts = self.typesize();
+        let span = header.block_span(0).len().max(1);
+        if !span.is_multiple_of(ts) {
+            return Err(EnvError::Blosc(format!(
+                "{key}: {span}-byte blocks split {ts}-byte values"
+            )));
+        }
+        let block_of = |offset: usize| offset * ts / span;
+        let wanted: std::collections::BTreeSet<usize> =
+            offsets.iter().map(|&o| block_of(o)).collect();
+        if let Some(&last) = wanted.last()
+            && last >= extents.len()
+        {
+            return Err(EnvError::Blosc(format!(
+                "{key}: a value lies in block {last} of {}",
+                extents.len()
+            )));
+        }
+        self.fetch_blocks(key, &header, &extents, &wanted, cancel)?;
+        let ns = self.namespace();
+        let mut decoded: BTreeMap<usize, Option<Vec<u8>>> = BTreeMap::new();
+        for &b in &wanted {
+            let bytes = match self.memory.get(ns, key, Part::Block(b as u32)) {
+                Some(Held::Compressed(bytes)) => Some(header.decode_block(b, &bytes)?),
+                _ => None,
+            };
+            decoded.insert(b, bytes);
+        }
+        Ok(offsets
+            .iter()
+            .map(|&o| {
+                let b = block_of(o);
+                let start = header.block_span(b).start;
+                decoded
+                    .get(&b)
+                    .and_then(Option::as_ref)
+                    .map_or(f32::NAN, |bytes| self.value_at(bytes, o * ts - start))
+            })
+            .collect())
+    }
+
+    /// Downloads the blocks of `wanted` not in memory, adjacent ones in one
+    /// request.
+    fn fetch_blocks(
+        &self,
+        key: &str,
+        header: &blosc::Header,
+        extents: &[std::ops::Range<usize>],
+        wanted: &std::collections::BTreeSet<usize>,
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        let ns = self.namespace();
+        let absent: Vec<usize> = wanted
+            .iter()
+            .copied()
+            .filter(|&b| !self.memory.contains(ns, key, Part::Block(b as u32)))
+            .collect();
+        // Runs of blocks that lie back to back in the chunk.
+        let mut runs: Vec<Vec<usize>> = Vec::new();
+        for b in absent {
+            match runs.last_mut() {
+                Some(run)
+                    if run
+                        .last()
+                        .is_some_and(|&p| extents[p].end == extents[b].start) =>
+                {
+                    run.push(b);
+                }
+                _ => runs.push(vec![b]),
+            }
+        }
+        for run in runs {
+            if cancel.load(Ordering::SeqCst) {
+                return Err(EnvError::Cancelled);
+            }
+            let (Some(&first), Some(&last)) = (run.first(), run.last()) else {
+                continue;
+            };
+            let (start, end) = (extents[first].start, extents[last].end);
+            let bytes = match self.ranges.range(key, start as u64, end as u64)? {
+                // Gone since its header was read: no data.
+                None => return Ok(()),
+                Some(Ranged::Whole(bytes)) => {
+                    self.whole_only.store(true, Ordering::Relaxed);
+                    self.keep_whole(key, &bytes)?;
+                    return Ok(());
+                }
+                Some(Ranged::Part(bytes)) => bytes,
+            };
+            if bytes.len() != end - start {
+                return Err(EnvError::Blosc(format!(
+                    "{key}: asked for {} bytes of blocks {first}–{last}, got {}",
+                    end - start,
+                    bytes.len()
+                )));
+            }
+            for b in run {
+                let extent = extents[b].start - start..extents[b].end - start;
+                // Checked now, so a damaged block fails the read that got it
+                // rather than being kept.
+                header.decode_block(b, &bytes[extent.clone()])?;
+                self.memory.put(
+                    ns,
+                    key,
+                    Part::Block(b as u32),
+                    Held::Compressed(bytes.slice(extent)),
+                );
+            }
+        }
+        Ok(())
     }
 
     /// The values of `cells`, NaN where missing (land, fill, a chunk the
-    /// archive does not have, or outside the array). Each chunk is fetched
-    /// and decoded once, on at most `concurrency` threads, and `cancel` is
-    /// checked before each.
+    /// archive does not have, or outside the array). Each chunk is read once,
+    /// only the blocks holding the cells, on at most `concurrency` threads,
+    /// and `cancel` is checked before each.
     ///
     /// # Errors
     /// [`EnvError::Cancelled`] once `cancel` is set; [`EnvError::Read`] on a
@@ -673,41 +959,58 @@ impl OpenVariable {
         cancel: &AtomicBool,
         concurrency: usize,
     ) -> Result<BTreeMap<Cell, f32>> {
+        let (mut out, groups) = self.group(cells)?;
+        let read = crate::parallel::map_bounded(&groups, concurrency.max(1), |group| {
+            self.read_group(group, cancel)
+        })?;
+        out.extend(read.into_iter().flatten());
+        Ok(out)
+    }
+
+    /// `cells` grouped by the chunk that holds them, and NaN for those
+    /// outside the array.
+    fn group(&self, cells: &[Cell]) -> Result<(BTreeMap<Cell, f32>, Vec<ChunkRequest>)> {
         let chunk = self.chunk_shape()?;
         let shape = self.array.shape().to_vec();
-        let multi_hour = chunk.first().is_some_and(|&n| n > 1);
         let mut by_chunk: BTreeMap<Vec<u64>, Vec<(Cell, usize)>> = BTreeMap::new();
-        let mut out = BTreeMap::new();
+        let mut outside = BTreeMap::new();
         for &cell in cells {
             let inside = cell.0 < shape[0]
                 && (cell.1 as u64) < shape[shape.len() - 2]
                 && (cell.2 as u64) < shape[shape.len() - 1];
             if !inside {
-                out.insert(cell, f32::NAN);
+                outside.insert(cell, f32::NAN);
                 continue;
             }
             let (index, offset) = self.locate(&chunk, cell);
             by_chunk.entry(index).or_default().push((cell, offset));
         }
-        let groups: Vec<ChunkRequest> = by_chunk.into_iter().collect();
-        let read = crate::parallel::map_bounded(&groups, concurrency.max(1), |(index, wanted)| {
-            if cancel.load(Ordering::SeqCst) {
-                return Err(EnvError::Cancelled);
-            }
-            let decoded = self.chunk(index, multi_hour)?;
-            Ok(wanted
-                .iter()
-                .map(|(cell, offset)| {
-                    let value = decoded
-                        .as_ref()
-                        .and_then(|values| values.get(*offset).copied())
-                        .unwrap_or(f32::NAN);
-                    (*cell, value)
-                })
-                .collect::<Vec<_>>())
-        })?;
-        out.extend(read.into_iter().flatten());
-        Ok(out)
+        let groups = by_chunk
+            .into_iter()
+            .map(|(index, wanted)| {
+                let key = self.chunk_key(&index);
+                (index, key, wanted)
+            })
+            .collect();
+        Ok((outside, groups))
+    }
+
+    /// The values of one chunk's cells.
+    fn read_group(&self, group: &ChunkRequest, cancel: &AtomicBool) -> Result<Vec<(Cell, f32)>> {
+        let (index, key, wanted) = group;
+        if cancel.load(Ordering::SeqCst) {
+            return Err(EnvError::Cancelled);
+        }
+        let offsets: Vec<usize> = wanted.iter().map(|(_, o)| *o).collect();
+        let values = match self.layout {
+            Layout::Blocks => self.block_values(key, &offsets, cancel)?,
+            Layout::Whole => self.whole_values(key, index, &offsets)?,
+        };
+        Ok(wanted
+            .iter()
+            .zip(values)
+            .map(|((cell, _), value)| (*cell, value))
+            .collect())
     }
 
     /// The stencil values for time steps `steps` at `stencil`, one
@@ -772,16 +1075,33 @@ impl OpenVariable {
     }
 }
 
-/// Whether a chunk read failed in decoding the bytes it got, rather than in
-/// getting them.
-fn is_decode_error(err: &zarrs::array::ArrayError) -> bool {
-    use zarrs::array::ArrayError;
-    use zarrs::array::codec::api::CodecError;
-    !matches!(
-        err,
-        ArrayError::StorageError(_)
-            | ArrayError::CodecError(CodecError::StorageError(_) | CodecError::IOError(_))
-    )
+/// [`OpenVariable::read_cells`] for several variables at once: every chunk
+/// of every variable on one pool of at most `concurrency` threads, so the
+/// wind's u and v and the waves of one batch download side by side rather
+/// than one variable after another. One map of values per request, in
+/// order.
+///
+/// # Errors
+/// [`EnvError::Cancelled`] once `cancel` is set; the first failed read.
+pub fn read_cells_of(
+    requests: &[(&OpenVariable, &[Cell])],
+    cancel: &AtomicBool,
+    concurrency: usize,
+) -> Result<Vec<BTreeMap<Cell, f32>>> {
+    let mut out = Vec::with_capacity(requests.len());
+    let mut jobs: Vec<(usize, ChunkRequest)> = Vec::new();
+    for (i, (var, cells)) in requests.iter().enumerate() {
+        let (outside, groups) = var.group(cells)?;
+        out.push(outside);
+        jobs.extend(groups.into_iter().map(|g| (i, g)));
+    }
+    let read = crate::parallel::map_bounded(&jobs, concurrency.max(1), |(i, group)| {
+        Ok((*i, requests[*i].0.read_group(group, cancel)?))
+    })?;
+    for (i, values) in read {
+        out[i].extend(values);
+    }
+    Ok(out)
 }
 
 /// The four cells of a stencil at one step, in [`Stencil::interpolate`]'s

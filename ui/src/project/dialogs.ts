@@ -43,14 +43,6 @@ export async function pickProjectToSave(suggestedName: string): Promise<string |
   return typeof chosen === "string" ? chosen : null;
 }
 
-/** Asks for the folder the chunk cache goes in (spec.md 3.4). */
-export async function pickCacheFolder(): Promise<string | null> {
-  const chosen = await whileChoosing(msg("Choosing a folder"), () =>
-    open({ multiple: false, directory: true, title: t("Choose where to keep the chunk cache") }),
-  );
-  return typeof chosen === "string" ? chosen : null;
-}
-
 /**
  * Asks for polar files to import (spec.md 6): several at once. The format is
  * read from the content, so "All files" is offered beside the usual
