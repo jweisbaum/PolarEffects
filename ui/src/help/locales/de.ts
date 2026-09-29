@@ -100,7 +100,7 @@ const topics: HelpTopic[] = [
     parameters: [
       ["Adresse der Veranstaltung", "Ein yb.tl-, cf.yb.tl- oder app.yb.tl-Link oder nur der Regattaschlüssel; für Geovoile die Viewer-Adresse der Regatta; für Blue Water Tracks ihr race.bluewatertracks.com-Link oder Regattaschlüssel."],
       ["Öffnen", "Lädt den Track jedes Bootes herunter oder öffnet die Veranstaltung, die früher in dieser Sitzung geladen wurde."],
-      ["Download abbrechen", "Beendet den Download; nichts wird importiert."],
+      ["Abbrechen", "Beendet einen laufenden Download und schließt den Dialog; nichts wird importiert."],
       ["Erneut versuchen", "Fragt den Tracker nach einem Fehler erneut."],
       ["Erneut herunterladen", "Für eine früher in dieser Sitzung geladene Veranstaltung: lädt sie erneut herunter."],
       ["Suche", "Zeigt nur die Boote, deren Name, Segelnummer, Modell oder Division jedes eingegebene Wort enthält; Groß- und Kleinschreibung und Akzente zählen nicht."],

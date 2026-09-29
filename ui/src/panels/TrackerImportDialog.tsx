@@ -52,7 +52,13 @@ export default function TrackerImportDialog({ tracker, onDone, onCancel }: {
   const [busy, setBusy] = useState(false);
   const loading = phase.kind === "downloading" || (phase.kind === "event" && !phase.event.positions);
   const live = useRef(true);
-  useEffect(() => () => { live.current = false; }, []);
+  // Set on every mount, not only by useRef's initial value: StrictMode
+  // (development) runs this cleanup and mounts again, and a flag left false
+  // would drop every answer and leave the dialog "downloading" for ever.
+  useEffect(() => {
+    live.current = true;
+    return () => { live.current = false; };
+  }, []);
   // Which download is current: a later one (another leg, Download again)
   // makes an earlier one's answer, or its cancellation, stale.
   const generation = useRef(0);
@@ -135,7 +141,8 @@ export default function TrackerImportDialog({ tracker, onDone, onCancel }: {
   const event = phase.kind === "event" ? phase.event : null;
   const progress = phase.kind === "downloading" || phase.kind === "event" ? phase.progress : null;
   // A stray click on the backdrop must not throw away a download or an
-  // import under way; Cancel download and Escape still end them.
+  // import under way; Cancel and Escape still end them (Cancel also stops
+  // the download).
   return (
     <div className="modal-backdrop" onClick={() => { if (!loading && !busy) close(); }}>
       <div className="modal tracker-import" role="dialog" aria-label={title} onClick={(e) => e.stopPropagation()}>
@@ -166,11 +173,6 @@ export default function TrackerImportDialog({ tracker, onDone, onCancel }: {
             <div className={progress === null ? "progress-bar indeterminate" : "progress-bar"}>
               <div className="progress-fill" style={{ width: `${Math.round((progress?.fraction ?? 0.3) * 100)}%` }} />
             </div>
-            <button className="small" data-feature="tracker-import:cancel-download"
-              title={t("Stop the download; nothing is imported")}
-              onClick={() => { void api.cancelTrackerEvent().catch(reportFailure); }}>
-              {t("Cancel download")}
-            </button>
           </div>
         )}
         {phase.kind === "failed" && (

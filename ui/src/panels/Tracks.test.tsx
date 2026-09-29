@@ -5,7 +5,7 @@
  * answers to Rust, and a track's filters and derivation are edited through
  * their commands.
  */
-import { act } from "react";
+import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
@@ -387,6 +387,17 @@ it("offers the other legs of a Geovoile race in legs and downloads the one chose
   expect(q('[data-feature="tracker-import:leg"]')).toBeNull();
 });
 
+it("shows the downloaded event under StrictMode, which mounts every component twice in development", async () => {
+  responses.trackerEvent = EVENT;
+  await act(async () => root.render(<StrictMode><Tracks project={project([])} onProject={() => undefined} /></StrictMode>));
+  await click(q('[data-feature="tracks:yellowbrick"]'));
+  await typeAddress("yb.tl/rmsr2024");
+  await click(q('[data-feature="tracker-import:open"]'));
+  // The answer is shown, not dropped as if the dialog had closed.
+  expect(q(".tracker-progress")).toBeNull();
+  expect(document.body.textContent).toContain("Afazik Impulse");
+});
+
 it("keeps the dialog open on a backdrop click while an event downloads", async () => {
   responses.trackerEvent = new Promise(() => undefined);
   await act(async () => root.render(<Tracks project={project([])} onProject={() => undefined} />));
@@ -396,8 +407,12 @@ it("keeps the dialog open on a backdrop click while an event downloads", async (
   await click(q(".modal-backdrop"));
   expect(q("[role=dialog]")).not.toBeNull();
   expect(calls.some(([n]) => n === "cancelTrackerEvent")).toBe(false);
-  // Cancel download still ends it.
-  expect(q('[data-feature="tracker-import:cancel-download"]')).not.toBeNull();
+  // One Cancel, which also stops the download.
+  expect(q('[data-feature="tracker-import:cancel-download"]')).toBeNull();
+  const cancels = [...document.querySelectorAll(".tracker-import button")].filter((b) => b.textContent === "Cancel");
+  expect(cancels.length).toBe(1);
+  await click(cancels[0] as HTMLElement);
+  expect(calls.some(([n]) => n === "cancelTrackerEvent")).toBe(true);
 });
 
 it("refuses an older Geovoile tracker clearly, without a Retry", async () => {

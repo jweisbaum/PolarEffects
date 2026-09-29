@@ -117,7 +117,7 @@ export const TOPICS: HelpTopic[] = [
     parameters: [
       ["Event address", "A yb.tl, cf.yb.tl or app.yb.tl link, or the race key alone; for Geovoile, the race’s viewer address; for Blue Water Tracks, its race.bluewatertracks.com link or race key."],
       ["Open", "Downloads every boat’s track, or opens the event kept from earlier in this session."],
-      ["Cancel download", "Stops the download; nothing is imported."],
+      ["Cancel", "Stops any download under way and closes the dialog; nothing is imported."],
       ["Retry", "After a failure, asks the tracker again."],
       ["Download again", "For an event kept from earlier in this session: downloads it again."],
       ["Search", "Shows only the boats whose name, sail number, model or division contains every word typed; case and accents do not matter."],

@@ -100,7 +100,7 @@ const topics: HelpTopic[] = [
     parameters: [
       ["Adresse de l’événement", "Un lien yb.tl, cf.yb.tl ou app.yb.tl, ou la clé de course seule ; pour Geovoile, l’adresse de visualisation de la course ; pour Blue Water Tracks, son lien race.bluewatertracks.com ou sa clé de course."],
       ["Ouvrir", "Télécharge la trace de chaque bateau, ou ouvre l’événement gardé plus tôt dans cette session."],
-      ["Annuler le téléchargement", "Arrête le téléchargement ; rien n’est importé."],
+      ["Annuler", "Arrête tout téléchargement en cours et ferme la boîte ; rien n’est importé."],
       ["Réessayer", "Après un échec, interroge à nouveau la balise."],
       ["Télécharger à nouveau", "Pour un événement gardé plus tôt dans cette session : le télécharge à nouveau."],
       ["Recherche", "N’affiche que les bateaux dont le nom, le numéro de voile, le modèle ou la division contient chaque mot tapé ; la casse et les accents ne comptent pas."],

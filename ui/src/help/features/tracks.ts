@@ -124,8 +124,6 @@ const features: Feature[] = [
     keywords: [msg("link"), msg("race key"), "yb.tl", msg("paste")], ...dialog },
   { id: "tracker-import:open", label: msg("Open the event"), description: msg("In the tracker dialog (YellowBrick… first): download every boat's track, without weather, or open the event kept from earlier in this session. The boats list as soon as the tracker names them."),
     keywords: [msg("download"), msg("fleet"), msg("tracker")], ...dialog },
-  { id: "tracker-import:cancel-download", label: msg("Cancel the download"), description: msg("In the tracker dialog, while an event downloads: stop it; nothing is imported."),
-    keywords: [msg("stop"), msg("download"), msg("job")], ...dialog },
   { id: "tracker-import:retry", label: msg("Retry the download"), description: msg("In the tracker dialog, after a failed download: ask the tracker again."),
     keywords: [msg("again"), msg("error"), msg("download")], ...dialog },
   { id: "tracker-import:refresh", label: msg("Download the event again"), description: msg("In the tracker dialog, for an event kept from earlier in this session: download it again for newer positions."),
