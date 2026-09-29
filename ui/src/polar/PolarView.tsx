@@ -472,7 +472,7 @@ export default function PolarView({ project, settings, onProject }: {
       )}
       {dragValue && (
         <div className="view3d-drag-value" style={{ left: dragValue.x + 12, top: dragValue.y - 12 }}>
-          {t("BSP {bsp} kn", { bsp: dragValue.bsp.toFixed(2) })}
+          {t("BSP {bsp} {unit}", { bsp: (dragValue.bsp * factor).toFixed(2), unit: symbol })}
         </div>
       )}
       {unavailable !== null && <p className="view3d-unavailable muted">{t(unavailable)}</p>}

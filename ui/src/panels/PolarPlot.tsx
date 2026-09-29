@@ -5,13 +5,15 @@ import { reportFailure } from "../errors";
 import type { PolarCurve } from "../generated/PolarCurve";
 import type { PolarPlotResult } from "../generated/PolarPlotResult";
 import type { ProjectSummary } from "../generated/ProjectSummary";
+import type { SpeedUnit } from "../generated/SpeedUnit";
 import { useT } from "../i18n";
 import { api } from "../ipc";
+import { SPEED_FACTOR, SPEED_SYMBOL } from "../polar/view3d";
 import { useSampleSelection } from "../selection";
 import { onThemeChange } from "../settings/themes";
 import { DOT_EXCLUDED, DOT_FILTERED, dotSampleId, emptyDots, type DotPacket } from "./dotPacket";
 import {
-  ANGLE_TICKS, axisLabels, fitLayout, maxBoatSpeed, nearestPoint, niceTicks, project as projectPoint,
+  ANGLE_TICKS, axisLabels, fitLayout, maxBoatSpeed, nearestPoint, project as projectPoint, speedTicks,
   type Hover, type SourceStyle,
 } from "./plotGeometry";
 
@@ -50,13 +52,22 @@ function blendCurves(result: PolarPlotResult | null, t: (key: string) => string)
 }
 
 /**
- * Draws the plot: radial BSP rings and angular TWA spokes, every curve in
- * its source colour, the blend thicker, sample dots in their track's colour
- * (filtered ones dimmed, excluded ones hollow, selected ones ringed), and
- * the hovered point.
+ * A speed in the display unit, for text: at most `digits` decimals, trailing
+ * zeros dropped. Everything the plot is given is in knots; this is the one
+ * place its text leaves them.
+ */
+export function displaySpeed(knots: number, unit: SpeedUnit, digits: number): string {
+  return String(Number((knots * SPEED_FACTOR[unit]).toFixed(digits)));
+}
+
+/**
+ * Draws the plot: radial BSP rings (round numbers in the display unit) and
+ * angular TWA spokes, every curve in its source colour, the blend thicker,
+ * sample dots in their track's colour (filtered ones dimmed, excluded ones
+ * hollow, selected ones ringed), and the hovered point.
  */
 function draw(canvas: HTMLCanvasElement, result: PolarPlotResult | null, dots: DotPacket, hover: Hover | null,
-  colours: ReadonlyMap<number, SourceStyle>, selected: ReadonlySet<number>) {
+  colours: ReadonlyMap<number, SourceStyle>, selected: ReadonlySet<number>, unit: SpeedUnit) {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
   const dpr = window.devicePixelRatio || 1;
@@ -85,8 +96,9 @@ function draw(canvas: HTMLCanvasElement, result: PolarPlotResult | null, dots: D
   ctx.lineWidth = 1;
   ctx.strokeStyle = line;
   ctx.fillStyle = muted;
-  for (const tick of niceTicks(maxBsp)) {
-    const r = tick * layout.scale;
+  const factor = SPEED_FACTOR[unit];
+  for (const tick of speedTicks(maxBsp, factor)) {
+    const r = tick.knots * layout.scale;
     ctx.beginPath();
     ctx.arc(layout.centerX, layout.centerY, r, -Math.PI / 2, Math.PI / 2);
     ctx.stroke();
@@ -98,7 +110,7 @@ function draw(canvas: HTMLCanvasElement, result: PolarPlotResult | null, dots: D
     ctx.lineTo(edge.x, edge.y);
     ctx.stroke();
   }
-  for (const label of axisLabels(layout, maxBsp, (text) => ctx.measureText(text).width)) {
+  for (const label of axisLabels(layout, maxBsp, (text) => ctx.measureText(text).width, 10, factor)) {
     ctx.fillText(label.text, label.x, label.y);
   }
 
@@ -169,8 +181,10 @@ function draw(canvas: HTMLCanvasElement, result: PolarPlotResult | null, dots: D
  * command, including undo and redo, and by a source's colour, visibility,
  * weight or label — and whenever the chosen wind speed changes.
  */
-export default function PolarPlot({ project, variant, onFullSize, onClose }: {
+export default function PolarPlot({ project, variant, unit = "kn", onFullSize, onClose }: {
   project: ProjectSummary;
+  /** The display speed unit (Settings); every value arrives and is kept in knots. */
+  unit?: SpeedUnit;
   /** `"panel"` in the right panel; `"overlay"` full size over the map. */
   variant: "panel" | "overlay";
   /** Panel variant only: opens the full-size overlay. */
@@ -217,8 +231,8 @@ export default function PolarPlot({ project, variant, onFullSize, onClose }: {
   }, [project.sources]);
 
   const redraw = useCallback(() => {
-    if (canvas.current) draw(canvas.current, result, dots, hover, sourcesById, selection.ids);
-  }, [result, dots, hover, sourcesById, selection]);
+    if (canvas.current) draw(canvas.current, result, dots, hover, sourcesById, selection.ids, unit);
+  }, [result, dots, hover, sourcesById, selection, unit]);
 
   useEffect(redraw, [redraw]);
 
@@ -264,8 +278,10 @@ export default function PolarPlot({ project, variant, onFullSize, onClose }: {
           aria-label={t("Wind speed")} title={t("The true wind speed the plot slices at")}
           onChange={(event) => setTws(Number(event.target.value))} />
         <span className="polar-plot-tws-value"
-          title={tracksShown && tws !== null ? t("Sample dots within {band} kn of this wind speed (Settings)", { band: result?.band_kn ?? 1 }) : undefined}>
-          {tws === null ? t("All") : t("{tws} kn", { tws: tws.toFixed(1) })}
+          title={tracksShown && tws !== null ? t("Sample dots within {band} {unit} of this wind speed (Settings)", {
+            band: displaySpeed(result?.band_kn ?? 1, unit, 2), unit: SPEED_SYMBOL[unit],
+          }) : undefined}>
+          {tws === null ? t("All") : t("{tws} {unit}", { tws: displaySpeed(tws, unit, 1), unit: SPEED_SYMBOL[unit] })}
         </span>
         <label className="polar-plot-filtered"
           title={tracksShown ? t("Also draw the samples the filters take out, dimmed") : t("No visible track has samples to filter")}>
@@ -293,8 +309,9 @@ export default function PolarPlot({ project, variant, onFullSize, onClose }: {
           {hover && (
             <div className="polar-plot-tooltip" style={{ left: hover.x + 10, top: hover.y + 10 }}>
               <strong style={{ color: hover.colour }}>{hover.label}</strong>
-              <div>{t("TWA {twa}°, TWS {tws} kn, BSP {bsp} kn", {
-                twa: hover.twa.toFixed(0), tws: hover.tws.toFixed(1), bsp: hover.bsp.toFixed(2),
+              <div>{t("TWA {twa}°, TWS {tws} {unit}, BSP {bsp} {unit}", {
+                twa: hover.twa.toFixed(0), tws: (hover.tws * SPEED_FACTOR[unit]).toFixed(1),
+                bsp: (hover.bsp * SPEED_FACTOR[unit]).toFixed(2), unit: SPEED_SYMBOL[unit],
               })}</div>
             </div>
           )}

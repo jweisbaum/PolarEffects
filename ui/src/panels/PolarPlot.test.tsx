@@ -131,3 +131,18 @@ it("counts a blend-only slice as something to draw", async () => {
   await render({ project: project(), variant: "panel" });
   expect(host.querySelector(".polar-plot-empty")).toBeNull();
 });
+
+it("shows the slice's wind speed and its dot band in the display speed unit (M17b)", async () => {
+  const tracked = project({ sources: [source(), source({ id: 2, kind: "track", label: "T" })] });
+  await render({ project: tracked, variant: "panel", unit: "kmh" });
+  await act(async () => host.querySelector<HTMLInputElement>('[data-feature="plot:all"]')!.click());
+  // The slice starts mid-domain, 13 kn: 13 × 1.852 = 24.076 km/h. The band is 1 kn = 1.852 km/h.
+  const value = host.querySelector<HTMLElement>(".polar-plot-tws-value")!;
+  expect(value.textContent).toBe("24.1 km/h");
+  expect(value.title).toBe("Sample dots within 1.85 km/h of this wind speed (Settings)");
+  await render({ project: tracked, variant: "panel", unit: "ms" });
+  // 13 kn × 1852 / 3600 = 6.688 m/s.
+  expect(host.querySelector(".polar-plot-tws-value")!.textContent).toBe("6.7 m/s");
+  await render({ project: tracked, variant: "panel" });
+  expect(host.querySelector(".polar-plot-tws-value")!.textContent).toBe("13 kn");
+});

@@ -523,14 +523,15 @@ function Shell() {
           {stage === "compare" && <CompareView key={project.id} project={project} settings={settings} />}
           {stage === "map" && plotFull && (
             <div className="polar-plot-overlay" role="dialog" aria-label={t("Polar plot")}>
-              <PolarPlot project={project} variant="overlay" onClose={() => setPlotFull(false)} />
+              <PolarPlot project={project} variant="overlay" unit={settings?.units.speed ?? "kn"}
+                onClose={() => setPlotFull(false)} />
             </div>
           )}
         </main>
         {panels.right && (
           <aside className="sidebar right">
             <RightPanel project={project} onProject={setProject} panels={panels} onToggle={toggle}
-              onFullSizePlot={() => { setStage("map"); setPlotFull(true); }} />
+              speedUnit={settings?.units.speed ?? "kn"} onFullSizePlot={() => { setStage("map"); setPlotFull(true); }} />
           </aside>
         )}
         <DockToggle side="left" open={panels.left}

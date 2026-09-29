@@ -219,16 +219,16 @@ export default function TrackerImportDialog({ tracker, onDone, onCancel }: {
   );
 }
 
-/**
- * One boat of the table; memoised, so ticking a boat redraws only its row.
- * It takes the language as a prop rather than subscribing to it: 444
- * subscriptions doubled the table's first draw.
- */
 /** This page load, in download keys: a reload's downloads never match an older one's. */
 const DIALOG_ID = Date.now().toString(36);
 /** Downloads started from this page, across dialogs: each gets its own key. */
 let downloads = 0;
 
+/**
+ * One boat of the table; memoised, so ticking a boat redraws only its row.
+ * It takes the language as a prop rather than subscribing to it: 444
+ * subscriptions doubled the table's first draw.
+ */
 const BoatRow = memo(function BoatRow({ boat, checked, loading, onToggle }: {
   boat: TrackerBoatRow;
   checked: boolean;

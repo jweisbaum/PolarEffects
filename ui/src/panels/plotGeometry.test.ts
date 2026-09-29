@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { PolarCurve } from "../generated/PolarCurve";
 import type { DotPacket } from "./dotPacket";
 import {
-  axisLabels, fitLayout, labelsOverlap, maxBoatSpeed, nearestPoint, niceTicks, project,
+  axisLabels, fitLayout, labelsOverlap, maxBoatSpeed, nearestPoint, niceTicks, project, speedTicks,
 } from "./plotGeometry";
 
 /** One dot of one source, as the packet carries it. */
@@ -162,5 +162,28 @@ describe("axisLabels", () => {
     const labels = axisLabels(layout, 10, measure).filter((l) => !l.text.endsWith("°"));
     expect(labels.length).toBeLessThan(niceTicks(10).length);
     expect(labels.length).toBeGreaterThan(0);
+  });
+});
+
+describe("rings in the display speed unit (M17b)", () => {
+  const measure = (text: string) => text.length * 6;
+
+  it("puts round km/h or m/s values at their speed in knots", () => {
+    // 10 kn is 18.52 km/h: rings every 5 km/h, the 5 km/h ring at 5 / 1.852 = 2.6998 kn.
+    expect(speedTicks(10, 1.852).map((t) => t.value)).toEqual([5, 10, 15, 20]);
+    expect(speedTicks(10, 1.852)[0]!.knots).toBeCloseTo(2.6998, 4);
+    // 10 kn is 5.144 m/s: rings every 2 m/s, the 2 m/s ring at 7200 / 1852 = 3.8877 kn.
+    expect(speedTicks(10, 1852 / 3600).map((t) => t.value)).toEqual([2, 4, 6]);
+    expect(speedTicks(10, 1852 / 3600)[0]!.knots).toBeCloseTo(3.8877, 4);
+    // Knots are unchanged.
+    expect(speedTicks(9.4).map((t) => [t.value, t.knots])).toEqual([[2, 2], [4, 4], [6, 6], [8, 8], [10, 10]]);
+  });
+
+  it("labels each ring with its display value, where the ring is drawn", () => {
+    const layout = fitLayout(400, 400, 10);
+    const rings = axisLabels(layout, 10, measure, 10, 1.852).filter((l) => !l.text.endsWith("°"));
+    expect(rings.map((l) => l.text)).toEqual(["5", "10", "15", "20"]);
+    // The 10 km/h label starts 3 px past the ring at 10 / 1.852 kn.
+    expect(rings[1]!.x).toBeCloseTo(layout.centerX + (10 / 1.852) * layout.scale + 3, 6);
   });
 });

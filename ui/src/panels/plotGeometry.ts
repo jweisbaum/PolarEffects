@@ -66,6 +66,17 @@ export function niceTicks(max: number, targetCount = 5): number[] {
   return ticks;
 }
 
+/**
+ * The boat speed rings in the display unit: round numbers in that unit
+ * (`value`), each placed at its speed in knots (`knots`), the unit every
+ * polar is stored in. `factor` is display units per knot; the conversion
+ * happens here, at the drawing's boundary, and nowhere else.
+ */
+export function speedTicks(maxKnots: number, factor = 1): { value: number; knots: number }[] {
+  if (!(factor > 0)) return [];
+  return niceTicks(maxKnots * factor).map((value) => ({ value, knots: value / factor }));
+}
+
 /** The angular gridlines a classic polar diagram draws, degrees. */
 export const ANGLE_TICKS: readonly number[] = [0, 30, 60, 90, 120, 150, 180];
 
@@ -94,17 +105,20 @@ export function labelsOverlap(a: AxisLabel, b: AxisLabel): boolean {
  * still touch one already placed (rings closer together than their text is
  * wide) is left out rather than drawn over it. `measure` is the text width in
  * pixels (the canvas's `measureText` in the view, a fixed advance in tests).
+ * Ring values are in the display unit (`factor` units per knot, see
+ * `speedTicks`); `maxBsp` and the layout stay in knots.
  */
 export function axisLabels(
   layout: PlotLayout,
   maxBsp: number,
   measure: (text: string) => number,
   fontSize = 10,
+  factor = 1,
 ): AxisLabel[] {
   const gap = 3;
   const labels: AxisLabel[] = [];
-  const ticks = niceTicks(maxBsp);
-  const outer = Math.max(maxBsp, ticks[ticks.length - 1] ?? 0) * layout.scale;
+  const ticks = speedTicks(maxBsp, factor);
+  const outer = Math.max(maxBsp, ticks[ticks.length - 1]?.knots ?? 0) * layout.scale;
   const angleRadius = Math.max(maxBsp * 1.06 * layout.scale, outer + gap + fontSize / 2);
   for (const angle of ANGLE_TICKS) {
     const text = `${angle}°`;
@@ -120,10 +134,10 @@ export function axisLabels(
   }
   const placed = [...labels];
   for (const tick of ticks) {
-    const text = String(tick);
+    const text = String(tick.value);
     const label: AxisLabel = {
       text,
-      x: layout.centerX + tick * layout.scale + gap,
+      x: layout.centerX + tick.knots * layout.scale + gap,
       y: layout.centerY + gap,
       width: measure(text),
       height: fontSize,
