@@ -537,14 +537,17 @@ impl TrackerClient for YellowBrick {
         })
     }
 
-    /// `RaceSetup`, then `AllPositions3`; if the binary does not decode (or
-    /// is refused), the KML instead. A cancel, or a tracker that keeps
-    /// failing (5xx), ends the download without the fallback.
-    fn fetch(
+    /// `RaceSetup` and `AllPositions3` at the same time (the binary decoded
+    /// on its own thread), the boat list handed to `listed` as soon as the
+    /// setup is read; if the binary does not decode (or is refused), the
+    /// KML instead. A cancel, or a tracker that keeps failing (5xx), ends
+    /// the download without the fallback.
+    fn fetch_listed(
         &self,
         event: &EventRef,
         fetcher: &Fetcher,
         progress: &mut dyn FnMut(Progress),
+        listed: &mut dyn FnMut(TrackerEvent),
     ) -> Result<TrackerEvent> {
         let key = event.key.as_str();
         // The key goes into request paths as it is.
@@ -571,6 +574,23 @@ impl TrackerClient for YellowBrick {
             key: key.to_owned(),
         };
 
+        // The positions start at once: the setup is small and quick, and
+        // the dialog lists the boats from it while the binary still reads.
+        let binary = fetcher.spawn(
+            format!("{}/BIN/{key}/AllPositions3", self.cdn),
+            None,
+            |bytes| {
+                if is_html(&bytes) {
+                    Err(decode_error(
+                        0,
+                        "the answer is a web page, not positions".to_owned(),
+                    ))
+                } else {
+                    decode_all_positions(&bytes)
+                }
+            },
+        )?;
+
         let at = step(0);
         let bytes = fetcher.get(
             &format!("{}/JSON/{key}/RaceSetup", self.cdn),
@@ -582,25 +602,17 @@ impl TrackerClient for YellowBrick {
             return Err(no_such());
         }
         let setup = parse_race_setup(&bytes)?;
+        listed(event_of(
+            event,
+            &setup,
+            |_| Vec::new(),
+            PositionsFrom::Primary,
+        ));
 
         let at = step(1);
-        let binary = fetcher
-            .get(
-                &format!("{}/BIN/{key}/AllPositions3", self.cdn),
-                &mut |b, t| {
-                    progress(at(b, t));
-                },
-            )
-            .and_then(|bytes| {
-                if is_html(&bytes) {
-                    Err(decode_error(
-                        0,
-                        "the answer is a web page, not positions".to_owned(),
-                    ))
-                } else {
-                    decode_all_positions(&bytes)
-                }
-            });
+        let binary = binary.wait(&mut |b, t| {
+            progress(at(b, t));
+        });
         let failure = match binary {
             Ok(all) => {
                 progress(Progress {

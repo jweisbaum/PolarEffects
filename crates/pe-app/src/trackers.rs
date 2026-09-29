@@ -3,7 +3,9 @@
 //!
 //! Two calls, as the dialog needs. [`tracker_event`] resolves the pasted
 //! address and downloads **every** boat's full track as a job with
-//! progress (`tracker://progress`) and Cancel ([`cancel_tracker_event`]);
+//! progress (`tracker://progress`) and Cancel ([`cancel_tracker_event`]),
+//! sending the boat list ahead of the positions (`tracker://listed`) when
+//! the tracker gives it first, so the dialog's table shows at once (D24);
 //! the event is kept in memory (up to [`KEPT_FIXES`] positions in all), so
 //! asking again, or importing a second boat later in the session, downloads
 //! nothing. [`import_tracker_boats`] then
@@ -30,6 +32,10 @@ use crate::tracks::{Pending, TrackImportFailure, TrackImportResult, add_tracks, 
 
 /// The event carrying [`TrackerProgress`] while an event downloads.
 pub const PROGRESS_EVENT: &str = "tracker://progress";
+
+/// The event carrying the downloading event's boat list, a
+/// [`TrackerEventView`] with `positions` false, before its positions.
+pub const LISTED_EVENT: &str = "tracker://listed";
 
 /// How many positions the downloaded events the session keeps may hold in
 /// all; the oldest event goes first, and the latest is always kept. A
@@ -193,7 +199,8 @@ pub struct TrackerBoatRow {
     pub first: Option<i64>,
     /// Last position.
     pub last: Option<i64>,
-    /// A few positions for the map preview: `[lon, lat, lon, lat, …]`.
+    /// A few positions for the map preview: `[lon, lat, lon, lat, …]`,
+    /// rounded to 1e-4° (about 10 m), which keeps the payload small.
     pub preview: Vec<f64>,
 }
 
@@ -221,6 +228,10 @@ pub struct TrackerEventView {
     pub legs: Option<u32>,
     /// Whether this came from the session's memory rather than a download.
     pub cached: bool,
+    /// Whether the positions are in. False for the boat list sent ahead of
+    /// them ([`LISTED_EVENT`]): every boat's `fixes` is 0, its `first`,
+    /// `last` and `preview` empty.
+    pub positions: bool,
     /// Every boat.
     pub boats: Vec<TrackerBoatRow>,
 }
@@ -240,12 +251,27 @@ fn preview(fixes: &[pe_core::track::Fix]) -> Vec<f64> {
                 k * (n - 1) / (take - 1)
             }
         })
-        .flat_map(|i| [fixes[i].lon, fixes[i].lat])
+        .flat_map(|i| [round4(fixes[i].lon), round4(fixes[i].lat)])
         .collect()
+}
+
+/// To 1e-4°: the preview is 600 units wide, and the shortest decimal of the
+/// rounded value is what the IPC's JSON carries.
+fn round4(value: f64) -> f64 {
+    (value * 1e4).round() / 1e4
 }
 
 impl TrackerEventView {
     fn of(event: &TrackerEvent, cached: bool) -> Self {
+        Self::with(event, cached, true)
+    }
+
+    /// The boat list a tracker sends ahead of the positions.
+    fn listing(event: &TrackerEvent) -> Self {
+        Self::with(event, false, false)
+    }
+
+    fn with(event: &TrackerEvent, cached: bool, positions: bool) -> Self {
         Self {
             tracker: tracker_name(event.event.tracker).to_owned(),
             key: event.event.key.clone(),
@@ -257,6 +283,7 @@ impl TrackerEventView {
             leg: event.leg.map(|(leg, _)| leg),
             legs: event.leg.map(|(_, legs)| legs),
             cached,
+            positions,
             boats: event
                 .boats
                 .iter()
@@ -292,7 +319,25 @@ pub fn download_with(
     client: Arc<dyn TrackerClient>,
     input: &str,
     refresh: bool,
+    on_progress: impl FnMut(TrackerProgress),
+) -> Result<TrackerEventView> {
+    download_listed(state, client, input, refresh, on_progress, |_| {})
+}
+
+/// [`download_with`], also passing the boat list to `on_listed` as soon as
+/// the tracker gives it, before the positions (at most once; never for an
+/// event recalled from the session, nor for a tracker that answers
+/// everything at once).
+///
+/// # Errors
+/// As [`download_with`].
+pub fn download_listed(
+    state: &AppState,
+    client: Arc<dyn TrackerClient>,
+    input: &str,
+    refresh: bool,
     mut on_progress: impl FnMut(TrackerProgress),
+    mut on_listed: impl FnMut(&TrackerEventView),
 ) -> Result<TrackerEventView> {
     let event = client.resolve(input)?;
     if !refresh && let Some(cached) = state.trackers.cached(event.tracker, &event.key) {
@@ -311,19 +356,25 @@ pub fn download_with(
         Duration::from_secs(u64::from(timeout.max(1))),
         Arc::clone(&cancel),
     )?;
-    let (tx, rx) = std::sync::mpsc::channel::<
-        std::result::Result<Progress, pe_trackers::Result<TrackerEvent>>,
-    >();
+    let (tx, rx) = std::sync::mpsc::channel::<Message>();
     let worker = {
         let tx = tx.clone();
         let event = event.clone();
         std::thread::Builder::new()
             .name("tracker-download".to_owned())
             .spawn(move || {
-                let result = client.fetch(&event, &fetcher, &mut |p| {
-                    let _ = tx.send(Ok(p));
-                });
-                let _ = tx.send(Err(result));
+                let listed_tx = tx.clone();
+                let result = client.fetch_listed(
+                    &event,
+                    &fetcher,
+                    &mut |p| {
+                        let _ = tx.send(Message::Progress(p));
+                    },
+                    &mut |boats| {
+                        let _ = listed_tx.send(Message::Listed(Box::new(boats)));
+                    },
+                );
+                let _ = tx.send(Message::Done(Box::new(result)));
             })
             .map_err(|e| AppError::Internal(format!("no download thread: {e}")))?
     };
@@ -335,7 +386,10 @@ pub fn download_with(
             break Err(TrackerError::Cancelled);
         }
         match rx.recv_timeout(Duration::from_millis(50)) {
-            Ok(Ok(p)) => {
+            Ok(Message::Listed(boats)) => {
+                on_listed(&TrackerEventView::listing(&boats));
+            }
+            Ok(Message::Progress(p)) => {
                 if p.step != last_step || last.elapsed() >= PROGRESS_EVERY {
                     last = Instant::now();
                     last_step = p.step;
@@ -346,7 +400,7 @@ pub fn download_with(
                     });
                 }
             }
-            Ok(Err(result)) => break result,
+            Ok(Message::Done(result)) => break *result,
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                 break Err(TrackerError::Network("the download stopped".to_owned()));
@@ -366,8 +420,16 @@ pub fn download_with(
     Ok(TrackerEventView::of(&downloaded, false))
 }
 
+/// What the download's worker says.
+enum Message {
+    Progress(Progress),
+    Listed(Box<TrackerEvent>),
+    Done(Box<pe_trackers::Result<TrackerEvent>>),
+}
+
 /// Resolves a pasted event address and downloads every boat's track, or
-/// recalls the event from this session (spec.md 7.2).
+/// recalls the event from this session (spec.md 7.2). The boat list goes
+/// ahead as [`LISTED_EVENT`] when the tracker gives it first.
 #[tauri::command]
 pub async fn tracker_event(
     app: tauri::AppHandle,
@@ -380,9 +442,18 @@ pub async fn tracker_event(
     let client: Arc<dyn TrackerClient> = Arc::from(client_of(tracker)?);
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        download_with(&state, client, &url, refresh, |p| {
-            let _ = app.emit(PROGRESS_EVENT, &p);
-        })
+        download_listed(
+            &state,
+            client,
+            &url,
+            refresh,
+            |p| {
+                let _ = app.emit(PROGRESS_EVENT, &p);
+            },
+            |listing| {
+                let _ = app.emit(LISTED_EVENT, listing);
+            },
+        )
     })
     .await
     .map_err(|e| AppError::Internal(format!("the download task failed: {e}")))?

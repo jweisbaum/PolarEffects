@@ -234,7 +234,9 @@ export const api = {
   importTrackFiles: (files: TrackFileRequest[]) => call<TrackImportResult>("import_track_files", { files }),
 
   // Tracker imports (spec.md 7.2). A download reports `TRACKER_PROGRESS`
-  // events and can be cancelled; the event is kept for the session.
+  // events, sends the boat list ahead of the positions as a
+  // `TRACKER_LISTED` event when the tracker gives it first (D24), and can
+  // be cancelled; the event is kept for the session.
 
   /**
    * Resolves a pasted event address and downloads every boat's full track,
@@ -385,6 +387,8 @@ export const ENV_CHANGED = "env://changed";
 
 /** The event carrying a tracker download's progress. */
 export const TRACKER_PROGRESS = "tracker://progress";
+/** The event carrying a downloading event's boat list, before its positions. */
+export const TRACKER_LISTED = "tracker://listed";
 
 /** The event Rust sends when the user asks to quit or close the window. */
 export const QUIT_REQUESTED = "app://quit-requested";

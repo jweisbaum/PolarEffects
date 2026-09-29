@@ -529,13 +529,17 @@ The ORC catalogue is **embedded in the app** (D3):
 ### 7.1 Track list
 
 The Tracks section lists every track source: colour, boat name, event title,
-date range, sample count, and an environment status (not fetched, queued,
-fetching n %, ready, partial, failed). Each has Show on map, Remove, Refetch
-environment, and Export reanalysis GRIB (§7.8).
+date range, sample count, and a weather status (not fetched, queued,
+fetching n %, ready, partial, failed). Each has a tick box, **Fetch
+weather…** (Cancel fetch while it runs), Show on map, Remove, and Export
+reanalysis GRIB (§7.8).
 
 Buttons above the list: **YellowBrick…**, **Geovoile…**, **Blue Water…**,
-**File…**. Several events and several files can be imported into one
-project, and several boats from one event.
+**File…**; and, once there are tracks, **Fetch weather for selected
+tracks…**, over the ticked tracks. Several events and several files can be
+imported into one project, and several boats from one event. Importing never
+fetches weather (D24): an imported track shows "Weather: not fetched" until
+the user asks for it.
 
 ### 7.2 Tracker import
 
@@ -543,26 +547,41 @@ All three trackers share one dialog flow (D4):
 
 1. The user pastes the event URL. The app resolves the event and shows its
    title and dates.
-2. **The full tracks of all boats are downloaded**, then shown as a table:
-   boat name, sail number, model/class, division, fix count, status. A map
-   preview shows the tracks.
+2. **The full tracks of all boats are downloaded — tracks only, never
+   weather** — and shown as a table: boat name, sail number, model/class,
+   division, fix count, status. The table appears as soon as the tracker
+   names the boats, while the positions still download (D24); the fix
+   counts, dates and a map preview of the tracks fill in when they arrive.
 3. The user selects one or more boats (search box over name, sail number,
-   model). **Import** creates one track source per selected boat.
+   model), during the download or after it. **Import tracks** (enabled once
+   the positions are in) creates one track source per selected boat.
 4. The downloaded event is kept in memory for the session, so a second import
    from the same event does not download again.
+5. No weather is fetched. The user starts it per track, or for the ticked
+   tracks, from the track list (§7.1, §7.5).
 
 In detail (M10):
 
 - Each tracker is a `TrackerClient` in `pe-trackers`: resolving the pasted
   address needs no network; one fetch then returns the whole event (title,
   dates, every boat with its sail number, model, division, status, own
-  start and finish, and full track). The dialog shows the event's title,
+  start and finish, and full track). A tracker that names its boats in a
+  response of its own hands that list over first (`fetch_listed`,
+  `tracker://listed`, a view with `positions: false`): YellowBrick after
+  RaceSetup, Geovoile after its config; Blue Water Tracks answers everything
+  in one response. The responses an event needs are requested at once
+  where they do not depend on each other (YellowBrick's RaceSetup and
+  AllPositions3; Geovoile's config, tracks and reports, after the viewer
+  page and versions), each decoded on its own thread, and asked for
+  gzipped (inflated by the client under the same 256 MB cap). The dialog shows the event's title,
   dates and boat count, a map preview of every boat's track (64 points
   each, over the basemap coastline, the ticked boats highlighted), a search
   over name, sail number, model and division (every word must match; case,
   accents and the spaces or slashes inside sail numbers do not matter), and
   a tick-all box for the boats shown. A boat without positions cannot be
-  ticked.
+  ticked; while the positions download every boat can be, and a ticked boat
+  that turns out to have none is unticked when they arrive. Preview
+  coordinates are rounded to 1e-4° to keep the IPC payload small.
 - The download is a job (§7.7) run from the dialog: its progress (bytes and
   fraction) shows in the dialog with Cancel download, which returns at once
   even while the tracker has not answered; nothing is kept from a cancelled
@@ -579,9 +598,9 @@ In detail (M10):
   two million positions in all (about 110 MB; the Fastnet 2025 is 714,380
   positions, about 40 MB); the latest is always kept. Reopening one says
   it was kept and offers Download again for newer positions.
-- Import adds one track source per ticked boat, labelled with the boat's
-  name, as one undo entry, and opens the environment fetch pre-flight as a
-  file import does (§7.5). The track's origin records the tracker, the
+- Import tracks adds one track source per ticked boat, labelled with the
+  boat's name, as one undo entry, and fetches no weather (D24); the hint
+  after it says weather can be fetched per track (§7.5). The track's origin records the tracker, the
   canonical event address (`https://yb.tl/<key>`), the title, and the
   boat's tracker id, name, sail number, model, division, start and finish.
   Its time-window filter starts at the boat's start and ends at its finish
@@ -775,10 +794,16 @@ undo entry that restores the previous values exactly.
 
 ### 7.5 Environment for each sample
 
-After import, every track is matched against reanalysis, as a background
-job (§7.7). The import opens the fetch's pre-flight (§13) for the tracks it
-added, with Fetch as its default answer; Not now leaves them "not fetched"
-until Refetch environment.
+Every track sample can be matched against reanalysis, as a background job
+(§7.7), **when the user asks for it** (D24): a track's **Fetch weather…**, or
+**Fetch weather for selected tracks…** over the ticked tracks, opens the
+fetch's pre-flight (§13) for those tracks, with Fetch as its default answer.
+Importing a track (from a file or a tracker) never starts it and makes no
+reanalysis request; Not now leaves the tracks "not fetched". The pre-flight
+opens at once: the estimate (which opens the chunk cache) is computed off
+the UI thread, the two interval choices read "calculating the download…"
+until it arrives, and a choice made meanwhile is kept over the
+recommendation.
 
 | Quantity | Dataset | Variable |
 |---|---|---|
@@ -801,7 +826,7 @@ until Refetch environment.
   dataset's name, version (the store's dated name) and fetch time, and
   whether its current has tides; each sample records which supplied its
   wind, waves and current, and whether the fetch has answered for it
-  (what Refetch resumes from).
+  (what Fetch weather… resumes from).
 - TWA is the angle between the heading and where the wind comes from; the
   wind over the starboard side is starboard tack, and head to wind or dead
   downwind is neither. The wave angle is measured off the bow (0° head
@@ -918,8 +943,10 @@ Scraping, reanalysis fetches and GRIB exports are **jobs**: they run on a
 worker pool, show progress in the status bar and the track list, and can be
 cancelled. The one exception is a tracker event's download, whose progress
 and Cancel show in the tracker dialog that started it (§7.2), since nothing
-else can go on in the dialog meanwhile. A cancelled or failed fetch keeps whatever samples completed
-(status "partial") and can be resumed with Refetch. Jobs for tracks from the
+else can go on in the dialog meanwhile; the boat list it sends ahead can be
+searched and ticked while it runs. A tracker download never includes weather
+(D24). A cancelled or failed fetch keeps whatever samples completed
+(status "partial") and can be resumed with Fetch weather…. Jobs for tracks from the
 same event share the chunk cache, so the second boat of a race costs almost
 nothing.
 
@@ -935,14 +962,14 @@ The environment fetch in detail (M9):
   the next chunk read, keeping every finished batch. Each sample's values
   depend only on its own time and place, so a resumed fetch ends exactly
   where an uninterrupted one would.
-- Refetch fetches the samples still missing; on a ready track, or at a
+- Fetch weather… fetches the samples still missing; on a ready track, or at a
   different interval or Stokes-drift choice than the last fetch (both
   recorded on the track), it starts over. Starting over first clears every
   sample's wind, waves and current (raw, corrected and which datasets) and
   the track's dataset records, so a restart that is cancelled leaves a
   track partly fetched at the new settings, never a mix of two fetches.
 - The status bar shows the running track, its progress and how many wait,
-  with Cancel fetch (all); a track's details have Cancel fetch for it. A
+  with Cancel fetch (all); a track's row has Cancel fetch for it. A
   failure is reported on the status line and leaves "partial" (or "failed"
   when nothing finished).
 - A job belongs to the project it was started for: New, Open, Close and
@@ -1328,6 +1355,7 @@ a Snapdragon X Windows ARM64 laptop):
 | Open a project with 50 tracks | < 2 s |
 | Reanalysis for a 5-day race, cold cache | reported, not budgeted; progress every second |
 | Second boat from the same event | < 5 s (cache hit) |
+| Tracker address to a pickable boat list | as short as the tracker allows: the first response naming the boats, no weather (D24) |
 
 The chunk-cache cost of reanalysis is real: one hour of one variable is a
 global chunk of about 1.7–3.3 MB (measured in M3: wind 3.3 MB, wave height

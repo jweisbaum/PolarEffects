@@ -369,14 +369,16 @@ impl TrackerClient for BlueWaterTracks {
         })
     }
 
-    /// One request, `GET /api/race/<slug>`. An unknown slug answers 200
-    /// with `race` an empty array rather than an object; a 404 is treated
-    /// the same, in case a redirect or a changed API ever gives one.
-    fn fetch(
+    /// One request, `GET /api/race/<slug>`, so there is no boat list ahead
+    /// of the positions. An unknown slug answers 200 with `race` an empty
+    /// array rather than an object; a 404 is treated the same, in case a
+    /// redirect or a changed API ever gives one.
+    fn fetch_listed(
         &self,
         event: &EventRef,
         fetcher: &Fetcher,
         progress: &mut dyn FnMut(Progress),
+        _listed: &mut dyn FnMut(TrackerEvent),
     ) -> Result<TrackerEvent> {
         let slug = event.key.as_str();
         // The slug goes into the request path as it is.

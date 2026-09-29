@@ -46,6 +46,12 @@ legs: number | null,
  */
 cached: boolean,
 /**
+ * Whether the positions are in. False for the boat list sent ahead of
+ * them ([`LISTED_EVENT`]): every boat's `fixes` is 0, its `first`,
+ * `last` and `preview` empty.
+ */
+positions: boolean,
+/**
  * Every boat.
  */
 boats: Array<TrackerBoatRow>, };

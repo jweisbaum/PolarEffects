@@ -377,3 +377,79 @@ fn a_geovoile_event_imports_with_official_heading_and_speed() {
     })
     .unwrap();
 }
+
+/// A reanalysis archive that fails on any request and counts them.
+#[derive(Default)]
+struct Refusing(AtomicUsize);
+
+impl pe_env::Provider for Refusing {
+    fn sample(
+        &self,
+        _points: &[pe_env::Point],
+        _options: &pe_env::Options,
+        _cancel: &Arc<std::sync::atomic::AtomicBool>,
+    ) -> pe_env::Result<Vec<pe_env::EnvPoint>> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Err(pe_env::EnvError::Open(
+            "no reanalysis request may be made".to_owned(),
+        ))
+    }
+}
+
+#[derive(Default)]
+struct Quiet;
+
+impl pe_app::env::JobSink for Quiet {
+    fn progress(&self, _status: &pe_app::env::EnvJobsStatus) {}
+    fn changed(&self) {}
+}
+
+/// Importing is tracks only (D24): neither a tracker import nor a file
+/// import queues a weather fetch, opens the reanalysis archives, or makes
+/// a single reanalysis request, even when the job runner is driven.
+#[test]
+fn importing_issues_no_reanalysis_request() {
+    let root = TempRoot::new("trackers-no-weather");
+    let app = project(&root);
+    let (host, _) = serve();
+    download(&app, &host);
+    let from_tracker =
+        trackers::import_boats(&app, Tracker::YellowBrick, "rmsr2024", &["1".to_owned()]).unwrap();
+    assert_eq!(from_tracker.imported.len(), 1);
+    let path = root.file("one.geojson");
+    std::fs::write(
+        &path,
+        r#"{"type":"FeatureCollection","features":[
+{"type":"Feature","geometry":{"type":"Point","coordinates":[14.5,35.9]},"properties":{"time":1729233205}},
+{"type":"Feature","geometry":{"type":"Point","coordinates":[14.6,35.95]},"properties":{"time":1729236805}}]}"#,
+    )
+    .unwrap();
+    let from_file = pe_app::tracks::import(
+        &app,
+        &[pe_app::tracks::TrackFileRequest {
+            path,
+            mapping: None,
+            boats: None,
+        }],
+    )
+    .unwrap();
+    assert_eq!(from_file.imported.len(), 1);
+
+    assert!(app.env_jobs.status().tracks.is_empty(), "nothing queued");
+    let refusing = Refusing::default();
+    assert!(pe_app::env::run_next(&app, &refusing, &Quiet, 1_760_000_000, false).is_none());
+    assert_eq!(
+        refusing.0.load(Ordering::SeqCst),
+        0,
+        "no reanalysis request"
+    );
+    assert!(
+        app.env_provider.lock().unwrap().is_none(),
+        "the reanalysis archives were never opened"
+    );
+    for source in &from_file.project.sources {
+        if let Some(track) = &source.track {
+            assert_eq!(track.env_status, "not_fetched");
+        }
+    }
+}

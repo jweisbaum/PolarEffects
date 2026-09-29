@@ -41,6 +41,7 @@ first: number | null,
  */
 last: number | null,
 /**
- * A few positions for the map preview: `[lon, lat, lon, lat, …]`.
+ * A few positions for the map preview: `[lon, lat, lon, lat, …]`,
+ * rounded to 1e-4° (about 10 m), which keeps the payload small.
  */
 preview: Array<number>, };

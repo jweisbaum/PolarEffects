@@ -7,6 +7,11 @@
 //! returns the whole [`TrackerEvent`]; listing its boats and taking one
 //! boat's fixes are then reads of that value, which the app keeps for the
 //! session so a second import from the same event downloads nothing.
+//!
+//! A tracker that names its boats in a response of its own (YellowBrick's
+//! RaceSetup, Geovoile's config) hands that list over as soon as it has
+//! it, through [`TrackerClient::fetch_listed`], while the positions still
+//! download: the dialog shows a pickable table at once (D24).
 
 use pe_core::track::{Fix, Tracker};
 
@@ -148,6 +153,24 @@ pub trait TrackerClient: Send + Sync {
         event: &EventRef,
         fetcher: &Fetcher,
         progress: &mut dyn FnMut(Progress),
+    ) -> Result<TrackerEvent> {
+        self.fetch_listed(event, fetcher, progress, &mut |_| {})
+    }
+
+    /// [`TrackerClient::fetch`], also calling `listed` once with the event's
+    /// title, dates and boats, **without fixes**, as soon as they are known
+    /// and before the positions are read, when the tracker gives them
+    /// separately. A tracker that answers everything at once (Blue Water
+    /// Tracks) never calls it.
+    ///
+    /// # Errors
+    /// As [`TrackerClient::fetch`].
+    fn fetch_listed(
+        &self,
+        event: &EventRef,
+        fetcher: &Fetcher,
+        progress: &mut dyn FnMut(Progress),
+        listed: &mut dyn FnMut(TrackerEvent),
     ) -> Result<TrackerEvent>;
 }
 

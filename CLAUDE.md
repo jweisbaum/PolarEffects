@@ -171,8 +171,11 @@ with an undo inverse test. Run `npm run bindings`.
 
 **Adding a tracker.** A new module in `pe-trackers` implementing
 `TrackerClient` (`resolve` a pasted URL to an `EventRef` without network;
-`fetch` the whole `TrackerEvent` — title, dates, every boat and its fixes —
-through the shared `Fetcher`, whose boats and fixes the dialog then lists),
+`fetch_listed` the whole `TrackerEvent` — title, dates, every boat and its
+fixes — through the shared `Fetcher`, handing the boat list to `listed`
+first when the tracker names the boats in a response of its own, and
+starting independent requests at once with `Fetcher::spawn`; never any
+weather, D24),
 and a line in `event::client`. The dialog, session cache and import in
 `pe-app/src/trackers.rs` and `TrackerImportDialog.tsx` are shared. Add its hosts to the `pe-trackers` allow-list in
 `tools/check-offline.sh` and to `net::allowed_host` (which also bounds

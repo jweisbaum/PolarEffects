@@ -1152,3 +1152,70 @@ fn a_bluewater_plain_404_is_also_no_such_event() {
         .expect_err("no such event");
     assert!(matches!(err, TrackerError::NoSuchEvent { .. }), "{err:?}");
 }
+
+/// The boat list goes ahead of the positions (D24): YellowBrick hands the
+/// setup's boats, without fixes, to `listed` once, before the positions,
+/// and the event then carries them with their fixes.
+#[test]
+fn yellowbrick_lists_the_boats_before_the_positions() {
+    let host = serve(vec![
+        (
+            "/JSON/rmsr2024/RaceSetup",
+            "200 OK",
+            fixture("yellowbrick/rmsr2024-RaceSetup.json"),
+        ),
+        (
+            "/BIN/rmsr2024/AllPositions3",
+            "200 OK",
+            fixture("yellowbrick/rmsr2024-AllPositions3-first3.bin"),
+        ),
+    ]);
+    let client = YellowBrick::at(&host, &host);
+    let event = client.resolve("yb.tl/rmsr2024").expect("resolves");
+    let fetcher =
+        Fetcher::new("YellowBrick", Duration::from_secs(10), Arc::default()).expect("a client");
+    let mut listed = Vec::new();
+    let out = client
+        .fetch_listed(&event, &fetcher, &mut |_| {}, &mut |e| listed.push(e))
+        .expect("fetches");
+    assert_eq!(listed.len(), 1, "listed once");
+    let list = &listed[0];
+    assert_eq!(list.title, "Rolex Middle Sea Race 2024");
+    assert_eq!(list.boats.len(), 112);
+    assert!(list.boats.iter().all(|b| b.fixes.is_empty()));
+    let names = |e: &pe_trackers::TrackerEvent| {
+        e.boats
+            .iter()
+            .map(|b| (b.id.clone(), b.name.clone(), b.division.clone()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        names(list),
+        names(&out),
+        "the same boats, in the same order"
+    );
+    assert_eq!(out.boat("1").map(|b| b.fixes.len()), Some(1689));
+}
+
+/// Geovoile lists the config's boats before its tracks and reports.
+#[test]
+fn geovoile_lists_the_boats_before_the_positions() {
+    let host = ultim_routes(fixture("geovoile/24hultim2025/viewer.html"));
+    let client = geovoile::Geovoile::at(&host);
+    let event = client
+        .resolve("https://24hultim.geovoile.com/2025/tracker/")
+        .expect("resolves");
+    let fetcher =
+        Fetcher::new("Geovoile", Duration::from_secs(10), Arc::default()).expect("a client");
+    let mut listed = Vec::new();
+    let out = client
+        .fetch_listed(&event, &fetcher, &mut |_| {}, &mut |e| listed.push(e))
+        .expect("fetches");
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].title, "24H Ultim");
+    assert_eq!(listed[0].event, out.event);
+    assert_eq!(listed[0].boats.len(), 14);
+    assert!(listed[0].boats.iter().all(|b| b.fixes.is_empty()));
+    assert_eq!(listed[0].boats[0].name, out.boats[0].name);
+    assert_eq!(out.boat("4").map(|b| b.fixes.len()), Some(470));
+}

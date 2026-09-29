@@ -409,7 +409,7 @@ function Shell() {
     {askUnsaved !== null && <UnsavedChangesDialog name={askUnsaved.name} onChoose={answerUnsaved} />}
     {askStopJobs !== null && (
       <ConfirmDialog title={t("Cancel the environment fetch?")}
-        body={t("A wind, wave and current fetch is running for this project. It stops first; the samples it already fetched stay in the project, and Refetch environment resumes it later.")}
+        body={t("A wind, wave and current fetch is running for this project. It stops first; the samples it already fetched stay in the project, and Fetch weather… resumes it later.")}
         confirmLabel={t("Cancel the fetch")} onConfirm={() => askStopJobs(true)} onCancel={() => askStopJobs(false)} />
     )}
   </>;

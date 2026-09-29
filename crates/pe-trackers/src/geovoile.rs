@@ -1177,16 +1177,19 @@ impl TrackerClient for Geovoile {
         })
     }
 
-    /// The viewer page (for the parameters and seeds), the versions, the
-    /// config, the tracks and the reports. The reports only add official
-    /// heading, speed, status and finish times, so a reports file that does
-    /// not load or decode leaves those to be derived; a cancel or a tracker
-    /// that keeps failing still ends the download.
-    fn fetch(
+    /// The viewer page (for the parameters and seeds), the versions, then
+    /// the config, the tracks and the reports at the same time (the tracks
+    /// and reports decoded on their own threads), the boat list handed to
+    /// `listed` as soon as the config is read. The reports only add
+    /// official heading, speed, status and finish times, so a reports file
+    /// that does not load or decode leaves those to be derived; a cancel or
+    /// a tracker that keeps failing still ends the download.
+    fn fetch_listed(
         &self,
         event: &EventRef,
         fetcher: &Fetcher,
         progress: &mut dyn FnMut(Progress),
+        listed: &mut dyn FnMut(TrackerEvent),
     ) -> Result<TrackerEvent> {
         // The key goes into requests, so it is parsed again, never trusted.
         let mut site = site(&format!("{HTTPS}{}", event.key))?;
@@ -1247,22 +1250,43 @@ impl TrackerClient for Geovoile {
         };
         let version = |kind: &str| versions.get(kind).copied().unwrap_or(0);
 
-        let mut read = |kind: &str, step_no: u32| -> Result<Vec<u8>> {
-            let at = step(step_no);
+        let address = |kind: &str| -> Result<String> {
             let url = resource_url(&page, &viewer.resource_path(kind, version(kind)))?;
-            fetcher.get(&self.request(&url), &mut |b, t| progress(at(b, t)))
+            Ok(self.request(&url))
         };
-        let config = read("config", 2)?;
+        // The tracks and reports start at once and decode on their own
+        // threads while the config is read here.
+        let seeds = viewer.seeds;
+        let tracks = fetcher.spawn(address("tracks")?, None, move |bytes| {
+            parse_tracks(&decode_text(&bytes, seeds, false)?)
+        })?;
+        let reports = fetcher.spawn(address("reports")?, None, move |bytes| {
+            Ok(decode_text(&bytes, seeds, false)
+                .and_then(|text| parse_reports(&text))
+                .ok())
+        })?;
+        let at = step(2);
+        let config = fetcher.get(&address("config")?, &mut |b, t| progress(at(b, t)))?;
         let config = parse_config(&decode_text(&config, viewer.seeds, true)?)?;
         if config.boats.is_empty() {
             return Err(unsupported("the config lists no boats"));
         }
-        let tracks = read("tracks", 3)?;
-        let tracks = parse_tracks(&decode_text(&tracks, viewer.seeds, false)?)?;
-        let reports = match read("reports", 4) {
-            Ok(bytes) => decode_text(&bytes, viewer.seeds, false)
-                .and_then(|text| parse_reports(&text))
-                .ok(),
+        listed(event_of(
+            EventRef {
+                tracker: Tracker::Geovoile,
+                key: site.key(),
+                url: site.url(),
+            },
+            &viewer,
+            &config,
+            Vec::new(),
+            None,
+        ));
+        let at = step(3);
+        let tracks = tracks.wait(&mut |b, t| progress(at(b, t)))?;
+        let at = step(4);
+        let reports = match reports.wait(&mut |b, t| progress(at(b, t))) {
+            Ok(reports) => reports,
             Err(e @ (TrackerError::Cancelled | TrackerError::Unavailable { .. })) => return Err(e),
             Err(_) => None,
         };

@@ -211,7 +211,16 @@ impl Fetcher {
         timeout: Option<Duration>,
         progress: &mut dyn FnMut(u64, Option<u64>),
     ) -> std::result::Result<Vec<u8>, Failure> {
-        let mut request = self.client.get(url);
+        // Compressed where the tracker offers it: YellowBrick's RaceSetup
+        // and Blue Water Tracks' race JSON are about a tenth the size
+        // gzipped (M14b). Decompressed here, not by reqwest, so progress
+        // counts the bytes actually transferred against their announced
+        // length, and so `pe-env`'s client (which shares reqwest's
+        // features) is unchanged.
+        let mut request = self
+            .client
+            .get(url)
+            .header(reqwest::header::ACCEPT_ENCODING, "gzip");
         if let Some(timeout) = timeout {
             request = request.timeout(timeout);
         }
@@ -239,6 +248,11 @@ impl Fetcher {
                 });
             }
         }
+        let gzip = response
+            .headers()
+            .get(reqwest::header::CONTENT_ENCODING)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.trim().eq_ignore_ascii_case("gzip"));
         let total = response.content_length();
         if total.is_some_and(|n| n > MAX_BODY_BYTES) {
             return Err(Failure::Permanent {
@@ -283,7 +297,111 @@ impl Fetcher {
         }
         // Complete, whether or not the server announced a length.
         progress(body.len() as u64, Some(body.len() as u64));
+        if gzip {
+            return self.gunzip(&body, url);
+        }
         Ok(body)
+    }
+
+    /// A gzipped body, inflated under the same cap as a plain one.
+    fn gunzip(&self, body: &[u8], url: &str) -> std::result::Result<Vec<u8>, Failure> {
+        let mut out = Vec::with_capacity(body.len().saturating_mul(4));
+        flate2::read::GzDecoder::new(body)
+            .take(MAX_BODY_BYTES + 1)
+            .read_to_end(&mut out)
+            .map_err(|e| {
+                Failure::Transient(format!(
+                    "{}'s compressed answer for {url} did not inflate: {e}",
+                    self.tracker
+                ))
+            })?;
+        if out.len() as u64 > MAX_BODY_BYTES {
+            return Err(Failure::Permanent {
+                status: None,
+                why: format!(
+                    "{}'s answer for {url} is larger than the {MAX_BODY_BYTES}-byte limit",
+                    self.tracker
+                ),
+            });
+        }
+        Ok(out)
+    }
+
+    /// Starts a GET of `url` on its own thread, then `then` on the body
+    /// there too (a decoder), so it runs while this thread reads something
+    /// else: YellowBrick's positions download while its RaceSetup is read,
+    /// Geovoile's tracks and reports while its config is (M14b). The
+    /// thread stops with this fetcher's cancel; an answer nobody waits for
+    /// any more is dropped.
+    ///
+    /// # Errors
+    /// [`TrackerError::Network`] if no thread can be started.
+    pub fn spawn<T: Send + 'static>(
+        &self,
+        url: String,
+        timeout: Option<Duration>,
+        then: impl FnOnce(Vec<u8>) -> Result<T> + Send + 'static,
+    ) -> Result<Pending<T>> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let fetcher = self.clone();
+        std::thread::Builder::new()
+            .name("tracker-get".to_owned())
+            .spawn(move || {
+                let progress_tx = tx.clone();
+                let result = fetcher
+                    .read(&url, timeout, &mut |bytes, total| {
+                        let _ = progress_tx.send(Message::Progress(bytes, total));
+                    })
+                    .and_then(then);
+                let _ = tx.send(Message::Done(result));
+            })
+            .map_err(|e| TrackerError::Network(format!("no download thread: {e}")))?;
+        Ok(Pending {
+            rx,
+            fetcher: self.clone(),
+        })
+    }
+}
+
+enum Message<T> {
+    Progress(u64, Option<u64>),
+    Done(Result<T>),
+}
+
+/// A GET started by [`Fetcher::spawn`].
+#[derive(Debug)]
+pub struct Pending<T> {
+    rx: std::sync::mpsc::Receiver<Message<T>>,
+    fetcher: Fetcher,
+}
+
+impl<T> std::fmt::Debug for Message<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Progress(bytes, total) => write!(f, "Progress({bytes}, {total:?})"),
+            Self::Done(_) => write!(f, "Done"),
+        }
+    }
+}
+
+impl<T> Pending<T> {
+    /// Waits for the answer, passing on its progress; returns at once on
+    /// cancel.
+    ///
+    /// # Errors
+    /// Whatever the GET or `then` gave; [`TrackerError::Cancelled`].
+    pub fn wait(self, progress: &mut dyn FnMut(u64, Option<u64>)) -> Result<T> {
+        loop {
+            self.fetcher.check()?;
+            match self.rx.recv_timeout(PAUSE_SLICE) {
+                Ok(Message::Progress(bytes, total)) => progress(bytes, total),
+                Ok(Message::Done(result)) => return result,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(TrackerError::Network("the download stopped".to_owned()));
+                }
+            }
+        }
     }
 }
 
@@ -324,6 +442,83 @@ mod tests {
         Fetcher::new("Test", Duration::from_secs(5), Arc::default())
             .expect("a client")
             .with_backoff(Duration::from_millis(1))
+    }
+
+    /// A gzipped answer (asked for with `Accept-Encoding: gzip`) is
+    /// inflated, and a corrupt one is an error, not a partial body.
+    #[test]
+    fn gzipped_answers_are_inflated() {
+        use flate2::write::GzEncoder;
+        let text = "RaceSetup ".repeat(1000);
+        let mut enc = GzEncoder::new(Vec::new(), flate2::Compression::default());
+        enc.write_all(text.as_bytes()).expect("compresses");
+        let gz = enc.finish().expect("compresses");
+        let head = |len: usize| {
+            format!(
+                "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: {len}\r\nConnection: close\r\n\r\n"
+            )
+        };
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("binds");
+        let addr = listener.local_addr().expect("an address");
+        let bodies = vec![gz.clone(), gz[..gz.len() / 2].to_vec()];
+        std::thread::spawn(move || {
+            for body in bodies.into_iter().chain(std::iter::repeat_n(Vec::new(), 8)) {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    break;
+                };
+                let mut buf = [0u8; 4096];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                assert!(
+                    String::from_utf8_lossy(&buf[..n])
+                        .to_ascii_lowercase()
+                        .contains("accept-encoding: gzip")
+                );
+                let _ = stream.write_all(head(body.len()).as_bytes());
+                let _ = stream.write_all(&body);
+            }
+        });
+        let url = format!("http://127.0.0.1:{}/x", addr.port());
+        let mut last = (0, None);
+        let body = fetcher()
+            .get(&url, &mut |b, t| last = (b, t))
+            .expect("inflates");
+        assert_eq!(body, text.as_bytes());
+        assert_eq!(
+            last,
+            (gz.len() as u64, Some(gz.len() as u64)),
+            "progress counts the bytes sent"
+        );
+        assert!(fetcher().get(&url, &mut |_, _| {}).is_err(), "a cut gzip");
+    }
+
+    /// A GET on its own thread passes its progress and answer on; a cancel
+    /// ends the wait at once.
+    #[test]
+    fn a_spawned_get_answers_and_cancels() {
+        let (url, _) = serve(vec![reply("200 OK", "hello")]);
+        let pending = fetcher()
+            .spawn(url, None, |bytes| Ok(bytes.len()))
+            .expect("spawns");
+        let mut seen = 0;
+        assert_eq!(pending.wait(&mut |b, _| seen = b).expect("answers"), 5);
+        assert_eq!(seen, 5);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let quiet = std::net::TcpListener::bind("127.0.0.1:0").expect("binds");
+        let url = format!(
+            "http://127.0.0.1:{}/x",
+            quiet.local_addr().expect("addr").port()
+        );
+        let fetcher =
+            Fetcher::new("Test", Duration::from_secs(30), Arc::clone(&cancel)).expect("a client");
+        let pending = fetcher.spawn(url, None, Ok).expect("spawns");
+        cancel.store(true, Ordering::SeqCst);
+        let started = Instant::now();
+        assert!(matches!(
+            pending.wait(&mut |_, _| {}),
+            Err(TrackerError::Cancelled)
+        ));
+        assert!(started.elapsed() < Duration::from_secs(2));
+        drop(quiet);
     }
 
     #[test]

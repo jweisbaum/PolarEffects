@@ -14,11 +14,13 @@ type Interval = "hourly" | "three_hourly";
  * three hours, less what the chunk cache already holds. Hourly is offered
  * first unless its download would exceed half the chunk-cache limit.
  *
- * It opens by itself after an import, since importing is what starts the
- * fetch (spec.md 7.5), and from Refetch environment. Its two interval
- * choices are tagged and registered, landing on Refetch environment; its
- * answer buttons (Not now, Fetch) are not, as in every transient dialog
- * (spec.md 3.6).
+ * It opens only when the user asks for weather: Fetch weather… on a track,
+ * or Fetch weather for selected tracks… (never by itself after an import,
+ * D24). It shows at once; the estimate (which opens the chunk cache) runs
+ * off the UI thread and reads "calculating…" until it arrives. Its two
+ * interval choices are tagged and registered, landing on Fetch weather…;
+ * its answer buttons (Not now, Fetch) are not, as in every transient
+ * dialog (spec.md 3.6).
  */
 export default function EnvFetchDialog({ sourceIds, restart, onClose }: {
   sourceIds: number[];
@@ -30,6 +32,9 @@ export default function EnvFetchDialog({ sourceIds, restart, onClose }: {
   const [estimate, setEstimate] = useState<EnvEstimate | null>(null);
   const [choice, setChoice] = useState<Interval>("hourly");
   const [busy, setBusy] = useState(false);
+  // A choice made while the estimate is calculated is kept when it arrives.
+  const chosen = useRef(false);
+  const choose = (interval: Interval) => { chosen.current = true; setChoice(interval); };
   const close = useRef(onClose);
   close.current = onClose;
   const fetchButton = useRef<HTMLButtonElement>(null);
@@ -40,14 +45,15 @@ export default function EnvFetchDialog({ sourceIds, restart, onClose }: {
     if (estimate !== null) fetchButton.current?.focus();
   }, [estimate]);
 
-  // Asked once, when the dialog opens.
+  // Asked once, when the dialog opens; the dialog is already showing, and
+  // the choices stay usable while it is calculated.
   useEffect(() => {
     let live = true;
     api.envEstimate(sourceIds, restart)
       .then((e) => {
         if (!live) return;
         setEstimate(e);
-        setChoice(e.recommended === "three_hourly" ? "three_hourly" : "hourly");
+        if (!chosen.current) setChoice(e.recommended === "three_hourly" ? "three_hourly" : "hourly");
       })
       .catch((error) => { reportFailure(error); close.current(); });
     return () => { live = false; };
@@ -78,35 +84,37 @@ export default function EnvFetchDialog({ sourceIds, restart, onClose }: {
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal modal-narrow env-fetch" role="dialog" aria-label={title} onClick={(e) => e.stopPropagation()}>
         <h2>{title}</h2>
-        {estimate === null
-          ? <p className="muted">{t("Estimating the download")}</p>
-          : <>
-            <p className="modal-summary">
-              {t("Reanalysis wind, waves and current for {count} samples, from the archives named in Help.", { count: estimate.samples })}
-            </p>
-            <fieldset className="env-fetch-interval">
-              <legend>{t("Wind and wave sampling")}</legend>
-              <label>
-                <input type="radio" name="env-interval" data-feature="env-fetch:hourly" checked={choice === "hourly"}
-                  onChange={() => setChoice("hourly")} />
-                {t("Hourly: about {size} to download", { size: formatBytes(estimate.hourly_bytes) })}
-              </label>
-              <label>
-                <input type="radio" name="env-interval" data-feature="env-fetch:three-hourly" checked={choice === "three_hourly"}
-                  onChange={() => setChoice("three_hourly")} />
-                {t("Every 3 hours: about {size} to download", { size: formatBytes(estimate.three_hourly_bytes) })}
-              </label>
-            </fieldset>
-            {estimate.cached_bytes > 0 && (
-              <p className="muted">{t("{size} of it is already in the chunk cache.", { size: formatBytes(estimate.cached_bytes) })}</p>
-            )}
-            {estimate.recommended === "three_hourly" && (
-              <p className="muted">{t("Hourly would fill more than half the chunk cache ({limit}), so every 3 hours is chosen.", { limit: formatBytes(estimate.cache_limit_bytes) })}</p>
-            )}
-            <p className="muted">{t("It runs in the background; the status bar shows its progress and can cancel it. Samples already fetched are kept.")}</p>
-          </>}
+        <p className="modal-summary">
+          {estimate === null
+            ? t("Reanalysis wind, waves and current for the chosen tracks, from the archives named in Help.")
+            : t("Reanalysis wind, waves and current for {count} samples, from the archives named in Help.", { count: estimate.samples })}
+        </p>
+        <fieldset className="env-fetch-interval">
+          <legend>{t("Wind and wave sampling")}</legend>
+          <label>
+            <input type="radio" name="env-interval" data-feature="env-fetch:hourly" checked={choice === "hourly"}
+              onChange={() => choose("hourly")} />
+            {estimate === null
+              ? t("Hourly: calculating the download…")
+              : t("Hourly: about {size} to download", { size: formatBytes(estimate.hourly_bytes) })}
+          </label>
+          <label>
+            <input type="radio" name="env-interval" data-feature="env-fetch:three-hourly" checked={choice === "three_hourly"}
+              onChange={() => choose("three_hourly")} />
+            {estimate === null
+              ? t("Every 3 hours: calculating the download…")
+              : t("Every 3 hours: about {size} to download", { size: formatBytes(estimate.three_hourly_bytes) })}
+          </label>
+        </fieldset>
+        {estimate !== null && estimate.cached_bytes > 0 && (
+          <p className="muted">{t("{size} of it is already in the chunk cache.", { size: formatBytes(estimate.cached_bytes) })}</p>
+        )}
+        {estimate !== null && estimate.recommended === "three_hourly" && (
+          <p className="muted">{t("Hourly would fill more than half the chunk cache ({limit}), so every 3 hours is chosen.", { limit: formatBytes(estimate.cache_limit_bytes) })}</p>
+        )}
+        <p className="muted">{t("It runs in the background; the status bar shows its progress and can cancel it. Samples already fetched are kept.")}</p>
         <div className="modal-actions">
-          <button onClick={onClose} title={t("Fetch nothing now; Refetch environment starts it later")}>{t("Not now")}</button>
+          <button onClick={onClose} title={t("Fetch nothing now; Fetch weather… on a track starts it later")}>{t("Not now")}</button>
           <span className="spacer" />
           <button className="primary" ref={fetchButton} disabled={busy || estimate === null || estimate.samples === 0}
             title={t("Start the fetch in the background")} onClick={() => void start()}>

@@ -132,7 +132,7 @@ const catalogue: Record<string, string> = {
   "The project already holds this certificate.": "Le projet contient déjà ce certificat.",
   "The environment fetch of {label} stopped: {reason}": "La récupération de l’environnement de {label} s’est arrêtée : {reason}",
   "Cancel the environment fetch?": "Annuler la récupération de l’environnement ?",
-  "A wind, wave and current fetch is running for this project. It stops first; the samples it already fetched stay in the project, and Refetch environment resumes it later.": "Une récupération du vent, des vagues et du courant est en cours pour ce projet. Elle s’arrête d’abord ; les points déjà récupérés restent dans le projet, et Récupérer à nouveau l’environnement la reprend plus tard.",
+  "A wind, wave and current fetch is running for this project. It stops first; the samples it already fetched stay in the project, and Fetch weather… resumes it later.": "Une récupération du vent, des vagues et du courant est en cours pour ce projet. Elle s’arrête d’abord ; les points déjà récupérés restent dans le projet, et Récupérer la météo… la reprend plus tard.",
   "Cancel the fetch": "Annuler la récupération",
   "Fetching wind, waves and current: {label} {percent} %": "Récupération du vent, des vagues et du courant : {label} {percent} %",
   "({count} more waiting)": "({count} autres en attente)",

@@ -60,6 +60,38 @@ as the foundation of `pe-env`, `pe-trackers` and `ui/src/polar/`.
   samples (debug build) — **go**.
 - *D19 decided*: hourly stays the default (see §5).
 
+**2026-09-28: M14b — tracks first, weather on request (D24).** Measured on
+the development machine (Intel i9, home broadband, live, `PE_TEST_LIVE=1
+cargo test -p pe-app --test tracker_speed`), the time from the call to a
+pickable boat list, before → after (after: boat list / full event). The
+network dominated every phase: decode, per-boat building, previews and
+serialisation were each under 10 ms in debug (Fastnet: payload 565 KB
+serialised in 5 ms, import of 10 boats 15 ms), so the fixes are
+concurrency, an early boat list, gzip and taking weather out of the import.
+
+| Event | Debug before | Debug after | Release before | Release after |
+|---|---|---|---|---|
+| YellowBrick Fastnet 2025 (444 boats, 714,380 fixes) | 1.04 s | 0.15–0.38 s / 0.34–1.46 s | 0.37–1.04 s | 0.18–0.38 s / 0.45–1.43 s |
+| YellowBrick Middle Sea 2024 via KML fallback | 16.4 s | RaceSetup time (local: 0.00 s) / 14.7–15.0 s | — | 0.00 s / 15.0–16.0 s |
+| Geovoile New York–Vendée 2024 (28, 64,453) | 0.74 s | 0.25–0.29 s / 0.43–0.50 s | 0.50–0.52 s | 0.23–0.29 s / 0.46–0.49 s |
+| Geovoile Solitaire du Figaro 2024 leg 1 (45, 21,990) | 1.09 s | 0.30–0.35 s / 0.58–0.76 s | 0.57–0.67 s | 0.27–0.32 s / 0.56–0.85 s |
+| Blue Water Melbourne–Hobart Westcoaster 2025 (5, 863) | 2.18 s | 1.55–1.84 s (one response) | 1.99–2.25 s | 1.48 s |
+
+Ranges are repeated runs; the network varies by a factor of three between
+runs. Blue Water answers everything in one response, so it gets no early
+list; gzip took its body from 248 KB to 23 KB (RaceSetup 375 → 65 KB,
+AllPositions3 5.7 → 3.8 MB). The Fastnet IPC payload is now a 71 KB list
+then 515 KB (previews rounded to 1e-4°; was 565 KB). UI (vitest,
+happy-dom, development React, 444 boats × 64 preview points,
+`TrackerImportDialog.perf.test.tsx`): ticking a boat 107–112 ms → 21–30 ms
+(memoised rows, the preview drawn as two paths instead of 444); the first
+table draw 234–253 ms before, 267–295 ms after the list is already shown
+(the old code measured 460 ms in the same later session, so the machine
+varied; happy-dom is several times slower than a webview). The largest
+cost the user saw, the weather step opened automatically after every
+import (a 5-day race is ≈ 1.2 GB hourly, D19), is gone: importing makes no
+reanalysis request (`importing_issues_no_reanalysis_request`).
+
 ---
 
 ## 1. Sequencing strategy
@@ -677,6 +709,48 @@ binned again) 70.5 ms; edit → every view 73, 73 and 92 ms (M13: 61, 67,
 
 ---
 
+### M14b — Tracks first, weather on request · **complete**
+
+User request, 2026-09-28: "the yellowbrick downloader is too slow. it should
+first download just the tracks with no weather info. then prompt the user
+to pick a track and then download the weather separately" and "do the same
+for the other tracker scrapers they need to download the tracks super
+fast" (D24).
+
+**Deliverables:** measured per-phase timings for every tracker; the boat
+list before the positions; concurrent requests; no weather step after any
+import; Fetch weather… per track and Fetch weather for selected tracks…;
+an estimate dialog that opens at once.
+
+**Acceptance:** importing issues zero reanalysis requests; fetching weather
+for a chosen track works as before; time to the boat list recorded before
+and after (see the 2026-09-28 M14b entry at the top).
+
+*Done 2026-09-28.* `TrackerClient::fetch_listed` hands the boats (no
+fixes) to a callback as soon as the tracker names them; `fetch` is it with
+a no-op. `Fetcher::spawn` runs a GET and its decoder on their own thread
+(`Pending::wait` relays progress, returns at once on cancel), so
+YellowBrick reads RaceSetup and AllPositions3 together and Geovoile its
+config, tracks and reports together; every request asks for gzip and is
+inflated by `flate2` (pure Rust) under the same 256 MB cap, so `pe-env`'s
+client is unchanged. `pe-app::trackers::download_listed` emits
+`tracker://listed` (a `TrackerEventView` with `positions: false`); preview
+coordinates are rounded to 1e-4°. The dialog shows the list at once with
+"…" for positions, lets boats be searched and ticked meanwhile, keeps the
+ticks when the positions arrive (unticking boats with none), and imports
+with **Import tracks** once they are in; rows are memoised and the preview
+is two SVG paths. `Tracks.tsx` no longer opens the fetch after an import
+(hint: fetch weather from the track list), adds a tick box and **Fetch
+weather…** / Cancel fetch to each track row (replacing Refetch environment
+in the details) and **Fetch weather for selected tracks…**; the status
+reads "Weather: …". `EnvFetchDialog` shows its choices at once with
+"calculating the download…" and keeps a choice made before the estimate
+arrives. Tests: listing fixtures for YellowBrick and Geovoile, gzip and
+spawn units, the zero-request import test, the UI listing and multi-select
+tests, and the live `tracker_speed` measurements.
+
+---
+
 ### M15 — Compare
 
 **Deliverables:** Compare stage (spec §11): operand pickers, difference
@@ -767,6 +841,7 @@ jieter/orc-data MIT), user guide.
 | D21 | 2D polar plot (M6): "All" draws one curve per visible source per wind speed that source's grid has; curves are read at each source's own TWA points; the full-size view is a Map-stage overlay toggled by the shell, closed by its own button, Escape or a stage switch | Spec §9.2 named the slider's "all" state and the full-size overlay without saying what either draws or how the overlay opens and closes |
 | D23 | Blend and export (M14): an output cell read from an excluded node of a polar source is empty for that source (not read across it); the fill steps interpolate only between known values and the 0° row takes no part in them (set to 0 kn last, "filled" unless a source had it); sources are summed in id order and cells rounded to 1e-6 kn; the Blend settings dialog applies as one undo entry, the Blend entry's switch and colour as their own; the grid editor takes two decimals at most (≥ 0.01 apart); a custom export grid is the project-grid blend resampled; export refuses axis collisions, > 60 kn and an empty blend, naming the values | Spec §12.3 named the rule and the fill order without saying how exclusions reach a resampled cell, whether the 0° row anchors the fill, the summation order or how settings are undone; §12.2 and the M4 carry left the grid editor's precision open |
 | D23a | M14 review round 1 (controller rulings): a track cell with an override counts with confidence 1 whatever its sample count, 0 included; the 0° row is no evidence — it counts in no coverage, and a blend with no value off it is empty and refused by export; a custom export grid does not anchor on the 0° row (output 0° row 0 kn); new projects' blend colour is `#e0457b` and a colour lost on the background is outlined; out-of-range sample counts are clamped on load; the blend cache keys sources by id | Review of M14 |
+| D24 | Tracker and file imports download tracks only, never weather. The boat list shows as soon as the tracker names the boats (YellowBrick's RaceSetup, Geovoile's config), while the positions download; independent requests run at once and are asked for gzipped. Weather is a separate step the user starts per track (Fetch weather…) or for ticked tracks (Fetch weather for selected tracks…); its estimate dialog opens at once and calculates in the background | Settled with the user 2026-09-28: "the yellowbrick downloader is too slow. it should first download just the tracks with no weather info. then prompt the user to pick a track and then download the weather separately"; "do the same for the other tracker scrapers they need to download the tracks super fast". Supersedes "import starts the fetch" in spec §7.5 (M9) and the post-import pre-flight of M10 |
 | D22 | Polar edits and segments (M13): one `EditCells` command for every edit tool (overrides before/after per cell, the tool naming the undo entry, drags coalescing); segment bins are half-steps around each output-grid node with nothing beyond the outer half-steps, and nothing is binned into a 0° TWA node (samples nearest 0° are dropped, not moved: the 0° row is 0 kn, spec §12.3; controller ruling); spread is the sample standard deviation; smooth is the 3×3 binomial kernel over neighbours with a value as the blend reads them (excluded nodes take no part; controller ruling); the 3D samples key mixes a per-opening nonce, so two openings never share one; views show sources as edited, and the 2D curves also leave excluded nodes out | Spec §10.4 and §12.1 named the tools, the statistic and "count and spread" without the binning edges, the spread measure, the kernel or how undo groups them |
 
 ## 6. Settled before coding started

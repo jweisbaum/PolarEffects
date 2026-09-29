@@ -28,8 +28,16 @@ const responses: Record<string, unknown> = {};
 vi.mock("../ipc", () => ({
   api: new Proxy({}, { get: (_t, name: string) => record(name) }),
   TRACKER_PROGRESS: "tracker://progress",
+  TRACKER_LISTED: "tracker://listed",
 }));
-vi.mock("@tauri-apps/api/event", () => ({ listen: () => Promise.resolve(() => undefined) }));
+/** The Tauri event handlers the components listen with, by event name. */
+const handlers = new Map<string, (e: { payload: unknown }) => void>();
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: (name: string, handler: (e: { payload: unknown }) => void) => {
+    handlers.set(name, handler);
+    return Promise.resolve(() => { if (handlers.get(name) === handler) handlers.delete(name); });
+  },
+}));
 vi.mock("../project/dialogs", () => ({ pickTrackFiles: () => Promise.resolve(["/races/log.csv", "/races/fleet.geojson"]) }));
 const focus = vi.fn();
 vi.mock("../selection", () => ({ focusMap: (f: unknown) => focus(f) }));
@@ -92,7 +100,7 @@ it("lists a track with its boat, event, dates, samples used and environment stat
   expect(text).toContain("Alpha");
   expect(text).toContain("fleet.geojson · 2025-07-26 – 2025-07-27");
   expect(text).toContain("100 of 120 samples used");
-  expect(text).toContain("Environment: not fetched");
+  expect(text).toContain("Weather: not fetched");
   await click(q('[data-feature="tracks:show-on-map"]'));
   expect(focus).toHaveBeenCalledWith({ kind: "track", sourceId: 5 });
   // YellowBrick, Geovoile and Blue Water Tracks all open the tracker dialog.
@@ -137,7 +145,7 @@ it("edits the filters and the derivation through their commands", async () => {
   expect(calls.filter(([n]) => n === "setTrackFilters").at(-1)?.[1]).toEqual([5, { ...TRACK.filters, wave_mode: "sectors" }]);
 });
 
-it("offers the fetch after an import, with its download estimate, and starts it", async () => {
+it("imports files without fetching weather; Fetch weather… shows the estimate and starts it", async () => {
   responses.inspectTrackFiles = [GEOJSON];
   const line = {
     source_id: 5, file: "fleet.geojson", label: "Alpha", fixes: 3, out_of_order: 0, duplicates: 0,
@@ -154,7 +162,13 @@ it("offers the fetch after an import, with its download estimate, and starts it"
   await settle();
   await click(q(".modal-actions button.primary"));
   await settle();
-  // The import dialog gave way to the fetch's pre-flight.
+  // The import dialog closed and nothing about weather was asked (D24).
+  expect(q("[role=dialog]")).toBeNull();
+  expect(calls.filter(([n]) => n === "envEstimate" || n === "startEnvFetch")).toEqual([]);
+  // The track's Fetch weather… opens the pre-flight when the user wants it.
+  await act(async () => root.render(<Tracks project={project([SOURCE])} onProject={() => undefined} />));
+  await click(q('[data-feature="tracks:fetch-weather"]'));
+  await settle();
   expect(calls.find(([n]) => n === "envEstimate")?.[1]).toEqual([[5], false]);
   const text = q("[role=dialog]")!.textContent!;
   expect(text).toContain("120 samples");
@@ -176,8 +190,7 @@ it("preselects 3-hourly for a download bigger than half the cache (D19)", async 
     cache_limit_bytes: 20 * 2 ** 30, recommended: "three_hourly",
   };
   await act(async () => root.render(<Tracks project={project([SOURCE])} onProject={() => undefined} />));
-  await click(q('[data-feature="tracks:filters"]'));
-  await click(q('[data-feature="tracks:refetch"]'));
+  await click(q('[data-feature="tracks:fetch-weather"]'));
   await settle();
   expect(calls.find(([n]) => n === "envEstimate")?.[1]).toEqual([[5], false]);
   expect((q('[data-feature="env-fetch:three-hourly"]') as HTMLInputElement).checked).toBe(true);
@@ -191,9 +204,8 @@ it("shows a running fetch in the track list and cancels it", async () => {
   const { setEnvJobs, resetEnvJobs } = await import("../jobs");
   setEnvJobs({ tracks: [{ source_id: 5, label: "Alpha", state: "fetching", fraction: 0.42 }], failure: null, warning: null });
   await act(async () => root.render(<Tracks project={project([SOURCE])} onProject={() => undefined} />));
-  expect(q(".track-list")!.textContent).toContain("Environment: fetching 42 %");
-  await click(q('[data-feature="tracks:filters"]'));
-  expect(q('[data-feature="tracks:refetch"]')).toBeNull();
+  expect(q(".track-list")!.textContent).toContain("Weather: fetching 42 %");
+  expect(q('[data-feature="tracks:fetch-weather"]')).toBeNull();
   await click(q('[data-feature="tracks:cancel-fetch"]'));
   expect(calls.find(([n]) => n === "cancelEnvFetch")?.[1]).toEqual([[5]]);
   await act(async () => resetEnvJobs());
@@ -266,22 +278,18 @@ const boat = (id: string, name: string, sail: string, division: string, fixes: n
 });
 const EVENT = {
   tracker: "yellowbrick", key: "rmsr2024", url: "yb.tl/rmsr2024", title: "Rolex Middle Sea Race 2024",
-  start: 1_729_209_600, stop: 1_729_897_200, fallback: false, leg: null, legs: null, cached: false,
+  start: 1_729_209_600, stop: 1_729_897_200, fallback: false, leg: null, legs: null, cached: false, positions: true,
   boats: [boat("1", "12 NACIRA 69", "ITA17498", "IRC Class 2", 1689), boat("2", "Afazik Impulse", "FRA 9967", "ORC 3", 1692),
     boat("4", "Alquimia", "ESP 1", "IRC Class 4", 0)],
 };
 
-it("downloads a YellowBrick event, searches and picks boats, imports them and offers the fetch", async () => {
+it("downloads a YellowBrick event, searches and picks boats, and imports them without fetching weather", async () => {
   responses.trackerEvent = EVENT;
   const line = {
     source_id: 7, file: "Rolex Middle Sea Race 2024", label: "Afazik Impulse", fixes: 1692, out_of_order: 0, duplicates: 3,
     heading_given: 0, heading_derived: 1692, speed_given: 0, speed_derived: 1692,
   };
   responses.importTrackerBoats = { project: project([SOURCE]), imported: [line], failures: [] };
-  responses.envEstimate = {
-    samples: 1692, hourly_bytes: 1_000_000, three_hourly_bytes: 400_000, cached_bytes: 0,
-    cache_limit_bytes: 20 * 2 ** 30, recommended: "hourly",
-  };
   await act(async () => root.render(<Tracks project={project([])} onProject={() => undefined} />));
   await click(q('[data-feature="tracks:yellowbrick"]'));
   const url = q('[data-feature="tracker-import:url"]') as HTMLInputElement;
@@ -296,7 +304,7 @@ it("downloads a YellowBrick event, searches and picks boats, imports them and of
   const dialog = q("[role=dialog]")!;
   expect(dialog.textContent).toContain("Rolex Middle Sea Race 2024");
   expect(dialog.textContent).toContain("3 boats");
-  expect(dialog.querySelectorAll(".tracker-preview-line")).toHaveLength(2);
+  expect(dialog.querySelector(".tracker-preview-line")!.getAttribute("data-lines")).toBe("2");
   // Search by sail number, written without its space.
   const search = q('[data-feature="tracker-import:search"]') as HTMLInputElement;
   await act(async () => {
@@ -308,13 +316,15 @@ it("downloads a YellowBrick event, searches and picks boats, imports them and of
   expect(rows).toHaveLength(1);
   expect(rows[0]!.textContent).toContain("Afazik Impulse");
   await click(rows[0]!.querySelector("input"));
-  expect(dialog.querySelectorAll(".tracker-preview-line.chosen")).toHaveLength(1);
+  expect(dialog.querySelector(".tracker-preview-line.chosen")!.getAttribute("data-lines")).toBe("1");
+  expect(q(".modal-actions button.primary")!.textContent).toBe("Import tracks");
   await click(q(".modal-actions button.primary"));
   await settle();
   expect(calls.find(([n]) => n === "importTrackerBoats")?.[1]).toEqual(["yellowbrick", "rmsr2024", ["2"]]);
-  // The tracker dialog gave way to the environment fetch's pre-flight.
-  expect(calls.find(([n]) => n === "envEstimate")?.[1]).toEqual([[7], false]);
+  // The dialog closed; no weather is estimated or fetched (D24).
   expect(q('[data-feature="tracker-import:url"]')).toBeNull();
+  expect(q("[role=dialog]")).toBeNull();
+  expect(calls.filter(([n]) => n === "envEstimate" || n === "startEnvFetch")).toEqual([]);
 });
 
 it("says a tracker is not answering and retries", async () => {
@@ -402,4 +412,74 @@ it("refuses an older Geovoile tracker clearly, without a Retry", async () => {
   // Once the dialog is idle again, a backdrop click closes it.
   await click(q(".modal-backdrop"));
   expect(q("[role=dialog]")).toBeNull();
+});
+
+it("lists the boats while the positions download, keeps the ticks, and imports once they are in", async () => {
+  let answer: (event: typeof EVENT) => void = () => undefined;
+  responses.trackerEvent = new Promise((resolve) => { answer = resolve; });
+  const line = {
+    source_id: 7, file: "Rolex Middle Sea Race 2024", label: "12 NACIRA 69", fixes: 1689, out_of_order: 0, duplicates: 0,
+    heading_given: 0, heading_derived: 1689, speed_given: 0, speed_derived: 1689,
+  };
+  responses.importTrackerBoats = { project: project([SOURCE]), imported: [line], failures: [] };
+  await act(async () => root.render(<Tracks project={project([])} onProject={() => undefined} />));
+  await click(q('[data-feature="tracks:yellowbrick"]'));
+  await typeAddress("yb.tl/rmsr2024");
+  await click(q('[data-feature="tracker-import:open"]'));
+  await settle();
+  // The boat list arrives ahead of the positions.
+  const listing = { ...EVENT, positions: false, boats: EVENT.boats.map((b) => ({ ...b, fixes: 0, first: null, last: null, preview: [] })) };
+  await act(async () => { handlers.get("tracker://listed")!({ payload: listing }); });
+  const dialog = q("[role=dialog]")!;
+  expect(dialog.textContent).toContain("3 boats");
+  expect(dialog.textContent).toContain("you can search and tick boats meanwhile");
+  const rows = () => [...dialog.querySelectorAll("tbody tr")];
+  expect(rows()).toHaveLength(3);
+  // Every boat can be ticked meanwhile, none imported yet.
+  await click(rows()[0]!.querySelector("input"));
+  await click(rows()[2]!.querySelector("input"));
+  const importButton = () => q(".modal-actions button.primary") as HTMLButtonElement;
+  expect(importButton().disabled).toBe(true);
+  expect(q(".tracker-preview")).toBeNull();
+  // The positions arrive: the ticks stay, except on a boat with none.
+  await act(async () => { answer(EVENT); });
+  await settle();
+  expect((rows()[0]!.querySelector("input") as HTMLInputElement).checked).toBe(true);
+  expect((rows()[2]!.querySelector("input") as HTMLInputElement).checked).toBe(false);
+  expect(dialog.querySelector(".tracker-preview-line.chosen")!.getAttribute("data-lines")).toBe("1");
+  expect(importButton().disabled).toBe(false);
+  await click(importButton());
+  await settle();
+  expect(calls.find(([n]) => n === "importTrackerBoats")?.[1]).toEqual(["yellowbrick", "rmsr2024", ["1"]]);
+  expect(calls.filter(([n]) => n === "envEstimate" || n === "startEnvFetch")).toEqual([]);
+});
+
+it("fetches the weather of the ticked tracks together", async () => {
+  const other: SourceSummary = { ...SOURCE, id: 6, label: "Bravo", colour: "#4e79a7" };
+  const third: SourceSummary = { ...SOURCE, id: 8, label: "Charlie", colour: "#59a14f" };
+  let estimate: (e: unknown) => void = () => undefined;
+  responses.envEstimate = new Promise((resolve) => { estimate = resolve; });
+  responses.startEnvFetch = { tracks: [], failure: null, warning: null };
+  await act(async () => root.render(<Tracks project={project([SOURCE, other, third])} onProject={() => undefined} />));
+  const selected = q('[data-feature="tracks:fetch-weather-selected"]') as HTMLButtonElement;
+  expect(selected.disabled).toBe(true);
+  const boxes = host.querySelectorAll('[data-feature="tracks:select"]');
+  await click(boxes[0]!);
+  await click(boxes[2]!);
+  expect(selected.disabled).toBe(false);
+  expect(selected.textContent).toBe("Fetch weather for 2 selected tracks…");
+  await click(selected);
+  // The dialog shows at once, calculating, before the estimate is in.
+  expect(q("[role=dialog]")!.textContent).toContain("Hourly: calculating the download…");
+  expect(calls.find(([n]) => n === "envEstimate")?.[1]).toEqual([[5, 8], false]);
+  // A choice made meanwhile is kept when the estimate arrives.
+  await click(q('[data-feature="env-fetch:three-hourly"]'));
+  await act(async () => {
+    estimate({ samples: 240, hourly_bytes: 5e8, three_hourly_bytes: 2e8, cached_bytes: 0, cache_limit_bytes: 20 * 2 ** 30, recommended: "hourly" });
+  });
+  expect(q("[role=dialog]")!.textContent).toContain("240 samples");
+  expect((q('[data-feature="env-fetch:three-hourly"]') as HTMLInputElement).checked).toBe(true);
+  await click(q(".modal-actions button.primary"));
+  await settle();
+  expect(calls.find(([n]) => n === "startEnvFetch")?.[1]).toEqual([[5, 8], "three_hourly", false]);
 });

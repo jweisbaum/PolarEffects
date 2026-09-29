@@ -16,6 +16,8 @@ serde_json = { workspace = true }
 base64 = "0.22"
 # Geovoile's config resource is XML; quick-xml is already in the tree.
 quick-xml = "0.42"
+# Tracker answers are asked for gzipped and inflated here (M14b); pure Rust.
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 
 # The same pure-Rust TLS stack as pe-env (see its Cargo.toml): reqwest with
 # `rustls-no-provider` and a ring-backed ClientConfig, so no aws-lc-rs.

@@ -27,9 +27,13 @@ import { dateRange, describeImportLine, describeTrackFailure, envStatusText, fro
  * buttons (YellowBrick, Geovoile and Blue Water Tracks all open the shared
  * tracker dialog, spec.md 7.2), File… for GeoJSON and CSV, the result of
  * the last import, and every track with its colour, boat, event, dates,
- * samples used, environment status and actions. Each track unfolds to its
+ * samples used, weather status and actions. Each track unfolds to its
  * sample filters and heading and speed derivation (spec.md 7.4, 7.6),
  * every change one undo.
+ *
+ * Importing never fetches weather (D24): a track's Fetch weather…, or
+ * Fetch weather for selected tracks… over the ticked tracks, opens the
+ * fetch's pre-flight when the user wants it.
  */
 export default function Tracks({ project, onProject }: {
   project: ProjectSummary;
@@ -41,10 +45,18 @@ export default function Tracks({ project, onProject }: {
   const [imported, setImported] = useState<TrackImportLine[]>([]);
   const [failures, setFailures] = useState<TrackImportFailure[]>([]);
   const [open, setOpen] = useState<number | null>(null);
+  // The tracks ticked for Fetch weather for selected tracks…
+  const [selected, setSelected] = useState<ReadonlySet<number>>(new Set());
   // The fetch pre-flight: which tracks, and whether to fetch every sample again.
   const [fetching, setFetching] = useState<{ ids: number[]; restart: boolean } | null>(null);
   const closeFetch = useCallback(() => setFetching(null), []);
   const tracks = project.sources.filter((s) => s.track !== null);
+  const selectedIds = tracks.filter((s) => selected.has(s.id)).map((s) => s.id);
+  const select = (id: number, on: boolean) => setSelected((old) => {
+    const next = new Set(old);
+    if (on) next.add(id); else next.delete(id);
+    return next;
+  });
   // The search's `track:details` step unfolds the first track's filters.
   const first = useRef<number | null>(null);
   first.current = tracks[0]?.id ?? null;
@@ -60,16 +72,20 @@ export default function Tracks({ project, onProject }: {
     }
   };
 
-  /** After any import, file or tracker: the summary, and the environment fetch's pre-flight. */
+  /**
+   * After any import, file or tracker: the summary and a hint. No weather
+   * is fetched (D24); the user asks for it per track.
+   */
   const afterImport = (result: TrackImportResult) => {
     onProject(result.project);
     setImported(result.imported);
     setFailures(result.failures);
     const count = result.imported.length;
-    if (count > 0) setHint(count === 1 ? t("Imported 1 track.") : t("Imported {count} tracks.", { count }));
-    // Importing starts the environment fetch (spec.md 7.5), after its
-    // pre-flight (spec.md 13).
-    if (count > 0) setFetching({ ids: result.imported.map((line) => line.source_id), restart: false });
+    if (count > 0) {
+      setHint(count === 1
+        ? t("Imported 1 track. Fetch its weather from the track list when you want it.")
+        : t("Imported {count} tracks. Fetch their weather from the track list when you want it.", { count }));
+    }
   };
 
   const remove = (id: number) => { api.removeSource(id).then(onProject).catch(reportFailure); };
@@ -94,6 +110,19 @@ export default function Tracks({ project, onProject }: {
           {t("File…")}
         </button>
       </div>
+      {tracks.length > 0 && (
+        <div className="section-actions">
+          <button data-feature="tracks:fetch-weather-selected" disabled={selectedIds.length === 0}
+            title={selectedIds.length === 0
+              ? t("Tick tracks in the list first, then fetch their wind, waves and current together")
+              : t("Fetch the wind, waves and current the ticked tracks' samples do not have yet")}
+            onClick={() => setFetching({ ids: selectedIds, restart: false })}>
+            {selectedIds.length === 0
+              ? t("Fetch weather for selected tracks…")
+              : t("Fetch weather for {count} selected tracks…", { count: selectedIds.length })}
+          </button>
+        </div>
+      )}
       {tracks.length > 0 && <EnvOptions project={project} onProject={onProject} />}
       {imported.length > 0 && (
         <ul className="track-import-summary" aria-label={t("Last import")}>
@@ -110,6 +139,7 @@ export default function Tracks({ project, onProject }: {
         : <ul className="track-list">
           {tracks.map((source) => (
             <TrackItem key={source.id} source={source} track={source.track!} open={open === source.id}
+              selected={selected.has(source.id)} onSelect={(on) => select(source.id, on)}
               onToggle={() => setOpen(open === source.id ? null : source.id)}
               onRemove={() => remove(source.id)} onProject={onProject}
               onRefetch={() => setFetching({ ids: [source.id], restart: source.track!.env_status === "ready" })} />
@@ -158,10 +188,12 @@ function EnvOptions({ project, onProject }: { project: ProjectSummary; onProject
   );
 }
 
-function TrackItem({ source, track, open, onToggle, onRemove, onProject, onRefetch }: {
+function TrackItem({ source, track, open, selected, onSelect, onToggle, onRemove, onProject, onRefetch }: {
   source: SourceSummary;
   track: TrackSummary;
   open: boolean;
+  selected: boolean;
+  onSelect: (on: boolean) => void;
   onToggle: () => void;
   onRemove: () => void;
   onProject: (project: ProjectSummary) => void;
@@ -173,6 +205,9 @@ function TrackItem({ source, track, open, onToggle, onRemove, onProject, onRefet
   return (
     <li className="track-item">
       <div className="track-row">
+        <input type="checkbox" data-feature="tracks:select" checked={selected}
+          title={t("Tick to fetch this track's weather with the other ticked tracks")}
+          aria-label={t("Select {track}", { track: source.label })} onChange={(e) => onSelect(e.target.checked)} />
         <span className="swatch" style={{ backgroundColor: source.colour }} aria-hidden="true" />
         <span className="polar-file-text">
           <span className="polar-file-label" title={track.event_title}>{source.label}</span>
@@ -182,9 +217,18 @@ function TrackItem({ source, track, open, onToggle, onRemove, onProject, onRefet
           <span className="muted polar-file-meta">
             {t("{used} of {count} samples used", { used: source.used ?? 0, count: track.samples })}
             {" · "}
-            {t("Environment: {status}", { status: envStatusText(track, job) })}
+            {t("Weather: {status}", { status: envStatusText(track, job) })}
           </span>
         </span>
+        {job
+          ? <button className="small" data-feature="tracks:cancel-fetch" title={t("Stop this track's fetch; samples already fetched are kept")}
+            onClick={() => { api.cancelEnvFetch([source.id]).catch(reportFailure); }}>{t("Cancel fetch")}</button>
+          : <button className="small" data-feature="tracks:fetch-weather" onClick={onRefetch}
+            title={track.env_status === "ready"
+              ? t("Fetch this track's wind, waves and current again, every sample")
+              : t("Fetch the wind, waves and current this track's samples do not have yet")}>
+            {t("Fetch weather…")}
+          </button>}
         <button className="icon-button" data-feature="tracks:show-on-map" disabled={!source.visible}
           title={source.visible ? t("Show this track on the map") : t("Hidden tracks are not on the map")}
           aria-label={t("Show on map")} onClick={() => focusMap({ kind: "track", sourceId: source.id })}>
@@ -204,15 +248,6 @@ function TrackItem({ source, track, open, onToggle, onRemove, onProject, onRefet
           <TrackFiltersEditor id={source.id} track={track} onProject={onProject} />
           <DerivationEditor id={source.id} track={track} onProject={onProject} />
           <div className="section-actions">
-            {job
-              ? <button className="small" data-feature="tracks:cancel-fetch" title={t("Stop this track's fetch; samples already fetched are kept")}
-                onClick={() => { api.cancelEnvFetch([source.id]).catch(reportFailure); }}>{t("Cancel fetch")}</button>
-              : <button className="small" data-feature="tracks:refetch" onClick={onRefetch}
-                title={track.env_status === "ready"
-                  ? t("Fetch this track's wind, waves and current again, every sample")
-                  : t("Fetch the wind, waves and current this track's samples do not have yet")}>
-                {t("Refetch environment")}
-              </button>}
             <button className="small" data-feature="tracks:export-grib" disabled title={later}>{t("Export reanalysis GRIB…")}</button>
           </div>
         </div>
