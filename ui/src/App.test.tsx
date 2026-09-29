@@ -90,6 +90,8 @@ let project: ProjectSummary | null;
 let calls: [string, unknown][];
 /** What `legacy_cache_notice` answers: an earlier version's chunk cache. */
 let legacyNotice: { path: string; bytes: number } | null;
+/** How `compare_polars` answers: the fixture, never (a request in flight), or a refusal. */
+let compareAnswer: "fixture" | "pending" | "refuse";
 
 function backend() {
   invoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
@@ -105,7 +107,10 @@ function backend() {
       case "forget_recent_project": return [{ path: "/boats/Fastnet.wpsproj", name: "Fastnet", exists: true }];
       case "recovered_projects": return [{ id: 9, name: "Lost", original_path: null, saved_unix_s: 0 }];
       case "new_project": project = summary(true); return project;
-      case "open_project": project = summary(false, args?.path as string); return project;
+      case "open_project":
+        // Another file is another project, with its own id.
+        project = { ...summary(false, args?.path as string), id: args?.path === "/other.wpsproj" ? 2 : 1 };
+        return project;
       case "close_project":
         if (project?.dirty && !args?.discardUnsaved) throw { kind: "unsaved-changes", message: "unsaved" };
         project = null; return null;
@@ -131,8 +136,10 @@ function backend() {
         return header;
       }
       case "compare_polars": {
+        if (compareAnswer === "pending") return new Promise(() => undefined);
+        if (compareAnswer === "refuse") throw { kind: "bad-option", message: "Compare operand cannot be \"gone\"." };
         // The comparison the Rust packing test pins (layout in compare/comparePacket.ts).
-        const bytes = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "compare/fixtures/compare-v1.bin"));
+        const bytes = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "compare/fixtures/compare-v2.bin"));
         return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
       }
       case "polar_plot_dots": {
@@ -237,6 +244,7 @@ beforeEach(() => {
   calls = [];
   project = null;
   legacyNotice = null;
+  compareAnswer = "fixture";
   settings = {
     recent_projects: [], autosave: "recovery", language: "en", theme: "harbour",
     units: { speed: "kn", wave_height: "m", distance: "nm" },
@@ -749,7 +757,54 @@ describe("polar files and the source list (plan.md M4)", () => {
     expect(commands("compare_polars").at(-1)).toMatchObject({ a: { kind: "blend" }, b: { kind: "segment", source_id: TRACK.id } });
     // The summary and the heat map show what Rust sent.
     expect(q(".compare-summary")!.textContent).toContain("1 cells compared");
-    expect(document.querySelectorAll(".compare-heat-cell").length).toBe(2);
+    expect(q("canvas.compare-heat-map")).not.toBeNull();
+  });
+
+  it("shows nothing of one project's comparison under another's (M15 review)", async () => {
+    await open([POLAR, TRACK]);
+    await click(feature("stage:compare"));
+    await settle();
+    expect(q(".compare-summary")!.textContent).toContain("1 cells compared");
+    // The next project's comparison is still on its way when it opens.
+    compareAnswer = "pending";
+    const hooks = window as unknown as { __peOpen: (path: string) => Promise<string> };
+    await act(async () => { await hooks.__peOpen("/other.wpsproj"); });
+    await settle();
+    expect(q(".compare-summary")!.textContent).toContain("0 cells compared");
+    expect(q(".compare-legend")!.textContent).toContain("No compared cell");
+  });
+
+  it("clears the comparison and says why when Rust refuses it (M15 review)", async () => {
+    await open([POLAR, TRACK]);
+    await click(feature("stage:compare"));
+    await settle();
+    expect(q(".compare-summary")!.textContent).toContain("1 cells compared");
+    compareAnswer = "refuse";
+    await click(feature("compare:swap"));
+    await settle();
+    expect(q(".compare-failure")!.textContent).toContain("The comparison could not be made");
+    expect(q(".compare-summary")!.textContent).toContain("0 cells compared");
+  });
+
+  it("lets the operand list be walked with the arrow keys (M15 review)", async () => {
+    await open([POLAR, TRACK]);
+    await click(feature("stage:compare"));
+    await settle();
+    const trigger = feature("compare:operand-b") as HTMLButtonElement;
+    await act(async () => { trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })); });
+    const options = [...document.querySelectorAll<HTMLButtonElement>('.compare-picker-b [role="option"]')];
+    expect(options.map((o) => o.getAttribute("aria-selected"))).toEqual(["true", "false", "false"]);
+    expect(document.activeElement).toBe(options[0]);
+    const list = q(".compare-picker-b [role=listbox]")!;
+    await act(async () => { list.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })); });
+    expect(document.activeElement).toBe(options[1]);
+    await act(async () => { list.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true })); });
+    expect(document.activeElement).toBe(options[2]);
+    await click(options[2]!);
+    await settle();
+    expect(commands("compare_polars").at(-1)).toMatchObject({ b: { kind: "segment", source_id: TRACK.id } });
+    expect(q(".compare-picker-b [role=listbox]")).toBeNull();
+    expect(document.activeElement).toBe(feature("compare:operand-b"));
   });
 
   it("outlines a blend colour lost on the theme's background (M14 review)", async () => {

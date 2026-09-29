@@ -216,15 +216,15 @@ const topics: HelpTopic[] = [
   { id: "compare", group: "Vues", title: "Comparer",
     paragraphs: [
       "La vue Comparer montre la différence entre deux polaires, A et B, case par case sur la grille de sortie du projet. Chacune est la polaire d’une source, le segment de polaire d’une trace ou la fusion actuelle, lue comme les autres vues la lisent : avec ses modifications, sans ses nœuds exclus et jamais extrapolée. Comparer sur une source ouvre la vue avec cette source en A et la fusion en B.",
-      "En 3D, A et B sont des surfaces translucides dans leurs couleurs, et la surface de différence se trouve à mi-chemin, colorée selon ΔBSP = A − B : orange là où A est plus rapide, bleu là où B l’est, gris là où elles s’accordent. L’échelle est centrée sur zéro et son étendue figure dans la légende. Seules les cases où les deux ont une valeur sont comparées ; une case couverte par une seule est dessinée en gris hachuré et comptée dans le résumé. La ligne 0° vaut 0 nd par définition et n’est jamais comparée.",
-      "Le résumé donne le nombre de cases comparées, l’écart moyen et le plus grand, et, pour chaque force de vent, les angles où A est plus rapide et ceux où B l’est de plus que le seuil. La carte de chaleur montre les mêmes écarts à plat, TWA en lignes et TWS en colonnes ; survolez une case pour ses valeurs.",
+      "En 3D, A et B sont des surfaces translucides dans leurs couleurs, et la surface de différence se trouve à mi-chemin, colorée selon ΔBSP = A − B : orange là où A est plus rapide, bleu là où B l’est, gris là où elles s’accordent. L’échelle est centrée sur zéro et son étendue figure dans la légende. Seules les cases où les deux ont une valeur sont comparées ; une case couverte par une seule est dessinée en gris — hachurée dans la carte de chaleur et là où plusieurs se touchent en 3D, et marquée d’une croix en 3D — et comptée dans le résumé. La ligne 0° vaut 0 nd par définition et n’est jamais comparée.",
+      "Le résumé donne le nombre de cases comparées, l’écart moyen et le plus grand, et, pour chaque force de vent, les angles où A est plus rapide et ceux où B l’est de plus que le seuil. La carte de chaleur montre les mêmes écarts à plat, TWA en lignes et TWS en colonnes ; survolez une case pour ses valeurs. Ce qui est comparé est retenu pour chaque projet tant que l’application tourne.",
       "Ce qui est comparé, le choix du pourcentage et le seuil ne sont pas enregistrés et ne s’annulent pas : ils sont conservés tant que l’application tourne.",
     ],
     parameters: [
       ["A / B", "Les deux opérandes, chacun choisi par sa couleur et son nom : la fusion, la polaire d’une source ou le segment de polaire d’une trace. Une source masquée peut aussi être comparée."],
       ["⇅", "Échange A et B, ce qui change le signe de chaque différence."],
       ["Surface A / Surface B / Surface de différence", "Affiche ou masque chaque surface dans la vue 3D."],
-      ["Δ en pourcentage de B", "Montre chaque différence en pourcentage de la vitesse de B plutôt qu’en vitesse. Une case où B vaut 0 nd n’a pas de pourcentage."],
+      ["Δ en pourcentage de B", "Montre chaque différence en pourcentage de la vitesse de B plutôt qu’en vitesse. Une case où B est sous 0,1 nd n’est pas comparable en % : elle est dessinée en gris uni et laissée hors des statistiques en pourcentage."],
       ["Seuil", "Une différence doit dépasser cette valeur (0,05 nd au départ) pour qu’une case compte comme A plus rapide ou B plus rapide dans le résumé."],
       ["Disposition / Dessus / Côté / Isométrique", "Comme dans la polaire 3D : la tour ou des axes droits, et les caméras prédéfinies."],
     ],

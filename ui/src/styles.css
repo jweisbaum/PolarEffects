@@ -489,11 +489,8 @@ button.source-label:hover { border-color: var(--border); background: var(--raise
 .compare-regions li { display: grid; grid-template-columns: 4.5em 1fr; gap: 8px; }
 .compare-region-spans { display: flex; flex-wrap: wrap; gap: 0 8px; }
 .compare-region-tws { font-weight: 600; min-width: 4em; font-variant-numeric: tabular-nums; }
-.compare-heat-map { width: 100%; height: auto; display: block; }
-.compare-heat-axis { font-size: 8px; fill: var(--muted); }
-.compare-heat-cell { stroke: none; }
-.compare-heat-cell.empty { stroke: var(--border-subtle); stroke-width: 0.5; }
-.compare-heat-map rect:hover { stroke: var(--text); stroke-width: 1; }
+.compare-heat-map { width: 100%; display: block; cursor: crosshair; }
+.compare-failure { color: var(--error); }
 .compare-heat-readout { min-height: 2.6em; margin-top: 4px; }
 
 /* --- Map --------------------------------------------------------------- */

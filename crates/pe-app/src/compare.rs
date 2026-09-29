@@ -20,18 +20,18 @@
 //! Everything is derived from the session's cache (never persisted,
 //! invariant 2), so an edit costs one comparison of two grids.
 //!
-//! # Wire layout, version 1
+//! # Wire layout, version 2
 //!
-//! One binary buffer, not JSON: a 512 × 512 output grid is a million values
-//! per array. The frontend's mirror is `ui/src/compare/comparePacket.ts`,
+//! One binary buffer, not JSON: a 512 × 512 output grid is 262,144 cells,
+//! over 1.3 million values across the five per-cell arrays. The frontend's mirror is `ui/src/compare/comparePacket.ts`,
 //! and both are held to the same bytes by
-//! `ui/src/compare/fixtures/compare-v1.bin`. Every value is little-endian
+//! `ui/src/compare/fixtures/compare-v2.bin`. Every value is little-endian
 //! and 4 bytes wide.
 //!
 //! ```text
 //! header, 20 × u32 (80 bytes)
 //!   0  magic       0x4d434550 (the bytes "PECM")
-//!   1  version     1
+//!   1  version     2
 //!   2  ni          TWA values
 //!   3  nj          TWS values
 //!   4  R           regions
@@ -43,7 +43,7 @@
 //!   10 f32 threshold, kn
 //!   11–14 f32 mean |Δ|, max |Δ|, min Δ, max Δ, kn (NaN: no compared cell)
 //!   15–18 f32 the same in percent of B
-//!   19 reserved, 0
+//!   19 pct_excluded compared cells with no percentage (B under 0.1 kn)
 //! f32 [ni] TWA axis, f32 [nj] TWS axis
 //! f32 [ni × nj] A, then B, then Δ kn, then Δ %; TWA-major (i × nj + j),
 //!               NaN for no value
@@ -66,7 +66,7 @@ use crate::error::{AppError, Result};
 /// "PECM" read as a little-endian u32.
 pub const COMPARE_MAGIC: u32 = u32::from_le_bytes(*b"PECM");
 /// The wire layout's version.
-pub const COMPARE_VERSION: u32 = 1;
+pub const COMPARE_VERSION: u32 = 2;
 /// Header length in bytes.
 pub const HEADER_BYTES: usize = 80;
 /// No cell.
@@ -191,7 +191,7 @@ pub fn pack(c: &Comparison) -> Vec<u8> {
         f(&mut out, narrow(stats.range.map(|r| r.0)));
         f(&mut out, narrow(stats.range.map(|r| r.1)));
     }
-    u(&mut out, 0);
+    u(&mut out, count(c.pct_excluded));
 
     for value in c.twa.iter().chain(&c.tws) {
         f(&mut out, *value as f32);
@@ -286,6 +286,7 @@ mod tests {
                 max_abs: Some((7.142857, 1, 0)),
                 range: Some((7.142857, 7.142857)),
             },
+            pct_excluded: 3,
             threshold_kn: 0.05,
             regions: vec![Region {
                 tws_index: 0,
@@ -313,14 +314,14 @@ mod tests {
         assert_eq!(&bytes[0..4], b"PECM");
         assert_eq!(
             (1..10).map(|i| word(&bytes, i)).collect::<Vec<_>>(),
-            [1, 2, 2, 1, 1, 1, 0, 2, 2]
+            [2, 2, 2, 1, 1, 1, 0, 2, 2]
         );
         assert_eq!(float(&bytes, 10), 0.05);
         assert_eq!(
             (11..19).map(|i| float(&bytes, i)).collect::<Vec<_>>(),
             [0.5, 0.5, 0.5, 0.5, 7.142857, 7.142857, 7.142857, 7.142857]
         );
-        assert_eq!(word(&bytes, 19), 0);
+        assert_eq!(word(&bytes, 19), 3);
         assert_eq!(
             (20..24).map(|i| float(&bytes, i)).collect::<Vec<_>>(),
             [0.0, 90.0, 6.0, 12.0]
@@ -348,7 +349,7 @@ mod tests {
     fn the_frontend_fixture_holds_these_bytes() {
         let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../ui/src/compare/fixtures");
         let bytes = pack(&fixture());
-        let path = dir.join("compare-v1.bin");
+        let path = dir.join("compare-v2.bin");
         if std::env::var_os("PE_BLESS").is_some() {
             std::fs::create_dir_all(&dir).unwrap();
             std::fs::write(&path, &bytes).unwrap();

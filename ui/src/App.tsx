@@ -519,7 +519,8 @@ function Shell() {
         <main className="centre-stage" aria-label={t("Stage")}>
           {stage === "map" && <MapView project={project} settings={settings} onSettings={setSettings} />}
           {stage === "3d" && <PolarView project={project} settings={settings} onProject={setProject} />}
-          {stage === "compare" && <CompareView project={project} settings={settings} />}
+          {/* Keyed by project: nothing of one project's comparison (its answer, its framing, a hovered cell) shows under another's names. */}
+          {stage === "compare" && <CompareView key={project.id} project={project} settings={settings} />}
           {stage === "map" && plotFull && (
             <div className="polar-plot-overlay" role="dialog" aria-label={t("Polar plot")}>
               <PolarPlot project={project} variant="overlay" onClose={() => setPlotFull(false)} />

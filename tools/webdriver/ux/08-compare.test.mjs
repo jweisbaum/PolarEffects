@@ -5,7 +5,7 @@
  * picked from the colour-and-name list → Δ in percent → swap → the light
  * theme keeps the scale readable.
  */
-import { assert, distinctColours, newProject } from "./harness.mjs";
+import { assert, colourPixels, distinctColours, newProject } from "./harness.mjs";
 
 /** The largest |Δ| the summary names, as a number, and its unit. */
 async function summary(d) {
@@ -34,7 +34,7 @@ export default {
     let text = await summary(d);
     const compared = Number(/(\d+) cells compared/.exec(text)?.[1] ?? 0);
     assert.ok(compared > 20, `the blend and a source share many cells (${text})`);
-    assert.ok(await d.count(".compare-heat-cell") > 20, "the heat map has cells");
+    assert.ok((await distinctColours(d, "canvas.compare-heat-map")) >= 8, "the heat map is drawn");
     await d.waitFor("canvas.compare-canvas", { visible: true });
     let colours = 0;
     for (let i = 0; i < 50 && colours < 8; i += 1) {
@@ -59,7 +59,15 @@ export default {
     assert.match(text, /Max \|Δ\| [\d.]+ kn at [\d.]+°/, `the largest difference is named (${text})`);
     const single = Number(/(\d+) only A/.exec(text)?.[1] ?? 0) + Number(/(\d+) only B/.exec(text)?.[1] ?? 0);
     assert.ok(single > 0, `cells only one covers are counted (${text})`);
-    assert.equal(await d.count(".compare-heat-cell.empty[fill^='url(']"), single, "and hatched in the heat map");
+    // The hatch's light stripes (the dark scheme's #c8cacd) are in the heat map.
+    const stripes = await colourPixels(d, "canvas.compare-heat-map", "#c8cacd", 12);
+    assert.ok(stripes > 50, `and hatched in the heat map (${stripes} stripe pixels)`);
+    // Hovering a cell of the canvas reads it back.
+    const readout = await d.run(
+      `var c = document.querySelector("canvas.compare-heat-map"); var r = c.getBoundingClientRect();
+       c.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: r.left + 34 + 30, clientY: r.top + 16 + 20 }));
+       setTimeout(function () { done(document.querySelector(".compare-heat-readout").textContent); }, 100);`);
+    assert.match(readout, /TWA [\d.]+°, TWS [\d.]+ kn: A [\d.]+ kn, B [\d.]+ kn, Δ/, `hover reads a cell (${readout})`);
     await t.shot("two-files");
 
     // Δ as percent of B: the legend and the summary switch unit.

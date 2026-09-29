@@ -233,15 +233,15 @@ export const TOPICS: HelpTopic[] = [
   { id: "compare", group: "Views", title: "Compare",
     paragraphs: [
       "The Compare stage shows the difference between two polars, A and B, cell by cell on the project’s output grid. Each is any source’s polar, any track’s polar segment, or the current blend, read as the other views read it: with its edits, without its excluded nodes, and never extrapolated. Compare on a source opens the stage with that source as A and the blend as B.",
-      "In 3D, A and B are translucent surfaces in their colours, and the difference surface lies midway between them, coloured by ΔBSP = A − B: orange where A is faster, blue where B is faster, grey where they agree. The scale is centred on zero and its range is in the legend. Only cells where both have a value are compared; a cell only one of them covers is drawn grey and hatched, and counted in the summary. The 0° row is 0 kn by definition and is never compared.",
-      "The summary gives the number of cells compared, the mean and largest difference, and for each wind speed the angles where A is faster and where B is faster by more than the threshold. The heat map shows the same differences flat, TWA down and TWS across; hover a cell for its values.",
+      "In 3D, A and B are translucent surfaces in their colours, and the difference surface lies midway between them, coloured by ΔBSP = A − B: orange where A is faster, blue where B is faster, grey where they agree. The scale is centred on zero and its range is in the legend. Only cells where both have a value are compared; a cell only one of them covers is drawn grey — hatched in the heat map and where several lie together in 3D, and marked with a cross in 3D — and counted in the summary. The 0° row is 0 kn by definition and is never compared.",
+      "The summary gives the number of cells compared, the mean and largest difference, and for each wind speed the angles where A is faster and where B is faster by more than the threshold. The heat map shows the same differences flat, TWA down and TWS across; hover a cell for its values. What is compared is remembered for each project while the application runs.",
       "What is compared, the percentage switch and the threshold are not saved and cannot be undone: they are kept while the application runs.",
     ],
     parameters: [
       ["A / B", "The two operands, each chosen by its colour and name: the blend, a source’s polar, or a track’s polar segment. A hidden source can be compared too."],
       ["⇅", "Swaps A and B, which changes the sign of every difference."],
       ["Surface A / Surface B / Difference surface", "Show or hide each surface in the 3D view."],
-      ["Δ as percent of B", "Shows each difference as a percentage of B’s speed instead of a speed. A cell where B is 0 kn has no percentage."],
+      ["Δ as percent of B", "Shows each difference as a percentage of B’s speed instead of a speed. A cell where B is under 0.1 kn is not comparable in %: it is drawn plain grey and left out of the percentage statistics."],
       ["Threshold", "A difference must be larger than this (0.05 kn to begin with) for a cell to count as A faster or B faster in the summary."],
       ["Layout / Top / Side / Isometric", "As in the 3D polar: the tower or straight axes, and the preset cameras."],
     ],

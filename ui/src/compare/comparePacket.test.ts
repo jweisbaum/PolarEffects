@@ -1,6 +1,6 @@
 /**
  * The frontend half of the comparison transport: it reads the very bytes
- * the Rust packing test pins (`fixtures/compare-v1.bin`), and refuses
+ * the Rust packing test pins (`fixtures/compare-v2.bin`), and refuses
  * malformed ones.
  */
 import { readFileSync } from "node:fs";
@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 import { CLASS_A_ONLY, CLASS_BOTH, CLASS_ZERO_ROW, ComparePacketError, HEADER_BYTES, unpackCompare } from "./comparePacket";
 
 function fixture(): ArrayBuffer {
-  const bytes = readFileSync(new URL("./fixtures/compare-v1.bin", import.meta.url));
+  const bytes = readFileSync(new URL("./fixtures/compare-v2.bin", import.meta.url));
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
@@ -26,7 +26,7 @@ describe("unpackCompare", () => {
     expect(c.deltaKn[2]).toBe(0.5);
     expect(c.deltaPct[2]).toBe(f32(7.142857));
     expect([...c.cls]).toEqual([CLASS_ZERO_ROW, CLASS_ZERO_ROW, CLASS_BOTH, CLASS_A_ONLY]);
-    expect([c.overlap, c.aOnly, c.bOnly]).toEqual([1, 1, 0]);
+    expect([c.overlap, c.aOnly, c.bOnly, c.pctExcluded]).toEqual([1, 1, 0, 3]);
     expect(c.thresholdKn).toBe(f32(0.05));
     expect(c.kn).toEqual({ meanAbs: 0.5, maxAbs: 0.5, min: 0.5, max: 0.5, maxCell: 2 });
     expect(c.pct.maxCell).toBe(2);

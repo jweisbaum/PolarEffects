@@ -78,6 +78,20 @@ function hexChannels(colour: string): [number, number, number] {
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
 }
 
+/** Steps of the colour tables the views read from, per side of zero. */
+const LUT_HALF = 256;
+const linearLuts = new Map<Scheme, Float32Array>();
+/** The diverging scale in linear light, for vertex colours: `(2 · LUT_HALF + 1)` RGB triples from −1 to +1. */
+function linearLut(scheme: Scheme): Float32Array {
+  let table = linearLuts.get(scheme);
+  if (!table) {
+    table = new Float32Array((2 * LUT_HALF + 1) * 3);
+    for (let k = 0; k <= 2 * LUT_HALF; k++) table.set(diverging(k / LUT_HALF - 1, scheme).map(linear), k * 3);
+    linearLuts.set(scheme, table);
+  }
+  return table;
+}
+
 /** Which surfaces are drawn. */
 export interface CompareToggles {
   a: boolean;
@@ -101,27 +115,30 @@ export function differenceSurface(packet: ComparePacket, percent: boolean, schem
   const half = scaleHalfWidth(stats.min, stats.max);
   const colours = new Float32Array(ni * nj * 3);
   const hatched = new Uint8Array(ni * nj);
+  const table = linearLut(scheme);
   const single = hexChannels(POLES[scheme].single).map(linear);
-  const middle = diverging(0, scheme).map(linear);
   for (let i = 0; i < ni; i++) {
     for (let j = 0; j < nj; j++) {
       const k = i * nj + j;
       const node = j * ni + i;
       const cls = packet.cls[k]!;
-      let rgb: readonly number[];
+      const at = node * 3;
       if (cls === CLASS_BOTH) {
         heights[k] = (packet.a[k]! + packet.b[k]!) / 2;
         const d = delta[k]!;
-        // Both have a value but Δ % has none (B is 0 kn): the neutral middle.
-        rgb = Number.isFinite(d) ? diverging(d / half, scheme).map(linear) : middle;
+        if (Number.isFinite(d)) {
+          const e = Math.round((Math.max(-1, Math.min(1, d / half)) + 1) * LUT_HALF) * 3;
+          colours[at] = table[e]!; colours[at + 1] = table[e + 1]!; colours[at + 2] = table[e + 2]!;
+        } else {
+          // Both have a value but Δ % has none (B under 0.1 kn): not
+          // comparable in %, plain grey (no hatch).
+          colours[at] = single[0]!; colours[at + 1] = single[1]!; colours[at + 2] = single[2]!;
+        }
       } else if (cls === CLASS_A_ONLY || cls === CLASS_B_ONLY) {
         heights[k] = cls === CLASS_A_ONLY ? packet.a[k]! : packet.b[k]!;
-        rgb = single;
+        colours[at] = single[0]!; colours[at + 1] = single[1]!; colours[at + 2] = single[2]!;
         hatched[node] = 1;
-      } else {
-        continue;
       }
-      colours.set(rgb, node * 3);
     }
   }
   return {
@@ -133,6 +150,27 @@ export function differenceSurface(packet: ComparePacket, percent: boolean, schem
     hatchColor: POLES[scheme].hatch,
     lineColor: POLES[scheme].hatch,
   };
+}
+
+/**
+ * A cross at every node only one operand covers, in the hatch colour: the
+ * hatch marks quads whose four corners are all one-only, so a lone cell (or
+ * a strip one cell wide) needs a mark of its own (spec.md 11).
+ */
+export function singleMarkers(packet: ComparePacket, scheme: Scheme): { points: Float32Array; colors: Float32Array; count: number } {
+  const nj = packet.tws.length;
+  const found: number[] = [];
+  for (let k = 0; k < packet.cls.length; k++) {
+    const cls = packet.cls[k]!;
+    if (cls !== CLASS_A_ONLY && cls !== CLASS_B_ONLY) continue;
+    const i = Math.floor(k / nj), j = k % nj;
+    found.push(packet.twa[i]!, packet.tws[j]!, cls === CLASS_A_ONLY ? packet.a[k]! : packet.b[k]!);
+  }
+  const count = found.length / 3;
+  const colour = hexChannels(POLES[scheme].hatch);
+  const colors = new Float32Array(count * 3);
+  for (let n = 0; n < count; n++) colors.set(colour, n * 3);
+  return { points: Float32Array.from(found), colors, count };
 }
 
 /** Every surface to draw: A and B translucent in their colours, the difference opaque. */
@@ -191,8 +229,9 @@ export function spanText([first, last]: readonly [number, number]): string {
   return first === last ? f(first) : `${f(first)}–${f(last)}`;
 }
 
-/** One cell of the heat map. */
+/** One cell of the heat map, as the hover readout shows it. */
 export interface HeatCell {
+  /** The cell in the packet. */
   i: number;
   j: number;
   /** Degrees and knots. */
@@ -202,33 +241,113 @@ export interface HeatCell {
   cls: number;
   a: number;
   b: number;
-  /** Δ in the unit shown; NaN where not compared. */
+  /** Δ in the unit shown; NaN where not compared, or not comparable in %. */
   delta: number;
-  /** `#rrggbb` fill; null for a cell drawn hatched grey or left blank. */
-  fill: string | null;
 }
 
-/** The heat map (TWA rows × TWS columns), the 0° row left out: it is never compared. */
-export function heatRows(packet: ComparePacket, percent: boolean, scheme: Scheme): { twa: number; cells: HeatCell[] }[] {
+/**
+ * The heat map as images, one pixel per cell (TWA rows × TWS columns, the
+ * 0° row left out: it is never compared): the fills, and a mask of the
+ * cells only one operand covers, which the view hatches. Flat typed arrays
+ * rather than an element or an object per cell: a 512 × 512 output grid is
+ * 262,144 cells (spec.md 12.2, 13).
+ */
+export interface HeatImage {
+  rows: number;
+  cols: number;
+  /** The packet's TWA index of each row. */
+  rowIndex: Uint32Array;
+  /** RGBA per cell: a compared cell's colour; transparent otherwise. */
+  rgba: Uint8ClampedArray<ArrayBuffer>;
+  /** RGBA per cell: opaque where only one operand has a value. */
+  single: Uint8ClampedArray<ArrayBuffer>;
+}
+
+const luts = new Map<Scheme, Uint8ClampedArray>();
+function lut(scheme: Scheme): Uint8ClampedArray {
+  let table = luts.get(scheme);
+  if (!table) {
+    table = new Uint8ClampedArray((2 * LUT_HALF + 1) * 3);
+    for (let k = 0; k <= 2 * LUT_HALF; k++) {
+      const rgb = diverging(k / LUT_HALF - 1, scheme);
+      table[k * 3] = Math.round(rgb[0] * 255);
+      table[k * 3 + 1] = Math.round(rgb[1] * 255);
+      table[k * 3 + 2] = Math.round(rgb[2] * 255);
+    }
+    luts.set(scheme, table);
+  }
+  return table;
+}
+
+export function heatImage(packet: ComparePacket, percent: boolean, scheme: Scheme): HeatImage {
   const ni = packet.twa.length, nj = packet.tws.length;
+  const kept: number[] = [];
+  for (let i = 0; i < ni; i++) if (Math.abs(packet.twa[i]!) >= 1e-9) kept.push(i);
+  const rows = kept.length, cols = nj;
+  const rgba = new Uint8ClampedArray(rows * cols * 4);
+  const single = new Uint8ClampedArray(rows * cols * 4);
   const delta = deltaOf(packet, percent);
   const stats = percent ? packet.pct : packet.kn;
   const half = scaleHalfWidth(stats.min, stats.max);
-  const toHex = (rgb: readonly number[]) => `#${rgb.map((c) => Math.round(c * 255).toString(16).padStart(2, "0")).join("")}`;
-  const rows: { twa: number; cells: HeatCell[] }[] = [];
-  for (let i = 0; i < ni; i++) {
-    if (Math.abs(packet.twa[i]!) < 1e-9) continue;
-    const cells: HeatCell[] = [];
-    for (let j = 0; j < nj; j++) {
+  const table = lut(scheme);
+  const plain = hexChannels(POLES[scheme].single).map((c) => Math.round(c * 255));
+  for (let r = 0; r < rows; r++) {
+    const i = kept[r]!;
+    for (let j = 0; j < cols; j++) {
       const k = i * nj + j;
+      const p = (r * cols + j) * 4;
       const cls = packet.cls[k]!;
-      const d = delta[k]!;
-      cells.push({
-        i, j, twa: packet.twa[i]!, tws: packet.tws[j]!, cls, a: packet.a[k]!, b: packet.b[k]!, delta: cls === CLASS_BOTH ? d : Number.NaN,
-        fill: cls === CLASS_BOTH ? toHex(diverging(Number.isFinite(d) ? d / half : 0, scheme)) : null,
-      });
+      if (cls === CLASS_BOTH) {
+        const d = delta[k]!;
+        if (Number.isFinite(d)) {
+          const t = Math.max(-1, Math.min(1, d / half));
+          const e = Math.round((t + 1) * LUT_HALF) * 3;
+          rgba[p] = table[e]!; rgba[p + 1] = table[e + 1]!; rgba[p + 2] = table[e + 2]!;
+        } else {
+          // Compared, but not comparable in % (B under 0.1 kn): plain grey.
+          rgba[p] = plain[0]!; rgba[p + 1] = plain[1]!; rgba[p + 2] = plain[2]!;
+        }
+        rgba[p + 3] = 255;
+      } else if (cls === CLASS_A_ONLY || cls === CLASS_B_ONLY) {
+        single[p + 3] = 255;
+      }
     }
-    rows.push({ twa: packet.twa[i]!, cells });
   }
-  return rows;
+  return { rows, cols, rowIndex: Uint32Array.from(kept), rgba, single };
+}
+
+/** Where the heat map's cells are drawn, CSS pixels. */
+export interface HeatLayout {
+  left: number;
+  top: number;
+  cellWidth: number;
+  cellHeight: number;
+}
+
+/** The layout of a heat map `width` pixels wide: labels at the left and top, cells at most 14 px tall. */
+export function heatLayout(image: Pick<HeatImage, "rows" | "cols">, width: number): HeatLayout {
+  const left = 34, top = 16;
+  const cellWidth = Math.max(0.25, (width - left) / Math.max(1, image.cols));
+  const cellHeight = Math.min(14, Math.max(0.25, 480 / Math.max(1, image.rows)));
+  return { left, top, cellWidth, cellHeight };
+}
+
+/** The cell under a point of the heat map (CSS pixels from its top left), or null. */
+export function heatCellAt(packet: ComparePacket, image: HeatImage, layout: HeatLayout, percent: boolean,
+  x: number, y: number): HeatCell | null {
+  const c = Math.floor((x - layout.left) / layout.cellWidth);
+  const r = Math.floor((y - layout.top) / layout.cellHeight);
+  if (!(c >= 0 && c < image.cols && r >= 0 && r < image.rows)) return null;
+  const i = image.rowIndex[r]!, j = c;
+  const k = i * packet.tws.length + j;
+  const cls = packet.cls[k]!;
+  return {
+    i, j, twa: packet.twa[i]!, tws: packet.tws[j]!, cls, a: packet.a[k]!, b: packet.b[k]!,
+    delta: cls === CLASS_BOTH ? deltaOf(packet, percent)[k]! : Number.NaN,
+  };
+}
+
+/** Every `step`-th index from 0, so labels `size` pixels apart never overlap at `spacing` pixels per index. */
+export function labelStep(spacing: number, size: number): number {
+  return Math.max(1, Math.ceil(size / Math.max(1e-6, spacing)));
 }

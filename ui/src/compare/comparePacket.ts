@@ -2,17 +2,17 @@
  * The comparison as Rust sends it (spec.md 11): one binary buffer, not
  * JSON — a large output grid is a million values per array.
  *
- * # Wire layout, version 1
+ * # Wire layout, version 2
  *
  * The frontend's copy of the layout; the Rust side's is the module
  * documentation of `crates/pe-app/src/compare.rs`. Both are held to the same
- * bytes by `fixtures/compare-v1.bin` (written by a Rust test, read by
+ * bytes by `fixtures/compare-v2.bin` (written by a Rust test, read by
  * `comparePacket.test.ts`). Every value is little-endian and 4 bytes wide.
  *
  * ```text
  * header, 20 × u32 (80 bytes)
  *   0  magic       0x4d434550 (the bytes "PECM")
- *   1  version     1
+ *   1  version     2
  *   2  ni          TWA values
  *   3  nj          TWS values
  *   4  R           regions
@@ -24,7 +24,7 @@
  *   10 f32 threshold, kn
  *   11–14 f32 mean |Δ|, max |Δ|, min Δ, max Δ, kn (NaN: no compared cell)
  *   15–18 f32 the same in percent of B
- *   19 reserved, 0
+ *   19 pct_excluded compared cells with no percentage (B under 0.1 kn)
  * f32 [ni] TWA axis, f32 [nj] TWS axis
  * f32 [ni × nj] A, then B, then Δ kn, then Δ %; TWA-major (i × nj + j),
  *               NaN for no value
@@ -35,7 +35,9 @@
  */
 
 export const COMPARE_MAGIC = 0x4d434550;
-export const COMPARE_VERSION = 1;
+export const COMPARE_VERSION = 2;
+/** The least speed of B, knots, a difference is given as a percentage of (D28). */
+export const MIN_PERCENT_BASE_KN = 0.1;
 export const HEADER_BYTES = 80;
 export const NO_CELL = 0xffffffff;
 
@@ -76,6 +78,8 @@ export interface ComparePacket {
   overlap: number;
   aOnly: number;
   bOnly: number;
+  /** Compared cells with no percentage: B under `MIN_PERCENT_BASE_KN`. */
+  pctExcluded: number;
   thresholdKn: number;
   kn: DeltaStats;
   pct: DeltaStats;
@@ -137,7 +141,7 @@ export function unpackCompare(buffer: ArrayBuffer): ComparePacket {
   }
   return {
     twa, tws, a, b, deltaKn, deltaPct, cls,
-    overlap: word(5), aOnly: word(6), bOnly: word(7), thresholdKn: real(10),
+    overlap: word(5), aOnly: word(6), bOnly: word(7), pctExcluded: word(19), thresholdKn: real(10),
     kn: stats(11, cell(word(8))), pct: stats(15, cell(word(9))), regions,
   };
 }

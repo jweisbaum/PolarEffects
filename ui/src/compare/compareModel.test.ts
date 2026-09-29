@@ -2,12 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import type { ProjectSummary } from "../generated/ProjectSummary";
 import { TEST_BLEND } from "../testBlend";
-import { CLASS_A_ONLY, CLASS_B_ONLY, CLASS_BOTH, CLASS_NEITHER, CLASS_ZERO_ROW, emptyCompare, type ComparePacket } from "./comparePacket";
+import { CLASS_A_ONLY, CLASS_BOTH, CLASS_NEITHER, CLASS_ZERO_ROW, emptyCompare, type ComparePacket } from "./comparePacket";
 import {
-  compareSurfaces, DEFAULT_COMPARE_TOGGLES, differenceSurface, gridOf, heatRows, operandInfo, operandKey,
+  compareSurfaces, DEFAULT_COMPARE_TOGGLES, differenceSurface, gridOf, heatCellAt, heatImage, heatLayout, labelStep, operandInfo, operandKey,
+  singleMarkers,
   parseOperandKey, regionRows, spanText,
 } from "./compareModel";
-import { hex, POLES } from "./diverging";
+import { POLES } from "./diverging";
+import { surfaceMesh } from "../polar/geometry3d";
 
 const N = Number.NaN;
 
@@ -69,15 +71,92 @@ describe("the Compare stage's model", () => {
     expect(spanText([60, 60])).toBe("60°");
   });
 
-  it("leaves the 0° row out of the heat map and fills only compared cells", () => {
-    const rows = heatRows(packet(), false, "light");
-    expect(rows.map((r) => r.twa)).toEqual([60, 120]);
-    expect(rows[0]!.cells[0]!.fill).toBe(hex([...[1, 3, 5].map((k) => Number.parseInt(POLES.light.a.slice(k, k + 2), 16) / 255)] as [number, number, number]));
-    expect(rows[1]!.cells.map((c) => [c.cls, c.fill])).toEqual([[CLASS_A_ONLY, null], [CLASS_NEITHER, null]]);
-    expect(Number.isNaN(rows[1]!.cells[0]!.delta)).toBe(true);
-    // In percent, the scale is the percentages'.
-    expect(heatRows(packet(), true, "light")[0]!.cells[0]!.fill).toBe(rows[0]!.cells[0]!.fill);
-    expect(CLASS_B_ONLY).toBe(2);
+  it("draws the heat map as one pixel per cell, the 0° row left out, one-only cells masked for the hatch", () => {
+    const image = heatImage(packet(), false, "light");
+    expect([image.rows, image.cols, [...image.rowIndex]]).toEqual([2, 2, [1, 2]]);
+    // 60°/8 kn is +1, the scale's end: A's pole; 60°/16 kn is −0.5, half way to B's.
+    const px = (r: number, c: number, data = image.rgba) => [...data.slice((r * 2 + c) * 4, (r * 2 + c) * 4 + 4)];
+    const pole = [1, 3, 5].map((k) => Number.parseInt(POLES.light.a.slice(k, k + 2), 16));
+    expect(px(0, 0).slice(0, 3).map((v, k) => Math.abs(v - pole[k]!) <= 1)).toEqual([true, true, true]);
+    expect(px(0, 0)[3]).toBe(255);
+    expect(px(1, 0)[3]).toBe(0);
+    expect(px(1, 0, image.single)[3]).toBe(255);
+    expect(px(1, 1, image.single)[3]).toBe(0);
+  });
+
+  it("finds the hovered cell by arithmetic", () => {
+    const image = heatImage(packet(), false, "light");
+    const layout = heatLayout(image, 34 + 2 * 26);
+    expect(layout).toEqual({ left: 34, top: 16, cellWidth: 26, cellHeight: 14 });
+    expect(heatCellAt(packet(), image, layout, false, 34 + 26 + 3, 16 + 2)).toMatchObject({ i: 1, j: 1, twa: 60, tws: 16, delta: -0.5 });
+    expect(heatCellAt(packet(), image, layout, false, 40, 16 + 14 + 1)).toMatchObject({ i: 2, j: 0, cls: CLASS_A_ONLY });
+    expect(Number.isNaN(heatCellAt(packet(), image, layout, false, 40, 31)!.delta)).toBe(true);
+    expect(heatCellAt(packet(), image, layout, false, 10, 20)).toBeNull();
+    expect(heatCellAt(packet(), image, layout, false, 40, 16 + 28)).toBeNull();
+    expect(labelStep(26, 22)).toBe(1);
+    expect(labelStep(1, 11)).toBe(11);
+  });
+
+  it("draws a cell not comparable in % plain grey, and says so on hover (D28)", () => {
+    // 60°/16 kn has a difference in knots but none in percent.
+    const p = { ...packet(), deltaPct: Float32Array.from([N, N, 100 / 6, N, N, N]), pctExcluded: 1 };
+    const image = heatImage(p, true, "dark");
+    const grey = [1, 3, 5].map((k) => Number.parseInt(POLES.dark.single.slice(k, k + 2), 16));
+    expect([...image.rgba.slice(4, 8)]).toEqual([...grey, 255]);
+    expect(image.single[7]).toBe(0);
+    const layout = heatLayout(image, 86);
+    expect(Number.isNaN(heatCellAt(p, image, layout, true, 34 + 26 + 3, 18)!.delta)).toBe(true);
+    // In 3D, the same plain grey and no hatch.
+    const surface = differenceSurface(p, true, "dark");
+    const linear = (c: number) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+    expect([...surface.vertexColors!.slice(12, 15)].map((v) => v.toFixed(4))).toEqual(grey.map((c) => linear(c / 255).toFixed(4)));
+    expect(surface.hatched![4]).toBe(0);
+  });
+
+  it("marks every node only one operand covers with a cross", () => {
+    const markers = singleMarkers(packet(), "dark");
+    expect(markers.count).toBe(1);
+    expect([...markers.points]).toEqual([120, 8, 6]);
+  });
+
+  it("builds and hovers a 512 × 512 comparison's heat map within the edit-to-view budget (spec.md 13)", () => {
+    const n = 512;
+    const cells = n * n;
+    const values = (f: (k: number) => number) => Float32Array.from({ length: cells }, (_, k) => f(k));
+    const big: ComparePacket = {
+      ...emptyCompare(),
+      twa: Float32Array.from({ length: n }, (_, i) => (i * 180) / (n - 1)),
+      tws: Float32Array.from({ length: n }, (_, j) => (j * 70) / (n - 1)),
+      a: values((k) => 5 + (k % 7) / 10),
+      b: values((k) => (k % 11 === 0 ? N : 5 + (k % 5) / 10)),
+      deltaKn: values((k) => (k % 11 === 0 ? N : (k % 7) / 10 - (k % 5) / 10)),
+      deltaPct: values((k) => (k % 11 === 0 ? N : k % 13)),
+      cls: Uint32Array.from({ length: cells }, (_, k) => (k < n ? CLASS_ZERO_ROW : k % 11 === 0 ? CLASS_A_ONLY : CLASS_BOTH)),
+      kn: { meanAbs: 0.2, maxAbs: 0.6, min: -0.4, max: 0.6, maxCell: 0 },
+    };
+    const t0 = performance.now();
+    const image = heatImage(big, false, "dark");
+    const t1 = performance.now();
+    const layout = heatLayout(image, 300);
+    let found = 0;
+    for (let k = 0; k < 1000; k++) if (heatCellAt(big, image, layout, false, 34 + (k % 266), 16 + (k % 470))) found++;
+    const t2 = performance.now();
+    const surfaces = compareSurfaces(big, DEFAULT_COMPARE_TOGGLES, { a: "#4e79a7", b: "#e15759" }, false, "dark");
+    const surface = surfaces[2]!;
+    const t3 = performance.now();
+    const t4 = performance.now();
+    for (const each of surfaces) surfaceMesh(each.grid, "tower");
+    const t5 = performance.now();
+    console.log(`512 × 512: meshes ${(t5 - t4).toFixed(1)} ms`);
+    console.log(`512 × 512: heat image ${(t1 - t0).toFixed(1)} ms, 1000 hovers ${(t2 - t1).toFixed(1)} ms, three surfaces ${(t3 - t2).toFixed(1)} ms`);
+    expect(image.rows).toBe(n - 1);
+    expect(found).toBe(1000);
+    expect(surface.vertexColors!.length).toBe(cells * 3);
+    expect(t1 - t0).toBeLessThan(100);
+    expect((t2 - t1) / 1000).toBeLessThan(1);
+    // The 3D side at this size is over the budget (see the M15 fix report):
+    // held here to its measured scale so it does not grow unnoticed.
+    expect(t3 - t2).toBeLessThan(250);
   });
 
   it("names operands by the source's colour and label, and the blend by its entry", () => {

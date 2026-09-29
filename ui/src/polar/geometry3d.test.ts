@@ -48,12 +48,13 @@ describe("the surface of a polar grid", () => {
 });
 
 describe("the hatch over cells only one operand covers (spec.md 11)", () => {
-  it("crosses each drawn quad that touches a marked node, and no other", () => {
+  it("crosses each drawn quad whose corners are all marked, and no other", () => {
     // 3 × 2 nodes, all with a value but (2, 1): two quads could be drawn,
     // only the first is whole.
     const grid = { twa: [30, 60, 90], tws: [8, 12], bsp: [[5, 6, 7], [6, 7, null]] };
-    expect([...hatchLines(grid, [0, 1, 0, 0, 0, 0])]).toEqual([0, 4, 1, 3]);
-    expect([...hatchLines(grid, [0, 0, 1, 0, 0, 0])]).toEqual([]);
+    expect([...hatchLines(grid, [1, 1, 0, 1, 1, 0])]).toEqual([0, 4, 1, 3]);
+    expect([...hatchLines(grid, [0, 1, 0, 1, 1, 0])]).toEqual([]); // a mixed quad is not hatched
+    expect([...hatchLines(grid, [0, 1, 1, 0, 1, 1])]).toEqual([]); // the second quad is not whole
     expect([...hatchLines(grid, new Uint8Array(6))]).toEqual([]);
   });
 });

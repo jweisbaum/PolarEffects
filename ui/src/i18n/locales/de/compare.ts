@@ -83,6 +83,10 @@ const catalogue: Record<string, string> = {
   "tolerance": "Toleranz",
   "TWA {twa}°, TWS {tws}: A {a}, B {b}, Δ {delta}": "TWA {twa}°, TWS {tws}: A {a}, B {b}, Δ {delta}",
   "Where each is faster (more than {threshold})": "Wo jeweils schneller (um mehr als {threshold})",
+  "{count} cells not comparable in % (B under 0.1 kn)": "{count} Zellen nicht in % vergleichbar (B unter 0,1 kn)",
+  "Not comparable in %: B under 0.1 kn": "Nicht in % vergleichbar: B unter 0,1 kn",
+  "not comparable in %": "nicht in % vergleichbar",
+  "The comparison could not be made: {reason}": "Der Vergleich war nicht möglich: {reason}",
 };
 
 export default catalogue;

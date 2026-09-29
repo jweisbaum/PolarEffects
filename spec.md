@@ -1286,7 +1286,9 @@ Every source can be edited on its own (D17):
   scale (orange: A faster; blue: B faster; a hue-less grey at zero),
   centred on zero and symmetric (its ends are ± the largest |Δ|), with its
   range shown in the legend. A toggle shows Δ as percent of B, (A − B) / B;
-  a cell where B is 0 kn has no percentage. The scale is linear in OKLab
+  a cell where B is under 0.1 kn is compared in knots but **not comparable
+  in %**: drawn plain grey (no hatch), left out of the percentage
+  statistics, and counted in the summary in % mode. The scale is linear in OKLab
   with both poles at the same lightness, colour-blind safe (poles ≥ 20 ΔE
   apart under simulated protan, deutan and tritan vision), and has one set
   of stops for dark themes (arms lighten away from zero) and one for light
@@ -1294,15 +1296,20 @@ Every source can be edited on its own (D17):
   Each surface can be shown or hidden; the layouts and preset cameras are
   the 3D view's (§10.1).
 - **Overlap**: only cells where both A and B have a value are coloured.
-  Cells covered by only one are drawn in neutral grey with a pattern (a
-  hatch: crossed quads in 3D, diagonal stripes in the heat map) at that
-  operand's speed, and counted in the summary ("N only A, M only B"). The 0°
+  Cells covered by only one are drawn in neutral grey with a pattern at
+  that operand's speed, and counted in the summary ("N only A, M only B"):
+  diagonal stripes in the heat map; in 3D, a cross marker on every such
+  node and both diagonals across every quad whose four corners are all
+  one-only (a quad mixing compared and one-only corners is not hatched). The 0°
   row is 0 kn by definition (§12.3), not a measurement: it takes no part in
   the overlap, the statistics, the regions or the heat map.
 - Summary: overlap cell count, mean and max |Δ| (with where the max is),
   the TWS/TWA regions where A is faster and where B is faster, and a 2D Δ
   heat map (TWA rows × TWS columns; hovering a cell shows TWA, TWS, A, B and
-  Δ). A **region** is, for one TWS, a run of neighbouring TWA cells where
+  Δ). The heat map is one canvas image, one pixel per cell scaled up, with
+  the hover found by arithmetic, so a 512 × 512 grid costs about 25 ms to
+  draw and no element per cell. A comparison Rust refuses clears the stage
+  and says why. A **region** is, for one TWS, a run of neighbouring TWA cells where
   Δ > +threshold (A faster) or Δ < −threshold (B faster); a cell not
   compared or within the threshold ends a run. The threshold is a Compare
   setting, 0.05 kn by default, in the display speed unit; Δ is rounded to
@@ -1312,8 +1319,11 @@ Every source can be edited on its own (D17):
   by colour and name (a track standing for its polar segment; a hidden
   source marked hidden).
 - What is compared, the percent toggle and the threshold are view state:
-  not undoable, not saved, kept in memory per project while the application
-  runs. An operand whose source is removed falls back (A to the first
+  not undoable, not saved, kept in memory keyed by the project's id while
+  the application runs (the id is stored in the project, so closing and
+  reopening it finds the same choice). The stage is remounted for each
+  project id, so nothing of one project's comparison shows under
+  another's. An operand whose source is removed falls back (A to the first
   source, B to the blend).
 
 ---

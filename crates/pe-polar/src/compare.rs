@@ -27,6 +27,12 @@ const ON_AXIS: f64 = 1e-9;
 /// (spec.md 11: a Compare setting).
 pub const DEFAULT_THRESHOLD_KN: f64 = 0.05;
 
+/// The least speed of B, knots, a difference is given as a percentage of
+/// (controller ruling, D28): below it the ratio says more about B's
+/// rounding than about either boat — 0.02 kn against 0.01 kn is 100 % —
+/// so the cell is compared in knots but "not comparable in %".
+pub const MIN_PERCENT_BASE_KN: f64 = 0.1;
+
 /// Who covers a cell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CellClass {
@@ -89,7 +95,8 @@ pub struct Comparison {
     pub b: Vec<Vec<Option<f64>>>,
     /// Δ = A − B, knots, where both have a value (off the 0° row).
     pub delta_kn: Vec<Vec<Option<f64>>>,
-    /// Δ as percent of B, where both have a value and B is above zero.
+    /// Δ as percent of B, where both have a value and B is at least
+    /// [`MIN_PERCENT_BASE_KN`].
     pub delta_pct: Vec<Vec<Option<f64>>>,
     /// Who covers each cell.
     pub class: Vec<Vec<CellClass>>,
@@ -101,8 +108,10 @@ pub struct Comparison {
     pub b_only: usize,
     /// Statistics of Δ in knots.
     pub kn: DeltaStats,
-    /// Statistics of Δ in percent of B.
+    /// Statistics of Δ in percent of B, over the cells that have one.
     pub pct: DeltaStats,
+    /// Compared cells with no percentage: B below [`MIN_PERCENT_BASE_KN`].
+    pub pct_excluded: usize,
     /// The threshold the regions were found with, knots.
     pub threshold_kn: f64,
     /// Regions where A or B is faster, by TWS column then TWA.
@@ -180,6 +189,7 @@ pub fn compare(a: &Polar, b: &Polar, threshold_kn: f64) -> Result<Comparison, Co
         b_only: 0,
         kn: DeltaStats::default(),
         pct: DeltaStats::default(),
+        pct_excluded: 0,
         threshold_kn,
         regions: Vec::new(),
     };
@@ -194,7 +204,9 @@ pub fn compare(a: &Polar, b: &Polar, threshold_kn: f64) -> Result<Comparison, Co
                 (false, Some(va), Some(vb)) => {
                     out.overlap += 1;
                     out.delta_kn[i][j] = Some(canonical::knots(va - vb));
-                    if vb > 0.0 {
+                    if vb < MIN_PERCENT_BASE_KN {
+                        out.pct_excluded += 1;
+                    } else {
                         out.delta_pct[i][j] = Some(canonical::round(
                             (va - vb) / vb * 100.0,
                             canonical::KNOT_PLACES,
@@ -393,13 +405,30 @@ mod tests {
 
     /// A zero B has a difference in knots but none in percent.
     #[test]
-    fn a_zero_b_has_no_percentage() {
-        let a = grid(&[90.0], &[10.0], &[&[Some(1.0)]]);
-        let b = grid(&[90.0], &[10.0], &[&[Some(0.0)]]);
+    fn a_b_under_a_tenth_of_a_knot_has_no_percentage() {
+        // B 0.0, 0.05 and 0.1 kn: the first two are compared in knots only
+        // and counted; 0.1 kn is the least base, (0.3 − 0.1) / 0.1 = 200 %.
+        let a = grid(
+            &[60.0, 90.0, 120.0],
+            &[10.0],
+            &[&[Some(1.0)], &[Some(0.2)], &[Some(0.3)]],
+        );
+        let b = grid(
+            &[60.0, 90.0, 120.0],
+            &[10.0],
+            &[&[Some(0.0)], &[Some(0.05)], &[Some(0.1)]],
+        );
         let c = compare(&a, &b, 0.05).unwrap();
         assert_eq!(c.delta_kn[0][0], Some(1.0));
+        assert_eq!(c.delta_kn[1][0], Some(0.15));
         assert_eq!(c.delta_pct[0][0], None);
-        assert_eq!(c.pct.mean_abs, None);
+        assert_eq!(c.delta_pct[1][0], None);
+        assert_eq!(c.delta_pct[2][0], Some(200.0));
+        assert_eq!(c.pct_excluded, 2);
+        assert_eq!(c.overlap, 3);
+        // Only the one comparable cell is in the percentage statistics.
+        assert_eq!(c.pct.mean_abs, Some(200.0));
+        assert_eq!(c.pct.max_abs, Some((200.0, 2, 0)));
     }
 
     #[test]

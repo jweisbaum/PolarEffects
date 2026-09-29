@@ -79,40 +79,60 @@ export function surfaceMesh(grid: PolarGrid, layout: Layout): SurfaceMesh {
   const nj = grid.tws.length;
   const positions = new Float32Array(ni * nj * 3);
   const has = new Uint8Array(ni * nj);
+  // `place` inlined, with each angle's sine and cosine once: a tuple per
+  // node is 262,144 allocations at 512 × 512.
+  const tower = layout === "tower";
+  const sin = grid.twa.map((a) => Math.sin(a * RAD)), cos = grid.twa.map((a) => Math.cos(a * RAD));
   for (let j = 0; j < nj; j++) {
+    const row = grid.bsp[j];
+    const tws = grid.tws[j]!;
     for (let i = 0; i < ni; i++) {
-      const v = grid.bsp[j]?.[i];
+      const v = row?.[i];
       const k = j * ni + i;
       if (v === null || v === undefined || !Number.isFinite(v)) continue;
       has[k] = 1;
-      const [x, y, z] = place(grid.twa[i]!, grid.tws[j]!, v, layout);
-      positions[k * 3] = x;
-      positions[k * 3 + 1] = y;
-      positions[k * 3 + 2] = z;
-    }
-  }
-  const triangles: number[] = [];
-  const lines: number[] = [];
-  for (let j = 0; j < nj; j++) {
-    for (let i = 0; i < ni; i++) {
-      const a = j * ni + i;
-      if (i + 1 < ni && has[a] && has[a + 1]) lines.push(a, a + 1);
-      if (j + 1 < nj && has[a] && has[a + ni]) lines.push(a, a + ni);
-      if (i + 1 < ni && j + 1 < nj) {
-        const b = a + 1, c = a + ni, d = a + ni + 1;
-        if (has[a] && has[b] && has[c] && has[d]) triangles.push(a, b, d, a, d, c);
+      if (tower) {
+        positions[k * 3] = v * sin[i]!;
+        positions[k * 3 + 1] = v * cos[i]!;
+        positions[k * 3 + 2] = tws;
+      } else {
+        positions[k * 3] = grid.twa[i]! / CARTESIAN_TWA_SCALE;
+        positions[k * 3 + 1] = tws;
+        positions[k * 3 + 2] = v;
       }
     }
   }
-  return { positions, triangles: Uint32Array.from(triangles), lines: Uint32Array.from(lines) };
+  // Typed arrays at their largest size, trimmed after: at 512 × 512 a
+  // growing number[] costs several times the work itself (M15 review).
+  const triangles = new Uint32Array(Math.max(0, ni - 1) * Math.max(0, nj - 1) * 6);
+  const lines = new Uint32Array(ni * nj * 4);
+  let nt = 0, nl = 0;
+  for (let j = 0; j < nj; j++) {
+    for (let i = 0; i < ni; i++) {
+      const a = j * ni + i;
+      if (!has[a]) continue;
+      if (i + 1 < ni && has[a + 1]) { lines[nl++] = a; lines[nl++] = a + 1; }
+      if (j + 1 < nj && has[a + ni]) { lines[nl++] = a; lines[nl++] = a + ni; }
+      if (i + 1 < ni && j + 1 < nj) {
+        const b = a + 1, c = a + ni, d = a + ni + 1;
+        if (has[b] && has[c] && has[d]) {
+          triangles[nt++] = a; triangles[nt++] = b; triangles[nt++] = d;
+          triangles[nt++] = a; triangles[nt++] = d; triangles[nt++] = c;
+        }
+      }
+    }
+  }
+  return { positions, triangles: triangles.slice(0, nt), lines: lines.slice(0, nl) };
 }
 
 /**
- * A hatch over the quads of a surface that touch a marked node: both
- * diagonals of every drawn quad (all four corners with a value) with at
- * least one corner in `marked` (indexed `j * ni + i`, as the mesh's
- * vertices). The Compare stage marks the cells only one operand covers
- * (spec.md 11), so they read as a pattern, not only as a colour.
+ * A hatch over the quads of a surface whose four corners are all marked:
+ * both diagonals of every drawn quad (all four corners with a value) with
+ * every corner in `marked` (indexed `j * ni + i`, as the mesh's vertices).
+ * The Compare stage marks the cells only one operand covers (spec.md 11),
+ * so a region of them reads as a pattern, not only as a colour; a quad
+ * mixing compared and one-only corners is not hatched, and lone one-only
+ * cells get markers of their own.
  */
 export function hatchLines(grid: PolarGrid, marked: ArrayLike<number>): Uint32Array<ArrayBuffer> {
   const ni = grid.twa.length;
@@ -126,7 +146,7 @@ export function hatchLines(grid: PolarGrid, marked: ArrayLike<number>): Uint32Ar
     for (let i = 0; i + 1 < ni; i++) {
       if (!(has(i, j) && has(i + 1, j) && has(i, j + 1) && has(i + 1, j + 1))) continue;
       const a = j * ni + i, b = a + 1, c = a + ni, d = a + ni + 1;
-      if (marked[a] || marked[b] || marked[c] || marked[d]) out.push(a, d, b, c);
+      if (marked[a] && marked[b] && marked[c] && marked[d]) out.push(a, d, b, c);
     }
   }
   return Uint32Array.from(out);

@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import { registerRedraw } from "../automation";
-import { reportFailure } from "../errors";
+import { describeError, reportFailure } from "../errors";
 import type { AppSettings } from "../generated/AppSettings";
 import type { CompareOperand } from "../generated/CompareOperand";
 import type { ProjectSummary } from "../generated/ProjectSummary";
@@ -9,14 +9,14 @@ import { setHint } from "../hint";
 import { msg, useT } from "../i18n";
 import { api } from "../ipc";
 import type { Layout } from "../polar/geometry3d";
-import { PolarScene } from "../polar/scene3d";
+import { PolarScene, SHAPE_CROSS } from "../polar/scene3d";
 import { buildGuides, presetView, SPEED_FACTOR, SPEED_SYMBOL, type CameraPreset, type GuideLabel } from "../polar/view3d";
 import { onThemeChange } from "../settings/themes";
 import { CLASS_A_ONLY, CLASS_B_ONLY, CLASS_BOTH, emptyCompare, type ComparePacket } from "./comparePacket";
 import { operandOf, setCompareChoice, swapOperands, useCompareChoice } from "./compareState";
 import {
-  compareBounds, compareSurfaces, DEFAULT_COMPARE_TOGGLES, heatRows, operandInfo, operandKey, regionRows, spanText,
-  type CompareToggles, type HeatCell,
+  compareBounds, compareSurfaces, DEFAULT_COMPARE_TOGGLES, heatCellAt, heatImage, heatLayout, labelStep, operandInfo,
+  operandKey, regionRows, singleMarkers, spanText, type CompareToggles, type HeatCell, type HeatImage,
 } from "./compareModel";
 import { currentScheme, legendGradient, POLES, type Scheme } from "./diverging";
 
@@ -62,6 +62,8 @@ export default function CompareView({ project, settings }: {
   const [toggles, setToggles] = useState<CompareToggles>(DEFAULT_COMPARE_TOGGLES);
   const [scheme, setScheme] = useState<Scheme>(currentScheme);
   const [hovered, setHovered] = useState<HeatCell | null>(null);
+  /** Why the last comparison failed, shown on the stage; null when it did not. */
+  const [failure, setFailure] = useState<{ text: string; detail: string | null } | null>(null);
   const choice = useCompareChoice(project);
   const { a, b, percent, thresholdKn } = choice;
   const unit = settings?.units.speed ?? "kn";
@@ -137,8 +139,21 @@ export default function CompareView({ project, settings }: {
   useEffect(() => {
     const id = ++request.current;
     void api.comparePolars(a, b, thresholdKn)
-      .then((next) => { if (request.current === id) { setPacket(next); setArrived(true); } })
-      .catch((error: unknown) => { if (request.current === id) reportFailure(error); });
+      .then((next) => {
+        if (request.current !== id) return;
+        setPacket(next);
+        setArrived(true);
+        setFailure(null);
+      })
+      .catch((error: unknown) => {
+        if (request.current !== id) return;
+        // Nothing stale stays on screen under the new choice.
+        setPacket(emptyCompare());
+        setArrived(false);
+        setHovered(null);
+        setFailure(describeError(error));
+        reportFailure(error);
+      });
   }, [project.id, project.revision, operands, thresholdKn]);
 
   const infoA = operandInfo(project, a);
@@ -148,9 +163,11 @@ export default function CompareView({ project, settings }: {
   useEffect(() => {
     const current = scene.current;
     if (!current) return;
-    const empty = new Float32Array(0);
+    // Lone cells only one operand covers have no whole hatched quad: each
+    // such node is marked with a cross (spec.md 11).
+    const markers = toggles.delta ? singleMarkers(packet, scheme) : { points: new Float32Array(0), colors: new Float32Array(0), count: 0 };
     current.setData({
-      samples: empty, colors: empty, layout,
+      samples: markers.points, colors: markers.colors, shapes: new Float32Array(markers.count).fill(SHAPE_CROSS), layout,
       surfaces: compareSurfaces(packet, toggles, { a: infoA.colour, b: infoB.colour }, percent, scheme),
     });
     const guides = buildGuides(bounds, layout, unit);
@@ -204,7 +221,7 @@ export default function CompareView({ project, settings }: {
   };
   const maxAt = stats ? where(stats.maxCell) : null;
   const regions = useMemo(() => regionRows(packet), [packet]);
-  const heat = useMemo(() => heatRows(packet, percent, scheme), [packet, percent, scheme]);
+  const heat = useMemo(() => heatImage(packet, percent, scheme), [packet, percent, scheme]);
 
   const [thresholdText, setThresholdText] = useState<string | null>(null);
   const shownThreshold = thresholdText ?? String(Number((thresholdKn * factor).toFixed(3)));
@@ -221,7 +238,11 @@ export default function CompareView({ project, settings }: {
         onPointerLeave={() => setHint(null)} />
       <div className="view3d-labels compare-labels" ref={labelsHost} aria-hidden="true" />
       {unavailable !== null && <p className="view3d-unavailable muted">{t(unavailable)}</p>}
-      {unavailable === null && arrived && packet.overlap === 0 && (
+      {failure !== null && (
+        <p className="view3d-empty compare-empty compare-failure" role="alert" title={failure.detail ?? undefined}>
+          {t("The comparison could not be made: {reason}", { reason: failure.text })}</p>
+      )}
+      {unavailable === null && failure === null && arrived && packet.overlap === 0 && (
         <p className="view3d-empty compare-empty muted">{t("A and B share no cell with a value: there is nothing to compare. Cells only one of them covers are drawn grey and hatched.")}</p>
       )}
 
@@ -306,29 +327,21 @@ export default function CompareView({ project, settings }: {
             <span className="compare-hatch-swatch" style={hatchStyle(scheme)} />
             {t("Only one of A and B has a value")}
           </div>
-        </section>
-
-        <section className="compare-heat" aria-label={t("Difference heat map")} data-feature="compare:heat-map">
-          <h3>{t("Difference heat map")}</h3>
-          <HeatMap rows={heat} tws={[...packet.tws]} scheme={scheme} windSpeed={windSpeed}
-            onHover={setHovered} />
-          <div className="compare-heat-readout muted" aria-live="polite">
-            {hovered
-              ? t("TWA {twa}°, TWS {tws}: A {a}, B {b}, Δ {delta}", {
-                twa: Number(hovered.twa.toFixed(2)),
-                tws: windSpeed(hovered.tws),
-                a: speed(hovered.a), b: speed(hovered.b),
-                delta: hovered.cls === CLASS_BOTH ? delta(hovered.delta)
-                  : hovered.cls === CLASS_A_ONLY ? t("only A") : hovered.cls === CLASS_B_ONLY ? t("only B") : "—",
-              })
-              : t("Hover a cell for its values. Rows are TWA, columns TWS.")}
-          </div>
+          {percent && (
+            <div className="compare-legend-single">
+              <span className="compare-hatch-swatch" style={{ background: POLES[scheme].single }} />
+              {t("Not comparable in %: B under 0.1 kn")}
+            </div>
+          )}
         </section>
 
         <section className="compare-summary" aria-label={t("Summary")} data-feature="compare:summary">
           <h3>{t("Summary")}</h3>
           <div>{t("{count} cells compared", { count: packet.overlap })}</div>
           <div className="muted">{t("{a} only A, {b} only B (hatched)", { a: packet.aOnly, b: packet.bOnly })}</div>
+          {percent && packet.pctExcluded > 0 && (
+            <div className="muted">{t("{count} cells not comparable in % (B under 0.1 kn)", { count: packet.pctExcluded })}</div>
+          )}
           <div>{t("Mean |Δ| {mean}", { mean: size(stats.meanAbs) })}</div>
           <div>
             {maxAt
@@ -343,16 +356,34 @@ export default function CompareView({ project, settings }: {
                 {regions.map((row) => (
                   <li key={row.tws}>
                     <span className="compare-region-tws">{windSpeed(row.tws)}</span>
-                    {row.a.length > 0 && (
-                      <span className="compare-region-a">{t("A faster {spans}", { spans: row.a.map(spanText).join(", ") })}</span>
-                    )}
-                    {row.b.length > 0 && (
-                      <span className="compare-region-b">{t("B faster {spans}", { spans: row.b.map(spanText).join(", ") })}</span>
-                    )}
+                    <span className="compare-region-spans">
+                      {row.a.length > 0 && (
+                        <span className="compare-region-a">{t("A faster {spans}", { spans: row.a.map(spanText).join(", ") })}</span>
+                      )}
+                      {row.b.length > 0 && (
+                        <span className="compare-region-b">{t("B faster {spans}", { spans: row.b.map(spanText).join(", ") })}</span>
+                      )}
+                    </span>
                   </li>
                 ))}
               </ul>
             )}
+        </section>
+
+        <section className="compare-heat" aria-label={t("Difference heat map")} data-feature="compare:heat-map">
+          <h3>{t("Difference heat map")}</h3>
+          <HeatMap packet={packet} image={heat} percent={percent} scheme={scheme} unitFactor={factor} onHover={setHovered} />
+          <div className="compare-heat-readout muted" aria-live="polite">
+            {hovered
+              ? t("TWA {twa}°, TWS {tws}: A {a}, B {b}, Δ {delta}", {
+                twa: Number(hovered.twa.toFixed(2)),
+                tws: windSpeed(hovered.tws),
+                a: speed(hovered.a), b: speed(hovered.b),
+                delta: hovered.cls === CLASS_BOTH ? (Number.isFinite(hovered.delta) ? delta(hovered.delta) : t("not comparable in %"))
+                  : hovered.cls === CLASS_A_ONLY ? t("only A") : hovered.cls === CLASS_B_ONLY ? t("only B") : "—",
+              })
+              : t("Hover a cell for its values. Rows are TWA, columns TWS.")}
+          </div>
         </section>
       </div>
     </div>
@@ -364,50 +395,152 @@ function hatchStyle(scheme: Scheme) {
   return { background: `repeating-linear-gradient(45deg, ${p.hatch} 0 1.5px, ${p.single} 1.5px 5px)` };
 }
 
-/** The 2D Δ heat map (spec.md 11): TWA rows, TWS columns, the 0° row left out. */
-function HeatMap({ rows, tws, scheme, windSpeed, onHover }: {
-  rows: { twa: number; cells: HeatCell[] }[];
-  tws: number[];
+/** Up to this many cells the heat map draws a rectangle per cell; beyond, one scaled image. */
+const DIRECT_CELLS = 20_000;
+
+/**
+ * The 2D Δ heat map (spec.md 11): TWA rows, TWS columns, the 0° row left
+ * out, drawn on a canvas — one pixel per cell scaled up, then the hatch
+ * masked onto the cells only one operand covers — so a 512 × 512 grid is
+ * one image, not 262,144 elements. Hovering finds the cell by arithmetic.
+ */
+function HeatMap({ packet, image, percent, scheme, unitFactor, onHover }: {
+  packet: ComparePacket;
+  image: HeatImage;
+  percent: boolean;
   scheme: Scheme;
-  windSpeed: (knots: number) => string;
+  unitFactor: number;
   onHover: (cell: HeatCell | null) => void;
 }) {
   const t = useT();
-  const cw = 26, ch = 14, left = 34, top = 16;
-  const width = left + tws.length * cw;
-  const height = top + rows.length * ch;
-  const p = POLES[scheme];
-  const id = `compare-hatch-${scheme}`;
+  const canvas = useRef<HTMLCanvasElement>(null);
+  const [width, setWidth] = useState(300);
+  useEffect(() => {
+    const element = canvas.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => setWidth(element.clientWidth || 300));
+    observer.observe(element);
+    setWidth(element.clientWidth || 300);
+    return () => observer.disconnect();
+  }, []);
+  const layout = useMemo(() => heatLayout(image, width), [image, width]);
+  const height = Math.ceil(layout.top + image.rows * layout.cellHeight + 2);
+
+  useEffect(() => {
+    const element = canvas.current;
+    const ctx = element?.getContext("2d");
+    if (!element || !ctx) return;
+    const ratio = Math.min(globalThis.devicePixelRatio ?? 1, 2);
+    element.width = Math.round(width * ratio);
+    element.height = Math.round(height * ratio);
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    const cellsWidth = image.cols * layout.cellWidth, cellsHeight = image.rows * layout.cellHeight;
+    if (image.rows > 0 && image.cols > 0) {
+      const source = (pixels: Uint8ClampedArray<ArrayBuffer>) => {
+        const small = document.createElement("canvas");
+        small.width = image.cols;
+        small.height = image.rows;
+        small.getContext("2d")?.putImageData(new ImageData(pixels, image.cols, image.rows), 0, 0);
+        return small;
+      };
+      const p = POLES[scheme];
+      const tile = document.createElement("canvas");
+      tile.width = tile.height = Math.round(6 * ratio);
+      const tctx = tile.getContext("2d");
+      if (tctx) {
+        tctx.fillStyle = p.single;
+        tctx.fillRect(0, 0, tile.width, tile.height);
+        tctx.strokeStyle = p.hatch;
+        tctx.lineWidth = 1.5 * ratio;
+        tctx.beginPath();
+        tctx.moveTo(0, tile.height);
+        tctx.lineTo(tile.width, 0);
+        tctx.moveTo(-tile.width / 2, tile.height / 2);
+        tctx.lineTo(tile.width / 2, -tile.height / 2);
+        tctx.moveTo(tile.width / 2, tile.height * 1.5);
+        tctx.lineTo(tile.width * 1.5, tile.height / 2);
+        tctx.stroke();
+      }
+      if (image.rows * image.cols <= DIRECT_CELLS) {
+        // Few cells: each is a rectangle, with crisp edges whatever the
+        // browser does when scaling an image.
+        const pattern = tctx ? ctx.createPattern(tile, "repeat") : null;
+        pattern?.setTransform?.(new DOMMatrix().scale(1 / ratio));
+        for (let r = 0; r < image.rows; r++) {
+          for (let c = 0; c < image.cols; c++) {
+            const at = (r * image.cols + c) * 4;
+            const x = layout.left + c * layout.cellWidth, y = layout.top + r * layout.cellHeight;
+            if (image.rgba[at + 3]) {
+              ctx.fillStyle = `rgb(${image.rgba[at]}, ${image.rgba[at + 1]}, ${image.rgba[at + 2]})`;
+              ctx.fillRect(x, y, layout.cellWidth, layout.cellHeight);
+            } else if (image.single[at + 3] && pattern) {
+              ctx.fillStyle = pattern;
+              ctx.fillRect(x, y, layout.cellWidth, layout.cellHeight);
+            }
+          }
+        }
+      } else {
+        // Many cells: one pixel each, scaled up, and the hatch masked onto
+        // the one-only cells — one image rather than a rectangle per cell.
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(source(image.rgba), layout.left, layout.top, cellsWidth, cellsHeight);
+        const hatch = document.createElement("canvas");
+        hatch.width = element.width;
+        hatch.height = element.height;
+        const hctx = hatch.getContext("2d");
+        const pattern = hctx && tctx ? hctx.createPattern(tile, "repeat") : null;
+        if (hctx && pattern) {
+          hctx.fillStyle = pattern;
+          hctx.fillRect(0, 0, hatch.width, hatch.height);
+          hctx.globalCompositeOperation = "destination-in";
+          hctx.imageSmoothingEnabled = false;
+          hctx.drawImage(source(image.single), layout.left * ratio, layout.top * ratio, cellsWidth * ratio, cellsHeight * ratio);
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.drawImage(hatch, 0, 0);
+          ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+        }
+      }
+      // Gaps between cells while they are big enough to show them.
+      if (layout.cellWidth >= 6 && layout.cellHeight >= 6) {
+        ctx.strokeStyle = cssColour("--panel", "#253447");
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        for (let c = 0; c <= image.cols; c++) {
+          ctx.moveTo(layout.left + c * layout.cellWidth, layout.top);
+          ctx.lineTo(layout.left + c * layout.cellWidth, layout.top + cellsHeight);
+        }
+        for (let r = 0; r <= image.rows; r++) {
+          ctx.moveTo(layout.left, layout.top + r * layout.cellHeight);
+          ctx.lineTo(layout.left + cellsWidth, layout.top + r * layout.cellHeight);
+        }
+        ctx.stroke();
+      }
+    }
+    // Axis labels, thinned so they never overlap.
+    ctx.fillStyle = cssColour("--muted", "#b3c9de");
+    ctx.font = "9px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "alphabetic";
+    const colStep = labelStep(layout.cellWidth, 22);
+    for (let j = 0; j < image.cols; j += colStep) {
+      ctx.fillText(`${Number((packet.tws[j]! * unitFactor).toFixed(1))}`, layout.left + (j + 0.5) * layout.cellWidth, 11);
+    }
+    ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
+    const rowStep = labelStep(layout.cellHeight, 11);
+    for (let r = 0; r < image.rows; r += rowStep) {
+      ctx.fillText(`${Number(packet.twa[image.rowIndex[r]!]!.toFixed(1))}°`, layout.left - 4, layout.top + (r + 0.5) * layout.cellHeight);
+    }
+  }, [image, layout, width, height, scheme, packet, unitFactor]);
+
+  const hover = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    onHover(heatCellAt(packet, image, layout, percent, event.clientX - rect.left, event.clientY - rect.top));
+  };
   return (
-    <svg className="compare-heat-map" viewBox={`0 0 ${width} ${height}`} role="img"
-      aria-label={t("Difference heat map")} onMouseLeave={() => onHover(null)}>
-      <defs>
-        <pattern id={id} width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-          <rect width="5" height="5" fill={p.single} />
-          <line x1="0" y1="0" x2="0" y2="5" stroke={p.hatch} strokeWidth="1.5" />
-        </pattern>
-      </defs>
-      {tws.map((speed, j) => (
-        <text key={j} x={left + j * cw + cw / 2} y={11} textAnchor="middle" className="compare-heat-axis">
-          {Number(speed.toFixed(1))}
-        </text>
-      ))}
-      {rows.map((row, r) => (
-        <g key={row.twa}>
-          <text x={left - 4} y={top + r * ch + ch - 3} textAnchor="end" className="compare-heat-axis">{`${Number(row.twa.toFixed(1))}°`}</text>
-          {row.cells.map((cell) => {
-            const fill = cell.fill ?? (cell.cls === CLASS_A_ONLY || cell.cls === CLASS_B_ONLY ? `url(#${id})` : "none");
-            return (
-              <rect key={cell.j} x={left + cell.j * cw + 1} y={top + r * ch + 1} width={cw - 2} height={ch - 2} rx={2}
-                fill={fill} className={cell.cls === CLASS_BOTH ? "compare-heat-cell" : "compare-heat-cell empty"}
-                onMouseEnter={() => onHover(cell)}>
-                <title>{`${Number(row.twa.toFixed(2))}° · ${windSpeed(tws[cell.j]!)}`}</title>
-              </rect>
-            );
-          })}
-        </g>
-      ))}
-    </svg>
+    <canvas ref={canvas} className="compare-heat-map" style={{ height }} role="img" aria-label={t("Difference heat map")}
+      onPointerMove={hover} onPointerLeave={() => onHover(null)} />
   );
 }
 
@@ -425,6 +558,8 @@ function OperandPicker({ which, project, value, onChange }: {
   const t = useT();
   const [open, setOpen] = useState(false);
   const host = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const list = useRef<HTMLUListElement>(null);
   useEffect(() => {
     if (!open) return;
     const close = (event: PointerEvent) => {
@@ -438,30 +573,55 @@ function OperandPicker({ which, project, value, onChange }: {
     { operand: { kind: "blend" }, colour: project.blend.colour, label: t("Blend"), kind: "blend", hidden: false },
     ...project.sources.map((s) => ({ operand: operandOf(s), colour: s.colour, label: s.label, kind: s.kind, hidden: !s.visible })),
   ];
+  const selectedIndex = Math.max(0, options.findIndex((o) => operandKey(o.operand) === operandKey(value)));
+  // The list opens with the chosen operand focused, as a native list does.
+  useEffect(() => {
+    if (open) list.current?.querySelectorAll<HTMLElement>('[role="option"]')[selectedIndex]?.focus();
+  }, [open]);
   const letter = which === "a" ? "A" : "B";
   const kindName = (kind: string) => (kind === "track" ? t("polar segment") : kind === "blend" ? t("the current blend") : t("polar"));
+  const close = () => {
+    setOpen(false);
+    trigger.current?.focus();
+  };
+  /** Arrow keys, Home and End move between options; Escape closes; Enter and Space choose (the option is a button). */
+  const onListKey = (event: ReactKeyboardEvent<HTMLUListElement>) => {
+    const items = [...(list.current?.querySelectorAll<HTMLElement>('[role="option"]') ?? [])];
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    const move = (to: number) => { event.preventDefault(); items[Math.max(0, Math.min(items.length - 1, to))]?.focus(); };
+    if (event.key === "ArrowDown") move(at + 1);
+    else if (event.key === "ArrowUp") move(at - 1);
+    else if (event.key === "Home") move(0);
+    else if (event.key === "End") move(items.length - 1);
+    else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); }
+    else if (event.key === "Tab") setOpen(false);
+  };
   return (
-    <div className={`compare-picker compare-picker-${which}`} ref={host}
-      onKeyDown={(event) => { if (event.key === "Escape" && open) { event.stopPropagation(); setOpen(false); } }}>
+    <div className={`compare-picker compare-picker-${which}`} ref={host}>
       <span className="compare-picker-letter">{letter}</span>
-      <button className="compare-picker-button" data-feature={`compare:operand-${which}`} aria-haspopup="listbox"
+      <button ref={trigger} className="compare-picker-button" data-feature={`compare:operand-${which}`} aria-haspopup="listbox"
         aria-expanded={open}
         title={which === "a" ? t("Operand A: a source's polar, a track's polar segment, or the blend")
           : t("Operand B: a source's polar, a track's polar segment, or the blend")}
-        onClick={() => setOpen(!open)}>
+        onClick={() => setOpen(!open)}
+        onKeyDown={(event) => {
+          if ((event.key === "ArrowDown" || event.key === "ArrowUp") && !open) { event.preventDefault(); setOpen(true); }
+        }}>
         <span className="swatch" style={{ background: info.colour }} />
         <span className="compare-picker-name">{info.label ?? t("Blend")}</span>
         <span className="muted">{kindName(info.kind)}</span>
         <span aria-hidden="true">▾</span>
       </button>
       {open && (
-        <ul className="compare-picker-list" role="listbox" aria-label={which === "a" ? t("Operand A") : t("Operand B")}>
-          {options.map((option) => {
-            const selected = operandKey(option.operand) === operandKey(value);
+        <ul ref={list} className="compare-picker-list" role="listbox" aria-label={which === "a" ? t("Operand A") : t("Operand B")}
+          onKeyDown={onListKey}>
+          {options.map((option, index) => {
+            const selected = index === selectedIndex;
             return (
-              <li key={operandKey(option.operand)} role="option" aria-selected={selected}>
-                <button className={selected ? "selected" : undefined}
-                  onClick={() => { onChange(option.operand); setOpen(false); }}>
+              <li key={operandKey(option.operand)} role="presentation">
+                <button role="option" aria-selected={selected} tabIndex={selected ? 0 : -1}
+                  className={selected ? "selected" : undefined}
+                  onClick={() => { onChange(option.operand); close(); }}>
                   <span className="swatch" style={{ background: option.colour }} />
                   <span aria-hidden="true">{KIND_GLYPH[option.kind] ?? ""}</span>
                   <span className="compare-picker-name">{option.label}</span>
