@@ -250,7 +250,11 @@ The VectorEffects i18n system is copied (D10):
 - `coverage.test.ts` fails on a missing, unused or untranslated key, and on
   JSX text, `title` or `aria-label` that skips `t`.
 - A glossary per language fixes sailing terms (TWA, TWS, BSP, VMG, polar,
-  "abattée", "Wende"…) so the same concept is always the same word.
+  "abattée", "Wende"…) so the same concept is always the same word. The
+  French and German were drafted by the implementer (M17 preflight: no
+  native-speaking sailor was available); every glossary entry carries the
+  review status "machine-drafted, needs a native sailor", and
+  `docs/TRANSLATION-REVIEW.md` is the reviewers' checklist.
 - **Tooltips** on every control, translated. Each tooltip shows the shortcut
   if there is one.
 - **Help** is a reference window of translated topics, one per area. Every
@@ -1204,6 +1208,10 @@ overlay on demand):
 - Ring values (BSP) sit just under the 90° spoke and angle labels just
   outside the outermost ring; no two labels overlap, and a ring value that
   would touch another label is left out.
+- The rings, the slice's wind speed, its dot band and the hover are in the
+  display speed unit (§3.4): rings at round values of that unit, placed at
+  their speed in knots. Everything arrives in knots and is converted only
+  where it is drawn as text (M17b). So does the 3D drag readout (§10.4).
 - Full size opens the same plot as a large overlay owned by the Map stage
   (D21): the panel's "Full size" button switches to the Map stage and opens
   it; its own button, Escape, or switching stage again closes it.

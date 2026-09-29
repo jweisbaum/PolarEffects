@@ -7,8 +7,11 @@ the word a French or German sailor, a class rule or a routing program would
 use, not a dictionary's.
 
 Copied in form from VectorEffects' glossary. The translations were written by
-the implementer (plan.md M2); **they are marked for review by native-speaking
-sailors in M17**.
+the implementer (plan.md M2, completed in M17b). **Review status of every
+entry: machine-drafted, needs a native sailor.** No native-speaking sailor was
+available (M17 preflight ruling); `docs/TRANSLATION-REVIEW.md` is the checklist
+for the human review. Entries marked **⚑** are the ones the implementer was
+least sure of; each says why in its note.
 
 **Register.** French addresses the reader as *vous*; German as *Sie*. Button
 and menu labels are infinitives in French ("Enregistrer") and infinitives or
@@ -87,3 +90,74 @@ cross-platform "Einfügen"). The native menu's labels live in Rust,
 | orthographic | orthographique | orthografisch | |
 | feature search | recherche de commandes | Funktionssuche | |
 | control (UI) | commande | Bedienelement | |
+
+## Sailing, meteorological and ORC terms (M17b)
+
+Every such term the interface or the help uses. Review status for all:
+machine-drafted, needs a native sailor.
+
+| English | Français | Deutsch | Note |
+|---|---|---|---|
+| TWA — true wind angle | TWA (angle du vent réel) | TWA (wahrer Windwinkel) | Written "TWA" in labels in all three; gender: *le* TWA, *der* TWA. |
+| TWS — true wind speed | TWS (vitesse du vent réel) | TWS (wahre Windgeschwindigkeit) | *le* TWS, *die* TWS. |
+| BSP — boat speed | BSP (vitesse du bateau) | BSP (Bootsgeschwindigkeit) | *la* BSP (la vitesse), *die* BSP. ⚑ French routers also say "vitesse surface"; kept "vitesse du bateau". |
+| VMG | VMG | VMG | *la* VMG / *die* VMG. |
+| beat angle / run angle (ORC) | angle de près / angle de vent arrière optimaux | optimaler Am-Wind- / Vorwind-Winkel | The ORC certificate's "Beat angle" and "Gybe angle". |
+| upwind / downwind | au près / au portant | am Wind / vor dem Wind | |
+| closer to / further off the wind | plus près du vent / plus abattu | höher am Wind / tiefer | Filter tooltips. ⚑ "tiefer segeln" is the idiom; "raumer" was avoided as too narrow. |
+| tack / gybe (manoeuvres) | virement de bord / empannage | Wende / Halse | Plural "virements et empannages", "Wenden und Halsen". |
+| manoeuvre threshold | seuil de manœuvre | Manöverschwelle | |
+| heel | gîte | Krängung | Not shown in v1; fixed here for later features. |
+| leeway | dérive | Abdrift | ⚑ French "dérive" also means drift (Stokes drift, current set and drift) and the centreboard; context decides. |
+| heading / COG | cap / COG | Kurs / COG | "Cap ou COG", "Kurs oder COG" in the CSV mapping. |
+| SOG | SOG | SOG | "vitesse sur le fond" / "Geschwindigkeit über Grund" in prose. |
+| over the ground / through the water | par rapport au fond / par rapport à l'eau | über Grund / durchs Wasser | |
+| current (toward) | courant (vers) | Strömung (nach) | "{speed} vers {direction}", "{speed} nach {direction}". |
+| current set / drift | direction / vitesse du courant | Strömungsrichtung / Strömungsgeschwindigkeit | The app says direction and speed; "set and drift" is not used as such. ⚑ |
+| tide, tidal current | marée, courant de marée | Gezeiten, Gezeitenströmung | "currents without tide": courants sans marée / Strömungen ohne Gezeiten. |
+| Stokes drift | dérive de Stokes | Stokes-Drift | |
+| correct for current | corriger du courant | Strömung herausrechnen | |
+| significant wave height | hauteur significative des vagues | signifikante Wellenhöhe | |
+| mean wave direction | direction moyenne des vagues | mittlere Wellenrichtung | Waves are "from". |
+| head / bow / beam / quarter / following seas | mer de face / par l'avant / de travers / de trois-quarts arrière / de l'arrière | Wellen von vorn / schräg von vorn / von der Seite / schräg von achtern / von achtern | Wave sectors. ⚑ German keywords also carry "querab", "raumschots". |
+| angle off the bow | angle depuis l'étrave | Winkel zum Bug | |
+| sea state | état de la mer | Seegang | Search keyword. |
+| reanalysis | réanalyse | Reanalyse | ERA5, ARCO-ERA5, WeatherBench2 never translated. |
+| weather (the fetched wind, waves and current) | météo | Wetter | "Fetch weather…": Récupérer la météo… / Wetter abrufen…. |
+| environment (wind, waves, current of a sample) | environnement | Umweltdaten | |
+| fetch (verb, noun) | récupérer / récupération | abrufen / Abruf | Downloads in general: télécharger / herunterladen. |
+| hourly / every 3 hours (sampling) | toutes les heures, pas horaire / toutes les 3 heures | stündlich / alle 3 Stunden | "Abtastung" for sampling. |
+| blend (the result) | fusion | Mischung | ⚑ "fusion" and "Mischung" are plain words, not a routing-software term; a reviewer may prefer "polaire combinée" / "kombinierte Polare". |
+| polar segment (a track's polar) | segment de polaire | Polarsegment | |
+| statistic (of a cell) | statistique | Kennwert | 90th percentile: 90e centile / 90. Perzentil; median: médiane / Median; mean: moyenne / Mittelwert. |
+| cell (of a polar grid or table) | cellule | Zelle | Not "case" in French: "case" is kept for text boxes ("case de recherche") and tick boxes. |
+| grid (output grid, a polar's grid) | grille | Raster | "Gitterpunkt" only for a polar node in German descriptions. |
+| slice (2D plot at one TWS) | tranche | Schnitt | |
+| dot band (the plot's TWS tolerance) | plage de vent | Windbereich | |
+| heat map | carte de chaleur | Heatmap | |
+| sail number | numéro de voile | Segelnummer | "n° de voile" in the short placeholder. |
+| builder / designer / year built | chantier / architecte / année de construction | Werft / Konstrukteur / Baujahr | ORC fields. |
+| class, division | série, division | Klasse, Division | ⚑ "division" in French and German racing is understood; "groupe" / "Gruppe" are alternatives. |
+| handicap class | classe de handicap | Handicap-Klasse | |
+| VPP | VPP | VPP | "la grille VPP", "das VPP-Gitter". |
+| race / leg / fleet | course / étape / flotte | Regatta / Etappe / Flotte | |
+| event (a tracked race) | événement | Veranstaltung | Not "Ereignis". |
+| race key | clé de course | Regattaschlüssel | YellowBrick's short race name. |
+| start / finish | départ / arrivée | Start / Ziel | |
+| Racing / Finished / Retired / Did not start / Did not finish | En course / Arrivé / Abandon / Non partant / Non arrivé | Im Rennen / Im Ziel / Aufgegeben / Nicht gestartet / Nicht im Ziel | Tracker status. ⚑ Check against each country's racing-rules wording (DNF, DNS, RET). |
+| motoring | moteur | Motorfahrt | "le moteur avant le départ". |
+| knots (symbol) | kn | kn | ⚑ French sailors often write "nd" or "nds"; the interface keeps the international "kn" in all languages (it is also the unit picker's symbol). A reviewer may want "nd" throughout French. |
+
+### Interface verbs and nouns fixed in M17b
+
+| English | Français | Deutsch | Note |
+|---|---|---|---|
+| dialog | fenêtre | Dialog | "fenêtre d'import", "fenêtre de la balise"; not "boîte". |
+| tick / untick | cocher / décocher | ankreuzen / abkreuzen | Not "anhaken". |
+| leave out (filter) | écarter | weglassen | Not "laisser de côté" / "auslassen". |
+| frame (fit on the map) | cadrer | einpassen | Not "formatfüllend zeigen". |
+| derive / derived | déduire / déduit | ableiten / abgeleitet | Heading and speed from positions. |
+| given (value from the file) | fourni | angegeben | |
+| Shift (key) | Maj | Umschalt | In prose and tooltips. Keyboard chords shown as `Cmd+Shift+S` stay as the platform writes them. |
+| Esc (key) | Échap | Esc | |
+| undo (as a step) | une annulation | ein Widerrufen-Schritt | "One undo" → "s'annule en une fois" / "ein Widerrufen-Schritt". |

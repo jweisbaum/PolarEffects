@@ -55,7 +55,7 @@ const catalogue: Record<string, string> = {
   "km — kilometres": "km — Kilometer",
   "Unsaved work": "Ungespeicherte Arbeit",
   "Every minute, or every fifty edits, whichever comes first": "Jede Minute oder alle fünfzig Änderungen, je nachdem, was zuerst eintritt",
-  "Keep a recovery copy, offered back after a crash": "Eine Wiederherstellungskopie behalten, die nach einem Absturz angeboten wird",
+  "Keep a recovery copy, offered back after a crash": "Wiederherstellungskopie behalten (nach einem Absturz angeboten)",
   "Save into the project file itself": "In die Projektdatei selbst speichern",
   "Leave it until you save": "Bis zum Speichern nichts tun",
   "Network": "Netzwerk",

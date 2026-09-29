@@ -26,7 +26,7 @@ const catalogue: Record<string, string> = {
   "The percentage Scale applies: 5 is 5 % faster, -5 is 5 % slower": "Der Prozentsatz, den Skalieren anwendet: 5 ist 5 % schneller, -5 ist 5 % langsamer",
   "Scale the selected cells by the percentage (undoable)": "Die ausgewählten Zellen um den Prozentsatz skalieren (widerrufbar)",
   "Scale": "Skalieren",
-  "Smooth the selected cells over their neighbours on the grid (undoable)": "Die ausgewählten Zellen über ihre Nachbarn im Gitter glätten (widerrufbar)",
+  "Smooth the selected cells over their neighbours on the grid (undoable)": "Die ausgewählten Zellen über ihre Nachbarn im Raster glätten (widerrufbar)",
   "Smooth": "Glätten",
   "Put the selected cells back to the source's values (undoable)": "Die ausgewählten Zellen auf die Werte der Quelle zurücksetzen (widerrufbar)",
   "Reset": "Zurücksetzen",
@@ -40,7 +40,7 @@ const catalogue: Record<string, string> = {
   // The 3D stage.
   "Drag": "Ziehen",
   "Drag a node of the source being edited to change its boat speed; Shift snaps to 0.05 kn": "Einen Knoten der bearbeiteten Quelle ziehen, um seine Bootsgeschwindigkeit zu ändern; Umschalt rastet auf 0,05 kn ein",
-  "BSP {bsp} kn": "BSP {bsp} kn",
+  "BSP {bsp} {unit}": "BSP {bsp} {unit}",
   // The source list.
   "Edit this source's polar in the 3D view, with its table": "Die Polare dieser Quelle in der 3D-Ansicht bearbeiten, mit ihrer Tabelle",
   // The history (Rust labels).
@@ -76,7 +76,7 @@ const catalogue: Record<string, string> = {
   "Make the selected cells faster or slower by a percentage.": "Die ausgewählten Zellen um einen Prozentsatz schneller oder langsamer machen.",
   "multiply": "multiplizieren",
   "Smooth selection": "Auswahl glätten",
-  "Smooth the selected cells over their neighbours on the grid.": "Die ausgewählten Zellen über ihre Nachbarn im Gitter glätten.",
+  "Smooth the selected cells over their neighbours on the grid.": "Die ausgewählten Zellen über ihre Nachbarn im Raster glätten.",
   "average": "mitteln",
   "kernel": "Kern",
   "Reset selection": "Auswahl zurücksetzen",
@@ -86,7 +86,7 @@ const catalogue: Record<string, string> = {
   "clear": "löschen",
   "Polar table": "Polartabelle",
   "The edited source's polar as a TWA × TWS table; typing a value edits that cell.": "Die Polare der bearbeiteten Quelle als TWA × TWS-Tabelle; ein eingegebener Wert ändert diese Zelle.",
-  "grid": "Gitter",
+  "grid": "Raster",
   "type a value": "Wert eingeben",
   "cells": "Zellen",
   "Open one source in the 3D view to edit its polar, with its table.": "Eine Quelle in der 3D-Ansicht öffnen, um ihre Polare zu bearbeiten, mit ihrer Tabelle.",

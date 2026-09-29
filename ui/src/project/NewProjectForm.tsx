@@ -24,7 +24,10 @@ export default function NewProjectForm({
   onSubmit: (request: NewProjectRequest) => void;
 }) {
   const t = useT();
-  const [name, setName] = useState(() => t("Untitled polar"));
+  // Null until the person types: the default name then follows the
+  // language, so switching it on the start screen relabels it too (M17b).
+  const [typed, setName] = useState<string | null>(null);
+  const name = typed ?? t("Untitled polar");
   const [boatName, setBoatName] = useState("");
   const [notes, setNotes] = useState("");
   const blank = name.trim().length === 0;

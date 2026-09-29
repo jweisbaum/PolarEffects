@@ -385,6 +385,26 @@ window.__peShot = { state: "running" };
         copy.style.setProperty("visibility", "visible", "important");
       }
     });
+    // A cloned container starts unscrolled: its content is wrapped and moved
+    // up and left by the live scroll offsets, so a scrolled side panel shows
+    // what the window shows (M17b: the flash of a control scrolled into view
+    // was drawn over the panel's top).
+    live.forEach(function (el, i) {
+      var copy = copies[i];
+      if (!copy || copy.tagName !== el.tagName) return;
+      if (el.scrollTop === 0 && el.scrollLeft === 0) return;
+      if (el === document.documentElement || el === document.body) return;
+      var wrap = document.createElement("div");
+      wrap.style.cssText = "position: relative; top: " + (-el.scrollTop) + "px; left: " + (-el.scrollLeft) + "px;";
+      // The wrapper lays its children out as the container did.
+      var cs = getComputedStyle(el);
+      ["display", "flexDirection", "flexWrap", "gap", "alignItems", "justifyContent",
+        "gridTemplateColumns", "gridTemplateRows", "gridAutoFlow"].forEach(function (k) { wrap.style[k] = cs[k]; });
+      wrap.style.minHeight = el.clientHeight + "px";
+      while (copy.firstChild) wrap.appendChild(copy.firstChild);
+      copy.appendChild(wrap);
+      copy.style.setProperty("overflow", "hidden", "important");
+    });
     var xml = new XMLSerializer().serializeToString(clone);
     var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height + '">' +
       '<foreignObject width="100%" height="100%">' + xml + "</foreignObject></svg>";

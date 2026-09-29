@@ -155,7 +155,7 @@ export const TOPICS: HelpTopic[] = [
   { id: "sources", group: "Sources", title: "Source list and polar plot",
     paragraphs: [
       "The right panel lists every source of the project — ORC polars, polar files and tracks — each with its colour, a show or hide switch and a blend weight. A hidden source is left out of the blend and of every plot.",
-      "Below the list, the 2D polar plot draws boat speed against true wind angle: a curve per visible polar source at one true wind speed, or one curve per wind speed a source has when the slider is set to All, each in its source's colour, with the blend drawn thicker in its own colour. Track samples with their wind are dots in their track's colour when their wind speed is within a knot of the slice (the band is a setting); excluded samples are hollow, and samples selected on the map or in the 3D view are ringed. Hovering a curve or a dot shows its source, TWA, TWS and BSP. Full size opens the same plot as a large overlay on the map, closed with its own button, Escape or switching stage.",
+      "Below the list, the 2D polar plot draws boat speed against true wind angle: a curve per visible polar source at one true wind speed, or one curve per wind speed a source has when the slider is set to All, each in its source's colour, with the blend drawn thicker in its own colour. Track samples with their wind are dots in their track's colour when their wind speed is within a knot of the slice (the band is a setting); excluded samples are hollow, and samples selected on the map or in the 3D view are ringed. Hovering a curve or a dot shows its source, TWA, TWS and BSP; the speeds on the rings and in the hover are in your speed unit (Settings). Full size opens the same plot as a large overlay on the map, closed with its own button, Escape or switching stage.",
     ],
     parameters: [
       ["Sources (section)", "Click the heading to fold or unfold the list."],
@@ -227,7 +227,7 @@ export const TOPICS: HelpTopic[] = [
       ["Show on map", "Switches to the map, highlights the selected samples there and frames them."],
       ["Edit (source list)", "Opens the source in the 3D view in edit mode, with its table. Done leaves edit mode; the edits stay."],
       ["Drag", "In edit mode, drag a node of the source being edited to change its boat speed. Shift snaps to 0.05 kn. One drag is one undo."],
-      ["Table", "The source’s polar in knots, TWA down and TWS across. Type a value and press Enter to edit a cell; empty the cell to reset it. Each typed value is one undo. Clicking a cell selects it, Shift-click adds, and edited cells are highlighted."],
+      ["Table", "The source’s polar in your speed unit, TWA down and TWS across. Type a value and press Enter to edit a cell; empty the cell to reset it. Each typed value is one undo. Clicking a cell selects it, Shift-click adds, and edited cells are highlighted."],
       ["Scale / Smooth / Reset", "Act on the selected cells: scale them by the percentage, smooth each over its neighbours on the grid (a 3 × 3 kernel), or put them back to the source’s values. Each is one undo."],
       ["Reset all edits", "Clears every edit of the source being edited; undo puts them back."],
       ["Statistic", "For a track: how a cell of its polar segment sums up its samples’ boat speeds — the 90th or 75th percentile, the median or the mean."],
@@ -238,8 +238,8 @@ export const TOPICS: HelpTopic[] = [
     paragraphs: [
       "The Compare stage shows the difference between two polars, A and B, cell by cell on the project’s output grid. Each is any source’s polar, any track’s polar segment, or the current blend, read as the other views read it: with its edits, without its excluded nodes, and never extrapolated. Compare on a source opens the stage with that source as A and the blend as B.",
       "In 3D, A and B are translucent surfaces in their colours, and the difference surface lies midway between them, coloured by ΔBSP = A − B: orange where A is faster, blue where B is faster, grey where they agree. The scale is centred on zero and its range is in the legend. Only cells where both have a value are compared; a cell only one of them covers is drawn grey — hatched in the heat map and where several lie together in 3D, and marked with a cross in 3D — and counted in the summary. The 0° row is 0 kn by definition and is never compared.",
-      "The summary gives the number of cells compared, the mean and largest difference, and for each wind speed the angles where A is faster and where B is faster by more than the threshold. The heat map shows the same differences flat, TWA down and TWS across; hover a cell for its values. What is compared is remembered for each project while the application runs.",
-      "What is compared, the percentage switch and the threshold are not saved and cannot be undone: they are kept while the application runs.",
+      "The summary gives the number of cells compared, the mean and largest difference, and for each wind speed the angles where A is faster and where B is faster by more than the threshold. The heat map shows the same differences flat, TWA down and TWS across; hover a cell for its values.",
+      "What is compared, the percentage switch and the threshold are not saved and cannot be undone: they are kept for each project while the application runs.",
     ],
     parameters: [
       ["A / B", "The two operands, each chosen by its colour and name: the blend, a source’s polar, or a track’s polar segment. A hidden source can be compared too."],
@@ -257,7 +257,7 @@ export const TOPICS: HelpTopic[] = [
     parameters: [
       ["Language", "English, French or German. Everything changes at once, including the menu bar. Also on the start screen."],
       ["Theme", "The colours of the application. Harbour is the default."],
-      ["Speed / Wave height / Distance", "The units values are shown in. Stored values do not change."],
+      ["Boat and wind speed / Wave height / Distance", "The units values are shown in: the polar plot, the 3D axes and edit table, Compare and the map's hover. Stored values do not change; polar files, track filters and the output grid stay in knots."],
       ["Polar plot dot band", "How far from the polar plot's wind speed a track sample may be and still be drawn as a dot, from ±0.25 to ±5 kn (±1 kn by default)."],
       ["Autosave", "Keep a recovery copy of unsaved work (the default), save into the project file itself, or leave everything until you save."],
       ["Keep downloaded weather in memory", "How much downloaded wind, wave and current data is kept in memory for the session (256 MB by default, 16–4096 MB), so other boats of the same race reuse it. It is forgotten when PolarEffects quits; nothing downloaded is kept on disk, and every value a project uses is saved in the project. An earlier version's chunk cache folder is removed the first time, as the status line says."],

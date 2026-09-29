@@ -141,7 +141,9 @@ Adding one: gate Rust on `#[cfg(feature = "webdriver")]`, TypeScript on
   the same way, then paints each canvas clipped to itself and draws whatever
   is positioned over it (dialogs, popups, the help flash, 3D labels) again on
   top. Animations are shown at rest. Fonts fall back to the system's inside
-  the SVG, and a scrolled container shows roughly where it was scrolled.
+  the SVG. A scrolled container is drawn at its scroll offset: its cloned
+  content is wrapped and moved by `scrollTop`/`scrollLeft` (M17b), so a
+  control scrolled into view appears where the flash is drawn.
 - **A script hands its answer to `done(…)`** (`run` binds it; `evaluate`
   takes `arguments[arguments.length - 1]`). Never call
   `window.__WEBDRIVER__.resolve` yourself, and never run longer than 30 s:

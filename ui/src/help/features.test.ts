@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 import { FEATURES, searchFeatures } from "./features";
 import { TOPICS } from "./topics";
 import { LANGUAGES, setLanguage, t } from "../i18n";
+import sailorQueries from "./sailor-queries.json";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 
@@ -120,4 +121,32 @@ describe("feature registry", () => {
     expect(searchFeatures("projektfenster").map(m => m.feature.id)).toContain("shell:statusbar");
     setLanguage("en");
   });
+});
+
+/**
+ * Twenty words a sailor would type in each language, each finding the
+ * control meant as the first result (M17b). `npm run ux` drives the same
+ * list through the application and checks the flash lands on the control
+ * (or, for one inside a dialog, on the button that opens it).
+ */
+describe("a sailor's words", () => {
+  for (const [language, queries] of Object.entries(sailorQueries as unknown as Record<string, [string, string, string][]>)) {
+    it(`find the control meant first, in ${language}`, () => {
+      setLanguage(language);
+      try {
+        const wrong = queries
+          .map(([query, id]) => [query, id, searchFeatures(query)[0]?.feature.id ?? "nothing"])
+          .filter(([, id, found]) => found !== id)
+          .map(([query, id, found]) => `${query}: ${found}, not ${id}`);
+        expect(wrong).toEqual([]);
+        expect(queries.length).toBe(20);
+        for (const [, id, flashed] of queries) {
+          const feature = FEATURES.find(f => f.id === id)!;
+          expect(feature.landing ?? feature.id, id).toBe(flashed);
+        }
+      } finally {
+        setLanguage("en");
+      }
+    });
+  }
 });

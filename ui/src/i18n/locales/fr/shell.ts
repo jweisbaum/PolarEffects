@@ -125,18 +125,18 @@ const catalogue: Record<string, string> = {
   "Import polar file": "Importer un fichier de polaire",
   // ORC polars (spec.md 5.3).
   "The project already holds this certificate.": "Le projet contient déjà ce certificat.",
-  "The environment fetch of {label} stopped: {reason}": "La récupération de l’environnement de {label} s’est arrêtée : {reason}",
-  "Cancel the environment fetch?": "Annuler la récupération de l’environnement ?",
-  "A wind, wave and current fetch is running for this project. It stops first; the samples it already fetched stay in the project, and Fetch weather… resumes it later.": "Une récupération du vent, des vagues et du courant est en cours pour ce projet. Elle s’arrête d’abord ; les points déjà récupérés restent dans le projet, et Récupérer la météo… la reprend plus tard.",
+  "The environment fetch of {label} stopped: {reason}": "La récupération de l’environnement de {label} s’est arrêtée : {reason}",
+  "Cancel the environment fetch?": "Annuler la récupération de l’environnement ?",
+  "A wind, wave and current fetch is running for this project. It stops first; the samples it already fetched stay in the project, and Fetch weather… resumes it later.": "Une récupération du vent, des vagues et du courant est en cours pour ce projet. Elle s’arrête d’abord ; les points déjà récupérés restent dans le projet, et Récupérer la météo… la reprend plus tard.",
   "Cancel the fetch": "Annuler la récupération",
-  "Fetching wind, waves and current: {label} {percent} %": "Récupération du vent, des vagues et du courant : {label} {percent} %",
+  "Fetching wind, waves and current: {label} {percent} %": "Récupération du vent, des vagues et du courant : {label} {percent} %",
   "({count} more waiting)": "({count} autres en attente)",
-  "Stop every fetch; samples already fetched are kept": "Arrêter toutes les récupérations ; les points déjà récupérés sont conservés",
-  "While wind, waves and current are being fetched, stop every fetch; the samples already fetched are kept.": "Pendant la récupération du vent, des vagues et du courant, arrêter toutes les récupérations ; les points déjà récupérés sont conservés.",
+  "Stop every fetch; samples already fetched are kept": "Arrêter toutes les récupérations ; les points déjà récupérés sont conservés",
+  "While wind, waves and current are being fetched, stop every fetch; the samples already fetched are kept.": "Pendant la récupération du vent, des vagues et du courant, arrêter toutes les récupérations ; les points déjà récupérés sont conservés.",
   "stop": "arrêter",
   "job": "tâche",
   "The environment fetch of {label} left out a current source that would not open.": "La récupération de l’environnement de {label} a écarté une source de courant qui ne s’ouvrait pas.",
-  "Downloaded weather is no longer kept on disk: removing {size} an earlier version left in {path}. Projects keep every value they use.": "La météo téléchargée n’est plus gardée sur le disque : suppression de {size} laissés par une version précédente dans {path}. Les projets gardent toutes les valeurs qu’ils utilisent.",
+  "Downloaded weather is no longer kept on disk: removing {size} an earlier version left in {path}. Projects keep every value they use.": "La météo téléchargée n’est plus gardée sur le disque : suppression de {size} laissés par une version précédente dans {path}. Les projets gardent toutes les valeurs qu’ils utilisent.",
 };
 
 export default catalogue;

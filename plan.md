@@ -176,6 +176,30 @@ ms in total over three edit kinds and five runs (a polar source edit
 29.8–36.2), of which the 3D scene 9.8–16.4 ms; blend after an edit 0.6 ms.
 Within the 100 ms budget with the frontend's rebuild (above) on top.
 
+**2026-09-29: M17b — translation and help completion.** French and German
+audited string by string against the English and the glossary (report:
+`.superpowers/sdd/plan/task-17b-report.md`). Terminology made one word per
+concept (cell *cellule*/*Zelle*, grid *Raster*, statistic *Kennwert*, event
+*Veranstaltung*, dialog *fenêtre*, tick *ankreuzen*, leave out
+*écarter*/*weglassen*, Shift *Maj*/*Umschalt*); French punctuation spacing
+normalised to U+202F; stale help (3D samples, Compare, units, settings)
+rewritten in all three languages. The glossary gained every sailing,
+meteorological and ORC term with the review status "machine-drafted, needs
+a native sailor" and ⚑ on the least certain; `docs/TRANSLATION-REVIEW.md`
+is the reviewers' checklist (the M17 deliverable "reviewed by a sailor who
+speaks each language" stays open for them). Twenty sailor's words per
+language find their control first (`sailor-queries.json`, unit-tested and
+driven in `npm run ux` → `10-languages`, which also photographs every main
+area in French and German). Fixed from those pictures: clipped source-row
+buttons, the 3D side panel over the source list, the 3D toolbar under the
+side panel, the track row squeezing its name, the navigation's sideways
+scroll from filter fieldsets and the tracks' button row, an autosave option
+wider than Settings, the start screen's default name staying English; the
+screenshot compositor now draws scrolled containers at their offset. The 2D
+plot's rings, slice, band and hover and the 3D drag readout follow the
+display speed unit. Compare's three 512 × 512 surfaces, input + `setData`,
+are pinned under 100 ms (min of 12 runs; 63–78 ms alone, 93 ms under the full suite's load).
+
 ---
 
 ## 1. Sequencing strategy
@@ -1012,7 +1036,7 @@ independent decoder, as in VectorEffects).
 
 ---
 
-### M17 — Translation and help completion
+### M17 — Translation and help completion · **complete**
 
 **Deliverables:** French and German reviewed by a sailor who speaks each
 language; help topics complete; every control in the search.

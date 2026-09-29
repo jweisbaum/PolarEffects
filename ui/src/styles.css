@@ -262,14 +262,14 @@ select, input, textarea {
 .panel-body { padding: 10px; border-bottom: 1px solid var(--border-subtle); }
 .placeholder { margin: 0; font-size: 12px; }
 .swatch { width: 12px; height: 12px; flex: none; border-radius: 3px; border: 1px solid var(--border); }
-.section-actions { display: flex; gap: 6px; margin-bottom: 6px; }
+.section-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
 button.small { padding: 1px 6px; font-size: 11px; }
 button.icon-button { padding: 0 5px; line-height: 16px; font-size: 11px; }
 
 /* Polar files (spec.md 6) */
 .import-failures { list-style: none; margin: 0 0 6px; padding: 4px 6px; font-size: 12px; color: var(--error);
   border: 1px solid var(--danger-border); border-radius: 4px; background: var(--danger-surface); }
-.import-failures li { padding: 1px 0; overflow-wrap: anywhere; }
+.import-failures li { padding: 1px 0; hyphens: auto; }
 .polar-file-list { list-style: none; margin: 0; padding: 0; }
 .polar-file-list li { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
 .polar-file-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
@@ -278,16 +278,28 @@ button.icon-button { padding: 0 5px; line-height: 16px; font-size: 11px; }
 .track-list { list-style: none; margin: 0; padding: 0; }
 .track-item { padding: 3px 0; border-bottom: 1px solid var(--border-subtle, transparent); }
 .track-row { display: flex; align-items: center; gap: 6px; }
+/* The track's name keeps room to be read: with a long Fetch weather… label
+   (French, German) the buttons wrap under it instead of squeezing it to
+   one letter (M17b). */
+.track-row { flex-wrap: wrap; row-gap: 3px; }
+.track-row > .polar-file-text { flex: 1 1 9rem; min-width: 0; }
 .track-details { padding: 4px 0 6px 18px; font-size: 12px; }
+/* Fieldsets default to their min-content width: a translated label or a
+   date field then pushed the navigation into a sideways scroll (M17b). */
+.track-details { min-width: 0; }
+.track-filters, .track-env-filters, .track-wave-sectors { min-width: 0; }
+.track-field input { width: 100%; box-sizing: border-box; }
 .track-filters { border: 1px solid var(--border); border-radius: 6px; margin: 0 0 6px; padding: 4px 8px 6px; display: grid; gap: 4px; }
 .track-filters legend { font-size: 11px; padding: 0 4px; }
 .track-filters p { margin: 0; font-size: 11px; }
-.track-field { display: grid; grid-template-columns: 1fr 9.5rem; align-items: center; gap: 6px; font-size: 12px; }
+.track-field { display: grid; grid-template-columns: minmax(0, 1fr) minmax(6rem, 9.5rem); hyphens: auto; align-items: center; gap: 6px; font-size: 12px; }
 .track-field input, .track-field select { min-width: 0; }
 .track-env-filters { border: 1px dashed var(--border); border-radius: 6px; margin: 0; padding: 2px 6px 4px; font-size: 11px; display: grid; gap: 4px; }
 .track-env-filters legend { font-size: 11px; padding: 0 4px; }
-.track-range { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-.track-range .track-field { grid-template-columns: 1fr 4.5rem; }
+.track-range { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px; }
+/* A range's two halves put the label over its box: side by side, a
+   translated "TWS von (kn)" had a column a few letters wide (M17b). */
+.track-range .track-field { grid-template-columns: minmax(0, 1fr); align-items: end; gap: 2px; }
 .track-wave-sectors { border: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: 11px; }
 .track-wave-sectors legend { padding: 0; }
 .track-env-options { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; margin: 0 0 6px; }
@@ -303,7 +315,7 @@ button.icon-button { padding: 0 5px; line-height: 16px; font-size: 11px; }
 .env-jobs-bar { display: inline-block; width: 60px; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; }
 .env-jobs-bar > span { display: block; height: 100%; background: var(--accent); }
 .track-import-summary { list-style: none; margin: 0 0 6px; padding: 4px 6px; font-size: 11px; }
-.track-import-summary li { padding: 1px 0; overflow-wrap: anywhere; }
+.track-import-summary li { padding: 1px 0; hyphens: auto; }
 .track-import { width: min(860px, 94vw); max-height: 88vh; display: flex; flex-direction: column; }
 .track-import-files { overflow: auto; flex: 1; display: grid; gap: 10px; margin-bottom: 10px; }
 .track-import-file { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
@@ -344,7 +356,7 @@ button.icon-button { padding: 0 5px; line-height: 16px; font-size: 11px; }
 .orc-thumb path { fill: none; stroke: currentColor; stroke-width: 1; stroke-linejoin: round; }
 .orc-thumb .orc-thumb-0 { opacity: 0.45; }
 .orc-thumb .orc-thumb-1 { opacity: 0.7; }
-.orc-provenance { margin: 6px 0 0; font-size: 10px; overflow-wrap: anywhere; }
+.orc-provenance { margin: 6px 0 0; font-size: 10px; hyphens: auto; }
 
 /* The source list (spec.md 8) */
 .source-list { list-style: none; margin: 0; padding: 0; }
@@ -355,6 +367,10 @@ button.icon-button { padding: 0 5px; line-height: 16px; font-size: 11px; }
 .blend-row .blend-label { font-weight: 600; }
 .source-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .source-line + .source-line { margin-top: 3px; padding-left: 18px; }
+/* The weight line wraps rather than clip its buttons: French and German
+   labels (Modifier / Comparer / Retirer, Bearbeiten / Vergleich /
+   Entfernen) do not fit beside the slider in the panel's width (M17b). */
+.source-line + .source-line { flex-wrap: wrap; row-gap: 3px; }
 .drag-handle { cursor: grab; color: var(--muted); user-select: none; width: 12px; text-align: center; }
 .drag-handle:focus-visible { outline: 1px solid var(--accent); }
 .swatch-button { width: 14px; height: 14px; flex: none; padding: 0; border-radius: 3px; border: 1px solid var(--border); }
@@ -584,6 +600,14 @@ button.source-label:hover { border-color: var(--border); background: var(--raise
   margin: 0;
 }
 .view3d-show { display: flex; flex-direction: column; gap: 4px; }
+/* A fieldset is as wide as its widest child by default, and the colour
+   select as wide as its longest option: German's "Nach Strömungsgeschwindigkeit"
+   pushed the panel over the source list (M17b). */
+.view3d-show { min-width: 0; }
+.view3d-colour select { min-width: 0; flex: 1; }
+/* The 3D toolbar is centred in the room left of the side panel and wraps
+   there rather than run under it (French and German tool names, M17b). */
+.view3d-toolbar:not(.compare-toolbar) { left: calc((100% - 240px) / 2); max-width: calc(100% - 260px); flex-wrap: wrap; }
 .view3d-show legend { padding: 0 4px; }
 .view3d-colour { display: flex; gap: 6px; align-items: center; justify-content: space-between; }
 .view3d-ramp { display: flex; gap: 6px; align-items: center; }
@@ -853,6 +877,8 @@ button.source-label:hover { border-color: var(--border); background: var(--raise
   letter-spacing: 0.05em;
 }
 .modal.settings p { font-size: 12px; margin: 4px 0; }
+/* A long translated option must not widen its select past the dialog (M17b). */
+.modal.settings select { max-width: 100%; min-width: 0; }
 
 /* Blend settings and export (spec.md 12) */
 .axis-field { align-items: flex-start; }

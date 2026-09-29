@@ -119,7 +119,7 @@ pub fn text(language: &str, label: Label) -> &'static str {
         ("fr", L::Help) => "Aide",
         ("fr", L::AppHelp) => "Aide de PolarEffects",
         ("fr", L::OrcCatalogue) => {
-            "Catalogue ORC : {records} certificats de jieter/orc-data, commit {commit} du {date}, construit le {built}."
+            "Catalogue ORC : {records} certificats de jieter/orc-data, commit {commit} du {date}, construit le {built}."
         }
 
         ("de", L::About) => "Über PolarEffects",
