@@ -131,6 +131,22 @@ pub trait Provider: Send + Sync {
         cancel: &Arc<AtomicBool>,
     ) -> Result<Vec<EnvPoint>>;
 
+    /// Called once with every position a fetch will ask for, before its
+    /// batches, so the provider can start what they share (the ERA5
+    /// chunks' heads, read side by side). Nothing it does changes a
+    /// batch's answer.
+    ///
+    /// # Errors
+    /// [`crate::EnvError::Cancelled`] once `cancel` is set.
+    fn prepare(
+        &self,
+        _points: &[Point],
+        _options: &Options,
+        _cancel: &Arc<AtomicBool>,
+    ) -> Result<()> {
+        Ok(())
+    }
+
     /// What the last calls had to leave out and why (a current tier whose
     /// store would not open), each said once; emptied by the call.
     fn take_warnings(&self) -> Vec<String> {
@@ -198,6 +214,15 @@ fn in_box(p: &Point, (lat, lon): ([f64; 2], [f64; 2])) -> bool {
 
 /// Positions placed on a variable, and the corner values they need.
 type Placed = (Vec<Option<Stamp>>, BTreeMap<Cell, f32>);
+
+/// What [`Reanalysis::era5_wants`] plans: the variables to read with their
+/// positions, the wind's positions and dataset per (u, v) pair, and whether
+/// the last two are the waves.
+type Era5Plan = (
+    Vec<(Arc<OpenVariable>, Vec<usize>)>,
+    Vec<(Vec<usize>, Dataset)>,
+    bool,
+);
 
 /// A vector at each position, `None` where any part is missing.
 type Vectors = Vec<Option<(f64, f64)>>;
@@ -479,17 +504,12 @@ impl Reanalysis {
         Ok(Some(sum_vectors(&read, idx.len())))
     }
 
-    /// Wind and waves together, their chunks on one pool: wind from
-    /// WeatherBench2 while both bracketing steps are in it, else ARCO-ERA5
-    /// (D12); wave height as a scalar and direction as a unit vector, from
-    /// ARCO-ERA5.
-    fn era5(
-        &self,
-        points: &[Point],
-        every: i64,
-        out: &mut [EnvPoint],
-        cancel: &AtomicBool,
-    ) -> Result<()> {
+    /// What wind and waves need read: each variable with the positions it
+    /// is read at (wind u, v pairs by dataset, then wave height and
+    /// direction), the wind's positions and dataset per pair, and whether
+    /// the waves are among them. Wind comes from WeatherBench2 while both
+    /// bracketing steps are in it, else ARCO-ERA5 (D12).
+    fn era5_wants(&self, points: &[Point], every: i64) -> Result<Era5Plan> {
         let wb2 = self.var(vars::WB2_U10)?;
         let (mut on_wb2, mut on_arco) = (Vec::new(), Vec::new());
         for (i, p) in points.iter().enumerate() {
@@ -528,6 +548,19 @@ impl Reanalysis {
             }
             _ => false,
         };
+        Ok((wants, winds, waves))
+    }
+
+    /// Wind and waves together, their chunks on one pool: wind u and v,
+    /// wave height as a scalar and direction as a unit vector.
+    fn era5(
+        &self,
+        points: &[Point],
+        every: i64,
+        out: &mut [EnvPoint],
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        let (wants, winds, waves) = self.era5_wants(points, every)?;
         let read = self.read_all(&wants, points, every, cancel)?;
         for (k, (idx, dataset)) in winds.iter().enumerate() {
             let found = sum_vectors(&read[2 * k..2 * k + 2], idx.len());
@@ -732,6 +765,36 @@ impl Provider for Reanalysis {
             Err(_) if cancel.load(Ordering::SeqCst) => Err(crate::EnvError::Cancelled),
             Err(err) => Err(err),
             Ok(()) => Ok(out),
+        }
+    }
+
+    /// Reads the head of every wind and wave chunk the positions need, on
+    /// one pool, before the batches: a batch then waits for one round trip
+    /// per chunk (its blocks) instead of two. A failed head read is left to
+    /// the batch that needs it to report.
+    fn prepare(&self, points: &[Point], options: &Options, cancel: &Arc<AtomicBool>) -> Result<()> {
+        if points.is_empty() {
+            return Ok(());
+        }
+        self.interrupt.watch(Some(Arc::clone(cancel)));
+        let _watching = Watching(&self.interrupt);
+        let every = options.interval.seconds();
+        let heads = || -> Result<usize> {
+            let (wants, ..) = self.era5_wants(points, every)?;
+            let placed: Vec<Vec<Cell>> = wants
+                .iter()
+                .map(|(var, idx)| place(var, points, idx, every).1)
+                .collect();
+            let requests: Vec<(&OpenVariable, &[Cell])> = wants
+                .iter()
+                .zip(&placed)
+                .map(|((var, _), cells)| (var.as_ref(), cells.as_slice()))
+                .collect();
+            crate::dataset::prefetch_heads(&requests, cancel, self.concurrency)
+        };
+        match heads() {
+            Err(_) if cancel.load(Ordering::SeqCst) => Err(crate::EnvError::Cancelled),
+            _ => Ok(()),
         }
     }
 

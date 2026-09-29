@@ -225,9 +225,10 @@ or a failed write leaves the previous setting in place.
   same race reuse them; nothing downloaded is ever written to disk, and
   quitting forgets it (D27). An earlier version's on-disk chunk cache (the
   `chunks` folder in its settings' `chunk_cache.location`, or in the platform
-  cache directory) is removed in the background the first time a project
-  window opens, only that folder, and the status line says so; its settings
-  are no longer read or written.
+  cache directory) is announced on the status line the first time a project
+  window opens, then removed in the background — only that folder, and only
+  when it holds nothing but the dataset folders the cache wrote; its
+  settings are no longer read or written.
 - **Network**: request concurrency (default 8, 1–32), timeout (default 60 s,
   5–600 s).
 - **Map projection** (§9.1), remembered here rather than in the project.
@@ -849,7 +850,13 @@ recommendation.
   request), and decodes those. A stencil across two blocks, the poles, the
   0/360 seam and an uncompressed (memcpyed) container are handled; a server
   that answers a Range with 200 and the whole chunk has it used whole (up to
-  the 64 MB body cap) and is then read whole. The current geoChunks are read
+  the 64 MB body cap) and is then read whole. Values are read from the bytes
+  just fetched, never back through the size-bounded memory; a chunk whose
+  header was served but whose blocks then 404 fails the batch (resumable),
+  never "fetched, no data". A fetch first reads the heads of every ERA5
+  chunk the track needs, side by side, so each batch waits for one round
+  trip per chunk. The values relate() derives are rounded to canonical
+  precision, so libm differences between platforms cannot reach an export. The current geoChunks are read
   the same way (a block is 1,024–8,192 hours of a box). About an eighth of
   the whole-chunk bytes: a 5-day race hourly ≈ 150–160 MB, not ≈ 1.3 GB.
 - TWA is the angle between the heading and where the wind comes from; the

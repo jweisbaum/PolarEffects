@@ -34,6 +34,8 @@ pub struct AppState {
     /// Whether this session has looked for an earlier version's on-disk
     /// chunk cache to remove (`settings::remove_legacy_cache`).
     pub legacy_cache_checked: std::sync::atomic::AtomicBool,
+    /// The earlier version's chunk cache announced and not yet removed.
+    pub legacy_cache_pending: std::sync::Mutex<Option<std::path::PathBuf>>,
 }
 
 impl AppState {
@@ -48,6 +50,7 @@ impl AppState {
             env_provider: std::sync::Mutex::new(None),
             trackers: crate::trackers::TrackerSession::default(),
             legacy_cache_checked: std::sync::atomic::AtomicBool::new(false),
+            legacy_cache_pending: std::sync::Mutex::new(None),
         }
     }
 

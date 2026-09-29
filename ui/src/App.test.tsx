@@ -110,6 +110,7 @@ function backend() {
       case "set_language": settings = { ...settings, language: args?.language as string }; return settings;
       case "set_theme": settings = { ...settings, theme: args?.theme as string }; return settings;
       case "legacy_cache_notice": return legacyNotice;
+      case "remove_old_chunk_cache": return null;
       case "quit_app": return null;
       case "env_jobs": return { tracks: [], failure: null, warning: null };
       case "cancel_env_fetch": {
@@ -342,6 +343,8 @@ describe("the project window", () => {
     expect(q(".statusbar")!.textContent).toContain(
       "Downloaded weather is no longer kept on disk: removing 12.3 GB an earlier version left in /cache/chunks.");
     expect(calls.filter(([c]) => c === "legacy_cache_notice")).toHaveLength(1);
+    const order = calls.map(([c]) => c);
+    expect(order.indexOf("remove_old_chunk_cache")).toBeGreaterThan(order.indexOf("legacy_cache_notice"));
   });
 
   it("switches the stage", async () => {

@@ -355,11 +355,12 @@ export const api = {
   /** Sets how far from the 2D plot's wind speed a sample dot may be, knots either side. */
   setPlotBand: (bandKn: number) => call<AppSettings>("set_plot_band", { bandKn }),
   /**
-   * Starts removing the on-disk chunk cache an earlier version kept, the
-   * first time it is asked in a session, and says what it held; null when
-   * there is none (D27).
+   * The on-disk chunk cache an earlier version kept, the first time it is
+   * asked in a session: what it holds; null when there is none (D27).
    */
   legacyCacheNotice: () => call<LegacyCacheNotice | null>("legacy_cache_notice"),
+  /** Removes, in the background, the old chunk cache `legacyCacheNotice` announced. */
+  removeOldChunkCache: () => call<null>("remove_old_chunk_cache"),
 
   // The map (spec.md 9.1).
 

@@ -97,6 +97,8 @@ describe("api", () => {
     expect(invoke).toHaveBeenLastCalledWith("set_weather_memory", { megabytes: 512 });
     await api.legacyCacheNotice();
     expect(invoke).toHaveBeenLastCalledWith("legacy_cache_notice", undefined);
+    await api.removeOldChunkCache();
+    expect(invoke).toHaveBeenLastCalledWith("remove_old_chunk_cache", undefined);
     await api.setNetwork({ concurrency: 8, timeout_s: 60 });
     expect(invoke).toHaveBeenLastCalledWith("set_network", { network: { concurrency: 8, timeout_s: 60 } });
     await api.setProjection("orthographic");

@@ -150,6 +150,19 @@ impl Header {
                 header.blocksize
             )));
         }
+        // blosc never grows data by more than its header, offsets and stream
+        // lengths; a container declaring far more is not one to size
+        // ranges from, and nothing larger than a body may be is ever read.
+        let most = nbytes
+            .saturating_mul(2)
+            .saturating_add(4096)
+            .min(crate::http::MAX_BODY_BYTES as usize);
+        if header.cbytes > most {
+            return Err(EnvError::Blosc(format!(
+                "header declares {} bytes for {nbytes} decoded, more than the {most} a container may take",
+                header.cbytes
+            )));
+        }
         if flags & FLAG_BITSHUFFLE != 0 {
             return Err(EnvError::Blosc("bit shuffle is not supported".into()));
         }
@@ -441,6 +454,21 @@ fn shuffle(src: &[u8], typesize: usize) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A container may not declare itself far larger than what it holds:
+    /// ranges are sized from `cbytes`.
+    #[test]
+    fn an_inflated_container_size_is_refused() {
+        let flags = COMPRESSOR_LZ4 << 5;
+        let c = header(flags, 4, 4000, 1024, 20_000);
+        let err = Header::parse(&c, Expected::Exactly(4000)).expect_err("too large");
+        assert!(format!("{err}").contains("more than"), "{err}");
+        let big = header(flags, 4, 64 << 20, 1 << 20, (64 << 20) + 4096);
+        assert!(Header::parse(&big, Expected::AtMost(MAX_UNKNOWN_SIZE)).is_err());
+        assert!(
+            Header::parse(&header(flags, 4, 4000, 1024, 4100), Expected::Exactly(4000)).is_ok()
+        );
+    }
 
     /// The shuffle is its own documentation: element bytes are interleaved
     /// into planes, and unshuffling must put them back in element order.

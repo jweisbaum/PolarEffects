@@ -104,6 +104,18 @@ fn write_store(dir: &Path) {
     put(CHUNK, &std::fs::read(fixture()).unwrap());
 }
 
+/// How the test server answers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// As Google Cloud Storage does.
+    Honour,
+    /// 200 with the whole object whatever the range.
+    Ignore,
+    /// Heads as usual, but 404 for any range past the start: a chunk gone
+    /// between its header and its blocks.
+    NoBlocks,
+}
+
 /// One request the server answered: the key, the range asked for (if
 /// any) and the body bytes sent.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -124,7 +136,7 @@ struct Server {
 }
 
 impl Server {
-    fn start(dir: PathBuf, ignore_ranges: bool) -> Self {
+    fn start(dir: PathBuf, mode: Mode) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         listener.set_nonblocking(true).unwrap();
@@ -136,7 +148,7 @@ impl Server {
                 match listener.accept() {
                     Ok((stream, _)) => {
                         let (dir, log) = (dir.clone(), Arc::clone(&log2));
-                        std::thread::spawn(move || serve(stream, &dir, ignore_ranges, &log));
+                        std::thread::spawn(move || serve(stream, &dir, mode, &log));
                     }
                     Err(_) => std::thread::sleep(Duration::from_millis(2)),
                 }
@@ -171,12 +183,7 @@ impl Drop for Server {
     }
 }
 
-fn serve(
-    mut stream: std::net::TcpStream,
-    dir: &Path,
-    ignore_ranges: bool,
-    log: &Mutex<Vec<Served>>,
-) {
+fn serve(mut stream: std::net::TcpStream, dir: &Path, mode: Mode, log: &Mutex<Vec<Served>>) {
     stream.set_nonblocking(false).unwrap();
     let mut request = Vec::new();
     let mut buf = [0u8; 4096];
@@ -198,7 +205,13 @@ fn serve(
         let (a, b) = spec.split_once('-')?;
         Some((a.parse::<u64>().ok()?, b.parse::<u64>().ok()?))
     });
-    let Ok(body) = std::fs::read(dir.join(&key)) else {
+    let gone = mode == Mode::NoBlocks && range.is_some_and(|(a, _)| a > 0);
+    let found = if gone {
+        Err(())
+    } else {
+        std::fs::read(dir.join(&key)).map_err(|_| ())
+    };
+    let Ok(body) = found else {
         log.lock().unwrap().push(Served {
             key,
             range,
@@ -209,7 +222,7 @@ fn serve(
         return;
     };
     let (status, part, extra) = match range {
-        Some((a, b)) if !ignore_ranges && (a as usize) < body.len() => {
+        Some((a, b)) if mode != Mode::Ignore && (a as usize) < body.len() => {
             let end = (b as usize + 1).min(body.len());
             (
                 "206 Partial Content",
@@ -280,7 +293,7 @@ const REFERENCE: [(f64, f64, Option<f64>); 6] = [
 fn only_the_head_and_the_needed_block_are_requested() {
     let dir = temp("one-block");
     write_store(&dir);
-    let server = Server::start(dir.clone(), false);
+    let server = Server::start(dir.clone(), Mode::Honour);
     let (var, memory) = open(&server);
     assert!(var.reads_blocks());
     server.clear();
@@ -324,7 +337,7 @@ fn only_the_head_and_the_needed_block_are_requested() {
 fn every_position_equals_the_whole_chunk_and_blocks_are_fetched_once() {
     let dir = temp("all");
     write_store(&dir);
-    let server = Server::start(dir.clone(), false);
+    let server = Server::start(dir.clone(), Mode::Honour);
     let (var, _memory) = open(&server);
     server.clear();
     // Blocks 1 and 2 at once: one request for both, back to back.
@@ -369,7 +382,7 @@ fn every_position_equals_the_whole_chunk_and_blocks_are_fetched_once() {
 fn a_server_that_ignores_ranges_is_read_whole_once() {
     let dir = temp("ignore");
     write_store(&dir);
-    let server = Server::start(dir.clone(), true);
+    let server = Server::start(dir.clone(), Mode::Ignore);
     let (var, _memory) = open(&server);
     server.clear();
     for (lat, lon, _) in REFERENCE {
@@ -387,7 +400,7 @@ fn a_server_that_ignores_ranges_is_read_whole_once() {
 fn a_missing_chunk_is_no_data_and_asked_once() {
     let dir = temp("missing");
     write_store(&dir);
-    let server = Server::start(dir.clone(), false);
+    let server = Server::start(dir.clone(), Mode::Honour);
     let (var, _memory) = open(&server);
     let hour_before = T - 3600;
     server.clear();
@@ -401,5 +414,78 @@ fn a_missing_chunk_is_no_data_and_asked_once() {
         .filter(|s| s.key.ends_with("1099999.0.0"))
         .count();
     assert_eq!(asked, 1);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Round 1 of review: values are read from the bytes fetched, never back
+/// through the size-bounded memory. With a memory too small to hold one
+/// block, and several readers at once, every value is still the whole
+/// chunk's — none is lost as missing.
+#[test]
+fn a_memory_too_small_for_a_block_still_gives_exact_values() {
+    let dir = temp("tiny-memory");
+    write_store(&dir);
+    let server = Server::start(dir.clone(), Mode::Honour);
+    let store = open_http(&server.url, Duration::from_secs(10)).unwrap();
+    let memory = BlockCache::new(100);
+    let var = OpenVariable::open(&store, vars::ARCO_SWH)
+        .unwrap()
+        .with_concurrency(8)
+        .with_memory(Arc::clone(&memory));
+    std::thread::scope(|scope| {
+        for _ in 0..4 {
+            scope.spawn(|| {
+                for (lat, lon, reference) in REFERENCE {
+                    let got = var.sample(T, lat, lon).unwrap();
+                    assert_eq!(got, whole_chunk_value(&var, lat, lon), "{lat} {lon}");
+                    assert_eq!(got.is_some(), reference.is_some(), "{lat} {lon}");
+                }
+            });
+        }
+    });
+    assert_eq!(memory.size(), 0, "nothing fitted, and nothing was needed");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// A chunk whose header is served but whose blocks then 404 fails the
+/// read, and its header is forgotten, rather than reading as "fetched, no
+/// data" that would never be asked for again.
+#[test]
+fn blocks_gone_after_their_header_fail_the_read() {
+    let dir = temp("no-blocks");
+    write_store(&dir);
+    let server = Server::start(dir.clone(), Mode::NoBlocks);
+    let (var, memory) = open(&server);
+    let err = var.sample(T, 50.1, -4.9).expect_err("must not be missing");
+    assert!(err.to_string().contains("no longer has"), "{err}");
+    assert!(!memory.contains("arco-era5", CHUNK, pe_env::memory::Part::Head));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Heads read ahead, side by side (review round 1): afterwards a sample
+/// needs one request, its block.
+#[test]
+fn heads_read_ahead_leave_one_request_per_chunk() {
+    let dir = temp("prefetch");
+    write_store(&dir);
+    let server = Server::start(dir.clone(), Mode::Honour);
+    let (var, _memory) = open(&server);
+    server.clear();
+    let cells = pe_env::dataset::corner_cells(1_100_000, &var.grid().stencil(50.1, -4.9).unwrap());
+    let read =
+        pe_env::dataset::prefetch_heads(&[(&var, &cells[..])], &AtomicBool::new(false), 4).unwrap();
+    assert_eq!(read, 1);
+    assert_eq!(server.chunk_requests().len(), 1);
+    assert_eq!(server.chunk_requests()[0].range, Some((0, 63)));
+    server.clear();
+    assert!(var.sample(T, 50.1, -4.9).unwrap().is_some());
+    let reqs = server.chunk_requests();
+    assert_eq!(reqs.len(), 1, "{reqs:?}");
+    assert_eq!(reqs[0].range, Some((STARTS[1], STARTS[2] - 1)));
+    // Held heads are not read again.
+    assert_eq!(
+        pe_env::dataset::prefetch_heads(&[(&var, &cells[..])], &AtomicBool::new(false), 4).unwrap(),
+        0
+    );
     let _ = std::fs::remove_dir_all(dir);
 }

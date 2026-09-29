@@ -144,6 +144,7 @@ pub fn run() -> anyhow::Result<()> {
             settings::set_projection,
             settings::set_plot_band,
             settings::legacy_cache_notice,
+            settings::remove_old_chunk_cache,
             quit::quit_app,
         ])
         .build(tauri::generate_context!())?;

@@ -454,7 +454,16 @@ fn run(
     let mut done = 0;
     let mut outcome = Outcome::Done;
     let mut warnings = std::collections::BTreeSet::new();
+    // The heads of every chunk the track needs, side by side, before the
+    // batches read their blocks (M14e).
+    let all: Vec<Point> = todo.iter().map(|(_, p)| *p).collect();
+    if provider.prepare(&all, &options, cancel).is_err() || cancel.load(Ordering::SeqCst) {
+        outcome = Outcome::Cancelled;
+    }
     for batch in batches(&todo, batch_span_s(task.interval)) {
+        if outcome == Outcome::Cancelled {
+            break;
+        }
         if cancel.load(Ordering::SeqCst) {
             outcome = Outcome::Cancelled;
             break;

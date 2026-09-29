@@ -205,6 +205,17 @@ impl BlockCache {
         }
     }
 
+    /// Forgets `part` of `chunk`.
+    pub fn remove(&self, namespace: &str, chunk: &str, part: Part) {
+        let key = Self::key(namespace, chunk, part);
+        if let Ok(mut lru) = self.lru.lock()
+            && let Some((_, size, used)) = lru.entries.remove(&key)
+        {
+            lru.order.remove(&used);
+            lru.total -= size;
+        }
+    }
+
     /// The sizes of every chunk whose header is held, summed: what the same
     /// reads would have downloaded as whole chunks (for the measurements in
     /// `plan.md`).

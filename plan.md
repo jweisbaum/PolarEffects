@@ -111,7 +111,9 @@ provider end to end over every tier: 10.1 MB where whole chunks would be
 sum of the sizes of every chunk touched, from their headers, not a second
 download (the live budget was 300 MB). Currents dominate the time: the NW
 Shelf boxes are small and Copernicus Marine answers in 0.3–0.8 s, so
-currents are now read beside the wind and waves (not yet measured live).
+currents are now read beside the wind and waves. Review round 1 added
+reading every ERA5 head of the track side by side before the batches: the
+same 120 h boat then took **48.4 s** instead of 99 s, the same 159.6 MB.
 
 **2026-09-28: M14c — agent-driven UI testing through WebDriver (D25).** A
 user request. `npm run ux` builds `pe-app` with `--features webdriver`, then

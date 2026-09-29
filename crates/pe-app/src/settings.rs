@@ -537,42 +537,72 @@ pub fn legacy_chunk_dir(settings_file: &Path, default_cache_dir: &Path) -> PathB
         .join("chunks")
 }
 
-/// Starts removing an earlier version's chunk cache, once a session, and
-/// says what it is removing; `None` when there is none. Lossless by
-/// invariant 3: every value a project uses is saved in the project. Only
-/// the `chunks` folder goes, never the folder the user chose to hold it.
-///
-/// The handle is for tests, which wait for the removal.
-pub fn remove_legacy_cache(
-    state: &AppState,
-) -> Option<(LegacyCacheNotice, std::thread::JoinHandle<()>)> {
+/// Whether `dir` looks like nothing but an earlier version's chunk cache:
+/// every entry a folder named for a dataset it read (`wb2-era5-1h`, …).
+/// A folder holding anything else is not ours to delete.
+fn only_dataset_folders(dir: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    entries.filter_map(std::result::Result::ok).all(|entry| {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        (entry.file_type().is_ok_and(|kind| kind.is_dir())
+            && pe_env::Dataset::ALL.iter().any(|d| d.id() == name))
+            || name == ".DS_Store"
+    })
+}
+
+/// Says, once a session, that an earlier version's chunk cache is there to
+/// be removed, and remembers it for [`remove_legacy_cache`]; `None` when
+/// there is none, or its folder holds anything but the dataset folders the
+/// cache wrote (then it is left alone).
+pub fn legacy_cache_found(state: &AppState) -> Option<LegacyCacheNotice> {
     use std::sync::atomic::Ordering;
     if state.legacy_cache_checked.swap(true, Ordering::SeqCst) {
         return None;
     }
     let dir = legacy_chunk_dir(&state.paths.settings_file(), &state.paths.cache_dir);
-    if !dir.is_dir() {
+    if !dir.is_dir() || !only_dataset_folders(&dir) {
         return None;
     }
     let notice = LegacyCacheNotice {
         path: dir.to_string_lossy().into_owned(),
         bytes: folder_size(&dir),
     };
-    let handle = std::thread::Builder::new()
+    if let Ok(mut pending) = state.legacy_cache_pending.lock() {
+        *pending = Some(dir);
+    }
+    Some(notice)
+}
+
+/// Removes, in the background, the chunk cache [`legacy_cache_found`] said
+/// was there: lossless by invariant 3, since every value a project uses is
+/// saved in the project. Only the `chunks` folder goes, never the folder
+/// the user chose to hold it. The handle is for tests.
+pub fn remove_legacy_cache(state: &AppState) -> Option<std::thread::JoinHandle<()>> {
+    let dir = state.legacy_cache_pending.lock().ok()?.take()?;
+    std::thread::Builder::new()
         .name("old-chunk-cache".to_owned())
         .spawn(move || {
             let _ = std::fs::remove_dir_all(&dir);
         })
-        .ok()?;
-    Some((notice, handle))
+        .ok()
 }
 
-/// Removes an earlier version's on-disk chunk cache in the background and
-/// says so, the first time the frontend asks in a session; `None` when
-/// there is nothing to remove.
+/// An earlier version's on-disk chunk cache, the first time the frontend
+/// asks in a session; `None` when there is nothing to remove. The frontend
+/// shows it on the status line, then asks for the removal.
 #[tauri::command(async)]
 pub fn legacy_cache_notice(state: tauri::State<'_, AppState>) -> Result<Option<LegacyCacheNotice>> {
-    Ok(remove_legacy_cache(&state).map(|(notice, _)| notice))
+    Ok(legacy_cache_found(&state))
+}
+
+/// Removes the chunk cache [`legacy_cache_notice`] announced.
+#[tauri::command(async)]
+pub fn remove_old_chunk_cache(state: tauri::State<'_, AppState>) -> Result<()> {
+    remove_legacy_cache(&state);
+    Ok(())
 }
 
 /// Changes the 2D polar plot's TWS band for sample dots, knots.

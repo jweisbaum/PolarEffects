@@ -92,15 +92,16 @@ fn a_failed_write_puts_the_previous_value_back() {
     assert_eq!(settings::current(&app).unwrap().language, "en");
 }
 
-/// An earlier version's on-disk chunk cache is removed once, in the
-/// background, after saying what it held; only its `chunks` folder goes,
-/// never the folder the user had chosen for it (spec.md 3.4, D27).
+/// An earlier version's on-disk chunk cache is announced once, then
+/// removed in the background when asked; only its `chunks` folder goes,
+/// never the folder the user had chosen for it, and a `chunks` folder that
+/// holds anything but dataset folders is left alone (spec.md 3.4, D27).
 #[test]
-fn an_earlier_versions_chunk_cache_is_removed_once() {
+fn an_earlier_versions_chunk_cache_is_announced_then_removed_once() {
     let root = TempRoot::new("settings-legacy");
     let app = root.state();
     assert!(
-        settings::remove_legacy_cache(&app).is_none(),
+        settings::legacy_cache_found(&app).is_none(),
         "nothing there"
     );
 
@@ -121,17 +122,34 @@ fn an_earlier_versions_chunk_cache_is_removed_once() {
     )
     .unwrap();
 
+    // Something that is not a dataset folder: announced not, touched not.
+    let stranger = chosen.join("chunks/holiday-photos");
+    std::fs::create_dir_all(&stranger).unwrap();
+    let wary = root.state();
+    assert!(settings::legacy_cache_found(&wary).is_none());
+    assert!(settings::remove_legacy_cache(&wary).is_none());
+    assert!(chunk.is_file());
+    std::fs::remove_dir(&stranger).unwrap();
+
     let app = root.state();
-    let (notice, removing) = settings::remove_legacy_cache(&app).expect("found");
+    let notice = settings::legacy_cache_found(&app).expect("found");
     assert_eq!(notice.bytes, 1234);
     assert!(notice.path.ends_with("chunks"), "{}", notice.path);
-    removing.join().unwrap();
+    assert!(
+        chunk.is_file(),
+        "nothing removed before the notice is shown"
+    );
+    settings::remove_legacy_cache(&app)
+        .expect("removing")
+        .join()
+        .unwrap();
     assert!(!chosen.join("chunks").exists(), "no file left under it");
     assert!(
         chosen.join("keep-me.txt").is_file(),
         "only chunks/ is removed"
     );
-    // Said once a session.
+    // Said once a session, removed once.
+    assert!(settings::legacy_cache_found(&app).is_none());
     assert!(settings::remove_legacy_cache(&app).is_none());
     assert_eq!(Settings::default().weather_memory_mb, 256);
 }

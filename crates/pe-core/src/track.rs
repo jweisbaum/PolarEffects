@@ -733,6 +733,30 @@ impl Sample {
         }
         let bow = self.heading_corrected.or(self.heading);
         self.wave_angle = bow.zip(self.wave_from).map(|(h, w)| angle_off(h, w));
+        // Everything above went through the platform's libm (sin, cos,
+        // atan2, hypot), which may differ in the last bit between targets.
+        // These values feed the blend and export (invariant 5) and are now
+        // recomputed on every load, so they are rounded to canonical
+        // precision, where one-ULP differences vanish.
+        use crate::canonical::{degrees, knots};
+        for angle in [
+            &mut self.twa,
+            &mut self.heading_corrected,
+            &mut self.twd_from_corrected,
+            &mut self.twa_corrected,
+            &mut self.wave_angle,
+        ] {
+            *angle = angle.map(degrees);
+        }
+        for speed in [&mut self.bsp_corrected, &mut self.tws_corrected] {
+            *speed = speed.map(knots);
+        }
+        // 359.9999999996 rounds to 360: keep directions in [0, 360).
+        for direction in [&mut self.heading_corrected, &mut self.twd_from_corrected] {
+            if *direction == Some(360.0) {
+                *direction = Some(0.0);
+            }
+        }
     }
 }
 
@@ -947,9 +971,10 @@ mod tests {
         s.current_toward = Some(90.0);
         s.wave_from = Some(350.537_677_792);
         s.relate();
-        assert!(close(s.bsp_corrected, 37f64.sqrt()));
+        // Speeds are kept to a micro-knot (canonical).
+        assert!((s.bsp_corrected.unwrap() - 37f64.sqrt()).abs() <= 5e-7);
         assert!(close(s.heading_corrected, 350.537_677_791_974_9));
-        assert!(close(s.tws_corrected, 101f64.sqrt()));
+        assert!((s.tws_corrected.unwrap() - 101f64.sqrt()).abs() <= 5e-7);
         assert!(close(s.twd_from_corrected, 5.710_593_137_499_643));
         assert!(close(s.twa_corrected, 15.172_915_345_524_7));
         assert_eq!(s.tack_corrected, Some(Tack::Starboard));
@@ -957,6 +982,38 @@ mod tests {
         // Ground values are untouched by the current.
         assert!(close(s.twa, 0.0));
         assert_eq!(s.tack, None, "head to wind is neither tack");
+    }
+
+    /// Invariant 5, review round 1: what `relate` derives through libm is
+    /// rounded to canonical precision, so a last-bit difference between
+    /// platforms' sin, cos or atan2 cannot reach the blend or an export.
+    #[test]
+    fn related_values_are_canonical() {
+        use crate::canonical::{degrees, knots};
+        let mut s = sample();
+        s.heading = Some(12.345_678_9);
+        s.speed = Some(6.543_21);
+        s.tws = Some(14.37);
+        s.twd_from = Some(211.3);
+        s.current_speed = Some(1.23);
+        s.current_toward = Some(77.7);
+        s.wave_from = Some(190.1);
+        s.relate();
+        for v in [
+            s.twa,
+            s.heading_corrected,
+            s.twd_from_corrected,
+            s.twa_corrected,
+            s.wave_angle,
+        ] {
+            let v = v.expect("derived");
+            assert_eq!(v.to_bits(), degrees(v).to_bits(), "{v}");
+            assert!((0.0..360.0).contains(&v));
+        }
+        for v in [s.bsp_corrected, s.tws_corrected] {
+            let v = v.expect("derived");
+            assert_eq!(v.to_bits(), knots(v).to_bits(), "{v}");
+        }
     }
 
     /// Clearing leaves nothing of the fetch: no raw, corrected or
@@ -997,7 +1054,7 @@ mod tests {
         s.relate();
         assert_eq!((s.twa, s.tack, s.wave_angle), (None, None, None));
         assert_eq!(s.bsp_corrected, None);
-        assert!(close(s.tws_corrected, 101f64.sqrt()));
+        assert!((s.tws_corrected.unwrap() - 101f64.sqrt()).abs() <= 5e-7);
         assert_eq!(s.twa_corrected, None);
     }
 

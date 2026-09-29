@@ -203,9 +203,9 @@ function Shell() {
 
   /**
    * Downloaded weather is no longer kept on disk (D27): the first time a
-   * project window shows its status line in a session, an earlier
-   * version's chunk cache is removed in the background, and the status
-   * line says so.
+   * project window shows its status line in a session, the status line
+   * says an earlier version's chunk cache is being removed, and then it is,
+   * in the background.
    */
   const askedLegacy = useRef(false);
   useEffect(() => {
@@ -215,6 +215,8 @@ function Shell() {
       if (notice) {
         flash(t("Downloaded weather is no longer kept on disk: removing {size} an earlier version left in {path}. Projects keep every value they use.",
           { size: formatBytes(Number(notice.bytes)), path: notice.path }), 15_000);
+        // Said first, then removed.
+        void api.removeOldChunkCache().catch(() => undefined);
       }
     }).catch(() => undefined);
   }, [project, flash, t]);

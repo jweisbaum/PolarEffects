@@ -734,8 +734,11 @@ impl OpenVariable {
             .collect())
     }
 
-    /// Keeps a whole blosc chunk's header and every block, as served.
-    fn keep_whole(&self, key: &str, bytes: &Bytes) -> Result<Held> {
+    /// Keeps a whole blosc chunk's header and every block, as served, and
+    /// returns them: the caller uses the blocks it was given, never reads
+    /// them back through the size-bounded memory, which may already have
+    /// let them go.
+    fn keep_whole(&self, key: &str, bytes: &Bytes) -> Result<(Held, Vec<Bytes>)> {
         let expected = blosc::Expected::Exactly(self.chunk_bytes()?);
         let header = blosc::Header::parse(bytes, expected)?;
         if header.cbytes != bytes.len() {
@@ -747,25 +750,32 @@ impl OpenVariable {
         }
         let extents = header.block_extents(bytes)?;
         // Every block is checked before any is kept, so damaged bytes fail
-        // this read and the next one asks the archive again.
+        // this read and the next one asks the archive again. Each is copied
+        // out, so a kept block does not hold the whole chunk alive beyond
+        // what the memory counts.
+        let mut blocks = Vec::with_capacity(extents.len());
         for (b, extent) in extents.iter().enumerate() {
             let block = bytes
                 .get(extent.clone())
                 .ok_or_else(|| EnvError::Blosc(format!("{key}: block {b} runs past the chunk")))?;
             header.decode_block(b, block)?;
+            blocks.push(Bytes::copy_from_slice(block));
         }
         let ns = self.namespace();
-        for (b, extent) in extents.iter().enumerate() {
-            let block = bytes.slice(extent.clone());
-            self.memory
-                .put(ns, key, Part::Block(b as u32), Held::Compressed(block));
+        for (b, block) in blocks.iter().enumerate() {
+            self.memory.put(
+                ns,
+                key,
+                Part::Block(b as u32),
+                Held::Compressed(block.clone()),
+            );
         }
         let head = Held::Head {
             header,
             extents: Arc::new(extents),
         };
         self.memory.put(ns, key, Part::Head, head.clone());
-        Ok(head)
+        Ok((head, blocks))
     }
 
     /// Decoded bytes in one whole chunk.
@@ -791,7 +801,7 @@ impl OpenVariable {
         };
         if self.whole_only.load(Ordering::Relaxed) {
             return match self.ranges.whole(key)? {
-                Some(bytes) => self.keep_whole(key, &bytes),
+                Some(bytes) => Ok(self.keep_whole(key, &bytes)?.0),
                 None => missing(),
             };
         }
@@ -800,7 +810,7 @@ impl OpenVariable {
             None => return missing(),
             Some(Ranged::Whole(bytes)) => {
                 self.whole_only.store(true, Ordering::Relaxed);
-                return self.keep_whole(key, &bytes);
+                return Ok(self.keep_whole(key, &bytes)?.0);
             }
             Some(Ranged::Part(bytes)) => bytes,
         };
@@ -810,7 +820,7 @@ impl OpenVariable {
                 None => return missing(),
                 Some(Ranged::Whole(bytes)) => {
                     self.whole_only.store(true, Ordering::Relaxed);
-                    return self.keep_whole(key, &bytes);
+                    return Ok(self.keep_whole(key, &bytes)?.0);
                 }
                 Some(Ranged::Part(bytes)) => bytes,
             };
@@ -847,15 +857,25 @@ impl OpenVariable {
                 extents.len()
             )));
         }
-        self.fetch_blocks(key, &header, &extents, &wanted, cancel)?;
+        // Blocks already downloaded this session save a download; the rest
+        // are fetched, and every value is read from bytes held here, so a
+        // block the memory lets go meanwhile is never read as missing.
         let ns = self.namespace();
-        let mut decoded: BTreeMap<usize, Option<Vec<u8>>> = BTreeMap::new();
+        let mut got: BTreeMap<usize, Bytes> = BTreeMap::new();
         for &b in &wanted {
-            let bytes = match self.memory.get(ns, key, Part::Block(b as u32)) {
-                Some(Held::Compressed(bytes)) => Some(header.decode_block(b, &bytes)?),
-                _ => None,
-            };
-            decoded.insert(b, bytes);
+            if let Some(Held::Compressed(bytes)) = self.memory.get(ns, key, Part::Block(b as u32)) {
+                got.insert(b, bytes);
+            }
+        }
+        let absent: std::collections::BTreeSet<usize> = wanted
+            .iter()
+            .copied()
+            .filter(|b| !got.contains_key(b))
+            .collect();
+        got.extend(self.fetch_blocks(key, &header, &extents, &absent, cancel)?);
+        let mut decoded: BTreeMap<usize, Vec<u8>> = BTreeMap::new();
+        for (b, bytes) in &got {
+            decoded.insert(*b, header.decode_block(*b, bytes)?);
         }
         Ok(offsets
             .iter()
@@ -864,31 +884,32 @@ impl OpenVariable {
                 let start = header.block_span(b).start;
                 decoded
                     .get(&b)
-                    .and_then(Option::as_ref)
                     .map_or(f32::NAN, |bytes| self.value_at(bytes, o * ts - start))
             })
             .collect())
     }
 
-    /// Downloads the blocks of `wanted` not in memory, adjacent ones in one
-    /// request.
+    /// Downloads the blocks of `absent`, adjacent ones in one request, and
+    /// returns their compressed bytes (also kept in memory for later).
+    ///
+    /// # Errors
+    /// A chunk whose header was read but whose blocks the archive no longer
+    /// has fails the read (its header is forgotten), rather than being
+    /// taken as "no data": a sample marked fetched with nothing would never
+    /// be asked for again, while a failed batch is resumed by Fetch weather….
     fn fetch_blocks(
         &self,
         key: &str,
         header: &blosc::Header,
         extents: &[std::ops::Range<usize>],
-        wanted: &std::collections::BTreeSet<usize>,
+        absent: &std::collections::BTreeSet<usize>,
         cancel: &AtomicBool,
-    ) -> Result<()> {
+    ) -> Result<BTreeMap<usize, Bytes>> {
         let ns = self.namespace();
-        let absent: Vec<usize> = wanted
-            .iter()
-            .copied()
-            .filter(|&b| !self.memory.contains(ns, key, Part::Block(b as u32)))
-            .collect();
+        let mut out = BTreeMap::new();
         // Runs of blocks that lie back to back in the chunk.
         let mut runs: Vec<Vec<usize>> = Vec::new();
-        for b in absent {
+        for &b in absent {
             match runs.last_mut() {
                 Some(run)
                     if run
@@ -909,12 +930,23 @@ impl OpenVariable {
             };
             let (start, end) = (extents[first].start, extents[last].end);
             let bytes = match self.ranges.range(key, start as u64, end as u64)? {
-                // Gone since its header was read: no data.
-                None => return Ok(()),
+                None => {
+                    self.memory.remove(ns, key, Part::Head);
+                    return Err(EnvError::Read {
+                        what: key.to_owned(),
+                        source: "the archive no longer has this chunk, whose header it just served"
+                            .into(),
+                    });
+                }
                 Some(Ranged::Whole(bytes)) => {
                     self.whole_only.store(true, Ordering::Relaxed);
-                    self.keep_whole(key, &bytes)?;
-                    return Ok(());
+                    let (_, blocks) = self.keep_whole(key, &bytes)?;
+                    for (b, block) in blocks.into_iter().enumerate() {
+                        if absent.contains(&b) {
+                            out.insert(b, block);
+                        }
+                    }
+                    return Ok(out);
                 }
                 Some(Ranged::Part(bytes)) => bytes,
             };
@@ -928,17 +960,20 @@ impl OpenVariable {
             for b in run {
                 let extent = extents[b].start - start..extents[b].end - start;
                 // Checked now, so a damaged block fails the read that got it
-                // rather than being kept.
+                // rather than being kept. Copied out, so the memory counts
+                // what it holds.
                 header.decode_block(b, &bytes[extent.clone()])?;
+                let block = Bytes::copy_from_slice(&bytes[extent]);
                 self.memory.put(
                     ns,
                     key,
                     Part::Block(b as u32),
-                    Held::Compressed(bytes.slice(extent)),
+                    Held::Compressed(block.clone()),
                 );
+                out.insert(b, block);
             }
         }
-        Ok(())
+        Ok(out)
     }
 
     /// The values of `cells`, NaN where missing (land, fill, a chunk the
@@ -1102,6 +1137,38 @@ pub fn read_cells_of(
         out[i].extend(values);
     }
     Ok(out)
+}
+
+/// Reads, side by side on one pool, the head of every blosc chunk the
+/// requests' cells lie in that the session does not hold yet; returns how
+/// many were read.
+///
+/// # Errors
+/// [`EnvError::Cancelled`] once `cancel` is set; the first failed read.
+pub fn prefetch_heads(
+    requests: &[(&OpenVariable, &[Cell])],
+    cancel: &AtomicBool,
+    concurrency: usize,
+) -> Result<usize> {
+    let mut jobs: Vec<(&OpenVariable, String)> = Vec::new();
+    for (var, cells) in requests {
+        if var.layout != Layout::Blocks {
+            continue;
+        }
+        let (_, groups) = var.group(cells)?;
+        for (_, key, _) in groups {
+            if !var.memory.contains(var.namespace(), &key, Part::Head) {
+                jobs.push((var, key));
+            }
+        }
+    }
+    crate::parallel::map_bounded(&jobs, concurrency.max(1), |(var, key)| {
+        if cancel.load(Ordering::SeqCst) {
+            return Err(EnvError::Cancelled);
+        }
+        var.head(key).map(|_| ())
+    })?;
+    Ok(jobs.len())
 }
 
 /// The four cells of a stencil at one step, in [`Stencil::interpolate`]'s
