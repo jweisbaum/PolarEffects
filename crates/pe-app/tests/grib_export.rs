@@ -25,8 +25,8 @@
 //!   hours are missing in the archive, and must be written as missing.
 //! - **Waves**: an ARCO-ERA5 store written here, uncompressed, over 56–44N
 //!   × 345–359.75E for 11Z–13Z: height = (lat − 40) / 10 + step / 10,
-//!   missing north of 51N and east of 357E (land); direction = lon (in
-//!   0–360) − 100.
+//!   and direction = lon (in 0–360) − 100, both missing north of 51N
+//!   and east of 357E (land).
 //! - **Current**: a GlobCurrent store written here, uncompressed, on its
 //!   own grid (cell centres 44.125–55.875N × 9.875W–0.875E) for 11Z–13Z:
 //!   u = lat / 100, v = lon / 100 + step / 1000, missing north of 52N and
@@ -52,7 +52,7 @@ use pe_grib::reader::{Decoded, decode_all};
 use sha2::{Digest, Sha256};
 
 /// The pinned SHA-256 of the golden export.
-const GOLDEN_SHA256: &str = "9afad479912f77adbc7e7f2679d4131e3c3b78361d5c4f492fe366ddd47af84b";
+const GOLDEN_SHA256: &str = "1df29e8b8e26ccd94e8ad4290c24ac414b045b75d7a9cc00548ae1e8d8570b7b";
 
 /// 2020-07-27T11:00Z.
 const T11: i64 = 1_595_847_600;
@@ -171,7 +171,13 @@ fn write_archives(root: &Path) {
             (lat - 40.0) / 10.0 + step as f32 / 10.0
         }
     };
-    let direction = |_: usize, _: f32, lon: f32| lon - 100.0;
+    let direction = |_: usize, lat: f32, lon: f32| {
+        if lat > 51.0 && lon > 357.0 {
+            f32::NAN
+        } else {
+            lon - 100.0
+        }
+    };
     write_store(
         &root.join(Dataset::ArcoEra5.id()),
         "1900-01-01",
@@ -404,7 +410,7 @@ fn a_track_exports_wind_waves_and_current_to_the_golden_bytes() {
         (0, 2, 2),
         (0, 2, 3),
         (10, 0, 3),
-        (10, 0, 4),
+        (10, 0, 14),
         (10, 1, 2),
         (10, 1, 3),
     ];
@@ -453,6 +459,8 @@ fn a_track_exports_wind_waves_and_current_to_the_golden_bytes() {
         }
         assert!(at(hs, 52.0, -2.5).is_nan(), "land at 52N 2.5W");
         assert!(at(hs, 52.75, -2.0).is_nan());
+        assert!(at(dir, 52.0, -2.5).is_nan(), "no direction on land");
+        assert!(at(dir, 52.75, -2.0).is_nan());
     }
 
     // Current: bilinear from GlobCurrent's cell centres to the nodes;
@@ -541,13 +549,9 @@ impl GribSink for Quiet {
     fn progress(&self, _status: &GribExportStatus) {}
 }
 
-/// Through the app: the plan comes from the open project's track, the job
-/// refuses a second export while one runs, and its status ends "done"
-/// with the file's size.
-#[test]
-fn the_job_exports_a_project_track_once_at_a_time() {
+/// A project holding one track off the Lizard, 11:30 to 12:30Z.
+fn project_with_track(root: &TempRoot) -> (pe_app::commands::AppState, u64) {
     use pe_app::tracks::{self, TrackFileRequest};
-    let root = TempRoot::new("grib-job");
     let app = root.state();
     pe_app::projects::create(&app, "Grib".to_owned(), None, false).unwrap();
     let features: Vec<String> = [(T11 + 1800, 50.0, -5.0), (T11 + 5400, 50.6, -4.2)]
@@ -576,7 +580,16 @@ fn the_job_exports_a_project_track_once_at_a_time() {
         }],
     )
     .unwrap();
-    let id = imported.imported[0].source_id;
+    (app, imported.imported[0].source_id)
+}
+
+/// Through the app: the plan comes from the open project's track, the job
+/// refuses a second export while one runs, and its status ends "done"
+/// with the file's size.
+#[test]
+fn the_job_exports_a_project_track_once_at_a_time() {
+    let root = TempRoot::new("grib-job");
+    let (app, id) = project_with_track(&root);
 
     let (planned, label) = grib::plan_for(&app, id, "hourly", true, false).unwrap();
     assert_eq!(label, "Alpha");
@@ -714,4 +727,94 @@ fn live_a_fastnet_boat_exports_to_grib() {
         Err(_) => println!("M16 | grib_ls is not installed; ecCodes did not check the file"),
     }
     std::fs::copy(&out, std::env::temp_dir().join("pe-grib-live.grib2")).unwrap();
+}
+
+/// A provider whose archive will not answer: prepare fails, and so does
+/// every read; or, with `panics`, a read panics (a bug).
+struct Broken {
+    panics: bool,
+}
+
+impl pe_env::Provider for Broken {
+    fn sample(
+        &self,
+        points: &[pe_env::Point],
+        _options: &pe_env::Options,
+        _cancel: &Arc<AtomicBool>,
+    ) -> pe_env::Result<Vec<pe_env::EnvPoint>> {
+        assert!(!self.panics, "a bug in a read");
+        let _ = points;
+        Err(pe_env::EnvError::Open("the archive is down".to_owned()))
+    }
+
+    fn prepare(
+        &self,
+        _points: &[pe_env::Point],
+        _options: &pe_env::Options,
+        _cancel: &Arc<AtomicBool>,
+    ) -> pe_env::Result<()> {
+        if self.panics {
+            return Ok(());
+        }
+        Err(pe_env::EnvError::Open("the archive is down".to_owned()))
+    }
+}
+
+/// Review round 1: a prepare that fails without a cancel is a failure,
+/// not a cancel, and names why; nothing is written.
+#[test]
+fn a_failing_archive_fails_the_export_rather_than_cancelling_it() {
+    let root = TempRoot::new("grib-broken");
+    let path = root.0.join("race.grib2");
+    let err = grib::export(
+        &Broken { panics: false },
+        &plan(true, false),
+        &path,
+        &Arc::new(AtomicBool::new(false)),
+        &mut |_| {},
+    )
+    .expect_err("a failure");
+    assert!(err.to_string().contains("the archive is down"), "{err}");
+    assert!(!path.exists());
+    assert!(!pe_grib::file::temp_path_for(&path).exists());
+    // Cancelled while it failed: a cancel.
+    let cancelled = grib::export(
+        &Broken { panics: false },
+        &plan(true, false),
+        &path,
+        &Arc::new(AtomicBool::new(true)),
+        &mut |_| {},
+    )
+    .unwrap();
+    assert_eq!(cancelled, Outcome::Cancelled);
+}
+
+/// Review round 1: an export thread that panics leaves the job "failed",
+/// not "running" for ever, and no file.
+#[test]
+fn a_panicking_export_ends_failed() {
+    let root = TempRoot::new("grib-panic");
+    let (app, id) = project_with_track(&root);
+    let out = root.file("alpha.grib2");
+    let (plan, cancel) = grib::begin(&app, id, &out, "hourly", false, false).unwrap();
+    let joined = std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                grib::run(
+                    &app,
+                    &Broken { panics: true },
+                    &|| 0,
+                    &plan,
+                    &out,
+                    &cancel,
+                    &Quiet,
+                )
+            })
+            .join()
+    });
+    assert!(joined.is_err(), "the read panicked");
+    let status = app.grib_jobs.status();
+    assert_eq!(status.state, "failed", "{status:?}");
+    assert!(!Path::new(&out).exists());
+    assert!(grib::begin(&app, id, &out, "hourly", false, false).is_ok());
 }

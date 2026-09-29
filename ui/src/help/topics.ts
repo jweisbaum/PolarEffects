@@ -148,7 +148,7 @@ export const TOPICS: HelpTopic[] = [
       ["Leave out currents without tide", "A track filter: leaves out the samples whose current came from a source marked without tide. Every current source read today includes the tide, so it leaves nothing out unless such a source is added."],
       ["Replacing the project", "New, Open or Close while a fetch runs asks to cancel it first."],
       ["GRIB export: Also include", "Wave height and direction, and current, each with what it adds to the download. The wind is always written."],
-      ["GRIB export: Times", "Every hour, or every third hour: a third of the download and of the file."],
+      ["GRIB export: Times", "Every hour, or every third hour: a third of the file and of the wind and wave download (the current costs the same either way). With the current, a temporary file beside the export holds it while it is written; the dialog warns when that would pass 1 GB."],
       ["GRIB export: Save… / Cancel export", "Chooses the file and starts the export; while it runs, Cancel export stops it and nothing is written."],
     ],
     related: ["tracks", "settings", "map"] },

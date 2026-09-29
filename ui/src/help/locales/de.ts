@@ -131,7 +131,7 @@ const topics: HelpTopic[] = [
       ["Strömungen ohne Gezeiten auslassen", "Ein Trackfilter: lässt die Punkte aus, deren Strömung aus einer als ohne Gezeiten markierten Quelle kam. Alle heute gelesenen Strömungsquellen enthalten die Gezeiten; er lässt also nichts aus, solange keine solche Quelle hinzukommt."],
       ["Projekt ersetzen", "Neu, Öffnen oder Schließen während eines Abrufs fragt zuerst, ob er abgebrochen werden soll."],
       ["GRIB-Export: Außerdem aufnehmen", "Wellenhöhe und -richtung sowie Strömung, jeweils mit dem, was sie zum Download hinzufügen. Der Wind wird immer geschrieben."],
-      ["GRIB-Export: Zeiten", "Jede Stunde oder jede dritte Stunde: ein Drittel des Downloads und der Datei."],
+      ["GRIB-Export: Zeiten", "Jede Stunde oder jede dritte Stunde: ein Drittel der Datei und des Wind- und Wellen-Downloads (die Strömung kostet in beiden Fällen gleich viel). Mit Strömung hält eine temporäre Datei neben dem Export sie während des Schreibens; der Dialog warnt, wenn sie 1 GB überschreiten würde."],
       ["GRIB-Export: Speichern… / Export abbrechen", "Wählt die Datei und startet den Export; während er läuft, hält Export abbrechen ihn an und nichts wird geschrieben."],
     ],
     related: ["tracks", "settings", "map"] },

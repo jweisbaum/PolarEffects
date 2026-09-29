@@ -58,7 +58,8 @@ pub const PROGRESS_EVENT: &str = "grib://progress";
 /// chunks are smallest).
 const TILE: u32 = 16;
 
-/// The most positions one read asks for (about 16 MB of answers).
+/// The most positions one read asks for (about 16 MB of answers); a
+/// larger area is read in runs of nodes.
 const MAX_POINTS: usize = 200_000;
 
 /// At most this many times per wind-and-wave read: enough requests in
@@ -183,31 +184,25 @@ pub struct GribPreview {
     pub waves_bytes: u64,
     /// Bytes to download for the current (counted whether or not ticked).
     pub current_bytes: u64,
-    /// Wind and wave bytes already downloaded this session.
+    /// Bytes of the parts ticked already downloaded this session.
     pub cached_bytes: u64,
     /// About the file's size with the parts ticked.
     pub file_bytes: u64,
+    /// The current's temporary file beside the export (0 without the
+    /// current).
+    pub spool_bytes: u64,
+    /// Above this the dialog warns about the temporary file's size.
+    pub spool_warning_bytes: u64,
 }
 
-/// A 0.1° lattice over the grid's area: points closer than the smallest
-/// current chunk box, for [`pe_env::estimate_export`].
-fn lattice(grid: GridSpec) -> Vec<(f64, f64)> {
-    let north = grid.lat(0);
-    let south = grid.lat(grid.nj - 1);
-    let west = f64::from(grid.lo1) / 1e6;
-    let width = f64::from(grid.ni - 1) * f64::from(grid.step) / 1e6;
-    let rows = ((north - south) / 0.1).ceil() as usize + 1;
-    let cols = (width / 0.1).ceil() as usize + 1;
-    let mut out = Vec::with_capacity(rows * cols);
-    for r in 0..rows {
-        let lat = (north - r as f64 * 0.1).max(south);
-        for c in 0..cols {
-            let lon = (west + (c as f64 * 0.1).min(width)).rem_euclid(360.0);
-            out.push((lat, if lon >= 180.0 { lon - 360.0 } else { lon }));
-        }
-    }
-    out
+/// Bytes of the current's temporary file for `plan`: two `f32` a node
+/// and time.
+pub fn spool_bytes(plan: &Plan) -> u64 {
+    plan.grid.point_count() * plan.times.len() as u64 * 8
 }
+
+/// The temporary file size above which the dialog warns about disk space.
+pub const SPOOL_WARNING_BYTES: u64 = 1_000_000_000;
 
 /// The dialog's figures for `plan`; `memory` is what this session holds.
 pub fn preview_of(
@@ -217,10 +212,13 @@ pub fn preview_of(
     memory: Option<&pe_env::BlockCache>,
 ) -> GribPreview {
     let g = plan.grid;
-    let edges: Vec<(f64, f64)> = (0..g.nj)
-        .flat_map(|j| [(g.lat(j), g.lon(0)), (g.lat(j), g.lon(g.ni - 1))])
-        .collect();
-    let e = pe_env::estimate_export(&edges, &lattice(g), &plan.times, memory);
+    let area = pe_env::Area {
+        north: g.lat(0),
+        south: g.lat(g.nj - 1),
+        west: f64::from(g.lo1) / 1e6,
+        width: f64::from(g.ni - 1) * f64::from(g.step) / 1e6,
+    };
+    let e = pe_env::estimate_export(&area, &plan.times, memory);
     GribPreview {
         source_id,
         label: label.to_owned(),
@@ -237,8 +235,19 @@ pub fn preview_of(
         wind_bytes: e.wind_bytes,
         waves_bytes: e.waves_bytes,
         current_bytes: e.current_bytes,
-        cached_bytes: e.cached_bytes,
+        cached_bytes: e.wind_cached_bytes
+            + if plan.parts.waves {
+                e.waves_cached_bytes
+            } else {
+                0
+            },
         file_bytes: plan.file_bytes(),
+        spool_bytes: if plan.parts.current {
+            spool_bytes(plan)
+        } else {
+            0
+        },
+        spool_warning_bytes: SPOOL_WARNING_BYTES,
     }
 }
 
@@ -544,8 +553,17 @@ pub fn export(
             })
         })
         .collect();
-    if provider.prepare(&corners, &options, cancel).is_err() || cancel.load(Ordering::SeqCst) {
-        return Ok(Outcome::Cancelled);
+    match provider.prepare(&corners, &options, cancel) {
+        _ if cancel.load(Ordering::SeqCst) => return Ok(Outcome::Cancelled),
+        Err(EnvError::Cancelled) => return Ok(Outcome::Cancelled),
+        Err(err) => {
+            return Err(AppError::Doing {
+                doing: "read the reanalysis for",
+                what: "the GRIB export".to_owned(),
+                why: err.to_string(),
+            });
+        }
+        Ok(()) => {}
     }
 
     let per_read = (MAX_POINTS / n.max(1)).clamp(1, MAX_TIMES_PER_READ);
@@ -557,14 +575,35 @@ pub fn export(
         if cancel.load(Ordering::SeqCst) {
             return Ok(Outcome::Cancelled);
         }
-        let points: Vec<Point> = times
+        // Each time's wind and waves, `[u, v, height, direction]` a node.
+        // An area larger than one read (a global grid is a million nodes)
+        // is read in runs of nodes, never more than MAX_POINTS at once.
+        let mut fields: Vec<[Vec<f32>; 4]> = times
             .iter()
-            .flat_map(|&t| all.iter().map(move |&(lat, lon)| Point { t, lat, lon }))
+            .map(|_| std::array::from_fn(|_| vec![f32::NAN; n]))
             .collect();
-        let Some(found) = read_batch(provider, &points, &options, cancel)? else {
-            return Ok(Outcome::Cancelled);
-        };
-        for (k, (&t, env)) in times.iter().zip(found.chunks(n)).enumerate() {
+        let run = (MAX_POINTS / times.len()).max(1);
+        for start in (0..n).step_by(run) {
+            let nodes = &all[start..(start + run).min(n)];
+            let points: Vec<Point> = times
+                .iter()
+                .flat_map(|&t| nodes.iter().map(move |&(lat, lon)| Point { t, lat, lon }))
+                .collect();
+            let Some(found) = read_batch(provider, &points, &options, cancel)? else {
+                return Ok(Outcome::Cancelled);
+            };
+            for (field, env) in fields.iter_mut().zip(found.chunks(nodes.len())) {
+                for (k, e) in env.iter().enumerate() {
+                    let at = start + k;
+                    let value = |x: Option<f64>| x.map_or(f32::NAN, |v| v as f32);
+                    field[0][at] = value(e.wind.map(|w| w.u));
+                    field[1][at] = value(e.wind.map(|w| w.v));
+                    field[2][at] = value(e.waves.and_then(|w| w.hs));
+                    field[3][at] = value(e.waves.and_then(|w| w.from));
+                }
+            }
+        }
+        for (k, (&t, field)) in times.iter().zip(&fields).enumerate() {
             let index = batch * per_read + k;
             if let Some(spool) = spool.as_mut() {
                 spool
@@ -574,13 +613,13 @@ pub fn export(
             let forecast_hour = u32::try_from((t - reference) / 3600)
                 .map_err(|_| AppError::Internal("an export over too many hours".to_owned()))?;
             for &parameter in &parameters {
-                let values: Vec<f32> = match parameter {
-                    Parameter::WindU => field(env, |e| e.wind.map(|w| w.u)),
-                    Parameter::WindV => field(env, |e| e.wind.map(|w| w.v)),
-                    Parameter::WaveHeight => field(env, |e| e.waves.and_then(|w| w.hs)),
-                    Parameter::WaveDirection => field(env, |e| e.waves.and_then(|w| w.from)),
-                    Parameter::CurrentU => cu.clone(),
-                    Parameter::CurrentV => cv.clone(),
+                let values: &[f32] = match parameter {
+                    Parameter::WindU => &field[0],
+                    Parameter::WindV => &field[1],
+                    Parameter::WaveHeight => &field[2],
+                    Parameter::WaveDirection => &field[3],
+                    Parameter::CurrentU => &cu,
+                    Parameter::CurrentV => &cv,
                 };
                 if values.iter().all(|v| !v.is_finite()) {
                     empty += 1;
@@ -593,7 +632,7 @@ pub fn export(
                     centre: 255,
                     bits: pe_grib::packing::BITS_PER_VALUE,
                 };
-                file.write(&spec, &values)
+                file.write(&spec, values)
                     .doing("write the GRIB file", path.display())?;
             }
             done += 1;
@@ -607,13 +646,6 @@ pub fn export(
         messages: written.messages,
         empty_messages: empty,
     }))
-}
-
-/// One value per node, NaN where there is none.
-fn field(env: &[EnvPoint], get: impl Fn(&EnvPoint) -> Option<f64>) -> Vec<f32> {
-    env.iter()
-        .map(|e| get(e).map_or(f32::NAN, |v| v as f32))
-        .collect()
 }
 
 // ------------------------------------------------------------------ job
@@ -705,6 +737,25 @@ impl GribJobs {
     }
 }
 
+/// Ends a job still "running" when dropped, as failed: what unwinding
+/// through [`run`] leaves.
+struct Unfinished<'a> {
+    jobs: &'a GribJobs,
+    sink: &'a dyn GribSink,
+}
+
+impl Drop for Unfinished<'_> {
+    fn drop(&mut self) {
+        if self.jobs.status().state == "running" {
+            let status = self.jobs.update(|s| {
+                s.state = "failed".to_owned();
+                s.message = Some("the export stopped unexpectedly; nothing was written".to_owned());
+            });
+            self.sink.progress(&status);
+        }
+    }
+}
+
 /// Where an export reports to: the frontend in the app, nothing in tests.
 pub trait GribSink: Send + Sync {
     /// The status changed.
@@ -723,6 +774,9 @@ pub fn run(
     sink: &dyn GribSink,
 ) -> GribExportStatus {
     let jobs = &state.grib_jobs;
+    // Whatever happens below, the job does not stay "running": a panic in
+    // the export (a bug) ends it as failed, and the dialog says so.
+    let _guard = Unfinished { jobs, sink };
     let before = net();
     let mut last = -1.0f64;
     let mut progress = |fraction: f64| {
@@ -957,15 +1011,5 @@ mod tests {
             ]
         );
         assert!(Plan::of(&[], true, true, Interval::Hourly, false).is_none());
-    }
-
-    /// The lattice spans the area at 0.1°, across the antimeridian too.
-    #[test]
-    fn the_lattice_spans_the_area() {
-        let g = pe_grib::region(&[(0.0, 179.0), (0.0, -179.0)], 1.0, 250_000).unwrap();
-        let l = lattice(g);
-        let lons: Vec<f64> = l.iter().map(|p| p.1).collect();
-        assert!(lons.iter().any(|x| *x > 179.8) && lons.iter().any(|x| *x < -179.8));
-        assert!(lons.iter().all(|x| x.abs() >= 177.99), "{lons:?}");
     }
 }

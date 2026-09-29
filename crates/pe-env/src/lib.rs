@@ -31,6 +31,6 @@ pub use dataset::{Dataset, OpenVariable, Variable, vars};
 pub use error::{EnvError, Result};
 pub use memory::BlockCache;
 pub use sampler::{
-    Access, EnvPoint, Estimate, ExportEstimate, Interval, Options, Parts, Point, Provider,
+    Access, Area, EnvPoint, Estimate, ExportEstimate, Interval, Options, Parts, Point, Provider,
     Reanalysis, Vector, Waves, estimate, estimate_export,
 };

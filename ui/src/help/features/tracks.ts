@@ -58,7 +58,7 @@ const features: Feature[] = [
     keywords: ["GRIB", msg("current"), msg("tide")], topic: environment, reveal: details, landing: "tracks:export-grib" },
   { id: "grib:hourly", label: msg("GRIB export: every hour"), description: msg("In the GRIB export dialog (Export reanalysis GRIB first): write every hour."),
     keywords: ["GRIB", msg("interval"), msg("download size")], topic: environment, reveal: details, landing: "tracks:export-grib" },
-  { id: "grib:three-hourly", label: msg("GRIB export: every 3 hours"), description: msg("In the GRIB export dialog (Export reanalysis GRIB first): write every third hour, a third of the download and of the file."),
+  { id: "grib:three-hourly", label: msg("GRIB export: every 3 hours"), description: msg("In the GRIB export dialog (Export reanalysis GRIB first): write every third hour: a third of the file and of the wind and wave download."),
     keywords: ["GRIB", msg("interval"), msg("long race")], topic: environment, reveal: details, landing: "tracks:export-grib" },
   { id: "tracks:time-start", label: msg("Time window start"), description: msg("Leave out samples before this time, such as before the start."),
     keywords: [msg("time window"), msg("start"), msg("filters")], topic, reveal: details },

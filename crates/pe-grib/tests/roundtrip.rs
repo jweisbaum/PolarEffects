@@ -156,7 +156,7 @@ fn a_pacific_grid_across_the_antimeridian_round_trips() {
     // Column 48 is 180°: the app's −180, direction 0; column 47 is 179.75E.
     assert!((m.values[48] - 0.0).abs() < 0.01, "{}", m.values[48]);
     assert!((m.values[47] - 359.75).abs() < 0.01, "{}", m.values[47]);
-    assert_eq!((m.discipline, m.category, m.number), (10, 0, 4));
+    assert_eq!((m.discipline, m.category, m.number), (10, 0, 14));
     assert_eq!(
         (
             decoded[1].category,

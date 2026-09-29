@@ -138,6 +138,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libeccodes-tools
+          # 22.04 packages ecCodes 2.24. check-grib.sh uses only keys and
+          # tools that version has (grib_ls, grib_dump, grib_count,
+          # grib_get, grib_get_data -m) and checks parameters by number,
+          # not by the short names newer tables add.
+          codes_info
 
       - name: Emit a sample across both seams
         run: cargo run -p pe-grib --example emit -- sample.grib2

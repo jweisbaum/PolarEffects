@@ -1113,32 +1113,135 @@ pub struct ExportEstimate {
     pub waves_bytes: u64,
     /// The current tiers' blocks over the area.
     pub current_bytes: u64,
-    /// Wind and wave bytes already in memory this session (not counted
-    /// above).
-    pub cached_bytes: u64,
+    /// Wind bytes already in memory this session (not counted above).
+    pub wind_cached_bytes: u64,
+    /// Wave bytes already in memory this session (not counted above).
+    pub waves_cached_bytes: u64,
 }
 
-/// Expected download for a GRIB export: the ERA5 blocks holding `edges`
-/// (for each row of the area, its western and eastern node: every block
-/// between them holds nodes of the area) at each of `times` (whole hours),
-/// and the current blocks under `lattice` (points close enough together
-/// to fall in every current chunk box they cover; 0.1° is closer than the
-/// smallest box). The same approximations as [`estimate`].
-pub fn estimate_export(
-    edges: &[(f64, f64)],
-    lattice: &[(f64, f64)],
-    times: &[i64],
-    memory: Option<&BlockCache>,
-) -> ExportEstimate {
+/// A rectangle of latitude and longitude: an export's area.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Area {
+    /// Northern edge, degrees.
+    pub north: f64,
+    /// Southern edge, degrees.
+    pub south: f64,
+    /// Western edge, degrees, any convention.
+    pub west: f64,
+    /// Eastward width, degrees (0 to 360).
+    pub width: f64,
+}
+
+impl Area {
+    /// The longitude intervals of the area in [−180, 180): one, or two
+    /// when it crosses the antimeridian (the first ending a hair short of
+    /// 180°, which is the second's −180°).
+    fn lon_segments(&self) -> Vec<(f64, f64)> {
+        const EDGE: f64 = 180.0 - 1e-9;
+        if self.width >= 360.0 {
+            return vec![(-180.0, EDGE)];
+        }
+        let west = (self.west + 180.0).rem_euclid(360.0) - 180.0;
+        let east = west + self.width.max(0.0);
+        if east < 180.0 {
+            vec![(west, east)]
+        } else {
+            vec![(west, EDGE), (-180.0, east - 360.0)]
+        }
+    }
+}
+
+/// The ERA5 blocks holding an area's stencils: for every row it covers
+/// (and the one below), the blocks from its first to its last column, the
+/// row split in two where the area crosses 0°E. At most 722 rows, whatever
+/// the area.
+fn era5_area_blocks(area: &Area) -> Vec<usize> {
+    let row = |lat: f64| {
+        ((90.0 - lat) / 0.25)
+            .floor()
+            .clamp(0.0, (ERA5_ROWS - 1) as f64) as usize
+    };
+    let (top, bottom) = (row(area.north), (row(area.south) + 1).min(ERA5_ROWS - 1));
+    let first = (area.west.rem_euclid(360.0) / 0.25).floor() as usize % ERA5_COLS;
+    let cols = ((area.width.max(0.0) / 0.25).ceil() as usize + 2).min(ERA5_COLS);
+    let segments: Vec<(usize, usize)> = if first + cols <= ERA5_COLS {
+        vec![(first, first + cols - 1)]
+    } else {
+        vec![(first, ERA5_COLS - 1), (0, first + cols - ERA5_COLS - 1)]
+    };
+    let mut blocks = std::collections::BTreeSet::new();
+    for r in top..=bottom {
+        for &(a, b) in &segments {
+            let (lo, hi) = (
+                (r * ERA5_COLS + a) / ERA5_BLOCK_VALUES,
+                (r * ERA5_COLS + b) / ERA5_BLOCK_VALUES,
+            );
+            blocks.extend(lo..=hi);
+        }
+    }
+    blocks.into_iter().collect()
+}
+
+/// Chunk boxes of `tier` that the part of `area` inside `region` (all of
+/// it for `None`) touches, counted from the extents: no position is
+/// placed.
+fn tier_boxes(tier: &CurrentTier, area: &Area, region: Option<([f64; 2], [f64; 2])>) -> u64 {
+    let (lat_lo, lat_hi, lon_bounds) = match region {
+        Some((lat, lon)) => (area.south.max(lat[0]), area.north.min(lat[1]), Some(lon)),
+        None => (area.south, area.north, None),
+    };
+    if lat_lo > lat_hi {
+        return 0;
+    }
+    let index = |x: f64, x0: f64, size: f64| ((x - x0) / size).floor() as i64;
+    let rows = (index(lat_hi, tier.lat0, tier.box_lat) - index(lat_lo, tier.lat0, tier.box_lat) + 1)
+        .max(0) as u64;
+    let per_turn = (360.0 / tier.box_lon).ceil() as u64;
+    let mut cols = 0u64;
+    for (a, b) in area.lon_segments() {
+        let (a, b) = match lon_bounds {
+            Some(lon) => (a.max(lon[0]), b.min(lon[1])),
+            None => (a, b),
+        };
+        if a > b {
+            continue;
+        }
+        cols += (index(b, tier.lon0, tier.box_lon) - index(a, tier.lon0, tier.box_lon) + 1).max(0)
+            as u64;
+    }
+    rows * cols.min(per_turn)
+}
+
+/// Blocks of hours of `block_hours` that `[first, last]` crosses.
+fn time_blocks(first: i64, last: i64, block_hours: i64) -> u64 {
+    if last < first {
+        return 0;
+    }
+    let block = |t: i64| t.div_euclid(3600).div_euclid(block_hours);
+    (block(last) - block(first) + 1) as u64
+}
+
+/// The part of the NW Shelf's box IBI's does not overlap, where IBI is
+/// the first tier: south of 40N (the NW Shelf box holds IBI's longitudes).
+const IBI_ONLY_BOX: ([f64; 2], [f64; 2]) = ([26.1, 39.999], [-19.1, 5.1]);
+
+/// Expected download for a GRIB export over `area` at `times` (whole
+/// hours, in order), computed from the area's extent and each dataset's
+/// chunk and block geometry, so it costs the same for a bay or the globe
+/// (spec.md 13):
+///
+/// - **ERA5**: for each hour, each variable's 64-byte head and the blocks
+///   holding the area's rows (as [`estimate`]), less what `memory` holds.
+/// - **Current**: one typical block per variable per chunk box and block
+///   of hours, in the first tier whose box holds that part of the area:
+///   the NW Shelf, IBI south of 40N, then the global merged current from
+///   November 2020 or GlobCurrent before. Global boxes wholly inside a
+///   regional box are not taken out (an estimate).
+pub fn estimate_export(area: &Area, times: &[i64], memory: Option<&BlockCache>) -> ExportEstimate {
     use crate::dataset::HEAD_REQUEST;
     use crate::memory::Part;
     let mut out = ExportEstimate::default();
-    let mut blocks: Vec<usize> = edges
-        .iter()
-        .flat_map(|(lat, lon)| era5_blocks(*lat, *lon))
-        .collect();
-    blocks.sort_unstable();
-    blocks.dedup();
+    let blocks = era5_area_blocks(area);
     let held = |dataset: Dataset, key: &str, part: Part| {
         memory.is_some_and(|m| m.contains(dataset.id(), key, part))
     };
@@ -1169,42 +1272,93 @@ pub fn estimate_export(
         ];
         for (dataset, array, index, sizes, wind) in chunks {
             let key = format!("{array}/{index}.0.0");
-            let total = if wind {
-                &mut out.wind_bytes
+            let (total, cached) = if wind {
+                (&mut out.wind_bytes, &mut out.wind_cached_bytes)
             } else {
-                &mut out.waves_bytes
+                (&mut out.waves_bytes, &mut out.waves_cached_bytes)
             };
-            if held(dataset, &key, Part::Head) {
-                out.cached_bytes += HEAD_REQUEST;
-            } else {
-                *total += HEAD_REQUEST;
-            }
-            for &block in &blocks {
-                let bytes = sizes.get(block).copied().unwrap_or_default();
-                if held(dataset, &key, Part::Block(block as u32)) {
-                    out.cached_bytes += bytes;
+            let mut add = |bytes: u64, part: Part| {
+                if held(dataset, &key, part) {
+                    *cached += bytes;
                 } else {
                     *total += bytes;
                 }
+            };
+            add(HEAD_REQUEST, Part::Head);
+            for &block in &blocks {
+                add(
+                    sizes.get(block).copied().unwrap_or_default(),
+                    Part::Block(block as u32),
+                );
             }
         }
     }
-    // The current blocks: the lattice at the first time and every 1,024
-    // hours on (no tier's blocks are shorter), and at the last.
     let (Some(&first), Some(&last)) = (times.first(), times.last()) else {
         return out;
     };
-    let mut at: Vec<i64> = (0..)
-        .map(|k| first + k * 1024 * 3600)
-        .take_while(|t| *t < last)
-        .collect();
-    at.push(last);
-    let points: Vec<Point> = at
-        .iter()
-        .flat_map(|&t| lattice.iter().map(move |&(lat, lon)| Point { t, lat, lon }))
-        .collect();
-    out.current_bytes = current_bytes(&points);
+    let cost = |tier: &CurrentTier, boxes: u64, from: i64, to: i64| {
+        boxes
+            * time_blocks(from, to, tier.block_hours)
+            * tier.variables
+            * (tier.block_bytes + HEAD_REQUEST)
+    };
+    let nws = tier_boxes(&NWS_TIER, area, Some(NWS_BOX));
+    let ibi = tier_boxes(&IBI_TIER, area, Some(IBI_ONLY_BOX));
+    // The global tiers, less the part of the area the regional ones take.
+    let covered = |tier: &CurrentTier| {
+        tier_boxes(tier, area, None).saturating_sub(
+            tier_boxes(tier, &inner(area, NWS_BOX), None)
+                + tier_boxes(tier, &inner(area, IBI_ONLY_BOX), None),
+        )
+    };
+    out.current_bytes = cost(&NWS_TIER, nws, first, last)
+        + cost(&IBI_TIER, ibi, first, last)
+        + cost(
+            &MERGED_TIER,
+            covered(&MERGED_TIER),
+            first.max(MERGED_FIRST),
+            last,
+        )
+        + cost(
+            &GLOBCURRENT_TIER,
+            covered(&GLOBCURRENT_TIER),
+            first,
+            last.min(MERGED_FIRST - 1),
+        );
     out
+}
+
+/// The global tier boxes wholly inside `region` are the ones a smaller
+/// area shrunk by a box's size on each side would still touch; this is
+/// that region's intersection with `area`, shrunk by 2° (larger than any
+/// global box), or an empty area.
+fn inner(area: &Area, (lat, lon): ([f64; 2], [f64; 2])) -> Area {
+    let empty = Area {
+        north: -91.0,
+        south: 91.0,
+        west: 0.0,
+        width: -1.0,
+    };
+    let (south, north) = (area.south.max(lat[0] + 2.0), area.north.min(lat[1] - 2.0));
+    if south > north {
+        return empty;
+    }
+    // Only an area that does not wrap past the region is shrunk; others
+    // keep the global boxes (an over-estimate).
+    let segments = area.lon_segments();
+    let [(a, b)] = segments.as_slice() else {
+        return empty;
+    };
+    let (west, east) = (a.max(lon[0] + 2.0), b.min(lon[1] - 2.0));
+    if west > east {
+        return empty;
+    }
+    Area {
+        north,
+        south,
+        west,
+        width: east - west,
+    }
 }
 
 /// The current part of [`estimate`].
@@ -1331,24 +1485,70 @@ mod tests {
         assert_eq!(era5_blocks(44.375, 13.0), vec![1, 2]);
     }
 
-    /// Hand-counted: an export over rows 50–51N at 5W for two WeatherBench2
-    /// hours is block 1 of each chunk (its stencil rows 156–161 are values 224,640
-    /// to 233,261): per hour, u and v 2 × (64 + 432,731), waves 64 +
-    /// 173,816 and 64 + 165,715. The current is the NW Shelf box of 50N
-    /// 5W, one block of hours (8,192), two variables.
+    /// Hand-counted: an export over one point, 50.1N 4.9W, for two
+    /// WeatherBench2 hours: its stencil rows 159–160, columns 1420–1421,
+    /// are values 230,380 to 231,821, block 1 of each chunk: per hour, u
+    /// and v 2 × (64 + 432,731), waves 64 + 173,816 and 64 + 165,715. The
+    /// current is one NW Shelf box and one block of hours (8,192), two
+    /// variables.
     #[test]
     fn the_export_estimate_counts_blocks_per_hour_and_part() {
         let t = crate::time::parse_utc("2020-07-27T00:00Z").expect("a time");
-        let edges = [(51.0, -5.0), (50.0, -5.0)];
-        let e = estimate_export(&edges, &[(50.1, -4.9)], &[t, t + 3600], None);
+        let area = Area {
+            north: 50.1,
+            south: 50.1,
+            west: -4.9,
+            width: 0.0,
+        };
+        assert_eq!(era5_area_blocks(&area), vec![1]);
+        let e = estimate_export(&area, &[t, t + 3600], None);
         assert_eq!(e.wind_bytes, 2 * 2 * (64 + 432_731));
         assert_eq!(e.waves_bytes, 2 * (64 + 173_816 + 64 + 165_715));
         assert_eq!(e.current_bytes, 2 * (150_000 + 64));
-        assert_eq!(e.cached_bytes, 0);
-        assert_eq!(
-            estimate_export(&edges, &[], &[], None),
-            ExportEstimate::default()
-        );
+        assert_eq!(e.wind_cached_bytes + e.waves_cached_bytes, 0);
+        assert_eq!(estimate_export(&area, &[], None), ExportEstimate::default());
+    }
+
+    /// Chunk boxes are counted from the extents, across the antimeridian
+    /// too: GlobCurrent's 2° × 1° boxes over 10S–9.99N (rows 40 to 49 of
+    /// its grid from 90S: 10) and 175E–175W (10° across 180°: columns 355
+    /// to 359 east of it and 0 to 5 west: 11).
+    #[test]
+    fn current_boxes_follow_the_area_across_the_antimeridian() {
+        let area = Area {
+            north: 9.99,
+            south: -10.0,
+            west: 175.0,
+            width: 10.0,
+        };
+        assert_eq!(area.lon_segments().len(), 2);
+        assert_eq!(tier_boxes(&GLOBCURRENT_TIER, &area, None), 10 * 11);
+        // Outside the NW Shelf's box: none of its boxes.
+        assert_eq!(tier_boxes(&NWS_TIER, &area, Some(NWS_BOX)), 0);
+    }
+
+    /// A circumnavigation's area for 90 days hourly is estimated from the
+    /// extents in far less than the interaction budget (spec.md 13, 100
+    /// ms), with nothing proportional to the area held: every block of
+    /// every hour, and the current's global boxes.
+    #[test]
+    fn a_global_ninety_day_estimate_is_quick() {
+        let t = crate::time::parse_utc("2024-11-10T00:00Z").expect("a time");
+        let times: Vec<i64> = (0..90 * 24).map(|k| t + k * 3600).collect();
+        let area = Area {
+            north: 90.0,
+            south: -90.0,
+            west: 0.0,
+            width: 360.0,
+        };
+        let start = std::time::Instant::now();
+        let e = estimate_export(&area, &times, None);
+        let took = start.elapsed();
+        assert_eq!(era5_area_blocks(&area), (0..8).collect::<Vec<_>>());
+        let wind_hour: u64 = 2 * (64 + WIND_BLOCKS.iter().sum::<u64>());
+        assert_eq!(e.wind_bytes, 2160 * wind_hour);
+        assert!(e.current_bytes > 0);
+        assert!(took.as_millis() < 100, "{took:?}");
     }
 
     /// Blocks already downloaded this session are not counted again: the

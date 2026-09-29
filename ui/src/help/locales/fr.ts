@@ -131,7 +131,7 @@ const topics: HelpTopic[] = [
       ["Écarter les courants sans marée", "Un filtre de trace : écarte les points dont le courant vient d’une source marquée sans marée. Toutes les sources de courant lues aujourd’hui comprennent la marée : il n’écarte donc rien, sauf si une telle source est ajoutée."],
       ["Remplacer le projet", "Nouveau, Ouvrir ou Fermer pendant une récupération demande d’abord de l’annuler."],
       ["Export GRIB : Inclure aussi", "La hauteur et la direction des vagues, et le courant, chacun avec ce qu’il ajoute au téléchargement. Le vent est toujours écrit."],
-      ["Export GRIB : Heures", "Chaque heure, ou toutes les trois heures : un tiers du téléchargement et du fichier."],
+      ["Export GRIB : Heures", "Chaque heure, ou toutes les trois heures : un tiers du fichier et du téléchargement du vent et des vagues (le courant coûte autant dans les deux cas). Avec le courant, un fichier temporaire à côté de l’export le conserve pendant l’écriture ; la fenêtre avertit quand il dépasserait 1 GB."],
       ["Export GRIB : Enregistrer… / Annuler l’export", "Choisit le fichier et lance l’export ; pendant qu’il s’exécute, Annuler l’export l’arrête et rien n’est écrit."],
     ],
     related: ["tracks", "settings", "map"] },

@@ -947,7 +947,7 @@ targets.
 Built as specified (spec.md §7.8, D14). `pe-grib`: `packing` ported as is
 (16 bits), `writer` ported with a regional `GridSpec` (La1/Lo1 in
 micro-degrees, `Lo1`/`Lo2` in 0–360 so a prime-meridian box has `Lo2` <
-`Lo1`), wave height and direction (10/0/3, 10/0/4 at the surface) beside
+`Lo1`), wave height and direction (10/0/3, 10/0/14 — ERA5's `mwd` as ecCodes names it, corrected from 10/0/4 in review — at the surface) beside
 wind and current, a bitmap only where a value is missing, the local-use
 section "Created with PolarEffects"; `region` (bounding box + 2° on the
 0.25° grid, the shortest longitude arc, global when the margins close the

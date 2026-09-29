@@ -33,7 +33,7 @@ for n in $(seq 1 24); do
   test "$ni $nj $la1 $lo1 $la2 $lo2" = "$want" || { echo "message $n: grid $ni $nj $la1 $lo1 $la2 $lo2, expected $want" >&2; exit 1; }
   test "$date $time" = "20200727 1200" || { echo "message $n: reference $date $time" >&2; exit 1; }
   test "$step" = "$(( ((n - 1) / 6) % 2 ))" || { echo "message $n: step $step" >&2; exit 1; }
-  params=("0 2 2" "0 2 3" "10 0 3" "10 0 4" "10 1 2" "10 1 3")
+  params=("0 2 2" "0 2 3" "10 0 3" "10 0 14" "10 1 2" "10 1 3")
   test "$disc $cat $num" = "${params[$(( (n - 1) % 6 ))]}" || { echo "message $n: parameter $disc $cat $num" >&2; exit 1; }
 done
 

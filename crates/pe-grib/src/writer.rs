@@ -50,7 +50,9 @@ pub enum Parameter {
     /// Significant height of combined wind waves and swell, metres.
     /// Discipline 10, HTSGW.
     WaveHeight,
-    /// Mean wave direction, degrees true, "from". Discipline 10, WVDIR.
+    /// Mean wave direction, degrees true, "from". Discipline 10, category
+    /// 0, parameter 14 (direction of combined wind waves and swell): ERA5's
+    /// `mwd`, as ecCodes names it.
     WaveDirection,
     /// Eastward surface current. Discipline 10, UOGRD.
     CurrentU,
@@ -84,7 +86,7 @@ impl Parameter {
         match self {
             Self::WindU | Self::CurrentU => 2,
             Self::WindV | Self::CurrentV | Self::WaveHeight => 3,
-            Self::WaveDirection => 4,
+            Self::WaveDirection => 14,
         }
     }
 
@@ -106,7 +108,7 @@ impl Parameter {
             Self::WindU => "10u",
             Self::WindV => "10v",
             Self::WaveHeight => "swh",
-            Self::WaveDirection => "wvdir",
+            Self::WaveDirection => "mwd",
             Self::CurrentU => "ucurr",
             Self::CurrentV => "vcurr",
         }
@@ -743,7 +745,7 @@ mod tests {
             (Parameter::WindU, (0, 2, 2), 103),
             (Parameter::WindV, (0, 2, 3), 103),
             (Parameter::WaveHeight, (10, 0, 3), 1),
-            (Parameter::WaveDirection, (10, 0, 4), 1),
+            (Parameter::WaveDirection, (10, 0, 14), 1),
             (Parameter::CurrentU, (10, 1, 2), 160),
             (Parameter::CurrentV, (10, 1, 3), 160),
         ];

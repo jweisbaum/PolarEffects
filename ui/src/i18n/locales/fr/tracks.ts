@@ -434,7 +434,6 @@ const catalogue: Record<string, string> = {
   "Cancel export": "Annuler l’export",
   "Choose where to save the file, then export": "Choisir où enregistrer le fichier, puis exporter",
   "Current (about {size} to download)": "Courant (environ {size} à télécharger)",
-  "Every 3 hours: a third of the download and the file": "Toutes les 3 heures : un tiers du téléchargement et du fichier",
   "Every hour": "Chaque heure",
   "Export cancelled; nothing was written.": "Export annulé ; rien n’a été écrit.",
   "Exported the reanalysis to {path}": "Réanalyse exportée dans {path}",
@@ -448,7 +447,7 @@ const catalogue: Record<string, string> = {
   "In the GRIB export dialog (Export reanalysis GRIB first): add the surface current.": "Dans la fenêtre d’export GRIB (Exporter le GRIB de réanalyse d’abord) : ajouter le courant de surface.",
   "In the GRIB export dialog (Export reanalysis GRIB first): add the wave height and direction.": "Dans la fenêtre d’export GRIB (Exporter le GRIB de réanalyse d’abord) : ajouter la hauteur et la direction des vagues.",
   "In the GRIB export dialog (Export reanalysis GRIB first): write every hour.": "Dans la fenêtre d’export GRIB (Exporter le GRIB de réanalyse d’abord) : écrire chaque heure.",
-  "In the GRIB export dialog (Export reanalysis GRIB first): write every third hour, a third of the download and of the file.": "Dans la fenêtre d’export GRIB (Exporter le GRIB de réanalyse d’abord) : écrire une heure sur trois, un tiers du téléchargement et du fichier.",
+  "In the GRIB export dialog (Export reanalysis GRIB first): write every third hour: a third of the file and of the wind and wave download.": "Dans la fenêtre d’export GRIB (Exporter le GRIB de réanalyse d’abord) : écrire une heure sur trois : un tiers du fichier et du téléchargement du vent et des vagues.",
   "Nothing downloaded is kept on disk; only the file you choose is written.": "Rien de ce qui est téléchargé n’est conservé sur le disque ; seul le fichier choisi est écrit.",
   "routing": "routage",
   "Significant wave height and mean wave direction from ERA5; missing over land": "Hauteur significative et direction moyenne des vagues d’ERA5 ; absentes sur la terre",
@@ -463,6 +462,8 @@ const catalogue: Record<string, string> = {
   "Wave height and direction (about {size} to download)": "Hauteur et direction des vagues (environ {size} à télécharger)",
   "Write the reanalysis wind over a track's area and hours to a GRIB file, with its waves and current if you want them.": "Écrire le vent de réanalyse sur la zone et les heures d’une trace dans un fichier GRIB, avec ses vagues et son courant si vous les voulez.",
   "Write the reanalysis wind, and waves and current if you want them, over this track's area and hours to a GRIB file": "Écrire le vent de réanalyse, et les vagues et le courant si vous les voulez, sur la zone et les heures de cette trace dans un fichier GRIB",
+  "Every 3 hours: a third of the file and of the wind and wave download": "Toutes les 3 heures : un tiers du fichier et du téléchargement du vent et des vagues",
+  "The current needs about {size} of free disk space beside the file while it is exported.": "Le courant demande environ {size} d’espace disque libre à côté du fichier pendant l’export.",
 };
 
 export default catalogue;

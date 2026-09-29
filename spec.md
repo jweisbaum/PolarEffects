@@ -1067,8 +1067,9 @@ writes the 10 m wind (u, v) over the track's area to a `.grib2` file
   bitmap, never as zero.
 - Messages: at each time, in this order, wind u and v (discipline 0,
   category 2, parameters 2 and 3, 10 m above ground), wave height and
-  mean wave direction (discipline 10, category 0, parameters 3 and 4, the
-  surface), current u and v (discipline 10, category 1, parameters 2 and
+  mean wave direction (discipline 10, category 0, parameters 3 and 14 —
+  14 is ERA5's `mwd`, "direction of combined wind waves and swell", as
+  ecCodes names it — the surface), current u and v (discipline 10, category 1, parameters 2 and
   3, 0 m below the sea surface). Time convention (VectorEffects'): the
   reference time is the first time written, and each message carries its
   offset from it in hours as the forecast hour.
@@ -1085,15 +1086,23 @@ writes the 10 m wind (u, v) over the track's area to a `.grib2` file
   rows for each hour (as §7.5), into the session's memory, with nothing
   cached on disk. The current's geoChunks hold months of a small box each,
   so it is read first, tile by tile (16 × 16 nodes over every time), into
-  a temporary file beside the export; then the wind and waves a few hours
-  at a time, each hour's messages written as its values arrive. Neither
-  the file nor the current is held whole in memory.
+  a temporary file beside the export (two `f32` a node and time); then
+  the wind and waves a few hours at a time — an area of more than 200,000
+  nodes in runs of nodes — each hour's messages written as its values
+  arrive. Neither the file nor the current is held whole in memory. The
+  dialog warns when the current's temporary file would pass 1 GB.
 - The dialog shows the area, the number of times with the first and last,
   what the wind, the waves and the current would download (§13's
-  estimate, less what this session holds) and the file's size, before
-  anything is fetched. Save… asks for the file, then the export runs as a
+  estimate, less what this session holds of the parts ticked) and the
+  file's size, before anything is fetched. The estimate is worked out
+  from the area's extent and each archive's chunk and block geometry —
+  ERA5's blocks per row, the current tiers' boxes and blocks of hours —
+  never position by position, so a global area over 90 days costs no more
+  than a bay. Save… asks for the file, then the export runs as a
   job with its progress (and the bytes downloaded) in the dialog; Cancel
-  export stops it. One export runs at a time.
+  export stops it. One export runs at a time. An archive that fails
+  (other than by the cancel) fails the export with the reason; an export
+  that stops unexpectedly ends "failed", never stuck running.
 - The file is written to `<name>.tmp` and renamed into place when
   complete: a cancelled or failed export writes nothing and leaves what
   was at the path. On success the status line says where it went, and how

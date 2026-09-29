@@ -66,10 +66,19 @@ waves_bytes: number,
  */
 current_bytes: number,
 /**
- * Wind and wave bytes already downloaded this session.
+ * Bytes of the parts ticked already downloaded this session.
  */
 cached_bytes: number,
 /**
  * About the file's size with the parts ticked.
  */
-file_bytes: number, };
+file_bytes: number,
+/**
+ * The current's temporary file beside the export (0 without the
+ * current).
+ */
+spool_bytes: number,
+/**
+ * Above this the dialog warns about the temporary file's size.
+ */
+spool_warning_bytes: number, };

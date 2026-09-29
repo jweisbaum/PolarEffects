@@ -151,7 +151,7 @@ export default function GribExportDialog({ sourceId, label, onClose }: {
           <label>
             <input type="radio" name="grib-interval" data-feature="grib:three-hourly" checked={interval === "three_hourly"}
               onChange={() => chooseInterval("three_hourly")} />
-            {t("Every 3 hours: a third of the download and the file")}
+            {t("Every 3 hours: a third of the file and of the wind and wave download")}
           </label>
         </fieldset>
         <p className="muted" role="status">
@@ -160,6 +160,11 @@ export default function GribExportDialog({ sourceId, label, onClose }: {
             : t("About {download} to download; the file is about {size}.", {
               download: formatBytes(download), size: formatBytes(preview.file_bytes) })}
         </p>
+        {preview !== null && preview.spool_bytes > preview.spool_warning_bytes && (
+          <p className="modal-error" role="alert">
+            {t("The current needs about {size} of free disk space beside the file while it is exported.", { size: formatBytes(preview.spool_bytes) })}
+          </p>
+        )}
         {preview !== null && preview.cached_bytes > 0 && (
           <p className="muted">{t("{size} of it was already downloaded this session.", { size: formatBytes(preview.cached_bytes) })}</p>
         )}
