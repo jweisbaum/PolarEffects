@@ -91,9 +91,13 @@ describe("the dots drawn (spec.md 10.2, 10.3)", () => {
 });
 
 describe("surfaces", () => {
-  it("turns a TWA-major grid into the scene's TWS-major one, with holes", () => {
-    const grid = surfaceGrid(Float32Array.from([52, 90]), Float32Array.from([6, 12]), Float32Array.from([6, 7, Number.NaN, 8]));
-    expect(grid).toEqual({ twa: [52, 90], tws: [6, 12], bsp: [[6, null], [7, 8]] });
+  it("hands the scene the packet's TWA-major arrays as they are, holes as NaN", () => {
+    const twa = Float32Array.from([52, 90]), tws = Float32Array.from([6, 12]);
+    const bsp = Float32Array.from([6, 7, Number.NaN, 8]);
+    const grid = surfaceGrid(twa, tws, bsp);
+    expect(grid.bsp).toBe(bsp);
+    expect(grid.twa).toBe(twa);
+    expect(grid.tws).toBe(tws);
   });
 
   it("colours each surface as its source and the blend opaque", () => {

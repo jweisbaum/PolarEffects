@@ -38,14 +38,21 @@ function packet(): ComparePacket {
 }
 
 describe("the Compare stage's model", () => {
-  it("reads a packet array as the scene's grid, bsp[j][i]", () => {
-    expect(gridOf(packet(), packet().a).bsp).toEqual([[0, 7, 6], [0, 8, null]]);
+  /** A flat grid's values, an empty cell as null. */
+  const values = (bsp: ArrayLike<number>) => Array.from(bsp, (v) => (Number.isFinite(v) ? v : null));
+
+  it("reads a packet array as the scene's grid, TWA-major as it comes, without a copy", () => {
+    const p = packet();
+    const grid = gridOf(p, p.a);
+    expect(values(grid.bsp)).toEqual([0, 0, 7, 8, 6, null]);
+    expect(grid.bsp).toBe(p.a);
+    expect(grid.twa).toBe(p.twa);
   });
 
   it("draws the difference midway where both have a value, on the scale, and hatched grey where one has", () => {
     const surface = differenceSurface(packet(), false, "dark");
-    // Node (i, j) is vertex j * ni + i; the 0° row is left out.
-    expect(surface.grid.bsp).toEqual([[null, 6.5, 6], [null, 8.25, null]]);
+    // Node (i, j) is value i * nj + j (vertex j * ni + i); the 0° row is left out.
+    expect(values(surface.grid.bsp)).toEqual([null, null, 6.5, 8.25, 6, null]);
     expect([...surface.hatched!]).toEqual([0, 0, 1, 0, 0, 0]);
     // 60°/8 kn is +1, the scale's end: A's pole (in linear light).
     const linear = (c: number) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);

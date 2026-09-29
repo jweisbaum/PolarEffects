@@ -225,17 +225,9 @@ function dotsOf(packet: ScenePacket, toggles: Toggles, mode: ColourMode, focus: 
   return { points, colors, shapes, refs: refs.slice(0, n) };
 }
 
-/** A surface's grid in the scene's shape: `bsp[j][i]`, null for an empty cell. */
+/** A surface's grid for the scene: the packet's own arrays, TWA-major, NaN an empty cell; nothing is copied (M17a). */
 export function surfaceGrid(twa: Float32Array, tws: Float32Array, bsp: Float32Array): PolarGrid {
-  const nj = tws.length;
-  return {
-    twa: [...twa],
-    tws: [...tws],
-    bsp: [...tws].map((_, j) => [...twa].map((__, i) => {
-      const v = bsp[i * nj + j]!;
-      return Number.isFinite(v) ? v : null;
-    })),
-  };
+  return { twa, tws, bsp };
 }
 
 /** How faint the other sources' surfaces are while one is edited (spec.md 10.4). */

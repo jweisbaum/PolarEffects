@@ -53,11 +53,17 @@ export function dotPositions(
   return positions;
 }
 
-/** A polar source as a grid: `bsp[j][i]` is BSP at `tws[j]`, `twa[i]`; null is an empty cell. */
+/**
+ * A polar source as a grid, flat and TWA-major as the packets carry it:
+ * `bsp[i * tws.length + j]` is BSP at `twa[i]`, `tws[j]`; a value that is
+ * not finite (NaN) is an empty cell. The packet's own typed arrays pass
+ * straight through: a nested array of rows was 262,144 values boxed at
+ * 512 × 512 before a mesh was begun (M17a).
+ */
 export interface PolarGrid {
-  twa: readonly number[];
-  tws: readonly number[];
-  bsp: readonly (readonly (number | null)[])[];
+  twa: ArrayLike<number>;
+  tws: ArrayLike<number>;
+  bsp: ArrayLike<number>;
 }
 
 /** An indexed triangle mesh and the grid lines drawn on it. */
@@ -82,14 +88,21 @@ export function surfaceMesh(grid: PolarGrid, layout: Layout): SurfaceMesh {
   // `place` inlined, with each angle's sine and cosine once: a tuple per
   // node is 262,144 allocations at 512 × 512.
   const tower = layout === "tower";
-  const sin = grid.twa.map((a) => Math.sin(a * RAD)), cos = grid.twa.map((a) => Math.cos(a * RAD));
-  for (let j = 0; j < nj; j++) {
-    const row = grid.bsp[j];
-    const tws = grid.tws[j]!;
-    for (let i = 0; i < ni; i++) {
-      const v = row?.[i];
+  const sin = new Float64Array(ni), cos = new Float64Array(ni);
+  for (let i = 0; i < ni; i++) {
+    sin[i] = Math.sin(grid.twa[i]! * RAD);
+    cos[i] = Math.cos(grid.twa[i]! * RAD);
+  }
+  const bsp = grid.bsp;
+  // Vertices stay TWS-major (`j * ni + i`: vertex colours and the hatch
+  // index them so); the values are read TWA-major, as they come.
+  for (let i = 0; i < ni; i++) {
+    const column = i * nj;
+    for (let j = 0; j < nj; j++) {
+      const v = bsp[column + j]!;
+      if (!Number.isFinite(v)) continue;
       const k = j * ni + i;
-      if (v === null || v === undefined || !Number.isFinite(v)) continue;
+      const tws = grid.tws[j]!;
       has[k] = 1;
       if (tower) {
         positions[k * 3] = v * sin[i]!;
@@ -122,7 +135,8 @@ export function surfaceMesh(grid: PolarGrid, layout: Layout): SurfaceMesh {
       }
     }
   }
-  return { positions, triangles: triangles.slice(0, nt), lines: lines.slice(0, nl) };
+  // Views, not copies: a copy of the triangles alone is 6 MB at 512 × 512.
+  return { positions, triangles: triangles.subarray(0, nt), lines: lines.subarray(0, nl) };
 }
 
 /**
@@ -137,19 +151,18 @@ export function surfaceMesh(grid: PolarGrid, layout: Layout): SurfaceMesh {
 export function hatchLines(grid: PolarGrid, marked: ArrayLike<number>): Uint32Array<ArrayBuffer> {
   const ni = grid.twa.length;
   const nj = grid.tws.length;
-  const has = (i: number, j: number) => {
-    const v = grid.bsp[j]?.[i];
-    return v !== null && v !== undefined && Number.isFinite(v);
-  };
-  const out: number[] = [];
+  const has = (i: number, j: number) => Number.isFinite(grid.bsp[i * nj + j]!);
+  const out = new Uint32Array(Math.max(0, ni - 1) * Math.max(0, nj - 1) * 4);
+  let n = 0;
   for (let j = 0; j + 1 < nj; j++) {
     for (let i = 0; i + 1 < ni; i++) {
-      if (!(has(i, j) && has(i + 1, j) && has(i, j + 1) && has(i + 1, j + 1))) continue;
       const a = j * ni + i, b = a + 1, c = a + ni, d = a + ni + 1;
-      if (marked[a] && marked[b] && marked[c] && marked[d]) out.push(a, d, b, c);
+      if (!(marked[a] && marked[b] && marked[c] && marked[d])) continue;
+      if (!(has(i, j) && has(i + 1, j) && has(i, j + 1) && has(i + 1, j + 1))) continue;
+      out[n++] = a; out[n++] = d; out[n++] = b; out[n++] = c;
     }
   }
-  return Uint32Array.from(out);
+  return out.slice(0, n);
 }
 
 /**
@@ -264,6 +277,7 @@ export function syntheticSamples(n: number, seed = 1): Float32Array<ArrayBuffer>
 export function syntheticGrid(scale: number): PolarGrid {
   const twa = Array.from({ length: 37 }, (_, i) => i * 5);
   const tws = Array.from({ length: 14 }, (_, j) => 4 + j * 2);
-  const bsp = tws.map(s => twa.map(a => (a < 30 ? null : syntheticBsp(a, s, scale))));
+  const bsp = new Float32Array(twa.length * tws.length);
+  twa.forEach((a, i) => tws.forEach((s, j) => { bsp[i * tws.length + j] = a < 30 ? Number.NaN : syntheticBsp(a, s, scale); }));
   return { twa, tws, bsp };
 }

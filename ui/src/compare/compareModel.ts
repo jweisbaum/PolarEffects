@@ -52,20 +52,13 @@ export function deltaOf(packet: ComparePacket, percent: boolean): Float32Array {
   return percent ? packet.deltaPct : packet.deltaKn;
 }
 
-/** A grid of one packet array in the scene's shape: `bsp[j][i]`, null for no value. */
-export function gridOf(packet: ComparePacket, values: Float32Array, keep?: (k: number) => boolean): PolarGrid {
-  const ni = packet.twa.length, nj = packet.tws.length;
-  const bsp: (number | null)[][] = [];
-  for (let j = 0; j < nj; j++) {
-    const row: (number | null)[] = [];
-    for (let i = 0; i < ni; i++) {
-      const k = i * nj + j;
-      const v = values[k]!;
-      row.push(Number.isFinite(v) && (keep === undefined || keep(k)) ? v : null);
-    }
-    bsp.push(row);
-  }
-  return { twa: [...packet.twa], tws: [...packet.tws], bsp };
+/**
+ * A grid of one packet array for the scene: the packet's TWA-major arrays
+ * as they are, NaN for no value. Flat typed arrays, not rows of numbers:
+ * nothing is copied (M17a).
+ */
+export function gridOf(packet: ComparePacket, values: Float32Array): PolarGrid {
+  return { twa: packet.twa, tws: packet.tws, bsp: values };
 }
 
 /** sRGB 0–1 → linear, which three.js expects of vertex colours. */
