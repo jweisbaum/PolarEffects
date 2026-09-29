@@ -504,7 +504,7 @@ export default function PolarView({ project, settings, onProject }: {
       </div>
 
       {focus !== null && (
-        <EditPanel project={project} sourceId={focus} selected={selectedCells} hideOthers={hideOthers}
+        <EditPanel project={project} sourceId={focus} unit={unit} selected={selectedCells} hideOthers={hideOthers}
           onHideOthers={setHideOthers} onSelectCells={selectCells} onProject={onProject}
           onDone={() => editSource(null)} />
       )}

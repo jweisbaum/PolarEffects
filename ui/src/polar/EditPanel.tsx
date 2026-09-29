@@ -6,8 +6,10 @@ import type { EditOp } from "../generated/EditOp";
 import type { EditSurface } from "../generated/EditSurface";
 import type { PolarCell } from "../generated/PolarCell";
 import type { ProjectSummary } from "../generated/ProjectSummary";
+import type { SpeedUnit } from "../generated/SpeedUnit";
 import { msg, useT } from "../i18n";
 import { api } from "../ipc";
+import { SPEED_FACTOR, SPEED_SYMBOL } from "./view3d";
 
 /** A cell as the 3D view keys it: TWA index | TWS index << 16. */
 export function cellCode(i: number, j: number): number {
@@ -22,12 +24,36 @@ export const STATISTICS: readonly { id: string; label: string }[] = [
   { id: "mean", label: msg("Mean") },
 ];
 
-/** A typed value, knots; null for an empty box (reset the cell); undefined for something that is not a speed. */
-export function parseSpeed(text: string): number | null | undefined {
+/** The fastest boat speed a cell takes, knots. */
+export const MAX_BSP_KN = 60;
+
+/** A speed stored in knots as the table shows it: two decimals in the display unit. */
+export function showSpeed(knots: number, unit: SpeedUnit): string {
+  return (knots * SPEED_FACTOR[unit]).toFixed(2);
+}
+
+/**
+ * A value typed in the display unit, in knots (storage stays knots; the unit
+ * is converted only here and in `showSpeed`, M17a); null for an empty box
+ * (reset the cell); undefined for something that is not a speed from 0 to
+ * 60 kn. The knots are not rounded, so the cell shows back exactly what was
+ * typed at the table's two decimals.
+ */
+export function parseSpeed(text: string, unit: SpeedUnit = "kn"): number | null | undefined {
   const trimmed = text.trim().replace(",", ".");
   if (trimmed === "") return null;
   const value = Number(trimmed);
-  return Number.isFinite(value) && value >= 0 && value <= 60 ? value : undefined;
+  // The limit as the table shows it (30.87 m/s), so the largest value it
+  // names is accepted; it is stored as 60 kn.
+  if (!Number.isFinite(value) || value < 0 || value > Number(showSpeed(MAX_BSP_KN, unit))) return undefined;
+  const knots = unit === "kn" ? value : value / SPEED_FACTOR[unit];
+  return Math.min(knots, MAX_BSP_KN);
+}
+
+/** A wind speed column's heading in the display unit: whole knots as they are, other units to 0.1. */
+function showTws(knots: number, unit: SpeedUnit): string {
+  if (unit === "kn") return String(knots);
+  return String(Math.round(knots * SPEED_FACTOR[unit] * 10) / 10);
 }
 
 /**
@@ -39,9 +65,11 @@ export function parseSpeed(text: string): number | null | undefined {
  * Every action is one undoable change computed in Rust; the table refetches
  * the surface on every revision.
  */
-export default function EditPanel({ project, sourceId, selected, hideOthers, onHideOthers, onSelectCells, onProject, onDone }: {
+export default function EditPanel({ project, sourceId, unit = "kn", selected, hideOthers, onHideOthers, onSelectCells, onProject, onDone }: {
   project: ProjectSummary;
   sourceId: number;
+  /** The display speed unit (Settings); values are stored in knots whatever it is. */
+  unit?: SpeedUnit;
   /** The selected cells (see `cellCode`). */
   selected: ReadonlySet<number>;
   hideOthers: boolean;
@@ -83,15 +111,18 @@ export default function EditPanel({ project, sourceId, selected, hideOthers, onH
       delete next[code];
       return next;
     });
-    const value = parseSpeed(text);
+    const value = parseSpeed(text, unit);
     const held = surface.bsp[i]?.[j] ?? null;
     if (value === undefined) {
-      reportError(t("{text} is not a boat speed from 0 to 60 kn", { text }), null);
+      reportError(t("{text} is not a boat speed from 0 to {max} {unit}", {
+        text, max: Number(showSpeed(MAX_BSP_KN, unit)), unit: symbol,
+      }), null);
       return;
     }
     // An empty box resets an edited cell; on a cell without an edit it changes nothing.
     if (value === null && !surface.edited[i]?.[j]) return;
-    if (value !== null && held !== null && Math.abs(value - held) < 1e-9) return;
+    // What the cell already shows is no edit, whatever the knots behind it.
+    if (value !== null && held !== null && showSpeed(value, unit) === showSpeed(held, unit)) return;
     void run(api.editPolar(sourceId, { type: "type", bsp: value }, [{ twa_index: i, tws_index: j }]));
   };
 
@@ -109,20 +140,23 @@ export default function EditPanel({ project, sourceId, selected, hideOthers, onH
     }
   };
 
+  const symbol = SPEED_SYMBOL[unit];
   const isTrack = surface?.kind === "track";
   const cellTip = (i: number, j: number): string => {
     if (!surface) return "";
     const imported = surface.source[i]?.[j];
     const base = imported === null || imported === undefined
       ? (isTrack ? t("No segment value here") : t("No value in the source here"))
-      : (isTrack ? t("Segment value {bsp} kn", { bsp: imported.toFixed(2) }) : t("Source value {bsp} kn", { bsp: imported.toFixed(2) }));
+      : (isTrack
+        ? t("Segment value {bsp} {unit}", { bsp: showSpeed(imported, unit), unit: symbol })
+        : t("Source value {bsp} {unit}", { bsp: showSpeed(imported, unit), unit: symbol }));
     const parts = [base];
     if (isTrack && surface.count) {
       const count = surface.count[i]?.[j] ?? 0;
       const spread = surface.spread?.[i]?.[j];
       parts.push(spread === null || spread === undefined
         ? t("{count} samples", { count })
-        : t("{count} samples, spread ±{spread} kn", { count, spread: spread.toFixed(2) }));
+        : t("{count} samples, spread ±{spread} {unit}", { count, spread: showSpeed(spread, unit), unit: symbol }));
     }
     if (surface.edited[i]?.[j]) parts.push(t("Edited"));
     if (surface.excluded[i]?.[j]) parts.push(t("Excluded from the blend"));
@@ -199,8 +233,8 @@ export default function EditPanel({ project, sourceId, selected, hideOthers, onH
           <table className="view3d-edit-table">
             <thead>
               <tr>
-                <th title={t("TWA (°) down, TWS (kn) across; boat speeds in knots")}>TWA \ TWS</th>
-                {surface.tws.map((tws) => <th key={tws}>{tws}</th>)}
+                <th title={t("TWA (°) down, TWS ({unit}) across; boat speeds in {unit}", { unit: symbol })}>TWA \ TWS</th>
+                {surface.tws.map((tws) => <th key={tws}>{showTws(tws, unit)}</th>)}
               </tr>
             </thead>
             <tbody>
@@ -216,8 +250,9 @@ export default function EditPanel({ project, sourceId, selected, hideOthers, onH
                     if (selected.has(code)) classes.push("selected");
                     return (
                       <td key={tws} className={classes.join(" ")}>
-                        <input value={drafts[code] ?? (value === null ? "" : value.toFixed(2))} placeholder="–"
-                          inputMode="decimal" aria-label={t("BSP at {twa}° and {tws} kn", { twa, tws })} title={cellTip(i, j)}
+                        <input value={drafts[code] ?? (value === null ? "" : showSpeed(value, unit))} placeholder="–"
+                          inputMode="decimal" title={cellTip(i, j)}
+                          aria-label={t("BSP at {twa}° and {tws} {unit}", { twa, tws: showTws(tws, unit), unit: symbol })}
                           onFocus={(event) => { if (!selected.has(code) || selected.size > 1) onSelectCells([code], false); event.currentTarget.select(); }}
                           onMouseDown={(event) => { if (event.shiftKey) { event.preventDefault(); onSelectCells([code], true); } }}
                           onChange={(event) => setDrafts((current) => ({ ...current, [code]: event.target.value }))}

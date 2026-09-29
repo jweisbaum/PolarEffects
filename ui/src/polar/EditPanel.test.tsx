@@ -15,7 +15,7 @@ import { TEST_BLEND } from "../testBlend";
 const api = vi.hoisted(() => ({ polarEditSurface: vi.fn(), editPolar: vi.fn(), setSegmentStatistic: vi.fn() }));
 vi.mock("../ipc", () => ({ api }));
 
-const { default: EditPanel, cellCode, parseSpeed } = await import("./EditPanel");
+const { default: EditPanel, cellCode, parseSpeed, showSpeed } = await import("./EditPanel");
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let host: HTMLDivElement;
@@ -37,9 +37,9 @@ const surface: EditSurface = {
 const onProject = vi.fn();
 const onSelectCells = vi.fn();
 
-async function render(selected: number[] = []) {
+async function render(selected: number[] = [], unit: "kn" | "ms" | "kmh" = "kn") {
   await act(async () => root.render(
-    <EditPanel project={project} sourceId={30} selected={new Set(selected)} hideOthers={false} onHideOthers={() => undefined}
+    <EditPanel project={project} sourceId={30} unit={unit} selected={new Set(selected)} hideOthers={false} onHideOthers={() => undefined}
       onSelectCells={onSelectCells} onProject={onProject} onDone={() => undefined} />,
   ));
   await act(async () => { await Promise.resolve(); });
@@ -98,4 +98,44 @@ it("sends the tools over the selected cells, and the statistic", async () => {
   });
   expect(api.setSegmentStatistic).toHaveBeenCalledWith(30, "median");
   expect(onProject).toHaveBeenCalled();
+});
+
+it("converts speeds only at the table: m/s and km/h round-trip at two decimals", () => {
+  // 1 kn = 1852 m / 3600 s exactly.
+  expect(showSpeed(10, "ms")).toBe("5.14");
+  expect(showSpeed(10, "kmh")).toBe("18.52");
+  expect(parseSpeed("18.52", "kmh")).toBeCloseTo(10, 12);
+  expect(parseSpeed("5", "ms")).toBeCloseTo(5 * 3600 / 1852, 12);
+  // The limit as shown in the unit is accepted and stored as 60 kn.
+  expect(showSpeed(60, "ms")).toBe("30.87");
+  expect(parseSpeed("30.87", "ms")).toBe(60);
+  expect(parseSpeed("30.88", "ms")).toBeUndefined();
+  expect(parseSpeed("111.12", "kmh")).toBe(60);
+  // Whatever is typed at the table's precision shows back unchanged.
+  for (const unit of ["kn", "ms", "kmh"] as const) {
+    for (let hundredths = 0; hundredths <= 3087; hundredths += 7) {
+      const typed = (hundredths / 100).toFixed(2);
+      expect(showSpeed(parseSpeed(typed, unit)!, unit)).toBe(typed);
+    }
+  }
+});
+
+it("shows and takes values in the display unit, sending knots", async () => {
+  await render([], "ms");
+  const inputs = [...host.querySelectorAll<HTMLInputElement>(".view3d-edit-cell input")];
+  expect(inputs.map((input) => input.value)).toEqual(["", showSpeed(5.5, "ms"), "", showSpeed(6.81, "ms")]);
+  expect(inputs[3]!.title).toBe(`Segment value ${showSpeed(6.81, "ms")} m/s · 10 samples, spread ±${showSpeed(0.3, "ms")} m/s`);
+  expect([...host.querySelectorAll("thead th")].map((th) => th.textContent)).toEqual(["TWA \\ TWS", "4.1", "6.2"]);
+  const type = async (input: HTMLInputElement, text: string) => {
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, text);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => { input.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); });
+  };
+  // Typing back what the cell shows is no edit.
+  await type(inputs[3]!, showSpeed(6.81, "ms"));
+  expect(api.editPolar).not.toHaveBeenCalled();
+  await type(inputs[3]!, "4");
+  expect(api.editPolar).toHaveBeenLastCalledWith(30, { type: "type", bsp: 4 * 3600 / 1852 }, [{ twa_index: 1, tws_index: 1 }]);
 });
