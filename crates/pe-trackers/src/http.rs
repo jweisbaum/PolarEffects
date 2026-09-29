@@ -96,6 +96,10 @@ enum Failure {
 pub struct Fetcher {
     client: reqwest::blocking::Client,
     cancel: Arc<AtomicBool>,
+    /// The stop flags of the [`Pending`]s this fetcher's GET runs under:
+    /// set when nobody waits for its answer any more (M17a), so a failed
+    /// event's detached downloads stop without cancelling the download.
+    stops: Vec<Arc<AtomicBool>>,
     backoff: Duration,
     tracker: &'static str,
 }
@@ -110,6 +114,7 @@ impl Fetcher {
         Ok(Self {
             client: crate::net::client(timeout)?,
             cancel,
+            stops: Vec::new(),
             backoff: FIRST_BACKOFF,
             tracker,
         })
@@ -124,7 +129,7 @@ impl Fetcher {
 
     /// Whether the download has been cancelled.
     pub fn cancelled(&self) -> bool {
-        self.cancel.load(Ordering::SeqCst)
+        self.cancel.load(Ordering::SeqCst) || self.stops.iter().any(|s| s.load(Ordering::SeqCst))
     }
 
     /// Fails with [`TrackerError::Cancelled`] once cancelled.
@@ -305,7 +310,7 @@ impl Fetcher {
 
     /// A gzipped body, inflated under the same cap as a plain one.
     fn gunzip(&self, body: &[u8], url: &str) -> std::result::Result<Vec<u8>, Failure> {
-        let mut out = Vec::with_capacity(body.len().saturating_mul(4));
+        let mut out = Vec::with_capacity(inflate_capacity(body.len()));
         flate2::read::GzDecoder::new(body)
             .take(MAX_BODY_BYTES + 1)
             .read_to_end(&mut out)
@@ -343,7 +348,9 @@ impl Fetcher {
         then: impl FnOnce(Vec<u8>) -> Result<T> + Send + 'static,
     ) -> Result<Pending<T>> {
         let (tx, rx) = std::sync::mpsc::channel();
-        let fetcher = self.clone();
+        let stop = Arc::new(AtomicBool::new(false));
+        let mut fetcher = self.clone();
+        fetcher.stops.push(Arc::clone(&stop));
         std::thread::Builder::new()
             .name("tracker-get".to_owned())
             .spawn(move || {
@@ -359,8 +366,17 @@ impl Fetcher {
         Ok(Pending {
             rx,
             fetcher: self.clone(),
+            stop,
         })
     }
+}
+
+/// The first allocation for inflating a `compressed`-byte gzip body: four
+/// times it, as text compresses, but never more than the body cap (a
+/// 256 MB body would otherwise ask for 1 GB before reading a byte, M17a).
+fn inflate_capacity(compressed: usize) -> usize {
+    let cap = usize::try_from(MAX_BODY_BYTES).unwrap_or(usize::MAX);
+    compressed.saturating_mul(4).min(cap)
 }
 
 enum Message<T> {
@@ -373,6 +389,16 @@ enum Message<T> {
 pub struct Pending<T> {
     rx: std::sync::mpsc::Receiver<Message<T>>,
     fetcher: Fetcher,
+    /// Stops the GET's thread when this is dropped unanswered.
+    stop: Arc<AtomicBool>,
+}
+
+impl<T> Drop for Pending<T> {
+    /// An answer nobody will read: its thread stops at its next read or
+    /// pause instead of downloading on (a failed event's other requests).
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+    }
 }
 
 impl<T> std::fmt::Debug for Message<T> {
@@ -519,6 +545,77 @@ mod tests {
         ));
         assert!(started.elapsed() < Duration::from_secs(2));
         drop(quiet);
+    }
+
+    #[test]
+    fn inflating_never_preallocates_past_the_body_cap() {
+        let cap = usize::try_from(MAX_BODY_BYTES).expect("fits");
+        assert_eq!(inflate_capacity(0), 0);
+        assert_eq!(inflate_capacity(1000), 4000);
+        assert_eq!(inflate_capacity(cap / 4), cap);
+        assert_eq!(inflate_capacity(cap / 4 + 1), cap);
+        assert_eq!(inflate_capacity(cap), cap);
+        assert_eq!(inflate_capacity(usize::MAX), cap);
+    }
+
+    /// Dropping a [`Pending`] nobody waits for stops its thread mid-body,
+    /// while the download's own cancel stays unset (M17a).
+    #[test]
+    fn a_dropped_pending_stops_its_download() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("binds");
+        let addr = listener.local_addr().expect("an address");
+        // A body trickled out for up to a minute; the server stops when a
+        // write fails, i.e. when the client has hung up.
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("a connection");
+            let mut buf = [0u8; 4096];
+            let _ = stream.read(&mut buf);
+            let head = "HTTP/1.1 200 OK\r\nContent-Length: 100000000\r\nConnection: close\r\n\r\n";
+            if stream.write_all(head.as_bytes()).is_err() {
+                return Instant::now();
+            }
+            let started = Instant::now();
+            while started.elapsed() < Duration::from_secs(60) {
+                if stream
+                    .write_all(&[b'x'; 512])
+                    .and_then(|()| stream.flush())
+                    .is_err()
+                {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Instant::now()
+        });
+        let cancel = Arc::new(AtomicBool::new(false));
+        let fetcher =
+            Fetcher::new("Test", Duration::from_secs(30), Arc::clone(&cancel)).expect("a client");
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let pending = fetcher
+            .spawn(
+                format!("http://127.0.0.1:{}/x", addr.port()),
+                None,
+                move |b| {
+                    let _ = done_tx.send(b.len());
+                    Ok(())
+                },
+            )
+            .expect("spawns");
+        std::thread::sleep(Duration::from_millis(300));
+        let dropped = Instant::now();
+        drop(pending);
+        let stopped = server.join().expect("server");
+        assert!(
+            stopped.duration_since(dropped) < Duration::from_secs(10),
+            "the thread hung up {:?} after the drop",
+            stopped.duration_since(dropped)
+        );
+        assert!(
+            !cancel.load(Ordering::SeqCst),
+            "the download is not cancelled"
+        );
+        assert!(!fetcher.cancelled(), "nor is the fetcher that spawned it");
+        assert!(done_rx.try_recv().is_err(), "no answer was decoded");
     }
 
     #[test]

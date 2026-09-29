@@ -174,4 +174,25 @@ mod tests {
         assert!(!temp_path_for(&target).exists());
         let _ = std::fs::remove_dir_all(d);
     }
+
+    /// A panic while the file is written unwinds through its drop, which
+    /// removes the temporary; nothing reaches the target (M17a).
+    #[test]
+    fn a_panic_while_writing_leaves_no_temporary() {
+        let dir = dir("panic");
+        let target = dir.join("out.grib2");
+        std::fs::write(&target, b"before").unwrap();
+        let temp = temp_path_for(&target);
+        let result = std::panic::catch_unwind(|| {
+            let mut file = GribFile::create(&target).unwrap();
+            file.write(&spec(), &vec![1.0f32; spec().grid.point_count() as usize])
+                .unwrap();
+            assert!(temp_path_for(&target).exists());
+            panic!("a bug mid-export");
+        });
+        assert!(result.is_err());
+        assert!(!temp.exists(), "the temporary is gone");
+        assert_eq!(std::fs::read(&target).unwrap(), b"before");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

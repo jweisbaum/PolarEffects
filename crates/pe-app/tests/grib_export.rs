@@ -543,6 +543,48 @@ fn a_cancelled_export_leaves_the_path_as_it_was() {
     assert!(left.is_empty(), "{left:?}");
 }
 
+/// A panic mid-export (a bug) unwinds through the file and the spool,
+/// which delete their temporaries; what was at the path stays (M17a). It
+/// panics on the progress after the last hour's messages are written:
+/// the current is still spooled and every message is in the temporary,
+/// the commit not yet made.
+#[test]
+fn a_panic_mid_export_leaves_no_temporary() {
+    let root = TempRoot::new("grib-panic-mid");
+    let archives = root.0.join("archives");
+    write_archives(&archives);
+    let server = Server::start(archives);
+    let p = provider(&server.origin);
+    let path = root.0.join("race.grib2");
+    std::fs::write(&path, b"an earlier file").unwrap();
+    let temp = pe_grib::file::temp_path_for(&path);
+    let spool = root.0.join("race.grib2.current.tmp");
+    let mut seen = false;
+    let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        grib::export(
+            &p,
+            &plan(true, true),
+            &path,
+            &Arc::new(AtomicBool::new(false)),
+            &mut |f| {
+                if f >= 1.0 {
+                    seen = temp.exists() && spool.exists();
+                    panic!("a bug mid-export");
+                }
+            },
+        )
+    }));
+    assert!(unwound.is_err(), "the export panicked");
+    assert!(seen, "with the temporary and the spool on disk");
+    assert_eq!(std::fs::read(&path).unwrap(), b"an earlier file");
+    let left: Vec<_> = std::fs::read_dir(&root.0)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| n.contains(".tmp"))
+        .collect();
+    assert!(left.is_empty(), "{left:?}");
+}
+
 struct Quiet;
 
 impl GribSink for Quiet {
