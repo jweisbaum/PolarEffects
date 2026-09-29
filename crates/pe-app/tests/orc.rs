@@ -51,6 +51,7 @@ fn search_works_without_a_project_and_filters_apply() {
             year_min: Some(1999),
             year_max: Some(1999),
             country: Some("GBR".to_owned()),
+            ..OrcFilters::default()
         },
         200,
     )
@@ -66,6 +67,39 @@ fn search_works_without_a_project_and_filters_apply() {
 
     let nothing = orc::search(&app, "  ", OrcFilters::default(), 50).unwrap();
     assert_eq!((nothing.total, nothing.hits.len()), (0, 0));
+}
+
+#[test]
+fn field_queries_arrive_as_the_interface_sends_them() {
+    let root = TempRoot::new("orc-fields");
+    let app = root.state();
+    // The JSON `api.orcSearch` sends, typed into two fields.
+    let filters: OrcFilters = serde_json::from_value(serde_json::json!({
+        "year_min": null, "year_max": null, "country": null,
+        "name": "", "sail_no": "gbr/1124", "model": "SWAN", "builder": "",
+        "designer": "", "certificate_year": "",
+    }))
+    .unwrap();
+    let found = orc::search(&app, "", filters.clone(), 50).unwrap();
+    assert_eq!(found.hits[0].name, "Eratosthenes");
+    assert!(
+        found
+            .hits
+            .iter()
+            .all(|h| h.model.as_deref().unwrap_or("").contains("Swan"))
+    );
+    // A field is searched on its own: Swan is a model, not a sail number.
+    let wrong_field = OrcFilters {
+        sail_no: "swan".to_owned(),
+        ..OrcFilters::default()
+    };
+    assert_eq!(orc::search(&app, "", wrong_field, 50).unwrap().total, 0);
+    // Older callers that send no field queries still work.
+    let bare: OrcFilters = serde_json::from_value(
+        serde_json::json!({"year_min": 1999, "year_max": 1999, "country": "GBR"}),
+    )
+    .unwrap();
+    assert_eq!(bare.name, "");
 }
 
 #[test]

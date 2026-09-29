@@ -46,8 +46,10 @@ pub struct OrcCatalogueInfo {
     pub year_max: Option<i32>,
 }
 
-/// The search's filters (spec.md 5.2).
+/// The search's filters and its per-field queries (spec.md 5.2). A field
+/// query left empty is no condition.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, TS)]
+#[serde(default)]
 #[ts(export_to = "OrcFilters.ts")]
 pub struct OrcFilters {
     /// Earliest year built, inclusive.
@@ -56,6 +58,19 @@ pub struct OrcFilters {
     pub year_max: Option<i32>,
     /// A three-letter country code.
     pub country: Option<String>,
+    /// Words that must start words of the boat name.
+    pub name: String,
+    /// Words that must start words of the sail number (`GBR1124`, `GBR 1124`
+    /// and `GBR/1124` alike).
+    pub sail_no: String,
+    /// Words that must start words of the type or model.
+    pub model: String,
+    /// Words that must start words of the builder.
+    pub builder: String,
+    /// Words that must start words of the designer.
+    pub designer: String,
+    /// The start of the certificate year.
+    pub certificate_year: String,
 }
 
 /// One wind speed's curve in a result's thumbnail: the points the polar has
@@ -189,6 +204,14 @@ pub fn search(
         year_min: filters.year_min,
         year_max: filters.year_max,
         country: filters.country.filter(|c| !c.trim().is_empty()),
+        fields: pe_orc::Fields {
+            name: filters.name,
+            sail_no: filters.sail_no,
+            model: filters.model,
+            builder: filters.builder,
+            designer: filters.designer,
+            certificate_year: filters.certificate_year,
+        },
     };
     let hits = catalogue.search(query, &filters, limit.clamp(1, MAX_LIMIT) as usize);
     let records: Vec<(u32, pe_core::orc::OrcRecord)> = hits

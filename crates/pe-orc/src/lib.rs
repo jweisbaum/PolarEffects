@@ -18,7 +18,7 @@ use std::sync::OnceLock;
 use pe_core::orc::OrcRecord;
 
 pub use format::{Entry, Provenance};
-pub use search::{Filters, Hits};
+pub use search::{Fields, Filters, Hits};
 
 /// The catalogue as built into this binary.
 pub static EMBEDDED: &[u8] = include_bytes!("../data/catalogue.bin");

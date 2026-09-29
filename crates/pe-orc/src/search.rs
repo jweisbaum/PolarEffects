@@ -6,9 +6,14 @@
 //! are folded (case and accents), and the sail number is also indexed with its
 //! separators removed, so `GBR1124`, `GBR 1124` and `GBR/1124` all find it.
 //!
-//! Ranking, best first: the sail number exactly, then the name starting with
-//! the query, then the model starting with it, then any other match; within
-//! each, newer certificates first, then by name.
+//! Besides that box, each field can be searched on its own ([`Fields`]):
+//! every word of a field query must start a word of **that** field, with the
+//! same folding and compact forms, and every field query must match.
+//!
+//! Ranking, best first: a field query equal to its whole field, then the sail
+//! number exactly, then the name starting with the query, then the model
+//! starting with it, then any other match; within each, newer certificates
+//! first, then by name.
 //!
 //! The index is built once, when the catalogue is first used. A search is a
 //! linear scan of one pre-folded string per record, which over the ~18,000
@@ -16,6 +21,55 @@
 
 use crate::fold::{compact, fold, words};
 use crate::format::Entry;
+
+/// Queries on one field each (spec.md 5.2): the "Search by field" boxes.
+/// Empty means no condition on that field.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Fields {
+    /// Boat name.
+    pub name: String,
+    /// Sail number, with or without its country.
+    pub sail_no: String,
+    /// Type or model.
+    pub model: String,
+    /// Builder.
+    pub builder: String,
+    /// Designer.
+    pub designer: String,
+    /// Certificate year, matched from its start: `202` finds 2020 to 2029.
+    pub certificate_year: String,
+}
+
+/// The per-field search keys, in this order.
+const NAME: usize = 0;
+const SAIL: usize = 1;
+const MODEL: usize = 2;
+const BUILDER: usize = 3;
+const DESIGNER: usize = 4;
+const CERTIFICATE_YEAR: usize = 5;
+const FIELDS: usize = 6;
+
+impl Fields {
+    fn queries(&self) -> [&str; FIELDS] {
+        let mut out = [""; FIELDS];
+        out[NAME] = &self.name;
+        out[SAIL] = &self.sail_no;
+        out[MODEL] = &self.model;
+        out[BUILDER] = &self.builder;
+        out[DESIGNER] = &self.designer;
+        out[CERTIFICATE_YEAR] = &self.certificate_year;
+        out
+    }
+}
+
+/// One field query, prepared once per search.
+struct FieldQuery {
+    field: usize,
+    /// `" word"` for each word, as for the all-fields box.
+    needles: Vec<String>,
+    /// The query without separators, for the exact-field tier.
+    whole: String,
+}
 
 /// What the result list is narrowed to, besides the query.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -26,9 +80,13 @@ pub struct Filters {
     pub year_max: Option<i32>,
     /// Only this country's certificates, by three-letter code.
     pub country: Option<String>,
+    /// Queries on single fields.
+    pub fields: Fields,
 }
 
 impl Filters {
+    /// Whether nothing narrows the list, ignoring the field queries (which
+    /// the search prepares, and counts only when they hold a word).
     fn is_empty(&self) -> bool {
         self.year_min.is_none() && self.year_max.is_none() && self.country.is_none()
     }
@@ -77,15 +135,21 @@ struct Keys {
     sail: String,
     /// The sail number without separators or its country prefix.
     sail_number: String,
+    /// Per field (`NAME`…`CERTIFICATE_YEAR`): its words, each preceded by a
+    /// space, plus its compact form where it has one.
+    fields: [String; FIELDS],
+    /// Per field: the whole field without separators, for the exact tier.
+    wholes: [String; FIELDS],
     /// Place in the order of newer certificates first, then name.
     order: u32,
 }
 
 /// Ranking tiers (spec.md 5.2), best first.
-const EXACT_SAIL: u8 = 0;
-const NAME_PREFIX: u8 = 1;
-const MODEL_PREFIX: u8 = 2;
-const OTHER: u8 = 3;
+const EXACT_FIELD: u8 = 0;
+const EXACT_SAIL: u8 = 1;
+const NAME_PREFIX: u8 = 2;
+const MODEL_PREFIX: u8 = 3;
+const OTHER: u8 = 4;
 
 /// The search index over a catalogue's entries.
 #[derive(Debug)]
@@ -95,6 +159,24 @@ pub struct Index {
 
 fn joined(text: Option<&str>) -> String {
     text.map(|t| words(t).join(" ")).unwrap_or_default()
+}
+
+/// `text`'s words, each preceded by a space, then each of `extra` that is
+/// not empty and not already one of them.
+fn haystack(text: &str, extra: &[&str]) -> String {
+    let mut hay = String::new();
+    let own = words(text);
+    for word in &own {
+        hay.push(' ');
+        hay.push_str(word);
+    }
+    for more in extra {
+        if !more.is_empty() && !own.iter().any(|w| w == more) {
+            hay.push(' ');
+            hay.push_str(more);
+        }
+    }
+    hay
 }
 
 impl Index {
@@ -153,12 +235,39 @@ impl Index {
                     hay.push(' ');
                     hay.push_str(&year.to_string());
                 }
+                let model = entry.model.as_deref().unwrap_or("");
+                let builder = entry.builder.as_deref().unwrap_or("");
+                let designer = entry.designer.as_deref().unwrap_or("");
+                let certificate = entry
+                    .certificate_year
+                    .map(|y| y.to_string())
+                    .unwrap_or_default();
+                let (model_c, builder_c, designer_c) =
+                    (compact(model), compact(builder), compact(designer));
+                let fields = [
+                    haystack(&entry.name, &[&name]),
+                    haystack(&entry.sail_no, &[&sail, &sail_number]),
+                    haystack(model, &[&model_c]),
+                    haystack(builder, &[&builder_c]),
+                    haystack(designer, &[&designer_c]),
+                    haystack(&certificate, &[]),
+                ];
+                let wholes = [
+                    name,
+                    sail.clone(),
+                    model_c,
+                    builder_c,
+                    designer_c,
+                    certificate,
+                ];
                 Keys {
                     hay,
                     name: joined(Some(&entry.name)),
                     model: joined(entry.model.as_deref()),
                     sail,
                     sail_number,
+                    fields,
+                    wholes,
                     order,
                 }
             })
@@ -167,11 +276,25 @@ impl Index {
     }
 
     /// The best `limit` records for `query` within `filters`. An empty query
-    /// with no filter finds nothing; with a filter, it lists what the filter
-    /// admits, newest certificates first.
+    /// with no filter or field query finds nothing; with one, it lists what
+    /// they admit, newest certificates first.
     pub fn search(&self, entries: &[Entry], query: &str, filters: &Filters, limit: usize) -> Hits {
         let query_words = words(query);
-        if query_words.is_empty() && filters.is_empty() {
+        let field_queries: Vec<FieldQuery> = filters
+            .fields
+            .queries()
+            .into_iter()
+            .enumerate()
+            .filter_map(|(field, text)| {
+                let needles: Vec<String> = words(text).iter().map(|w| format!(" {w}")).collect();
+                (!needles.is_empty()).then(|| FieldQuery {
+                    field,
+                    needles,
+                    whole: compact(text),
+                })
+            })
+            .collect();
+        if query_words.is_empty() && field_queries.is_empty() && filters.is_empty() {
             return Hits::default();
         }
         let needles: Vec<String> = query_words.iter().map(|w| format!(" {w}")).collect();
@@ -186,10 +309,21 @@ impl Index {
             {
                 continue;
             }
+            if !field_queries.iter().all(|q| {
+                let hay = &keys.fields[q.field];
+                q.needles.iter().all(|needle| hay.contains(needle.as_str()))
+            }) {
+                continue;
+            }
             if !filters.admits(entry) {
                 continue;
             }
-            let tier = if !whole.is_empty() && (keys.sail == whole || keys.sail_number == whole) {
+            let exact_field = field_queries.iter().any(|q| {
+                keys.wholes[q.field] == q.whole || (q.field == SAIL && keys.sail_number == q.whole)
+            });
+            let tier = if exact_field {
+                EXACT_FIELD
+            } else if !whole.is_empty() && (keys.sail == whole || keys.sail_number == whole) {
                 EXACT_SAIL
             } else if !phrase.is_empty() && keys.name.starts_with(&phrase) {
                 NAME_PREFIX
@@ -314,5 +448,232 @@ mod tests {
         assert_eq!(ids(&index, &entries, "farr", &years), vec![3, 1, 2]);
         let hits = index.search(&entries, "farr", &years, 1);
         assert_eq!((hits.total, hits.ids), (3, vec![3]));
+    }
+
+    fn by_field(fields: Fields) -> Filters {
+        Filters {
+            fields,
+            ..Filters::default()
+        }
+    }
+
+    /// The fleet, with designers and builders that share words with other
+    /// fields, so a match in the wrong field would show.
+    fn designed() -> Vec<Entry> {
+        let mut entries = fleet();
+        entries[0].designer = Some("Bruce Farr".to_owned());
+        entries[1].designer = Some("Rod Johnstone".to_owned());
+        entries[1].builder = Some("J/Boats".to_owned());
+        entries[2].designer = Some("Farr Yacht Design".to_owned());
+        entries[3].designer = None;
+        entries[4].designer = Some("Berret-Racoupeau".to_owned());
+        entries[4].builder = Some("Bénéteau".to_owned());
+        entries.push(boat("TUR 1", "TUR", "O'Neil İstanbul", "X-35", 2010, 2024)); // 5
+        entries
+    }
+
+    #[test]
+    fn a_field_query_matches_word_starts_of_that_field_only() {
+        let entries = designed();
+        let index = Index::new(&entries);
+        let name = |q: &str| {
+            by_field(Fields {
+                name: q.to_owned(),
+                ..Fields::default()
+            })
+        };
+        // "farr" starts the names Farrago and Farr Out; the Farr 40 models and
+        // Bruce Farr the designer do not count in the name field.
+        assert_eq!(ids(&index, &entries, "", &name("farr")), vec![3, 1]);
+        // Word starts only: "arr" is inside a word.
+        assert!(ids(&index, &entries, "", &name("arr")).is_empty());
+        // Tokens are ANDed within the field.
+        assert_eq!(ids(&index, &entries, "", &name("out farr")), vec![3]);
+        assert!(ids(&index, &entries, "", &name("farr jiminy")).is_empty());
+        let designer = |q: &str| {
+            by_field(Fields {
+                designer: q.to_owned(),
+                ..Fields::default()
+            })
+        };
+        assert_eq!(ids(&index, &entries, "", &designer("farr")), vec![2, 0]);
+        assert_eq!(ids(&index, &entries, "", &designer("jOhN")), vec![1]);
+        let model = |q: &str| {
+            by_field(Fields {
+                model: q.to_owned(),
+                ..Fields::default()
+            })
+        };
+        assert_eq!(ids(&index, &entries, "", &model("farr 40")), vec![3, 2, 0]);
+        assert_eq!(ids(&index, &entries, "", &model("j/109")), vec![1]);
+        assert_eq!(ids(&index, &entries, "", &model("j109")), vec![1]);
+        assert!(ids(&index, &entries, "", &model("jiminy")).is_empty());
+        let builder = |q: &str| {
+            by_field(Fields {
+                builder: q.to_owned(),
+                ..Fields::default()
+            })
+        };
+        assert_eq!(ids(&index, &entries, "", &builder("j")), vec![1]);
+        // Punctuation-only queries are no condition, and so find nothing alone.
+        assert!(ids(&index, &entries, "", &builder(" / ")).is_empty());
+    }
+
+    #[test]
+    fn a_field_query_folds_case_and_accents_and_accepts_compact_forms() {
+        let entries = designed();
+        let index = Index::new(&entries);
+        let builder = |q: &str| {
+            by_field(Fields {
+                builder: q.to_owned(),
+                ..Fields::default()
+            })
+        };
+        for query in ["beneteau", "BENETEAU", "Bénéteau", "be\u{301}ne\u{301}teau"] {
+            assert_eq!(
+                ids(&index, &entries, "", &builder(query)),
+                vec![4],
+                "{query}"
+            );
+        }
+        let name = |q: &str| {
+            by_field(Fields {
+                name: q.to_owned(),
+                ..Fields::default()
+            })
+        };
+        for query in [
+            "oneil",
+            "o'neil",
+            "O NEIL",
+            "istanbul",
+            "İSTANBUL",
+            "fröken",
+            "froken",
+        ] {
+            assert_eq!(ids(&index, &entries, "", &name(query)).len(), 1, "{query}");
+        }
+        let sail = |q: &str| {
+            by_field(Fields {
+                sail_no: q.to_owned(),
+                ..Fields::default()
+            })
+        };
+        for query in ["GBR1124", "GBR 1124", "GBR/1124", "gbr-1124", "1124"] {
+            // GBR 11240 starts with it too, but the exact number comes first.
+            assert_eq!(
+                ids(&index, &entries, "", &sail(query)),
+                vec![0, 4],
+                "{query}"
+            );
+        }
+        // The country alone in the sail field is a word of the sail number.
+        assert_eq!(ids(&index, &entries, "", &sail("ita")), vec![2]);
+        // Not a word of any other field: "farr" is no sail number.
+        assert!(ids(&index, &entries, "", &sail("farr")).is_empty());
+        let designer = |q: &str| {
+            by_field(Fields {
+                designer: q.to_owned(),
+                ..Fields::default()
+            })
+        };
+        assert_eq!(
+            ids(&index, &entries, "", &designer("berretracoupeau")),
+            vec![4]
+        );
+    }
+
+    #[test]
+    fn every_field_query_the_box_and_the_filters_must_all_match() {
+        let entries = designed();
+        let index = Index::new(&entries);
+        let farr_models = Fields {
+            model: "farr".to_owned(),
+            ..Fields::default()
+        };
+        // Model Farr and designer Farr: Jiminy and Fröken, not Farr Out.
+        let both = by_field(Fields {
+            designer: "farr".to_owned(),
+            ..farr_models.clone()
+        });
+        assert_eq!(ids(&index, &entries, "", &both), vec![2, 0]);
+        // ... and the all-fields box as well.
+        assert_eq!(ids(&index, &entries, "ita", &both), vec![2]);
+        assert!(ids(&index, &entries, "usa", &both).is_empty());
+        // ... and the year and country filters.
+        let built = Filters {
+            year_min: Some(2000),
+            fields: both.fields.clone(),
+            ..Filters::default()
+        };
+        assert_eq!(ids(&index, &entries, "", &built), vec![2]);
+        let country = Filters {
+            country: Some("GBR".to_owned()),
+            fields: both.fields.clone(),
+            ..Filters::default()
+        };
+        assert_eq!(ids(&index, &entries, "", &country), vec![0]);
+    }
+
+    #[test]
+    fn year_built_ranges_and_the_certificate_year_field() {
+        let entries = designed();
+        let index = Index::new(&entries);
+        let built = |min: Option<i32>, max: Option<i32>| Filters {
+            year_min: min,
+            year_max: max,
+            ..Filters::default()
+        };
+        assert_eq!(
+            ids(&index, &entries, "", &built(Some(2001), Some(2001))),
+            vec![2]
+        );
+        assert_eq!(
+            ids(&index, &entries, "", &built(Some(2004), None)),
+            vec![1, 5, 4]
+        );
+        assert_eq!(ids(&index, &entries, "", &built(None, Some(1999))), vec![0]);
+        assert!(ids(&index, &entries, "", &built(Some(2005), Some(2004))).is_empty());
+        let cert = |q: &str| {
+            by_field(Fields {
+                certificate_year: q.to_owned(),
+                ..Fields::default()
+            })
+        };
+        assert_eq!(ids(&index, &entries, "", &cert("2024")), vec![1, 5, 4]);
+        // From its start, as a word: "202" is 2020 to 2029, "024" nothing.
+        assert_eq!(ids(&index, &entries, "", &cert("202")).len(), 6);
+        assert!(ids(&index, &entries, "", &cert("024")).is_empty());
+        // The certificate year is not the year built: none was built in 2024.
+        assert!(ids(&index, &entries, "", &built(Some(2024), Some(2024))).is_empty());
+        let with_built = Filters {
+            year_min: Some(2005),
+            ..cert("2024")
+        };
+        assert_eq!(ids(&index, &entries, "", &with_built), vec![5, 4]);
+    }
+
+    #[test]
+    fn an_exact_field_match_ranks_first() {
+        let mut entries = designed();
+        // A boat called exactly Farr, with the oldest certificate of all.
+        entries.push(boat("NZL 1", "NZL", "Farr", "Farr 40", 1990, 2010)); // 6
+        entries.push(boat("AUS 2", "AUS", "Zed", "Farr 40 OD", 2020, 2026)); // 7
+        let index = Index::new(&entries);
+        let name = by_field(Fields {
+            name: "farr".to_owned(),
+            ..Fields::default()
+        });
+        assert_eq!(ids(&index, &entries, "", &name), vec![6, 3, 1]);
+        // Model "farr 40" equals four models exactly; they come before the
+        // prefix-only "Farr 40 OD", although its certificate is the newest.
+        let model = by_field(Fields {
+            model: "farr 40".to_owned(),
+            ..Fields::default()
+        });
+        assert_eq!(ids(&index, &entries, "", &model), vec![3, 2, 0, 6, 7]);
+        // Below the exact field, the box's own tiers still apply: with "40"
+        // in the box, USA 40's exact sail number comes before Farr Out.
+        assert_eq!(ids(&index, &entries, "40", &name), vec![6, 1, 3]);
     }
 }

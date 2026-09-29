@@ -10,16 +10,11 @@ import { setHint } from "../hint";
 import { useT } from "../i18n";
 import { api, IpcError } from "../ipc";
 import ConfirmDialog from "../project/ConfirmDialog";
+import { activeCount, type FieldQueries, loadFieldsOpen, NO_FIELDS, saveFieldsOpen, toFilters } from "./orcFields";
 import { THUMB_HEIGHT, THUMB_WIDTH, thumbPaths } from "./orcThumb";
 
 /** How many results a search shows. */
 const LIMIT = 50;
-
-/** A year field's value as a filter: a whole number, or none. */
-function year(text: string): number | null {
-  const value = Number.parseInt(text, 10);
-  return Number.isFinite(value) ? value : null;
-}
 
 /** The fields a result or an added certificate shows under its name. */
 function meta(parts: (string | number | null | undefined)[]): string {
@@ -42,7 +37,8 @@ function Thumb({ hit }: { hit: OrcHit }) {
 /**
  * The ORC polars section of the left navigation (spec.md 5): one search box
  * over the embedded catalogue, results updated as you type with a thumbnail
- * each, filters by year built and country, Add (asks first when the project
+ * each; under it "Search by field", one box per field (year built and
+ * country among them), folded away until wanted; Add (asks first when the project
  * already holds that certificate), and the certificates already added, each
  * with its colour and Remove (undoable).
  */
@@ -53,9 +49,8 @@ export default function OrcPolars({ project, onProject }: {
   const t = useT();
   const [info, setInfo] = useState<OrcCatalogueInfo | null>(null);
   const [query, setQuery] = useState("");
-  const [yearFrom, setYearFrom] = useState("");
-  const [yearTo, setYearTo] = useState("");
-  const [country, setCountry] = useState("");
+  const [fields, setFields] = useState<FieldQueries>(NO_FIELDS);
+  const [fieldsOpen, setFieldsOpen] = useState(loadFieldsOpen);
   const [result, setResult] = useState<OrcSearchResult | null>(null);
   const [again, setAgain] = useState<OrcHit | null>(null);
   const latest = useRef(0);
@@ -74,24 +69,34 @@ export default function OrcPolars({ project, onProject }: {
   useEffect(() => onReveal("orc:results", () => {
     if (listing.current) return;
     setQuery("");
-    setCountry("");
-    setYearTo("");
-    setYearFrom(String(newest.current ?? new Date().getFullYear()));
+    setFields({ ...NO_FIELDS, year_from: String(newest.current ?? new Date().getFullYear()) });
   }), []);
 
+  // The reveal step of every per-field box: unfold "Search by field".
+  useEffect(() => onReveal("orc:fields", () => setFieldsOpen(true)), []);
+  useEffect(() => saveFieldsOpen(fieldsOpen), [fieldsOpen]);
+
   // Every keystroke searches; only the newest answer is shown.
+  const active = activeCount(fields);
   useEffect(() => {
-    const filters = { year_min: year(yearFrom), year_max: year(yearTo), country: country === "" ? null : country };
-    if (query.trim() === "" && filters.year_min === null && filters.year_max === null && filters.country === null) {
+    if (query.trim() === "" && active === 0) {
       latest.current += 1;
       setResult(null);
       return;
     }
     const ticket = ++latest.current;
-    api.orcSearch(query, filters, LIMIT)
+    api.orcSearch(query, toFilters(fields), LIMIT)
       .then((found) => { if (ticket === latest.current) setResult(found); })
       .catch(reportFailure);
-  }, [query, yearFrom, yearTo, country, project.revision]);
+  }, [query, fields, active, project.revision]);
+
+  const field = (key: keyof FieldQueries) => ({
+    value: fields[key],
+    onChange: (event: { target: { value: string } }) => {
+      const value = event.target.value;
+      setFields((before) => ({ ...before, [key]: value }));
+    },
+  });
 
   const add = async (hit: OrcHit, allowDuplicate: boolean) => {
     if (hit.in_project && !allowDuplicate) {
@@ -118,21 +123,51 @@ export default function OrcPolars({ project, onProject }: {
         aria-label={t("Search the ORC catalogue")}
         title={t("Every word must match a field: name, sail number, country, model, builder, designer or year")}
         onChange={(event) => setQuery(event.target.value)} />
-      <div className="orc-filters">
-        <input type="number" inputMode="numeric" value={yearFrom} data-feature="orc:year-from"
-          min={info?.year_min ?? undefined} max={info?.year_max ?? undefined}
-          placeholder={t("From")} aria-label={t("Built from")} title={t("Earliest year built")}
-          onChange={(event) => setYearFrom(event.target.value)} />
-        <input type="number" inputMode="numeric" value={yearTo} data-feature="orc:year-to"
-          min={info?.year_min ?? undefined} max={info?.year_max ?? undefined}
-          placeholder={t("To")} aria-label={t("Built until")} title={t("Latest year built")}
-          onChange={(event) => setYearTo(event.target.value)} />
-        <select value={country} data-feature="orc:country" aria-label={t("Country")}
-          title={t("Only certificates from this country")} onChange={(event) => setCountry(event.target.value)}>
-          <option value="">{t("All countries")}</option>
-          {(info?.countries ?? []).map((code) => <option key={code} value={code}>{code}</option>)}
-        </select>
-      </div>
+      <button type="button" className="orc-fields-toggle" data-feature="orc:fields" aria-expanded={fieldsOpen}
+        aria-controls="orc-fields" title={t("Search each field on its own")}
+        onClick={() => setFieldsOpen((open) => !open)}>
+        <span className="disclose" aria-hidden="true">{fieldsOpen ? "▾" : "▸"}</span>
+        {active === 0 ? t("Search by field") : t("Search by field ({count})", { count: active })}
+      </button>
+      {fieldsOpen && (
+        <div className="orc-fields" id="orc-fields" role="group" aria-label={t("Search by field")}>
+          <input type="search" {...field("name")} data-feature="orc:field-name"
+            placeholder={t("Boat name")} aria-label={t("Boat name")}
+            title={t("Every word must start a word of the boat name")} />
+          <input type="search" {...field("sail_no")} data-feature="orc:field-sail"
+            placeholder={t("Sail number")} aria-label={t("Sail number")}
+            title={t("With or without the country: GBR1124, GBR 1124 and GBR/1124 are the same")} />
+          <select {...field("country")} data-feature="orc:country" aria-label={t("Country")}
+            title={t("Only certificates from this country")}>
+            <option value="">{t("All countries")}</option>
+            {(info?.countries ?? []).map((code) => <option key={code} value={code}>{code}</option>)}
+          </select>
+          <input type="search" {...field("model")} data-feature="orc:field-model"
+            placeholder={t("Model / type")} aria-label={t("Model / type")}
+            title={t("Every word must start a word of the model or type")} />
+          <input type="search" {...field("builder")} data-feature="orc:field-builder"
+            placeholder={t("Builder")} aria-label={t("Builder")}
+            title={t("Every word must start a word of the builder")} />
+          <input type="search" {...field("designer")} data-feature="orc:field-designer"
+            placeholder={t("Designer")} aria-label={t("Designer")}
+            title={t("Every word must start a word of the designer")} />
+          <input type="number" inputMode="numeric" {...field("year_from")} data-feature="orc:year-from"
+            min={info?.year_min ?? undefined} max={info?.year_max ?? undefined}
+            placeholder={t("Built from")} aria-label={t("Built from")} title={t("Earliest year built")} />
+          <input type="number" inputMode="numeric" {...field("year_to")} data-feature="orc:year-to"
+            min={info?.year_min ?? undefined} max={info?.year_max ?? undefined}
+            placeholder={t("Built until")} aria-label={t("Built until")} title={t("Latest year built")} />
+          <input type="search" inputMode="numeric" maxLength={4} {...field("certificate_year")}
+            data-feature="orc:field-certificate-year"
+            placeholder={t("Certificate year")} aria-label={t("Certificate year")}
+            title={t("The certificate year, or its start: 202 finds 2020 to 2029")} />
+          <button type="button" className="small" data-feature="orc:fields-clear" disabled={active === 0}
+            title={t("Empty every field box; the search box above is kept")}
+            onClick={() => setFields(NO_FIELDS)}>
+            {t("Clear")}
+          </button>
+        </div>
+      )}
       {result !== null && (
         <>
           <p className="muted orc-count">

@@ -4,7 +4,7 @@
 
 use std::time::{Duration, Instant};
 
-use pe_orc::{Filters, catalogue, provenance};
+use pe_orc::{Fields, Filters, catalogue, provenance};
 
 /// GBR 1124, Eratosthenes, a 1999 Nautor Swan 112, as orc-data's
 /// `site/data/GBR/1124.json` gives it (commit c2ca870c, 2026-09-28). The
@@ -113,6 +113,88 @@ fn words_across_fields_are_anded_and_accents_fold() {
     );
 }
 
+#[test]
+fn each_field_is_searched_on_its_own() {
+    let catalogue = catalogue().unwrap();
+    let only = |fields: Fields| Filters {
+        fields,
+        ..Filters::default()
+    };
+    for query in ["GBR1124", "GBR 1124", "GBR/1124", "1124"] {
+        let hits = catalogue.search(
+            "",
+            &only(Fields {
+                sail_no: query.to_owned(),
+                ..Fields::default()
+            }),
+            50,
+        );
+        let first = catalogue.entry(hits.ids[0]).unwrap();
+        assert_eq!(first.name, "Eratosthenes", "{query}");
+    }
+    // Model and builder together, each in its own field.
+    let swans = only(Fields {
+        model: "swan 112".to_owned(),
+        builder: "nautor".to_owned(),
+        ..Fields::default()
+    });
+    let hits = catalogue.search("", &swans, 200);
+    assert!(hits.total >= 1);
+    for id in &hits.ids {
+        let entry = catalogue.entry(*id).unwrap();
+        assert!(entry.model.as_deref().unwrap_or("").contains("112"));
+        assert!(
+            entry
+                .builder
+                .as_deref()
+                .unwrap_or("")
+                .to_lowercase()
+                .contains("nautor")
+        );
+    }
+    // "nautor" is a builder, never a boat name here.
+    let named = catalogue.search(
+        "",
+        &only(Fields {
+            name: "nautor".to_owned(),
+            ..Fields::default()
+        }),
+        200,
+    );
+    for id in &named.ids {
+        let name = catalogue.entry(*id).unwrap().name.to_lowercase();
+        assert!(
+            name.split(|c: char| !c.is_alphanumeric())
+                .any(|w| w.starts_with("nautor")),
+            "{name}"
+        );
+    }
+    // The designer field, with the certificate year from its start.
+    let frers = only(Fields {
+        designer: "frers".to_owned(),
+        certificate_year: "202".to_owned(),
+        ..Fields::default()
+    });
+    let hits = catalogue.search("", &frers, 200);
+    assert!(hits.total >= 1);
+    for id in &hits.ids {
+        let entry = catalogue.entry(*id).unwrap();
+        assert!(
+            entry
+                .designer
+                .as_deref()
+                .unwrap_or("")
+                .to_lowercase()
+                .contains("frers")
+        );
+        assert!(
+            entry
+                .certificate_year
+                .is_some_and(|y| (2020..2030).contains(&y))
+        );
+    }
+}
+
 /// spec.md 13: a search result update within 30 ms of each keystroke, over
 /// the full catalogue. Every prefix of each query is one keystroke.
 #[test]
@@ -137,7 +219,7 @@ fn search_meets_the_keystroke_budget() {
         Filters {
             year_min: Some(1990),
             year_max: Some(2010),
-            country: None,
+            ..Filters::default()
         },
     ];
     let mut times: Vec<Duration> = Vec::new();
@@ -146,6 +228,48 @@ fn search_meets_the_keystroke_budget() {
             for end in query.char_indices().map(|(i, c)| i + c.len_utf8()) {
                 let started = Instant::now();
                 let hits = catalogue.search(&query[..end], filter, 50);
+                times.push(started.elapsed());
+                assert!(hits.ids.len() <= 50);
+            }
+        }
+    }
+    // The same keystrokes typed into single fields, alone, with the box and
+    // with a second field already filled in.
+    let fields: [fn(&str) -> Fields; 5] = [
+        |q| Fields {
+            name: q.to_owned(),
+            ..Fields::default()
+        },
+        |q| Fields {
+            sail_no: q.to_owned(),
+            ..Fields::default()
+        },
+        |q| Fields {
+            model: q.to_owned(),
+            builder: "b".to_owned(),
+            ..Fields::default()
+        },
+        |q| Fields {
+            designer: q.to_owned(),
+            certificate_year: "20".to_owned(),
+            ..Fields::default()
+        },
+        |q| Fields {
+            builder: q.to_owned(),
+            name: "a".to_owned(),
+            ..Fields::default()
+        },
+    ];
+    for field in fields {
+        for (query, boxed) in queries.iter().zip(["", "e"].iter().cycle()) {
+            for end in query.char_indices().map(|(i, c)| i + c.len_utf8()) {
+                let filter = Filters {
+                    year_min: Some(1980),
+                    fields: field(&query[..end]),
+                    ..Filters::default()
+                };
+                let started = Instant::now();
+                let hits = catalogue.search(boxed, &filter, 50);
                 times.push(started.elapsed());
                 assert!(hits.ids.len() <= 50);
             }

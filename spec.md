@@ -447,20 +447,38 @@ The ORC catalogue is **embedded in the app** (D3):
   Tokens are ANDed, and each must match the **start of a word** of some field,
   so `farr 40 2023` finds Farr 40s from 2023 and `arr` finds nothing. The name
   is also indexed without its punctuation, so `oneil` finds O'Neil.
+- **Search by field** (D26). Under the box, a disclosure — folded by
+  default, open or folded remembered per user in `localStorage` like the
+  panels — holds one box per field: boat name, sail number, country (a list
+  of the catalogue's codes), model / type, builder, designer, year built
+  (from, to) and certificate year. Every box that holds a word must match,
+  and so must the main box. Within a box, tokens are ANDed and each must
+  start a word of **that field only**, with the same folding and compact
+  forms as the main box (the sail number box takes `GBR1124`, `GBR 1124`,
+  `GBR/1124` or the number alone; the name box takes `oneil`). The
+  certificate year box matches the year from its start, so `202` is 2020–2029.
+  Folded, the disclosure's heading shows how many fields are in use
+  ("Search by field (2)"; year built counts once); **Clear** empties every
+  field and keeps the main box. The field boxes are not saved.
 - Results update **as the user types**, within 30 ms of each keystroke, best
-  first. Ranking: exact sail number (with or without its country), then name
+  first. Ranking: a field box equal to its whole field (folded, separators
+  removed; for the sail number, with or without its country), then exact
+  sail number of the main box (with or without its country), then name
   prefix, then model prefix, then other token matches; within each, newer
   certificates first, then by name.
 - Case- and accent-insensitive (decomposed accents and `İ` included); accepts `GBR1124`, `GBR 1124`, `GBR/1124`.
 - Each result shows name, sail number, model, year, builder, the certificate
   year and a small polar thumbnail (light, medium and strong wind: the
-  certificate's wind speeds nearest 6, 12 and 20 kn). Filters: year built
-  (from, to; a boat without a year is left out while either is set) and
-  country. An empty query with no filter lists nothing; with a filter it
-  lists what the filter admits. At most 50 results are listed, with the
-  total count.
+  certificate's wind speeds nearest 6, 12 and 20 kn). Year built (from, to)
+  leaves out a boat without a year while either is set. An empty main box
+  with every field empty lists nothing; otherwise it lists what the fields
+  admit. At most 50 results are listed, with the total count.
 - Measured in M5 on the development machine (Intel i9, debug build): 188
-  keystrokes over the full catalogue, median 1.2 ms, p99 2.4 ms.
+  keystrokes over the full catalogue, median 1.2 ms, p99 2.4 ms. In M14d,
+  with the per-field keys and 470 more keystrokes typed into single fields
+  (alone, beside the main box and beside a second field): 658 keystrokes,
+  median 1.6–1.7 ms, p99 2.5–2.6 ms; building the index on first use went
+  from about 0.18–0.24 s to about 0.27 s.
 
 ### 5.3 Adding and removing
 

@@ -64,7 +64,7 @@ kill %1                                            # stops the held app, its Vit
 whose file names contain those words). It builds once, then gives every test
 a fresh application and data root. Pictures land in
 `target/ux-shots/<test>/NN-step.png`; a failing test also leaves
-`failure.png`. About 4–5 minutes for the five tests on an Intel i9, almost
+`failure.png`. About 4–5 minutes for the seven tests on an Intel i9, almost
 all of it application start-up.
 
 ## Finding controls

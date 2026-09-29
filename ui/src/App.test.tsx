@@ -876,13 +876,17 @@ describe("ORC polars (plan.md M5)", () => {
     await search("GBR 1124");
     const searches = commands("orc_search") as { query: string; filters: unknown; limit: number }[];
     expect(searches.map((s) => s.query)).toEqual(["G", "GBR 1124"]);
-    expect(searches[1]!.filters).toEqual({ year_min: null, year_max: null, country: null });
+    expect(searches[1]!.filters).toEqual({
+      year_min: null, year_max: null, country: null,
+      name: "", sail_no: "", model: "", builder: "", designer: "", certificate_year: "",
+    });
     const row = q(".orc-results li")!;
     expect(row.querySelector(".orc-name")!.textContent).toBe("Eratosthenes");
     expect(row.querySelector(".orc-meta")!.textContent).toBe("GBR 1124 · Swan 112 · 1999 · Nautor");
     expect(row.querySelector("svg.orc-thumb path")!.getAttribute("d")).toMatch(/^M/);
     expect(q(".orc-count")!.textContent).toBe("Best 1 of 120 certificates");
 
+    await click(feature("orc:fields"));
     const country = feature("orc:country") as HTMLSelectElement;
     await act(async () => {
       country.value = "NED";
@@ -891,8 +895,78 @@ describe("ORC polars (plan.md M5)", () => {
     await type(feature("orc:year-from") as HTMLInputElement, "1990");
     await settle();
     const last = (commands("orc_search") as { filters: unknown }[]).at(-1)!;
-    expect(last.filters).toEqual({ year_min: 1990, year_max: null, country: "NED" });
+    expect(last.filters).toMatchObject({ year_min: 1990, year_max: null, country: "NED" });
     expect(q(".orc-provenance")!.textContent).toBe("Catalogue: 18135 certificates from jieter/orc-data of 2026-09-28");
+  });
+
+  it("searches each field on its own, folded away until wanted and remembered", async () => {
+    await open([]);
+    // Collapsed by default: no per-field box is on screen.
+    const toggle = feature("orc:fields") as HTMLButtonElement;
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(toggle.textContent).toContain("Search by field");
+    expect(feature("orc:field-name")).toBeNull();
+    await click(toggle);
+    expect(localStorage.getItem("pe.orcFields")).toBe("open");
+    expect((feature("orc:fields-clear") as HTMLButtonElement).disabled).toBe(true);
+
+    // Two fields, no text in the box: each keystroke searches with both.
+    await type(feature("orc:field-designer") as HTMLInputElement, "frers");
+    await settle();
+    await type(feature("orc:field-sail") as HTMLInputElement, " GBR/1124 ");
+    await settle();
+    const searches = commands("orc_search") as { query: string; filters: Record<string, unknown> }[];
+    expect(searches.map((s) => s.query)).toEqual(["", ""]);
+    expect(searches.at(-1)!.filters).toEqual({
+      year_min: null, year_max: null, country: null,
+      name: "", sail_no: "GBR/1124", model: "", builder: "", designer: "frers", certificate_year: "",
+    });
+    expect(q(".orc-results li .orc-name")!.textContent).toBe("Eratosthenes");
+
+    // Year built is one field however many ends are set; the count shows.
+    await type(feature("orc:year-from") as HTMLInputElement, "1990");
+    await type(feature("orc:year-to") as HTMLInputElement, "2000");
+    await type(feature("orc:field-certificate-year") as HTMLInputElement, "202");
+    await settle();
+    expect(feature("orc:fields")!.textContent).toContain("Search by field (4)");
+    expect((commands("orc_search") as { filters: unknown }[]).at(-1)!.filters).toMatchObject({
+      year_min: 1990, year_max: 2000, certificate_year: "202",
+    });
+
+    // Folding keeps the fields, and the count stays in sight.
+    await click(feature("orc:fields"));
+    expect(feature("orc:field-designer")).toBeNull();
+    expect(localStorage.getItem("pe.orcFields")).toBe("closed");
+    expect(feature("orc:fields")!.textContent).toContain("(4)");
+
+    // Clear empties every field and keeps the box.
+    await click(feature("orc:fields"));
+    await type(feature("orc:search") as HTMLInputElement, "swan");
+    await settle();
+    await click(feature("orc:fields-clear"));
+    await settle();
+    expect((feature("orc:field-designer") as HTMLInputElement).value).toBe("");
+    expect((feature("orc:search") as HTMLInputElement).value).toBe("swan");
+    expect(feature("orc:fields")!.textContent).not.toContain("(");
+    const cleared = (commands("orc_search") as { query: string; filters: unknown }[]).at(-1)!;
+    expect(cleared.query).toBe("swan");
+    expect(cleared.filters).toMatchObject({ designer: "", sail_no: "", year_min: null, certificate_year: "" });
+
+    // Remembered: a new window opens it unfolded.
+    await act(async () => root.unmount());
+    host.remove();
+    await mount();
+    expect(feature("orc:fields")!.getAttribute("aria-expanded")).toBe("true");
+    expect(feature("orc:field-name")).not.toBeNull();
+  });
+
+  it("lists nothing when every field is empty or holds only spaces", async () => {
+    await open([]);
+    await click(feature("orc:fields"));
+    await type(feature("orc:field-model") as HTMLInputElement, "   ");
+    await settle();
+    expect(commands("orc_search")).toEqual([]);
+    expect(q(".orc-results")).toBeNull();
   });
 
   it("adds a certificate, and asks before adding it a second time", async () => {
