@@ -239,6 +239,27 @@ export function connect(port) {
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
 /**
+ * The part of a canvas the window shows: its box cut by every ancestor
+ * that clips (overflow other than visible: a scrolled side panel) and by
+ * the window. `clips` are those ancestors' inner boxes, `{ left, top,
+ * right, bottom }`; null when nothing of it shows. The composite paints a
+ * canvas inside this only, so a plot scrolled under a panel's edge does not
+ * reappear over the status bar (M17a). Runs in the page too (inlined into
+ * the shot script), so it uses nothing but its arguments.
+ */
+export function visibleRect(rect, clips, viewport) {
+  var left = Math.max(rect.left, 0), top = Math.max(rect.top, 0);
+  var right = Math.min(rect.left + rect.width, viewport.width);
+  var bottom = Math.min(rect.top + rect.height, viewport.height);
+  for (var i = 0; i < clips.length; i++) {
+    left = Math.max(left, clips[i].left); top = Math.max(top, clips[i].top);
+    right = Math.min(right, clips[i].right); bottom = Math.min(bottom, clips[i].bottom);
+  }
+  if (right <= left || bottom <= top) return null;
+  return { left: left, top: top, width: right - left, height: bottom - top };
+}
+
+/**
  * The in-page half of `screenshot()`: started, never awaited, and leaves its
  * answer on `window.__peShot` for the poll (a script that outlives the
  * endpoint's 30 s timeout bricks it — see `evaluate`).
@@ -254,16 +275,31 @@ window.__peShot = { state: "running" };
   // Every canvas first, each redrawn and read back in the same task: a WebGL
   // drawing buffer is not preserved past the frame that showed it.
   var canvases = [];
+  var visibleRect = ${visibleRect.toString()};
+  // The inner boxes of the ancestors that clip an element.
+  var clipsOf = function (el) {
+    var clips = [];
+    for (var a = el.parentElement; a && a !== root; a = a.parentElement) {
+      var style = getComputedStyle(a);
+      if (style.overflowX === "visible" && style.overflowY === "visible") continue;
+      var r = a.getBoundingClientRect();
+      var l = r.left + a.clientLeft, t = r.top + a.clientTop;
+      clips.push({ left: l, top: t, right: l + a.clientWidth, bottom: t + a.clientHeight });
+    }
+    return clips;
+  };
   source.forEach(function (el) {
     if (!(el instanceof HTMLCanvasElement)) return;
     var rect = el.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0 || el.width === 0 || el.height === 0) return;
+    var shown = visibleRect(rect, clipsOf(el), { width: width, height: height });
+    if (!shown) return;
     try {
       if (typeof el.__peRedraw === "function") el.__peRedraw();
       var copy = document.createElement("canvas");
       copy.width = el.width; copy.height = el.height;
       copy.getContext("2d").drawImage(el, 0, 0);
-      canvases.push({ el: el, rect: rect, pixels: copy });
+      canvases.push({ el: el, rect: rect, shown: shown, pixels: copy });
     } catch (e) { /* a tainted or lost context: left blank */ }
   });
   var imageData = function (img) {
@@ -364,14 +400,15 @@ window.__peShot = { state: "running" };
   ctx.fillStyle = getComputedStyle(document.body).backgroundColor || "#000";
   ctx.fillRect(0, 0, width, height);
   ctx.drawImage(await render(null), 0, 0, width, height);
-  // Then each canvas in document order, clipped to itself, with whatever is
+  // Then each canvas in document order, clipped to the part of it the
+  // window shows (M17a), with whatever is
   // positioned over it drawn again on top (dialogs, the help flash, labels).
   for (var k = 0; k < canvases.length; k++) {
     var c = canvases[k];
     var over = await render(c);
     ctx.save();
     ctx.beginPath();
-    ctx.rect(c.rect.left, c.rect.top, c.rect.width, c.rect.height);
+    ctx.rect(c.shown.left, c.shown.top, c.shown.width, c.shown.height);
     ctx.clip();
     ctx.drawImage(c.pixels, c.rect.left, c.rect.top, c.rect.width, c.rect.height);
     ctx.drawImage(over, 0, 0, width, height);

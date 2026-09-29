@@ -123,6 +123,7 @@ uniform vec2 uViewport;
 uniform int uProjection;
 uniform float uLonOffset;
 uniform float uPointSize;
+uniform vec2 uNudge;
 out float vHorizon;
 out vec4 vColor;
 const float DEG = 0.017453292519943295;
@@ -145,8 +146,18 @@ void main() {
       uViewport.x * 0.5 + r * cos(phi) * sin(lam),
       uViewport.y * 0.5 - r * (cos(phi0) * sin(phi) - sin(phi0) * cos(phi) * cos(lam)));
   }
+  screen += uNudge;
   gl_Position = vec4(screen.x / uViewport.x * 2.0 - 1.0, 1.0 - screen.y / uViewport.y * 2.0, 0.0, 1.0);
 }`;
+
+/**
+ * Where the track lines are drawn again, CSS pixels over device pixels: a
+ * GL line is one device pixel, half a CSS pixel on a Retina screen, and a
+ * track in its colour over the sea was hard to find (M17a). Drawn once more
+ * a device pixel right and once a device pixel down, it is two device
+ * pixels wide whichever way it runs.
+ */
+export const TRACK_PASSES: readonly (readonly [number, number])[] = [[0, 0], [1, 0], [0, 1]];
 
 const TRACK_FRAG = `#version 300 es
 precision highp float;
@@ -251,7 +262,7 @@ export class MapRenderer {
 
   constructor(gl: WebGL2RenderingContext, basemap: Basemap) {
     this.gl = gl;
-    this.track = link(gl, TRACK_VERT, TRACK_FRAG, ["uCamera", "uViewport", "uProjection", "uLonOffset", "uPointSize", "uRound"]);
+    this.track = link(gl, TRACK_VERT, TRACK_FRAG, ["uCamera", "uViewport", "uProjection", "uLonOffset", "uPointSize", "uRound", "uNudge"]);
     this.geo = link(gl, GEO_VERT, GEO_FRAG, ["uCamera", "uViewport", "uProjection", "uLonOffset", "uColor"]);
     this.globe = link(gl, GLOBE_VERT, GLOBE_FRAG, ["uCamera", "uViewport", "uMask", "uSea", "uLand", "uVoid"]);
     for (const lod of basemap.lods) {
@@ -416,8 +427,12 @@ export class MapRenderer {
       if (this.tracks) {
         gl.uniform1i(u.uRound ?? null, 0);
         gl.uniform1f(u.uPointSize ?? null, 1);
-        this.draw(this.tracks, gl.LINES);
+        for (const [dx, dy] of TRACK_PASSES) {
+          gl.uniform2f(u.uNudge ?? null, dx / pixelRatio, dy / pixelRatio);
+          this.draw(this.tracks, gl.LINES);
+        }
       }
+      gl.uniform2f(u.uNudge ?? null, 0, 0);
       gl.uniform1i(u.uRound ?? null, 1);
       for (const h of this.highlights) {
         gl.uniform1f(u.uPointSize ?? null, h.size * pixelRatio);
