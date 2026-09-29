@@ -197,6 +197,7 @@ jobs:
       - run: npm ci
       - run: npm run ui:typecheck
       - run: npm run ui:test
+      - run: npm run ui:perf
       - run: npm run ui:build
 
   offline:

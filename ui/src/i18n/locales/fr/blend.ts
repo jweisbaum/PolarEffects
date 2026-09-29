@@ -52,7 +52,7 @@ const catalogue: Record<string, string> = {
   "save": "enregistrer",
   "Exporting the polar": "Export de la polaire",
   "Output grid": "Grille de sortie",
-  "Every source is read onto this grid and the blend is made on it. Values in order, separated by commas or spaces, with at most two decimals.": "Chaque source est lue sur cette grille, et la fusion est faite dessus. Valeurs dans l’ordre, séparées par des virgules ou des espaces, avec au plus deux décimales (point décimal).",
+  "Every source is read onto this grid and the blend is made on it. Values in order, separated by commas or spaces, with at most two decimals after a decimal point.": "Chaque source est lue sur cette grille, et la fusion est faite dessus. Valeurs dans l’ordre, séparées par des virgules ou des espaces, avec au plus deux décimales après un point décimal.",
   "TWA, degrees": "TWA, degrés",
   "True wind angles, 0 to 180": "Angles du vent réel, de 0 à 180",
   "TWS, knots": "TWS, nœuds",

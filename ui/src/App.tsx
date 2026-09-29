@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { listen } from "@tauri-apps/api/event";
 
-import { ACCEL, isAccel } from "./chords";
+import { chordText, isAccel } from "./chords";
 import type { AppInfo } from "./generated/AppInfo";
 import type { AppSettings } from "./generated/AppSettings";
 import type { ProjectSummary } from "./generated/ProjectSummary";
@@ -9,7 +9,7 @@ import Help from "./help/Help";
 import HelpMenu from "./help/HelpMenu";
 import { onReveal } from "./help/highlight";
 import { describeError, reportFailure } from "./errors";
-import { reportError, shown, useHint } from "./hint";
+import { later, lineText, reportError, shown, useHint, type Line } from "./hint";
 import { isBusy, useBusy } from "./busy";
 import { msg, setLanguage, useT } from "./i18n";
 import { api, ENV_CHANGED, ENV_PROGRESS, IpcError, QUIT_REQUESTED } from "./ipc";
@@ -65,7 +65,7 @@ function Shell() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [stage, setStage] = useState<Stage>("map");
-  const [status, setStatus] = useState<string | null>(null);
+  const [status, setStatus] = useState<Line | null>(null);
   // Non-null while the New Project dialog is up; the boolean is the answer the
   // user already gave about unsaved changes, carried through to the command.
   const [creating, setCreating] = useState<{ discardUnsaved: boolean } | null>(null);
@@ -109,11 +109,11 @@ function Shell() {
       setEnvJobs(status);
       const failure = status.failure;
       if (failure && JSON.stringify(failure) !== JSON.stringify(before.failure)) {
-        reportError(t("The environment fetch of {label} stopped: {reason}", { label: failure[0] ?? "", reason: failure[1] ?? "" }), failure[1] ?? null);
+        reportError(later(msg("The environment fetch of {label} stopped: {reason}"), { label: failure[0] ?? "", reason: failure[1] ?? "" }), failure[1] ?? null);
       }
       const warning = status.warning;
       if (!failure && warning && JSON.stringify(warning) !== JSON.stringify(before.warning)) {
-        reportError(t("The environment fetch of {label} left out a current source that would not open.", { label: warning[0] ?? "" }), warning[1] ?? null);
+        reportError(later(msg("The environment fetch of {label} left out a current source that would not open."), { label: warning[0] ?? "" }), warning[1] ?? null);
       }
     };
     void api.envJobs().then(onStatus).catch(() => undefined);
@@ -197,7 +197,7 @@ function Shell() {
     return () => { for (const off of offs) off(); };
   }, []);
 
-  const flash = useCallback((message: string, ms = 2500) => {
+  const flash = useCallback((message: Line, ms = 2500) => {
     setStatus(message);
     reportError(null);
     window.setTimeout(() => setStatus((current) => (current === message ? null : current)), ms);
@@ -215,7 +215,7 @@ function Shell() {
     askedLegacy.current = true;
     void api.legacyCacheNotice().then((notice) => {
       if (notice) {
-        flash(t("Downloaded weather is no longer kept on disk: removing {size} an earlier version left in {path}. Projects keep every value they use.",
+        flash(later(msg("Downloaded weather is no longer kept on disk: removing {size} an earlier version left in {path}. Projects keep every value they use."),
           { size: formatBytes(Number(notice.bytes)), path: notice.path }), 15_000);
         // Said first, then removed.
         void api.removeOldChunkCache().catch(() => undefined);
@@ -245,7 +245,7 @@ function Shell() {
       if (path === null) return false;
       const saved = await api.saveProjectAs(path);
       setProject(saved);
-      flash(t("Saved to {path}", { path: saved.path ?? path }));
+      flash(later(msg("Saved to {path}"), { path: saved.path ?? path }));
       return true;
     } catch (err) {
       report(err);
@@ -259,7 +259,7 @@ function Shell() {
     if (project.path === null) return saveAs();
     try {
       setProject(await api.saveProject());
-      flash(t("Saved"));
+      flash(later(msg("Saved")));
       return true;
     } catch (err) {
       if (err instanceof IpcError && err.kind === "never-saved") return saveAs();
@@ -435,7 +435,7 @@ function Shell() {
         void (event.shiftKey ? api.redo() : api.undo()).then((next) => {
           const label = event.shiftKey ? project.redo_label : project.undo_label;
           setProject(next);
-          if (label) flash(event.shiftKey ? t("Redone: {action}", { action: t(label) }) : t("Undone: {action}", { action: t(label) }));
+          if (label) flash(later(event.shiftKey ? msg("Redone: {action}") : msg("Undone: {action}"), { action: later(label) }));
         }).catch(report);
       }
     };
@@ -506,7 +506,7 @@ function Shell() {
         <span className="spacer" />
         <HelpMenu />
         <button className="settings" onClick={() => setShowSettings(true)} data-feature="shell:settings"
-          title={t("Settings ({chord})", { chord: `${ACCEL}+,` })} aria-label={t("Settings")}>
+          title={t("Settings ({chord})", { chord: chordText(["accel", ","]) })} aria-label={t("Settings")}>
           ⚙
         </button>
       </div>
@@ -515,7 +515,8 @@ function Shell() {
         "--dock-left": panels.left ? "var(--sidebar-left)" : "0px",
         "--dock-right": panels.right ? "var(--sidebar-right)" : "0px",
       } as CSSProperties}>
-        {panels.left && <aside className="sidebar left"><LeftNav project={project} onProject={setProject} panels={panels} onToggle={toggle} /></aside>}
+        {panels.left && <aside className="sidebar left"><LeftNav project={project} onProject={setProject} panels={panels} onToggle={toggle}
+          {...(settings ? { units: settings.units } : {})} /></aside>}
         <main className="centre-stage" aria-label={t("Stage")}>
           {stage === "map" && <MapView project={project} settings={settings} onSettings={setSettings} />}
           {stage === "3d" && <PolarView project={project} settings={settings} onProject={setProject} />}
@@ -624,12 +625,12 @@ function EnvJobsIndicator() {
 }
 
 /** The status bar's middle: a flash, the error, or the hint. */
-function StatusHint({ status }: { status: string | null }) {
+function StatusHint({ status }: { status: Line | null }) {
   useT();
   const state = useHint();
   const described = state.failure !== undefined && state.error !== null ? describeError(state.failure) : null;
   const line = described ? { text: described.text, kind: "error" as const, detail: described.detail } : shown(state);
-  if (status !== null) return <span className="hint accent">{status}</span>;
+  if (status !== null) return <span className="hint accent">{lineText(status)}</span>;
   if (line === null) return <span className="hint" />;
   return <span className={line.kind === "error" ? "hint error" : "hint muted"} role={line.kind === "error" ? "alert" : undefined}
     title={line.detail ?? undefined}>{line.text}</span>;

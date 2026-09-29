@@ -3,8 +3,8 @@ import { useState } from "react";
 import { reportFailure } from "../errors";
 import type { PolarImportFailure } from "../generated/PolarImportFailure";
 import type { ProjectSummary } from "../generated/ProjectSummary";
-import { setHint } from "../hint";
-import { useT } from "../i18n";
+import { later, setHint } from "../hint";
+import { msg, useT } from "../i18n";
 import { api } from "../ipc";
 import { pickPolarFiles } from "../project/dialogs";
 import { describeAxes, describeFailure, FORMAT_NAMES } from "./polarImport";
@@ -33,7 +33,7 @@ export default function PolarFiles({ project, onProject }: {
       setFailures(result.failures);
       const count = result.imported.length;
       if (count > 0) {
-        setHint(count === 1 ? t("Imported 1 polar file.") : t("Imported {count} polar files.", { count }));
+        setHint(count === 1 ? later(msg("Imported 1 polar file.")) : later(msg("Imported {count} polar files."), { count }));
       }
     } catch (error) {
       reportFailure(error);

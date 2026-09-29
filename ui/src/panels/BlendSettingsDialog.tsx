@@ -95,7 +95,7 @@ export default function BlendSettingsDialog({ project, onProject, onClose }: {
 
         <section>
           <h3>{t("Output grid")}</h3>
-          <p className="muted">{t("Every source is read onto this grid and the blend is made on it. Values in order, separated by commas or spaces, with at most two decimals.")}</p>
+          <p className="muted">{t("Every source is read onto this grid and the blend is made on it. Values in order, separated by commas or spaces, with at most two decimals after a decimal point.")}</p>
           <label className="settings-field axis-field">
             {t("TWA, degrees")}
             <textarea data-feature="blend-settings:twa" rows={2} value={twaText}

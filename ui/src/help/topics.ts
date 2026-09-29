@@ -257,7 +257,7 @@ export const TOPICS: HelpTopic[] = [
     parameters: [
       ["Language", "English, French or German. Everything changes at once, including the menu bar. Also on the start screen."],
       ["Theme", "The colours of the application. Harbour is the default."],
-      ["Boat and wind speed / Wave height / Distance", "The units values are shown in: the polar plot, the 3D axes and edit table, Compare and the map's hover. Stored values do not change; polar files, track filters and the output grid stay in knots."],
+      ["Boat and wind speed / Wave height / Distance", "The units values are shown in: the polar plot, the 3D axes and edit table, Compare, the track filters and the map's hover. Stored values do not change; polar files and the output grid stay in knots."],
       ["Polar plot dot band", "How far from the polar plot's wind speed a track sample may be and still be drawn as a dot, from ±0.25 to ±5 kn (±1 kn by default)."],
       ["Autosave", "Keep a recovery copy of unsaved work (the default), save into the project file itself, or leave everything until you save."],
       ["Keep downloaded weather in memory", "How much downloaded wind, wave and current data is kept in memory for the session (256 MB by default, 16–4096 MB), so other boats of the same race reuse it. It is forgotten when PolarEffects quits; nothing downloaded is kept on disk, and every value a project uses is saved in the project. An earlier version's chunk cache folder is removed the first time, as the status line says."],

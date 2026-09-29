@@ -162,6 +162,7 @@ jobs:
       - run: npm run bindings
       - run: git diff --exit-code -- ui/src/generated
       - run: npm run ui:test
+      - run: npm run ui:perf
       - run: npm run ui:build
       # Invariant 4, checked on the bundle that will ship rather than on a
       # development build.

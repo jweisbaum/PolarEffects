@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { IS_MAC } from "../chords";
-import { reportError } from "../hint";
-import { useT } from "../i18n";
+import { chordText, IS_MAC } from "../chords";
+import { later, reportError } from "../hint";
+import { msg, useT } from "../i18n";
 import { searchFeatures, type Feature } from "./features";
 import { locateFeature } from "./highlight";
 import { openHelp } from "./open";
@@ -38,7 +38,7 @@ export default function HelpMenu() {
   const id = useId();
   const container = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLInputElement>(null);
-  const chord = IS_MAC ? "Cmd+F" : "Ctrl+F";
+  const chord = chordText(["accel", "F"]);
 
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
@@ -90,7 +90,7 @@ export default function HelpMenu() {
     void locateFeature(feature).then(found => {
       if (found) return;
       if (feature.topic) openHelp(feature.topic);
-      else reportError(t("{feature} is not available here. Open a project to use it.", { feature: t(feature.label) }));
+      else reportError(later(msg("{feature} is not available here. Open a project to use it."), { feature: later(feature.label) }));
     });
   };
 

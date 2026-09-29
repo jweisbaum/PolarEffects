@@ -9,7 +9,9 @@ import type { TrackImportFailure } from "../generated/TrackImportFailure";
 import type { TrackImportLine } from "../generated/TrackImportLine";
 import type { TrackSummary } from "../generated/TrackSummary";
 import { onReveal } from "../help/highlight";
-import { setHint } from "../hint";
+import type { Units } from "../generated/Units";
+import { DEFAULT_UNITS, shownValue, speedUnit, storedValue, waveUnit } from "./filterUnits";
+import { later, setHint } from "../hint";
 import { msg, useT } from "../i18n";
 import { api } from "../ipc";
 import { envJobOf, useEnvJobs } from "../jobs";
@@ -36,9 +38,11 @@ import { dateRange, describeImportLine, describeTrackFailure, envStatusText, fro
  * Fetch weather for selected tracks… over the ticked tracks, opens the
  * fetch's pre-flight when the user wants it.
  */
-export default function Tracks({ project, onProject }: {
+export default function Tracks({ project, onProject, units = DEFAULT_UNITS }: {
   project: ProjectSummary;
   onProject: (project: ProjectSummary) => void;
+  /** The display units (Settings): the filters are shown and typed in them. */
+  units?: Units;
 }) {
   const t = useT();
   const [inspections, setInspections] = useState<TrackFileInspection[] | null>(null);
@@ -91,8 +95,8 @@ export default function Tracks({ project, onProject }: {
     const count = result.imported.length;
     if (count > 0) {
       setHint(count === 1
-        ? t("Imported 1 track. Fetch its weather from the track list when you want it.")
-        : t("Imported {count} tracks. Fetch their weather from the track list when you want it.", { count }));
+        ? later(msg("Imported 1 track. Fetch its weather from the track list when you want it."))
+        : later(msg("Imported {count} tracks. Fetch their weather from the track list when you want it."), { count }));
     }
   };
 
@@ -149,7 +153,7 @@ export default function Tracks({ project, onProject }: {
             <TrackItem key={source.id} source={source} track={source.track!} open={open === source.id}
               selected={selected.has(source.id)} onSelect={(on) => select(source.id, on)}
               onToggle={() => setOpen(open === source.id ? null : source.id)}
-              onRemove={() => remove(source.id)} onProject={onProject}
+              onRemove={() => remove(source.id)} onProject={onProject} units={units}
               onRefetch={() => setFetching({ ids: [source.id], restart: source.track!.env_status === "ready" })}
               onExport={() => setExporting({ id: source.id, label: source.label })} />
           ))}
@@ -201,8 +205,9 @@ function EnvOptions({ project, onProject }: { project: ProjectSummary; onProject
   );
 }
 
-function TrackItem({ source, track, open, selected, onSelect, onToggle, onRemove, onProject, onRefetch, onExport }: {
+function TrackItem({ source, track, open, selected, onSelect, onToggle, onRemove, onProject, onRefetch, onExport, units }: {
   source: SourceSummary;
+  units: Units;
   track: TrackSummary;
   open: boolean;
   selected: boolean;
@@ -258,7 +263,7 @@ function TrackItem({ source, track, open, selected, onSelect, onToggle, onRemove
       </div>
       {open && (
         <div className="track-details">
-          <TrackFiltersEditor id={source.id} track={track} onProject={onProject} />
+          <TrackFiltersEditor id={source.id} track={track} onProject={onProject} units={units} />
           <DerivationEditor id={source.id} track={track} onProject={onProject} />
           <div className="section-actions">
             <button className="small" data-feature="tracks:export-grib" onClick={onExport}
@@ -281,27 +286,30 @@ const WAVE_SECTORS: [string, string][] = [
   ["following", msg("Following (from 150°)")],
 ];
 
-/** A number field that commits on Enter or leaving it; empty is "no bound". */
-function NumberField({ feature, label, title, value, min, max, step, onCommit }: {
+/**
+ * A number box that commits on Enter or leaving it. `value` is stored (knots,
+ * metres, degrees); `factor` converts it to what the box shows and back, so
+ * a speed or a wave height is typed in the display unit. Empty means no bound.
+ */
+function NumberField({ feature, label, title, value, min, max, step, factor = 1, onCommit }: {
   feature: string; label: string; title: string; value: number | null;
-  min: number; max: number; step: number; onCommit: (value: number | null) => void;
+  min: number; max: number; step: number; factor?: number; onCommit: (value: number | null) => void;
 }) {
-  const [text, setText] = useState(value === null ? "" : String(value));
-  const [shown, setShown] = useState(value);
-  if (shown !== value) {
-    setShown(value);
-    setText(value === null ? "" : String(value));
+  const [text, setText] = useState(shownValue(value, factor));
+  const [shown, setShown] = useState<[number | null, number]>([value, factor]);
+  if (shown[0] !== value || shown[1] !== factor) {
+    setShown([value, factor]);
+    setText(shownValue(value, factor));
   }
   const commit = () => {
-    const trimmed = text.trim();
-    const next = trimmed === "" ? null : Number(trimmed);
-    if (next !== null && !Number.isFinite(next)) { setText(value === null ? "" : String(value)); return; }
+    const next = storedValue(text, value, factor);
+    if (next === undefined) { setText(shownValue(value, factor)); return; }
     if (next !== value) onCommit(next);
   };
   return (
     <label className="track-field">
       {label}
-      <input type="number" data-feature={feature} value={text} min={min} max={max} step={step} title={title}
+      <input type="number" data-feature={feature} value={text} min={min} max={Number((max * factor).toFixed(3))} step={step} title={title}
         onChange={(e) => setText(e.target.value)} onBlur={commit}
         onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }} />
     </label>
@@ -328,7 +336,7 @@ function TimeField({ feature, label, title, value, onCommit }: {
     if (next !== value) onCommit(next);
   };
   return (
-    <label className="track-field">
+    <label className="track-field track-time-field">
       {label}
       <input type="datetime-local" data-feature={feature} value={text} title={title}
         onChange={(e) => setText(e.target.value)} onBlur={commit}
@@ -337,10 +345,12 @@ function TimeField({ feature, label, title, value, onCommit }: {
   );
 }
 
-function TrackFiltersEditor({ id, track, onProject }: {
-  id: number; track: TrackSummary; onProject: (project: ProjectSummary) => void;
+function TrackFiltersEditor({ id, track, onProject, units }: {
+  id: number; track: TrackSummary; onProject: (project: ProjectSummary) => void; units: Units;
 }) {
   const t = useT();
+  const speed = speedUnit(units);
+  const wave = waveUnit(units);
   const f = track.filters;
   const set = (change: Partial<TrackFilters>) => {
     api.setTrackFilters(id, { ...f, ...change }).then(onProject).catch(reportFailure);
@@ -363,14 +373,14 @@ function TrackFiltersEditor({ id, track, onProject }: {
       <TimeField feature="tracks:time-end" label={t("To (UTC)")} value={f.time_end}
         title={t("Leave out samples after this time, such as after the finish")}
         onCommit={(v) => set({ time_end: v })} />
-      <NumberField feature="tracks:min-bsp" label={t("Minimum BSP (kn)")} value={f.min_bsp} min={0} max={100} step={0.5}
+      <NumberField feature="tracks:min-bsp" label={t("Minimum BSP ({unit})", { unit: speed.symbol })} value={f.min_bsp} min={0} max={100} step={0.5} factor={speed.factor}
         title={t("Leave out samples slower than this; empty for no minimum")} onCommit={(v) => set({ min_bsp: v })} />
-      <NumberField feature="tracks:max-bsp" label={t("Maximum BSP (kn)")} value={f.max_bsp} min={0} max={100} step={0.5}
+      <NumberField feature="tracks:max-bsp" label={t("Maximum BSP ({unit})", { unit: speed.symbol })} value={f.max_bsp} min={0} max={100} step={0.5} factor={speed.factor}
         title={t("Leave out samples faster than this; empty for no maximum")} onCommit={(v) => set({ max_bsp: v })} />
       <NumberField feature="tracks:manoeuvre" label={t("Manoeuvre threshold (°)")} value={f.max_heading_change} min={1} max={180} step={5}
         title={t("Leave out samples whose heading changes more than this from a neighbour: tacks and gybes. Empty to keep them.")}
         onCommit={(v) => set({ max_heading_change: v })} />
-      <label className="track-field">
+      <label className="track-field track-choice-field">
         {t("Heading")}
         <select data-feature="tracks:heading-origin" value={f.heading_origin}
           title={t("Keep samples whose heading the track gave, was derived, or either")}
@@ -378,7 +388,7 @@ function TrackFiltersEditor({ id, track, onProject }: {
           {origins.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
         </select>
       </label>
-      <label className="track-field">
+      <label className="track-field track-choice-field">
         {t("Speed")}
         <select data-feature="tracks:speed-origin" value={f.speed_origin}
           title={t("Keep samples whose speed the track gave, was derived, or either")}
@@ -390,9 +400,9 @@ function TrackFiltersEditor({ id, track, onProject }: {
         <legend>{t("Wind, waves and current")}</legend>
         {track.env_status === "not_fetched" && <p className="muted">{needsWind}</p>}
         <div className="track-range">
-          <NumberField feature="tracks:tws-min" label={t("TWS from (kn)")} value={f.tws_min} min={0} max={200} step={1}
+          <NumberField feature="tracks:tws-min" label={t("TWS from ({unit})", { unit: speed.symbol })} value={f.tws_min} min={0} max={200} step={1} factor={speed.factor}
             title={t("Leave out samples in less wind than this; empty for no minimum")} onCommit={(v) => set({ tws_min: v })} />
-          <NumberField feature="tracks:tws-max" label={t("to (kn)")} value={f.tws_max} min={0} max={200} step={1}
+          <NumberField feature="tracks:tws-max" label={t("to ({unit})", { unit: speed.symbol })} value={f.tws_max} min={0} max={200} step={1} factor={speed.factor}
             title={t("Leave out samples in more wind than this; empty for no maximum")} onCommit={(v) => set({ tws_max: v })} />
         </div>
         <div className="track-range">
@@ -402,12 +412,12 @@ function TrackFiltersEditor({ id, track, onProject }: {
             title={t("Leave out samples further off the wind than this")} onCommit={(v) => set({ twa_max: v })} />
         </div>
         <div className="track-range">
-          <NumberField feature="tracks:hs-min" label={t("Wave height from (m)")} value={f.hs_min} min={0} max={100} step={0.5}
+          <NumberField feature="tracks:hs-min" label={t("Wave height from ({unit})", { unit: wave.symbol })} value={f.hs_min} min={0} max={100} step={0.5} factor={wave.factor}
             title={t("Leave out samples in smaller waves than this")} onCommit={(v) => set({ hs_min: v })} />
-          <NumberField feature="tracks:hs-max" label={t("to (m)")} value={f.hs_max} min={0} max={100} step={0.5}
+          <NumberField feature="tracks:hs-max" label={t("to ({unit})", { unit: wave.symbol })} value={f.hs_max} min={0} max={100} step={0.5} factor={wave.factor}
             title={t("Leave out samples in bigger waves than this")} onCommit={(v) => set({ hs_max: v })} />
         </div>
-        <label className="track-field">
+        <label className="track-field track-choice-field">
           {t("Wave direction")}
           <select data-feature="tracks:wave-mode" value={f.wave_mode}
             title={t("Keep samples by where the waves come from: off the bow by sector or angle, or by compass direction")}
@@ -448,9 +458,9 @@ function TrackFiltersEditor({ id, track, onProject }: {
           </div>
         )}
         <div className="track-range">
-          <NumberField feature="tracks:current-min" label={t("Current from (kn)")} value={f.current_min} min={0} max={100} step={0.1}
+          <NumberField feature="tracks:current-min" label={t("Current from ({unit})", { unit: speed.symbol })} value={f.current_min} min={0} max={100} step={0.1} factor={speed.factor}
             title={t("Leave out samples in less current than this")} onCommit={(v) => set({ current_min: v })} />
-          <NumberField feature="tracks:current-max" label={t("to (kn)")} value={f.current_max} min={0} max={100} step={0.1}
+          <NumberField feature="tracks:current-max" label={t("to ({unit})", { unit: speed.symbol })} value={f.current_max} min={0} max={100} step={0.1} factor={speed.factor}
             title={t("Leave out samples in more current than this")} onCommit={(v) => set({ current_max: v })} />
         </div>
         <label className="track-field">
@@ -478,7 +488,7 @@ function DerivationEditor({ id, track, onProject }: {
       <NumberField feature="tracks:max-gap" label={t("Maximum gap (h)")} value={track.max_gap_s / 3600} min={0.01} max={24} step={0.5}
         title={t("Neighbours further apart in time than this are not used to derive heading and speed")}
         onCommit={(v) => { if (v !== null && v > 0) set(Math.round(v * 3600), prefer); }} />
-      <label className="track-field">
+      <label className="track-field track-choice-field">
         {t("Prefer")}
         <select data-feature="tracks:prefer" value={prefer}
           title={t("Use the heading and speed the track gives where it gives them, or always derive them from the positions")}

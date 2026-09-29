@@ -5,7 +5,7 @@ import { describeError, reportFailure } from "../errors";
 import type { AppSettings } from "../generated/AppSettings";
 import type { CompareOperand } from "../generated/CompareOperand";
 import type { ProjectSummary } from "../generated/ProjectSummary";
-import { setHint } from "../hint";
+import { later, setHint } from "../hint";
 import { msg, useT } from "../i18n";
 import { api } from "../ipc";
 import type { Layout } from "../polar/geometry3d";
@@ -234,7 +234,7 @@ export default function CompareView({ project, settings }: {
   return (
     <div className="view3d compare" tabIndex={-1}>
       <canvas ref={canvas} className="view3d-canvas compare-canvas"
-        onPointerEnter={() => setHint(t("Drag to turn, right-drag to pan, scroll to zoom."))}
+        onPointerEnter={() => setHint(later(msg("Drag to turn, right-drag to pan, scroll to zoom.")))}
         onPointerLeave={() => setHint(null)} />
       <div className="view3d-labels compare-labels" ref={labelsHost} aria-hidden="true" />
       {unavailable !== null && <p className="view3d-unavailable muted">{t(unavailable)}</p>}

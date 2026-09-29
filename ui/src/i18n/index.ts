@@ -107,7 +107,18 @@ export function subscribeLanguage(listener: () => void): () => void {
  */
 export function t(text: string, params?: Params): string {
   const translated = current === "en" ? undefined : CATALOGUES[current][text];
-  return interpolate(translated ?? text, params);
+  return interpolate(translated ?? english(text), params);
+}
+
+/**
+ * The English a key shows. One English word can need two translations —
+ * the Compare stage (German "Vergleich") and a source's Compare button
+ * ("Vergleichen") — so a key may carry a context after `@@`
+ * (`"Compare@@verb"`), which English never shows.
+ */
+export function english(key: string): string {
+  const at = key.indexOf("@@");
+  return at < 0 ? key : key.slice(0, at);
 }
 
 /**

@@ -5,7 +5,7 @@ import type { AppSettings } from "../generated/AppSettings";
 import type { ProjectSummary } from "../generated/ProjectSummary";
 import type { SampleDetails } from "../generated/SampleDetails";
 import { reportFailure } from "../errors";
-import { setHint } from "../hint";
+import { later, setHint } from "../hint";
 import { msg, useT } from "../i18n";
 import { api } from "../ipc";
 import { clearSamples, getSampleSelection, onFocusMap, selectSamples, takePendingFocus, useSampleSelection, type MapFocus } from "../selection";
@@ -266,7 +266,7 @@ export default function MapView({ project, settings, onSettings }: {
       <canvas
         ref={canvas}
         className="map-canvas"
-        onPointerEnter={() => setHint(t("Drag to move the map; scroll to zoom. Shift-drag a box to select track positions."))}
+        onPointerEnter={() => setHint(later(msg("Drag to move the map; scroll to zoom. Shift-drag a box to select track positions.")))}
         onPointerLeave={() => { setHint(null); setHover(null); setHoverFix(-1); cancelAnimationFrame(hoverFrame.current); }}
         onPointerDown={(event) => {
           const rect = event.currentTarget.getBoundingClientRect();

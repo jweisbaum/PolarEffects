@@ -1,5 +1,7 @@
 /** The left navigation and the right panel. */
 const catalogue: Record<string, string> = {
+  // A source row's button: the verb, where the stage tab says the noun.
+  "Compare@@verb": "Vergleichen",
   "ORC polars": "ORC-Polaren",
   "Search the ORC catalogue and add certificates.": "Den ORC-Katalog durchsuchen und Messbriefe hinzufügen.",
   "certificate": "Messbrief",

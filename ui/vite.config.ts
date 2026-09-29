@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { configDefaults } from "vitest/config";
 
 // Everything must resolve from the bundle: no CDN, no remote fonts, no runtime
 // network access of any kind (invariant 4). `tools/check-offline.sh` enforces it.
@@ -26,5 +27,12 @@ export default defineConfig({
   // than jsdom: jsdom 27's CSS parser is a CommonJS build that `require()`s an
   // ES module, which only Node 20.19+ and 22.12+ allow, and the machine this
   // is developed on runs 21.
-  test: { environment: "node", include: ["src/**/*.test.ts?(x)"] },
+  // Timed tests (`*.perf.test.ts`) run alone, serially, in `npm run ui:perf`
+  // (vitest.perf.config.ts): beside the parallel suite's other workers a
+  // 100 ms budget measures the machine's load, not the code (M17b review).
+  test: {
+    environment: "node",
+    include: ["src/**/*.test.ts?(x)"],
+    exclude: [...configDefaults.exclude, "src/**/*.perf.test.ts?(x)"],
+  },
 });

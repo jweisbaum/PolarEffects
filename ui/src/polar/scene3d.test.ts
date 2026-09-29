@@ -9,7 +9,6 @@ import { describe, expect, it, vi } from "vitest";
 
 import { PolarScene, SHAPE_CROSS, type RendererLike } from "./scene3d";
 import { syntheticGrid } from "./geometry3d";
-import { surfaceGrid } from "./view3d";
 
 function fakeRenderer(): RendererLike & { dispose: ReturnType<typeof vi.fn> } {
   return { setPixelRatio: () => undefined, getPixelRatio: () => 1, setSize: () => undefined, render: () => undefined, dispose: vi.fn() };
@@ -96,31 +95,5 @@ describe("dispose", () => {
     expect(renderer.dispose).toHaveBeenCalledTimes(1);
     expect(points(scene)).toBeUndefined();
     expect(scene.scene.children.every((child) => child.children.length === 0)).toBe(true);
-  });
-});
-
-describe("the spec.md 13 budget at the 512 × 512 grid (M17a)", () => {
-  it("rebuilds two 512 × 512 surfaces from packet arrays in under 100 ms", () => {
-    const n = 512;
-    const twa = Float32Array.from({ length: n }, (_, i) => (i * 180) / (n - 1));
-    const tws = Float32Array.from({ length: n }, (_, j) => 4 + (j * 66) / (n - 1));
-    const bsp = Float32Array.from({ length: n * n }, (_, k) => (k % 97 === 0 ? Number.NaN : 4 + (k % 13) / 5));
-    const { scene } = make();
-    const times: number[] = [];
-    for (let run = 0; run < 5; run++) {
-      // As PolarView does on every edit: the packet's arrays to the scene's input, then setData.
-      const t0 = performance.now();
-      scene.setData({
-        samples: three(0), colors: three(0), layout: "tower",
-        surfaces: [
-          { grid: surfaceGrid(twa, tws, bsp), color: "#4e79a7" },
-          { grid: surfaceGrid(twa, tws, bsp), color: "#ffffff", opaque: true },
-        ],
-      });
-      times.push(performance.now() - t0);
-    }
-    console.log(`two 512 × 512 surfaces, input + setData: ${times.map((t) => t.toFixed(0)).join(", ")} ms`);
-    // The first run pays for compiling the loops; an edit is a later one.
-    expect(Math.min(...times.slice(1))).toBeLessThan(100);
   });
 });

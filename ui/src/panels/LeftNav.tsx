@@ -1,3 +1,4 @@
+import type { Units } from "../generated/Units";
 import type { ProjectSummary } from "../generated/ProjectSummary";
 import { useT } from "../i18n";
 import type { PanelState } from "./layout";
@@ -11,8 +12,10 @@ import Tracks from "./Tracks";
  * Tracks (§7), in that order, each foldable. Tracks import from files now;
  * the tracker imports arrive with M10–M12.
  */
-export default function LeftNav({ project, onProject, panels, onToggle }: {
+export default function LeftNav({ project, onProject, panels, onToggle, units }: {
   project: ProjectSummary;
+  /** The display units (Settings), for the track filters. */
+  units?: Units;
   onProject: (project: ProjectSummary) => void;
   panels: PanelState;
   onToggle: (panel: keyof PanelState) => void;
@@ -30,7 +33,7 @@ export default function LeftNav({ project, onProject, panels, onToggle }: {
       </Section>
       <Section feature="nav:tracks" title={t("Tracks")} tooltip={t("Import race tracks from trackers and files")}
         open={panels.tracks} onToggle={() => onToggle("tracks")}>
-        <Tracks project={project} onProject={onProject} />
+        <Tracks project={project} onProject={onProject} {...(units ? { units } : {})} />
       </Section>
     </nav>
   );

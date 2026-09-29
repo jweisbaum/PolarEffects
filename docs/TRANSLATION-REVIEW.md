@@ -21,6 +21,9 @@ Review status of everything below, until a reviewer signs it off:
 | History and job names from Rust | `ui/src/i18n/rust-strings.json` (English), translated in the catalogues | as above |
 | Fixed terms | `ui/src/i18n/GLOSSARY.md` | one row per concept |
 
+A key may end in a context, `@@verb` in `"Compare@@verb"`: English never
+shows it, and it lets one English word take two translations.
+
 Edit the translation, never the English key: the English is the key, and
 changing it orphans every translation. `npm run ui:test` then checks that
 nothing is missing or unused, that placeholders survive and that one
@@ -90,8 +93,9 @@ For each string:
 - [ ] Every `{placeholder}` kept exactly (the test enforces this, but check
   the sentence still reads with the values in it).
 - [ ] Keyboard names as your keyboard prints them: French *Maj*, *Échap*,
-  *Entrée*; German *Umschalt*, *Esc*, *Eingabetaste*. (Menu chords such as
-  `Cmd+Shift+S` stay as the platform shows them.)
+  *Entrée*; German *Umschalt*, *Esc*, *Eingabetaste*. Chords in tooltips
+  and menus are built by `chordText` (`ui/src/chords.ts`): ⌘ on a Mac,
+  Ctrl / Strg elsewhere, Maj / Umschalt for Shift.
 
 ## 3. Feature search
 

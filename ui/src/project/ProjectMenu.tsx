@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 
-import { ACCEL } from "../chords";
+import { chordText } from "../chords";
 import type { RecentProject } from "../generated/RecentProject";
 import { onReveal } from "../help/highlight";
 import { msg, useT } from "../i18n";
@@ -26,11 +26,11 @@ export default function ProjectMenu({ onNew, onOpen, onOpenRecent, onSave, onSav
   const menu = useRef<HTMLDivElement>(null);
   const firstFocus = useRef(0);
   const actions = [
-    { label: msg("New…"), feature: "new", run: onNew, chord: `${ACCEL}+N`, tip: msg("Create a new project") },
-    { label: msg("Open…"), feature: "open", run: onOpen, chord: `${ACCEL}+O`, tip: msg("Open a saved project") },
-    { label: msg("Save"), feature: "save", run: onSave, chord: `${ACCEL}+S`, tip: msg("Save the project to its file") },
-    { label: msg("Save As…"), feature: "save-as", run: onSaveAs, chord: `${ACCEL}+Shift+S`, tip: msg("Save the project to a new file") },
-    { label: msg("Close"), feature: "close", run: onClose, chord: `${ACCEL}+W`, tip: msg("Close the project and return to the start screen") },
+    { label: msg("New…"), feature: "new", run: onNew, chord: chordText(["accel", "N"]), tip: msg("Create a new project") },
+    { label: msg("Open…"), feature: "open", run: onOpen, chord: chordText(["accel", "O"]), tip: msg("Open a saved project") },
+    { label: msg("Save"), feature: "save", run: onSave, chord: chordText(["accel", "S"]), tip: msg("Save the project to its file") },
+    { label: msg("Save As…"), feature: "save-as", run: onSaveAs, chord: chordText(["accel", "shift", "S"]), tip: msg("Save the project to a new file") },
+    { label: msg("Close"), feature: "close", run: onClose, chord: chordText(["accel", "W"]), tip: msg("Close the project and return to the start screen") },
   ];
 
   // The Help search opens the menu to show one of its items (spec.md 3.6).

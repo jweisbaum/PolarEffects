@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 
 import { reportFailure } from "../errors";
-import { reportError } from "../hint";
+import { later, reportError } from "../hint";
 import type { EditOp } from "../generated/EditOp";
 import type { EditSurface } from "../generated/EditSurface";
 import type { PolarCell } from "../generated/PolarCell";
@@ -114,7 +114,7 @@ export default function EditPanel({ project, sourceId, unit = "kn", selected, hi
     const value = parseSpeed(text, unit);
     const held = surface.bsp[i]?.[j] ?? null;
     if (value === undefined) {
-      reportError(t("{text} is not a boat speed from 0 to {max} {unit}", {
+      reportError(later(msg("{text} is not a boat speed from 0 to {max} {unit}"), {
         text, max: Number(showSpeed(MAX_BSP_KN, unit)), unit: symbol,
       }), null);
       return;

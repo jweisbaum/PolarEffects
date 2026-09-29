@@ -13,6 +13,7 @@
     "ui:dev": "npm run dev -w ui",
     "ui:typecheck": "npm run typecheck -w ui",
     "ui:test": "npm run test -w ui",
+    "ui:perf": "npm run test:perf -w ui",
     "ui:build": "npm run build -w ui",
     "bindings": "cargo run -p pe-app --example export_bindings",
     "check:offline": "./tools/check-offline.sh",

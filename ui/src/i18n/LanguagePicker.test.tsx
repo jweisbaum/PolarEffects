@@ -8,7 +8,7 @@ vi.mock("../ipc", () => ({ api: { setLanguage: (language: string) => setLanguage
 
 const { default: LanguagePicker } = await import("./LanguagePicker");
 const { language, setLanguage, t, useT } = await import("./index");
-const { currentHint } = await import("../hint");
+const { currentHint, shown } = await import("../hint");
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let host: HTMLDivElement;
@@ -55,7 +55,7 @@ it("puts the previous language back when the save fails", async () => {
   await choose("de");
   expect(language()).toBe("en");
   expect(host.querySelector("#label")?.textContent).toBe("Help");
-  expect(currentHint().error).toBe("The language could not be saved.");
+  expect(shown(currentHint())?.text).toBe("The language could not be saved.");
   expect(currentHint().errorDetail).toContain("disk full");
 });
 

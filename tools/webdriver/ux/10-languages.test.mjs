@@ -166,6 +166,55 @@ async function searches(t, language, queries) {
   console.log(`${language} searches: ${found.join("; ")}`);
 }
 
+/** Display units change the boxes; edits still reach Rust in knots and metres. */
+async function filterUnits(t) {
+  const d = t.driver;
+  const field = (name) => `[data-feature="tracks:${name}"]`;
+  const track = async () => (await d.invoke("project_summary")).sources.find((s) => s.track).track;
+  await d.click('[data-feature="shell:settings"]');
+  await d.type('[data-feature="settings:speed-unit"]', "kmh");
+  await d.waitFor(".track-field", { text: "(km/h)" });
+  await d.type('[data-feature="settings:wave-unit"]', "ft");
+  await d.waitFor(".track-field", { text: "(ft)" });
+  await d.click('[data-feature="settings:close"]');
+  await d.waitGone(".modal.settings");
+  await d.waitFor(field("min-bsp"), { text: "1.852" });
+  const before = await d.invoke("project_summary");
+  await d.click(field("min-bsp"));
+  await d.key("Enter", field("min-bsp"));
+  assert.equal((await d.invoke("project_summary")).revision, before.revision,
+    "leaving an untouched converted filter creates no edit");
+
+  for (const [feature, text, stored, expected] of [
+    ["min-bsp", "18.52", "min_bsp", 10],
+    ["tws-min", "9.26", "tws_min", 5],
+    ["hs-min", "10", "hs_min", 3.048],
+    ["current-min", "1.852", "current_min", 1],
+  ]) {
+    await d.type(field(feature), text);
+    await d.key("Enter", field(feature));
+    // Wait for the command's reply and the next render, not just the typed text.
+    for (let attempt = 0; attempt < 30; attempt++) {
+      if (Math.abs((await track()).filters[stored] - expected) < 1e-9) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.ok(Math.abs((await track()).filters[stored] - expected) < 1e-9,
+      `${feature} stores ${expected} in the project unit`);
+  }
+  await d.click(field("manoeuvre"));
+  await t.shot("de-filters-kmh");
+  await d.click(field("current-min"));
+  await t.shot("de-filters-feet-and-current");
+
+  await d.click('[data-feature="shell:settings"]');
+  await d.type('[data-feature="settings:speed-unit"]', "kn");
+  await d.waitFor(field("min-bsp"), { text: "10" });
+  await d.type('[data-feature="settings:wave-unit"]', "m");
+  await d.waitFor(field("hs-min"), { text: "3.048" });
+  await d.click('[data-feature="settings:close"]');
+  await d.waitGone(".modal.settings");
+}
+
 export default {
   name: "languages",
   async setup() {
@@ -195,6 +244,16 @@ export default {
     await d.waitFor(".modal-actions button.primary");
     await d.click(".modal-actions button.primary");
     await d.waitFor('[data-feature="tracks:fetch-weather"]', { timeoutMs: 30_000 });
+    // Check the same existing message across a language change before any
+    // canvas or search interaction can legitimately replace/clear the hint.
+    await d.waitFor(".statusbar", { text: "1 trace importée." });
+    await setLanguageInSettings(d, "de");
+    await d.waitFor(".statusbar", { text: "1 Track importiert." });
+    await d.type('[data-feature="settings:language"]', "fr");
+    await d.waitFor('html[lang="fr"]');
+    await d.waitFor(".statusbar", { text: "1 trace importée." });
+    await d.click('[data-feature="settings:close"]');
+    await d.waitGone(".modal.settings");
     // Open what is folded, once: Search by field and the track's filters.
     await d.click('[data-feature="orc:fields"]');
     await d.click('[data-feature="tracks:filters"]');
@@ -207,6 +266,7 @@ export default {
     await d.click('[data-feature="settings:close"]');
     await d.waitGone(".modal.settings");
     await areas(t, "de");
+    await filterUnits(t);
     await searches(t, "de", queries.de);
 
     // Back to the start screen in German.

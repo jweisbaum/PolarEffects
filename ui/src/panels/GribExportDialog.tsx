@@ -4,8 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { describeError, reportFailure } from "../errors";
 import type { GribExportStatus } from "../generated/GribExportStatus";
 import type { GribPreview } from "../generated/GribPreview";
-import { setHint } from "../hint";
-import { useT } from "../i18n";
+import { later, setHint } from "../hint";
+import { msg, useT } from "../i18n";
 import { api, GRIB_PROGRESS } from "../ipc";
 import { pickGribPath } from "../project/dialogs";
 import { formatBytes } from "./trackImport";
@@ -74,9 +74,9 @@ export default function GribExportDialog({ sourceId, label, onClose }: {
       setStatus(next);
       if (next.state === "done") {
         setHint(next.empty_messages > 0
-          ? t("Exported the reanalysis to {path}; {count} of its fields had no data (hours the archives do not have).", {
+          ? later(msg("Exported the reanalysis to {path}; {count} of its fields had no data (hours the archives do not have)."), {
             path: next.path ?? "", count: next.empty_messages })
-          : t("Exported the reanalysis to {path}", { path: next.path ?? "" }));
+          : later(msg("Exported the reanalysis to {path}"), { path: next.path ?? "" }));
         close.current();
       }
     });

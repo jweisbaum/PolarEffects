@@ -5,7 +5,7 @@ import { needsOutline } from "../colourContrast";
 import { reportFailure } from "../errors";
 import type { AppSettings } from "../generated/AppSettings";
 import type { ProjectSummary } from "../generated/ProjectSummary";
-import { setHint } from "../hint";
+import { later, setHint } from "../hint";
 import { msg, useT } from "../i18n";
 import { api } from "../ipc";
 import { focusMap, selectSamples, useSampleSelection } from "../selection";
@@ -460,7 +460,7 @@ export default function PolarView({ project, settings, onProject }: {
     <div className="view3d" tabIndex={-1}
       onKeyDown={(event) => { if (event.key === "Escape" && selection.length > 0) { event.stopPropagation(); select([]); } }}>
       <canvas ref={canvas} className={`view3d-canvas tool-${tool}`}
-        onPointerEnter={() => setHint(t("Drag to turn, right-drag to pan, scroll to zoom. Click a dot to select it; Shift adds."))}
+        onPointerEnter={() => setHint(later(msg("Drag to turn, right-drag to pan, scroll to zoom. Click a dot to select it; Shift adds.")))}
         onPointerLeave={() => setHint(null)}
         onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
         onPointerCancel={() => { gesture.current = null; drag.current = null; setPath(null); setDragValue(null); }} />

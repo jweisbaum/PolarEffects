@@ -1,8 +1,8 @@
 import { api } from "../ipc";
 import { describeError } from "../errors";
-import { reportError } from "../hint";
+import { later, reportError } from "../hint";
 import type { AppSettings } from "../generated/AppSettings";
-import { LANGUAGES, language, setLanguage, useLanguage, useT } from "./index";
+import { LANGUAGES, language, msg, setLanguage, useLanguage, useT } from "./index";
 
 /**
  * The interface language, on the start screen and in Settings (spec.md 3.5).
@@ -25,7 +25,7 @@ export default function LanguagePicker({ feature, onSettings }: {
       setLanguage(next);
       api.setLanguage(next).then(settings => onSettings?.(settings)).catch(error => {
         setLanguage(before);
-        reportError(t("The language could not be saved."), describeError(error).detail);
+        reportError(later(msg("The language could not be saved.")), describeError(error).detail);
       });
     }}>
     {LANGUAGES.map(({ id, name }) => <option key={id} value={id} lang={id}>{name}</option>)}

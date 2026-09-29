@@ -211,7 +211,7 @@ export default function SourceList({ project, onProject }: {
               </button>
               <button className="small" data-feature="sources:compare"
                 title={t("Compare this source with the blend in the Compare stage; pick another operand there")}
-                onClick={() => compareSource(project, source.id)}>{t("Compare")}</button>
+                onClick={() => compareSource(project, source.id)}>{t("Compare@@verb")}</button>
               <button className="small" data-feature="sources:remove"
                 title={t("Remove this source from the project (undoable)")}
                 onClick={() => void run(api.removeSource(source.id))}>{t("Remove")}</button>

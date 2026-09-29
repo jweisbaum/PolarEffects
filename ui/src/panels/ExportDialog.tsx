@@ -4,7 +4,7 @@ import { describeError, reportFailure } from "../errors";
 import type { ExportPreview } from "../generated/ExportPreview";
 import type { ExportProblemView } from "../generated/ExportProblemView";
 import type { ProjectSummary } from "../generated/ProjectSummary";
-import { setHint } from "../hint";
+import { later, setHint } from "../hint";
 import { msg, useT } from "../i18n";
 import { api } from "../ipc";
 import { pickExportPath } from "../project/dialogs";
@@ -94,7 +94,7 @@ export default function ExportDialog({ project, onClose }: {
     setBusy(true);
     try {
       const written = await api.exportPolar(path, format, axes);
-      setHint(t("Exported the polar to {path}", { path: written.path }));
+      setHint(later(msg("Exported the polar to {path}"), { path: written.path }));
       onClose();
     } catch (failure) {
       reportFailure(failure);

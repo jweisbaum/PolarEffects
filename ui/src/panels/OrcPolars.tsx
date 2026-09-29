@@ -6,8 +6,8 @@ import type { OrcHit } from "../generated/OrcHit";
 import type { OrcSearchResult } from "../generated/OrcSearchResult";
 import type { ProjectSummary } from "../generated/ProjectSummary";
 import { onReveal } from "../help/highlight";
-import { setHint } from "../hint";
-import { useT } from "../i18n";
+import { later, setHint } from "../hint";
+import { msg, useT } from "../i18n";
 import { api, IpcError } from "../ipc";
 import ConfirmDialog from "../project/ConfirmDialog";
 import { activeCount, type FieldQueries, loadFieldsOpen, NO_FIELDS, saveFieldsOpen, toFilters } from "./orcFields";
@@ -105,7 +105,7 @@ export default function OrcPolars({ project, onProject }: {
     }
     try {
       onProject(await api.orcAdd(hit.id, allowDuplicate));
-      setHint(t("Added {name}.", { name: hit.name || hit.sail_no }));
+      setHint(later(msg("Added {name}."), { name: hit.name || hit.sail_no }));
     } catch (error) {
       if (error instanceof IpcError && error.kind === "orc-duplicate") setAgain(hit);
       else reportFailure(error);

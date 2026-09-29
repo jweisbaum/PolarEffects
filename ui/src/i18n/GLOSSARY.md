@@ -36,8 +36,8 @@ cross-platform "Einfügen"). The native menu's labels live in Rust,
 |---|---|---|---|
 | polar | polaire (f.) | Polare (f.) | Never "diagramme polaire" for the data itself. |
 | polar plot / polar diagram | diagramme polaire | Polardiagramm | The 2D drawing. |
-| blend (noun) | fusion | Mischung | The exported result of the enabled sources. |
-| blend (verb) | fusionner | einmischen | |
+| blend (noun) | fusion | Mischung | The exported result of the enabled sources. ⚑ Plain words, not a routing-software term; a reviewer may prefer "polaire combinée" / "kombinierte Polare". |
+| blend (verb) | fusionner | zusammenführen | ⚑ "einmischen" (to meddle) was wrong; "zusammenführen" is also the word for the global *merged* current, which a reviewer may want kept apart. |
 | source | source | Quelle | Anything that contributes to the polar. |
 | weight (blend weight) | poids | Gewichtung | |
 | output grid | grille de sortie | Ausgaberaster | The TWA × TWS grid the blend is made on (M14). |
@@ -57,9 +57,9 @@ cross-platform "Einfügen"). The native menu's labels live in Rust,
 | polar tower (3D layout) | tour polaire | Polarturm | |
 | ORC certificate | certificat ORC | ORC-Messbrief | "Messbrief" is the class-rule word. |
 | sister ship | sistership | Schwesterschiff | |
-| TWA — true wind angle | angle du vent réel | wahrer Windwinkel | Keep "TWA" as the abbreviation. |
-| TWS — true wind speed | vitesse du vent réel | wahre Windgeschwindigkeit | Keep "TWS". |
-| BSP — boat speed | vitesse du bateau | Bootsgeschwindigkeit | Keep "BSP". |
+| TWA — true wind angle | angle du vent réel | wahrer Windwinkel | Keep "TWA" as the abbreviation; *le* TWA, *der* TWA. |
+| TWS — true wind speed | vitesse du vent réel | wahre Windgeschwindigkeit | Keep "TWS"; *le* TWS, *die* TWS. |
+| BSP — boat speed | vitesse du bateau | Bootsgeschwindigkeit | Keep "BSP"; *la* BSP, *die* BSP. ⚑ French routers also say "vitesse surface". |
 | VMG | VMG | VMG | |
 | heading | cap | Kurs | |
 | tack (side) | amure | Bug | "tribord amure" / "Steuerbordbug". |
@@ -69,7 +69,7 @@ cross-platform "Einfügen"). The native menu's labels live in Rust,
 | to luff up | lofer | anluven | |
 | upwind / downwind | au près / au portant | am Wind / vor dem Wind | |
 | wind / waves / current | vent / vagues / courant | Wind / Wellen / Strömung | Current is "toward", wind and waves "from". |
-| wave height | hauteur des vagues | Wellenhöhe | Significant height: hauteur significative / signifikante Wellenhöhe. |
+| wave height | hauteur des vagues | Wellenhöhe | Significant height (ERA5's): hauteur significative / signifikante Wellenhöhe. |
 | reanalysis | réanalyse | Reanalyse | |
 | chunk cache | cache de blocs | Datenblock-Cache | Downloaded reanalysis data. |
 | knots | nœuds | Knoten | Symbol "kn" in every language. |
@@ -98,14 +98,8 @@ machine-drafted, needs a native sailor.
 
 | English | Français | Deutsch | Note |
 |---|---|---|---|
-| TWA — true wind angle | TWA (angle du vent réel) | TWA (wahrer Windwinkel) | Written "TWA" in labels in all three; gender: *le* TWA, *der* TWA. |
-| TWS — true wind speed | TWS (vitesse du vent réel) | TWS (wahre Windgeschwindigkeit) | *le* TWS, *die* TWS. |
-| BSP — boat speed | BSP (vitesse du bateau) | BSP (Bootsgeschwindigkeit) | *la* BSP (la vitesse), *die* BSP. ⚑ French routers also say "vitesse surface"; kept "vitesse du bateau". |
-| VMG | VMG | VMG | *la* VMG / *die* VMG. |
 | beat angle / run angle (ORC) | angle de près / angle de vent arrière optimaux | optimaler Am-Wind- / Vorwind-Winkel | The ORC certificate's "Beat angle" and "Gybe angle". |
-| upwind / downwind | au près / au portant | am Wind / vor dem Wind | |
 | closer to / further off the wind | plus près du vent / plus abattu | höher am Wind / tiefer | Filter tooltips. ⚑ "tiefer segeln" is the idiom; "raumer" was avoided as too narrow. |
-| tack / gybe (manoeuvres) | virement de bord / empannage | Wende / Halse | Plural "virements et empannages", "Wenden und Halsen". |
 | manoeuvre threshold | seuil de manœuvre | Manöverschwelle | |
 | heel | gîte | Krängung | Not shown in v1; fixed here for later features. |
 | leeway | dérive | Abdrift | ⚑ French "dérive" also means drift (Stokes drift, current set and drift) and the centreboard; context decides. |
@@ -117,18 +111,14 @@ machine-drafted, needs a native sailor.
 | tide, tidal current | marée, courant de marée | Gezeiten, Gezeitenströmung | "currents without tide": courants sans marée / Strömungen ohne Gezeiten. |
 | Stokes drift | dérive de Stokes | Stokes-Drift | |
 | correct for current | corriger du courant | Strömung herausrechnen | |
-| significant wave height | hauteur significative des vagues | signifikante Wellenhöhe | |
 | mean wave direction | direction moyenne des vagues | mittlere Wellenrichtung | Waves are "from". |
 | head / bow / beam / quarter / following seas | mer de face / par l'avant / de travers / de trois-quarts arrière / de l'arrière | Wellen von vorn / schräg von vorn / von der Seite / schräg von achtern / von achtern | Wave sectors. ⚑ German keywords also carry "querab", "raumschots". |
 | angle off the bow | angle depuis l'étrave | Winkel zum Bug | |
 | sea state | état de la mer | Seegang | Search keyword. |
-| reanalysis | réanalyse | Reanalyse | ERA5, ARCO-ERA5, WeatherBench2 never translated. |
 | weather (the fetched wind, waves and current) | météo | Wetter | "Fetch weather…": Récupérer la météo… / Wetter abrufen…. |
 | environment (wind, waves, current of a sample) | environnement | Umweltdaten | |
 | fetch (verb, noun) | récupérer / récupération | abrufen / Abruf | Downloads in general: télécharger / herunterladen. |
 | hourly / every 3 hours (sampling) | toutes les heures, pas horaire / toutes les 3 heures | stündlich / alle 3 Stunden | "Abtastung" for sampling. |
-| blend (the result) | fusion | Mischung | ⚑ "fusion" and "Mischung" are plain words, not a routing-software term; a reviewer may prefer "polaire combinée" / "kombinierte Polare". |
-| polar segment (a track's polar) | segment de polaire | Polarsegment | |
 | statistic (of a cell) | statistique | Kennwert | 90th percentile: 90e centile / 90. Perzentil; median: médiane / Median; mean: moyenne / Mittelwert. |
 | cell (of a polar grid or table) | cellule | Zelle | Not "case" in French: "case" is kept for text boxes ("case de recherche") and tick boxes. |
 | grid (output grid, a polar's grid) | grille | Raster | "Gitterpunkt" only for a polar node in German descriptions. |
@@ -158,6 +148,9 @@ machine-drafted, needs a native sailor.
 | frame (fit on the map) | cadrer | einpassen | Not "formatfüllend zeigen". |
 | derive / derived | déduire / déduit | ableiten / abgeleitet | Heading and speed from positions. |
 | given (value from the file) | fourni | angegeben | |
-| Shift (key) | Maj | Umschalt | In prose and tooltips. Keyboard chords shown as `Cmd+Shift+S` stay as the platform writes them. |
+| Shift (key) | Maj | Umschalt | In prose, tooltips and chords (`chordText` in `ui/src/chords.ts`). |
+| Cmd / Ctrl (accelerator) | ⌘ on a Mac, Ctrl elsewhere | ⌘ on a Mac, Strg elsewhere | English writes Cmd / Ctrl. |
+| Compare (a source's button, the verb) | Comparer | Vergleichen | Key `Compare@@verb`; the stage tab is the noun: Comparer / Vergleich. |
 | Esc (key) | Échap | Esc | |
+| add | ajouter | hinzufügen | Not "addieren" (Stokes drift). |
 | undo (as a step) | une annulation | ein Widerrufen-Schritt | "One undo" → "s'annule en une fois" / "ein Widerrufen-Schritt". |

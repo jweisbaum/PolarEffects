@@ -200,6 +200,27 @@ plot's rings, slice, band and hover and the 3D drag readout follow the
 display speed unit. Compare's three 512 × 512 surfaces, input + `setData`,
 are pinned under 100 ms (min of 12 runs; 63–78 ms alone, 93 ms under the full suite's load).
 
+**M17b review follow-up.** Status hints, errors and save/undo messages keep
+their translation keys until rendered, including translated parameters, so
+a language switch relabels an existing message. Shortcut labels use the
+language's modifier names, and the German source action uses *Vergleichen*
+while the stage remains *Vergleich*. Track filters show and accept the
+chosen speed and wave-height units, converting to knots/metres at the input
+boundary; leaving a rounded display value untouched creates no edit.
+Long filter labels have more room; date/time inputs and dropdowns occupy a
+full row so their native controls fit without sideways scrolling.
+The 512 × 512 timing tests run serially in `npm run ui:perf`, separately
+from the parallel correctness suite, in both CI and release builds. The
+language UX flow checks status relabelling and edits BSP, TWS, wave-height
+and current filters through Settings' km/h/feet and knots/metres choices.
+Verified locally: 612 Rust tests, 340 UI correctness tests, four serial
+performance tests, ten driver unit tests and all ten UX flows passed; the
+language flow passed again after the final layout fixes (65 screenshots).
+Formatting, Clippy, type checking, the production UI build and the offline
+check passed. Compare's three-surface CPU rebuild measured 57–90 ms in
+warm runs and the two-surface rebuild 18–40 ms on this Intel i9; reference
+machine measurements and native-sailor translation review remain open.
+
 ---
 
 ## 1. Sequencing strategy

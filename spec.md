@@ -242,11 +242,16 @@ The VectorEffects i18n system is copied (D10):
 
 - English text is the key: `t("Import {count} tracks", {count})` via
   `useT()`, `msg("…")` for tables built at module load.
+  A key may carry an `@@context` suffix for words whose translation depends
+  on their role (the Compare stage and the Compare action); the suffix is
+  never displayed.
 - Catalogues in `ui/src/i18n/locales/<lang>/<area>.ts`. **v1 ships English,
   French and German.** The language picker is in Settings and on the start
   screen; changing it relabels everything immediately, including the native
   menu, which Rust rebuilds from a translated table (`menu.rs`) on every
   language change.
+  Existing status messages and their translated parameters follow the new
+  language too; shortcut modifiers use its keyboard names.
 - `coverage.test.ts` fails on a missing, unused or untranslated key, and on
   JSX text, `title` or `aria-label` that skips `t`.
 - A glossary per language fixes sailing terms (TWA, TWS, BSP, VMG, polar,
@@ -995,6 +1000,10 @@ Filtered-out samples stay in the project and appear dimmed in the plots when
   TWA, wave height and current speed ranges, the wave direction (sectors,
   an angle off the bow, or a compass range from–to clockwise) and "leave
   out currents without tide" (M9). Each change is one undo.
+- The BSP, TWS and current boxes are in the display speed unit and the
+  wave height boxes in the display wave height unit (§3.4), converted where
+  they are shown and typed; the filter is stored in knots and metres, and a
+  box left as it was commits nothing (M17b).
 
 ### 7.7 Jobs
 

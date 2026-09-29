@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { ACCEL } from "../chords";
+import { chordText } from "../chords";
 import { describeError } from "../errors";
 import { api } from "../ipc";
 import type { AppSettings } from "../generated/AppSettings";
@@ -103,7 +103,7 @@ export default function StartScreen({
             <button data-feature="start:help" onClick={() => openHelp()} title={t("Open the help reference (F1)")}>
               {t("Help")}
             </button>
-            <button data-feature="start:settings" onClick={onSettings} title={t("Language, theme, units, autosave, cache and network ({chord})", { chord: `${ACCEL}+,` })}>
+            <button data-feature="start:settings" onClick={onSettings} title={t("Language, theme, units, autosave, cache and network ({chord})", { chord: chordText(["accel", ","]) })}>
               {t("Settings")}
             </button>
           </div>

@@ -565,3 +565,33 @@ it("keeps the ticks when the fetch is not started", async () => {
   await click([...host.querySelectorAll(".modal-actions button")].find((b) => b.textContent === "Not now")!);
   expect([...host.querySelectorAll<HTMLInputElement>('[data-feature="tracks:select"]')].map((b) => b.checked)).toEqual([true, true]);
 });
+
+it("shows and takes the speed and wave filters in the display units, storing knots and metres (M17b)", async () => {
+  const units = { speed: "kmh", wave_height: "ft", distance: "nm" } as const;
+  await act(async () => root.render(<Tracks project={project([SOURCE])} onProject={() => undefined} units={units} />));
+  await click(q('[data-feature="tracks:filters"]'));
+  const type = async (feature: string, text: string) => {
+    const input = q(`[data-feature="${feature}"]`) as HTMLInputElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, text);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => { input.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); });
+  };
+  const min = q('[data-feature="tracks:min-bsp"]') as HTMLInputElement;
+  // The stored 1 kn is 1.852 km/h, and the label names the unit.
+  expect(min.value).toBe("1.852");
+  expect(min.closest("label")!.textContent).toContain("Minimum BSP (km/h)");
+  // Leaving the box untouched sends nothing.
+  await act(async () => { min.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); });
+  expect(calls.filter(([n]) => n === "setTrackFilters")).toEqual([]);
+  // 18.52 km/h is 10 kn.
+  await type("tracks:min-bsp", "18.52");
+  const sent = calls.filter(([n]) => n === "setTrackFilters").at(-1)?.[1] as [number, { min_bsp: number }];
+  expect(sent[1].min_bsp).toBeCloseTo(10, 12);
+  // 10 ft is 3.048 m.
+  await type("tracks:hs-min", "10");
+  const waves = calls.filter(([n]) => n === "setTrackFilters").at(-1)?.[1] as [number, { hs_min: number }];
+  expect(waves[1].hs_min).toBeCloseTo(3.048, 12);
+  expect(q('[data-feature="tracks:hs-min"]')!.closest("label")!.textContent).toContain("(ft)");
+});

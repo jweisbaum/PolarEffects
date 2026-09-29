@@ -292,8 +292,11 @@ button.icon-button { padding: 0 5px; line-height: 16px; font-size: 11px; }
 .track-filters { border: 1px solid var(--border); border-radius: 6px; margin: 0 0 6px; padding: 4px 8px 6px; display: grid; gap: 4px; }
 .track-filters legend { font-size: 11px; padding: 0 4px; }
 .track-filters p { margin: 0; font-size: 11px; }
-.track-field { display: grid; grid-template-columns: minmax(0, 1fr) minmax(6rem, 9.5rem); hyphens: auto; align-items: center; gap: 6px; font-size: 12px; }
+/* The label gets the room (a German or French label wraps at its spaces,
+   never mid-word); the box takes what is left, down to 5rem (M17b review). */
+.track-field { display: grid; grid-template-columns: minmax(0, 1fr) minmax(5rem, 6rem); align-items: center; gap: 6px; font-size: 12px; }
 .track-field input, .track-field select { min-width: 0; }
+.track-time-field, .track-choice-field { grid-template-columns: minmax(0, 1fr); gap: 2px; }
 .track-env-filters { border: 1px dashed var(--border); border-radius: 6px; margin: 0; padding: 2px 6px 4px; font-size: 11px; display: grid; gap: 4px; }
 .track-env-filters legend { font-size: 11px; padding: 0 4px; }
 .track-range { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px; }

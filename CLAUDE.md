@@ -132,6 +132,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 npm run ui:typecheck
 npm run ui:test
+npm run ui:perf             # timed tests, serially: the spec §13 budgets
 npm run check:offline       # invariant 4
 
 # Regenerate TS bindings after changing any IPC-facing Rust type
