@@ -1,11 +1,13 @@
 """Require every platform's installers before checksumming and publishing."""
 
 import hashlib
+import json
 from pathlib import Path
+import re
 import sys
 
 
-def main(directory):
+def main(directory, version):
     assets = sorted(path for path in directory.iterdir() if path.is_file() and path.name != "SHA256SUMS")
     required = {
         "Intel Mac": lambda name: name.endswith("_x64.dmg"),
@@ -21,6 +23,10 @@ def main(directory):
     missing = [platform for platform, matches in required.items() if not any(matches(path.name) for path in assets)]
     if missing:
         raise SystemExit("Missing release installers: " + ", ".join(missing))
+    prefix = re.compile(rf"^polareffects[_-]{re.escape(version)}[_-]", re.IGNORECASE)
+    for path in assets:
+        if path.suffix in {".dmg", ".msi", ".exe", ".AppImage", ".deb", ".rpm"} and not prefix.match(path.name):
+            raise SystemExit(f"Installer does not match PolarEffects {version}: {path.name}")
     lines = []
     for path in assets:
         if path.stat().st_size == 0:
@@ -35,4 +41,5 @@ def main(directory):
 
 
 if __name__ == "__main__":
-    main(Path(sys.argv[1]))
+    version = json.loads((Path(__file__).resolve().parent.parent / "package.json").read_text())["version"]
+    main(Path(sys.argv[1]), version)

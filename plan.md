@@ -1071,6 +1071,26 @@ for all five targets, About with ORC catalogue provenance and data
 attributions (ECMWF/Copernicus ERA5, WeatherBench2, Copernicus Marine,
 jieter/orc-data MIT), user guide.
 
+*Prepared 2026-09-30; five-platform verification in progress.* About and
+searchable Help credit all data providers in en/fr/de. `docs/USER-GUIDE.md`,
+`DATA-SOURCES.md` and the ORC MIT notice are bundled resources;
+`docs/RELEASING.md` documents artifact-only builds, tagging, optional credentials
+and installation checks. The release workflow validates partial Apple secrets,
+supports Windows PFX signing with SHA-256 and RFC 3161 timestamps, checks the
+resulting signatures, and includes a documentation archive in release checksums.
+Missing, empty or mixed-version installers prevent publication. No signing
+credentials is a supported test-build mode: ad-hoc macOS, unsigned Windows.
+
+Local Intel Mac validation: app and DMG built in release mode; app signature,
+DMG integrity and bundled documents verified. fmt, clippy, 612 Rust tests
+(20 ignored), 340 UI tests, 4 serial performance tests, 10 driver tests,
+8 release-tool tests and the offline check pass. The Help UX flow passes in
+all three languages; its credits screenshots were opened and reviewed.
+The user supplied `jweisbaum/PolarEffects` as the release repository. The other
+platform bundles, Windows signing fixture and CI ecCodes check are pending
+the first hosted run. Real issuer signing/notarization awaits certificates;
+native-sailor review and reference-device launch/performance checks remain open.
+
 ---
 
 ## 3. Testing strategy

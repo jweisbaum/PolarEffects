@@ -10,6 +10,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
   # Integration binaries otherwise exhaust the Linux runner's disk while
   # linking. Keep normal optimizations and assertions, without DWARF/PDBs.
   CARGO_PROFILE_DEV_DEBUG: "0"
@@ -195,6 +196,11 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci
+      - run: node --test tools/configure-macos-signing.test.mjs
+      - name: Exercise optional Windows certificate import
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tools/test-windows-signing.ps1
       - run: npm run ui:typecheck
       - run: npm run ui:test
       - run: npm run ui:perf
@@ -210,6 +216,8 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci
+      - run: node tools/check-release.mjs
+      - run: python3 -m unittest discover -s tools -p 'test_release*.py'
       # Check the built bundle too: a remote reference pulled in by a dependency
       # only becomes visible after bundling.
       - run: npm run ui:build

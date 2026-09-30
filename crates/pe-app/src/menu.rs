@@ -63,6 +63,8 @@ pub enum Label {
     /// The ORC catalogue's provenance in About (spec.md 5.1), a template
     /// filled by [`about_orc`].
     OrcCatalogue,
+    /// Data providers credited in the About panel.
+    DataCredits,
 }
 
 /// Every label, for the test that each has a translation.
@@ -89,6 +91,7 @@ pub const ALL: &[Label] = &[
     Label::Help,
     Label::AppHelp,
     Label::OrcCatalogue,
+    Label::DataCredits,
 ];
 
 /// A menu label in `language` (one of `settings::LANGUAGES`), English for
@@ -121,6 +124,9 @@ pub fn text(language: &str, label: Label) -> &'static str {
         ("fr", L::OrcCatalogue) => {
             "Catalogue ORC : {records} certificats de jieter/orc-data, commit {commit} du {date}, construit le {built}."
         }
+        ("fr", L::DataCredits) => {
+            "Données : jieter/orc-data (MIT) ; ERA5 d’ECMWF / Copernicus Climate Change Service, via WeatherBench2 et ARCO-ERA5 ; E.U. Copernicus Marine Service Information ; fond de carte Natural Earth (domaine public).\n\nLe guide et les mentions des sources sont fournis dans le dossier documentation de l’application."
+        }
 
         ("de", L::About) => "Über PolarEffects",
         ("de", L::Services) => "Dienste",
@@ -145,6 +151,9 @@ pub fn text(language: &str, label: Label) -> &'static str {
         ("de", L::AppHelp) => "PolarEffects-Hilfe",
         ("de", L::OrcCatalogue) => {
             "ORC-Katalog: {records} Messbriefe aus jieter/orc-data, Commit {commit} vom {date}, erstellt am {built}."
+        }
+        ("de", L::DataCredits) => {
+            "Daten: jieter/orc-data (MIT); ERA5 von ECMWF / Copernicus Climate Change Service, über WeatherBench2 und ARCO-ERA5; E.U. Copernicus Marine Service Information; Kartengrundlage von Natural Earth (gemeinfrei).\n\nDas Handbuch und die Quellenangaben liegen im Ordner documentation der Anwendung."
         }
 
         (_, L::About) => "About PolarEffects",
@@ -171,6 +180,9 @@ pub fn text(language: &str, label: Label) -> &'static str {
         (_, L::OrcCatalogue) => {
             "ORC catalogue: {records} certificates from jieter/orc-data, commit {commit} of {date}, built {built}."
         }
+        (_, L::DataCredits) => {
+            "Data: jieter/orc-data (MIT); ERA5 from ECMWF / Copernicus Climate Change Service, via WeatherBench2 and ARCO-ERA5; E.U. Copernicus Marine Service Information; Natural Earth basemap (public domain).\n\nThe user guide and data source notices are included in the application’s documentation folder."
+        }
     }
 }
 
@@ -189,6 +201,15 @@ pub fn about_orc(language: &str) -> Option<String> {
     )
 }
 
+/// Keep the data credits even if a damaged catalogue has no provenance.
+pub fn about_credits(language: &str) -> String {
+    let credits = text(language, Label::DataCredits);
+    match about_orc(language) {
+        Some(provenance) => format!("{provenance}\n\n{credits}"),
+        None => credits.to_owned(),
+    }
+}
+
 /// Builds the menu in `language`.
 pub fn build<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
@@ -197,12 +218,12 @@ pub fn build<R: tauri::Runtime>(
     let l = |label| Some(text(language, label));
     let info = app.package_info();
     // macOS shows `credits` in its About panel, the others `comments`.
-    let orc = about_orc(language);
+    let credits = about_credits(language);
     let about = AboutMetadata {
         name: Some(info.name.clone()),
         version: Some(info.version.to_string()),
-        comments: orc.clone(),
-        credits: orc,
+        comments: Some(credits.clone()),
+        credits: Some(credits),
         ..AboutMetadata::default()
     };
     let quit = MenuItem::with_id(
@@ -365,12 +386,23 @@ mod tests {
     fn about_names_the_orc_catalogue_provenance() {
         let provenance = pe_orc::provenance().unwrap();
         for &language in LANGUAGES {
-            let about = about_orc(language).unwrap();
+            let about = about_credits(language);
             assert!(about.contains(&provenance.commit[..10]), "{about}");
             assert!(about.contains(&provenance.commit_date), "{about}");
             assert!(about.contains(&provenance.build_date), "{about}");
             assert!(about.contains(&provenance.records.to_string()), "{about}");
             assert!(!about.contains('{'), "{about}");
+            for source in [
+                "jieter/orc-data (MIT)",
+                "ECMWF",
+                "Copernicus Climate Change Service",
+                "WeatherBench2",
+                "ARCO-ERA5",
+                "Copernicus Marine",
+                "Natural Earth",
+            ] {
+                assert!(about.contains(source), "{language}: missing {source}");
+            }
         }
     }
 }

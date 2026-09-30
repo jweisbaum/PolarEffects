@@ -446,6 +446,10 @@ The ORC catalogue is **embedded in the app** (D3):
   and the build date (the commit's date unless `SOURCE_DATE_EPOCH` is set,
   so rebuilding one commit is byte-identical); About shows them (the native About panel), and the
   ORC polars section's footer shows the certificate count and commit date.
+  About and the searchable help also credit jieter/orc-data (MIT), ECMWF /
+  Copernicus ERA5, WeatherBench2, ARCO-ERA5, Copernicus Marine and Natural Earth
+  in all three interface languages. Every installed bundle includes the user
+  guide, detailed data notices and ORC MIT notice in its documentation resources.
 - Refreshing the catalogue is a developer task and a new release, never a
   run-time fetch (invariant 4).
 

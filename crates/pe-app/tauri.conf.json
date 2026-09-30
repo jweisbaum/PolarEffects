@@ -36,6 +36,13 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "shortDescription": "Build sailing polars from certificates, polar files and race tracks.",
+    "category": "Sports",
+    "resources": {
+      "../../docs/USER-GUIDE.md": "documentation/USER-GUIDE.md",
+      "../../docs/DATA-SOURCES.md": "documentation/DATA-SOURCES.md",
+      "../../docs/licenses/orc-data-MIT.txt": "documentation/licenses/orc-data-MIT.txt"
+    }
   }
 }

@@ -30,6 +30,17 @@ export default {
       assert.equal(inside, true, `the flash surrounds Fit the world (${language})`);
       await t.shot(`${language}-flash`);
       await d.waitGone(".feature-flash", { timeoutMs: 10_000 });
+      await d.key("F1");
+      await d.waitFor('[data-feature="help:search"]');
+      await d.type('[data-feature="help:search"]', "Copernicus");
+      await d.waitFor(".help-dialog article", { text: "Natural Earth" });
+      const credits = await d.text(".help-dialog article");
+      for (const source of ["jieter/orc-data (MIT)", "ECMWF", "WeatherBench2", "ARCO-ERA5", "Copernicus Marine"]) {
+        assert.ok(credits.includes(source), `${language} credits name ${source}`);
+      }
+      await t.shot(`${language}-data-credits`);
+      await d.click('[data-feature="help:close"]');
+      await d.waitGone(".help-dialog");
     }
   },
 };
