@@ -156,6 +156,10 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Exercise Windows signing setup before using release credentials
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tools/test-windows-signing.ps1
 
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
@@ -193,7 +197,7 @@ jobs:
           WINDOWS_TIMESTAMP_URL: ${{ secrets.WINDOWS_TIMESTAMP_URL }}
         run: ./tools/configure-windows-signing.ps1
 
-      - name: Upload documentation for artifact-only builds
+      - name: Upload bundled documentation
         uses: actions/upload-artifact@v4
         with:
           name: PolarEffects-documentation-${{ matrix.name }}
