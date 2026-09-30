@@ -1064,14 +1064,14 @@ language; help topics complete; every control in the search.
 
 ---
 
-### M18 — Release
+### M18 — Release · **complete**
 
 **Deliverables:** signing and notarisation (macOS), Windows signing, bundles
 for all five targets, About with ORC catalogue provenance and data
 attributions (ECMWF/Copernicus ERA5, WeatherBench2, Copernicus Marine,
 jieter/orc-data MIT), user guide.
 
-*Prepared 2026-09-30; five-platform verification in progress.* About and
+*Completed 2026-09-30 under the signing-ready preflight scope.* About and
 searchable Help credit all data providers in en/fr/de. `docs/USER-GUIDE.md`,
 `DATA-SOURCES.md` and the ORC MIT notice are bundled resources;
 `docs/RELEASING.md` documents artifact-only builds, tagging, optional credentials
@@ -1086,10 +1086,27 @@ DMG integrity and bundled documents verified. fmt, clippy, 612 Rust tests
 (20 ignored), 340 UI tests, 4 serial performance tests, 10 driver tests,
 8 release-tool tests and the offline check pass. The Help UX flow passes in
 all three languages; its credits screenshots were opened and reviewed.
-The user supplied `jweisbaum/PolarEffects` as the release repository. The other
-platform bundles, Windows signing fixture and CI ecCodes check are pending
-the first hosted run. Real issuer signing/notarization awaits certificates;
-native-sailor review and reference-device launch/performance checks remain open.
+The repository is [jweisbaum/PolarEffects](https://github.com/jweisbaum/PolarEffects),
+with `build/v1` as its default branch. At commit `0c2932d`,
+[CI passed all ten jobs](https://github.com/jweisbaum/PolarEffects/actions/runs/36720234361)
+and [all five platform bundles passed](https://github.com/jweisbaum/PolarEffects/actions/runs/36720247704)
+in artifact-only mode. This includes the Windows PFX fixture, Windows application
+manifests, cross-compilation of ARM64 tests and independent ecCodes validation.
+The first Windows run exposed a Unix-only absolute-path fixture; it now uses a
+native temporary path and the full Windows suite passes.
+
+Downloaded all eight installers: two Mac DMGs, Windows x64 MSI and NSIS,
+Windows ARM64 NSIS, and Linux AppImage, Debian and RPM. The complete-set guard
+and independent SHA-256 verification pass. Both downloaded Mac apps have the
+expected architecture, valid ad-hoc signatures and exact documentation resources;
+both DMGs pass `hdiutil verify`. Debian and RPM contain the expected guide and
+notices. Local verified payloads and `SHA256SUMS` are in
+`target/release-downloads/0c2932d/verified/`.
+
+Actual issuer signing/notarization awaits certificates (the accepted preflight
+scope); Windows packages are unsigned and Mac builds are ad-hoc signed. No
+release tag was created and no GitHub release was published. Native-sailor
+review and reference-device installation/launch/performance checks remain open.
 
 ---
 
