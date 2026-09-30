@@ -798,25 +798,23 @@ mod tests {
     fn the_legacy_chunk_folder_is_found_where_it_was_kept() {
         let dir = temp("legacy");
         let file = dir.join("settings.json");
-        let default = Path::new("/cache");
-        assert_eq!(
-            legacy_chunk_dir(&file, default),
-            PathBuf::from("/cache/chunks")
-        );
+        let default = dir.join("default cache");
+        let chosen = dir.join("chosen cache");
+        // A Unix /Volumes path is rooted but not absolute on Windows. Use
+        // this platform's absolute temp path and let serde escape backslashes.
+        assert!(chosen.is_absolute());
+        assert_eq!(legacy_chunk_dir(&file, &default), default.join("chunks"));
         std::fs::write(
             &file,
-            r#"{ "chunk_cache": { "location": " /Volumes/big ", "size_limit_gb": 20 } }"#,
+            serde_json::to_vec(&serde_json::json!({
+                "chunk_cache": { "location": format!(" {} ", chosen.display()), "size_limit_gb": 20 }
+            }))
+            .unwrap(),
         )
         .unwrap();
-        assert_eq!(
-            legacy_chunk_dir(&file, default),
-            PathBuf::from("/Volumes/big/chunks")
-        );
+        assert_eq!(legacy_chunk_dir(&file, &default), chosen.join("chunks"));
         std::fs::write(&file, r#"{ "chunk_cache": { "location": "relative" } }"#).unwrap();
-        assert_eq!(
-            legacy_chunk_dir(&file, default),
-            PathBuf::from("/cache/chunks")
-        );
+        assert_eq!(legacy_chunk_dir(&file, &default), default.join("chunks"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
