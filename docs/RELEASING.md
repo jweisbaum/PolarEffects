@@ -93,7 +93,7 @@ To make a local ad-hoc Intel Mac package:
 ```sh
 CARGO_INCREMENTAL=0 APPLE_SIGNING_IDENTITY=- npm run build -- --bundles app,dmg -- --locked
 codesign --verify --deep --strict target/release/bundle/macos/PolarExplorer.app
-hdiutil verify target/release/bundle/dmg/PolarExplorer_0.1.0_x64.dmg
+hdiutil verify target/release/bundle/dmg/PolarExplorer_0.2.0_x64.dmg
 ```
 
 ## Optional Windows signing

@@ -269,15 +269,18 @@ mod tests {
         let service = app.state::<McpService>();
         let sessions = || service.activity.lock().unwrap().shown().sessions;
         assert_eq!(sessions(), 0);
-        service.note_sessionless(app.handle(), Duration::from_millis(300));
+        // Generous times: a loaded runner oversleeps, and each check below
+        // has half a second or more to spare.
+        let idle = Duration::from_millis(1500);
+        service.note_sessionless(app.handle(), idle);
         assert_eq!(sessions(), 1);
         // Another call before the time is up pushes it back, and is still
         // one client.
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        service.note_sessionless(app.handle(), Duration::from_millis(300));
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+        service.note_sessionless(app.handle(), idle);
+        tokio::time::sleep(Duration::from_millis(1000)).await;
         assert_eq!(sessions(), 1, "the second call pushed the deadline back");
-        tokio::time::sleep(Duration::from_millis(600)).await;
+        tokio::time::sleep(Duration::from_millis(1500)).await;
         assert_eq!(sessions(), 0);
     }
 }
