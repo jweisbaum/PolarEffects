@@ -20,7 +20,7 @@ use std::sync::Arc;
 use pe_core::command::BLEND_SETTINGS_LABEL;
 use pe_core::project::{BlendSettings, MAX_GRID_TWS_KN, OutputGrid, validate_grid_axis};
 use pe_core::{Colour, Command, Project};
-use pe_polar::blend::on_grid;
+use pe_polar::blend::on_grid_mode;
 use pe_polar::{
     Blend, BlendOptions, BlendSource, CellOrigin, Confidence, ExportProblem, Polar, PolarFileFormat,
 };
@@ -33,8 +33,95 @@ use crate::error::{AppError, Context, Result};
 use crate::polar_edit::{parse_statistic, statistic_name};
 use crate::projects::ProjectSummary;
 
+/// One inclusive wave range in physical units.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export_to = "WaveRangeInput.ts")]
+pub struct WaveRangeInput {
+    /// Lower bound, or none.
+    pub min: Option<f64>,
+    /// Upper bound, or none.
+    pub max: Option<f64>,
+}
+
+/// The main wave sliders, independent of the other global filters.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "WaveRangesInput.ts")]
+pub struct WaveRangesInput {
+    /// Significant wave height, metres.
+    pub hs: WaveRangeInput,
+    /// Wave angle off the bow, degrees.
+    pub wave_angle: WaveRangeInput,
+    /// Mean wave period, seconds.
+    pub wave_period: WaveRangeInput,
+}
+
+impl WaveRangesInput {
+    fn of(value: &pe_core::source::WaveRanges) -> Self {
+        let range = |r: &pe_core::source::Range| WaveRangeInput {
+            min: r.min,
+            max: r.max,
+        };
+        Self {
+            hs: range(&value.height_m),
+            wave_angle: range(&value.angle_deg),
+            wave_period: range(&value.period_s),
+        }
+    }
+}
+
+/// Update all wave sliders as one reversible analysis edit.
+#[tauri::command]
+pub fn set_wave_ranges(
+    state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
+    ranges: WaveRangesInput,
+) -> Result<ProjectSummary> {
+    let state = state.scoped(boat_context);
+    wave_ranges_set(&state, ranges)
+}
+
+/// The native wave slider edit, shared with tests.
+pub fn wave_ranges_set(state: &AppState, ranges: WaveRangesInput) -> Result<ProjectSummary> {
+    let range = |r: WaveRangeInput| pe_core::source::Range {
+        min: r.min,
+        max: r.max,
+    };
+    let next = pe_core::source::WaveRanges {
+        height_m: range(ranges.hs),
+        angle_deg: range(ranges.wave_angle),
+        period_s: range(ranges.wave_period),
+    };
+    next.validate()?;
+    settings_set(state, |settings| {
+        settings.wave_ranges = next;
+        Ok(())
+    })
+}
+
 /// The blend of `project` from each visible source's derived data.
 pub fn assemble(project: &Project, derived: &BTreeMap<u64, Arc<Derived>>) -> Blend {
+    let mut result = assemble_base(project, derived);
+    pe_polar::edit::apply_overrides(&mut result.polar, &project.blend.corrections);
+    for (i, angle) in result.polar.twa.iter().enumerate() {
+        for j in 0..result.polar.tws.len() {
+            if *angle == 0.0 || *angle == 360.0 {
+                result.polar.bsp[i][j] = Some(0.0);
+            } else if project
+                .blend
+                .corrections
+                .iter()
+                .any(|c| c.twa == *angle && c.tws == result.polar.tws[j])
+            {
+                result.origin[i][j] = CellOrigin::Direct;
+            }
+        }
+    }
+    result
+}
+
+/// The uncorrrected blend used as the manual editor's immutable baseline.
+pub fn assemble_base(project: &Project, derived: &BTreeMap<u64, Arc<Derived>>) -> Blend {
     let grid = &project.grid;
     // A track cell the person overrode counts fully (D23 ruling).
     type Read<'a> = (u64, f64, Polar, Option<(&'a Derived, Vec<Vec<bool>>)>);
@@ -58,7 +145,13 @@ pub fn assemble(project: &Project, derived: &BTreeMap<u64, Arc<Derived>>) -> Ble
                 (data.blend.clone(), Some((&**data, overridden)))
             } else {
                 (
-                    on_grid(&data.edited, &source.overlay, &grid.twa, &grid.tws),
+                    on_grid_mode(
+                        &data.edited,
+                        &source.overlay,
+                        &grid.twa,
+                        &grid.tws,
+                        project.blend.interpolation,
+                    ),
                     None,
                 )
             };
@@ -83,7 +176,7 @@ pub fn assemble(project: &Project, derived: &BTreeMap<u64, Arc<Derived>>) -> Ble
             },
         })
         .collect();
-    pe_polar::blend(
+    pe_polar::blend::blend_mode(
         &grid.twa,
         &grid.tws,
         &sources,
@@ -91,6 +184,7 @@ pub fn assemble(project: &Project, derived: &BTreeMap<u64, Arc<Derived>>) -> Ble
             n_full: project.blend.n_full,
             smoothing: project.blend.smoothing,
         },
+        project.blend.interpolation,
     )
 }
 
@@ -126,6 +220,20 @@ pub struct BlendSummary {
     pub smoothing: bool,
     /// The statistic new tracks start with: `median`, `mean`, `p75`, `p90`.
     pub default_statistic: String,
+    /// Extra sample filters applied after each track's own filters.
+    pub global_filters: Option<crate::tracks::TrackFilters>,
+    /// Additional wave constraints from the main view.
+    pub wave_ranges: WaveRangesInput,
+    /// Independent port/starboard values.
+    pub asymmetric: bool,
+    /// `linear` or `monotone_spline`.
+    pub interpolation: String,
+    /// Stored manual blend corrections.
+    pub correction_count: u32,
+    /// Ordered fallback groups; empty disables prioritization.
+    pub priority_groups: Vec<crate::tracks::TrackFilters>,
+    /// Minimum pooled observations per cell for a priority group.
+    pub priority_min_samples: u32,
 }
 
 fn count(n: usize) -> u32 {
@@ -149,7 +257,29 @@ impl BlendSummary {
             n_full: settings.n_full,
             smoothing: settings.smoothing,
             default_statistic: statistic_name(settings.default_statistic).to_owned(),
+            global_filters: settings
+                .global_filters
+                .as_ref()
+                .map(crate::tracks::TrackFilters::of),
+            wave_ranges: WaveRangesInput::of(&settings.wave_ranges),
+            asymmetric: settings.asymmetric,
+            interpolation: interpolation_name(settings.interpolation).to_owned(),
+            correction_count: count(settings.corrections.len()),
+            priority_groups: settings
+                .priority_groups
+                .iter()
+                .map(crate::tracks::TrackFilters::of)
+                .collect(),
+            priority_min_samples: settings.priority_min_samples,
         }
+    }
+}
+
+/// Stable wire name of the interpolation rule.
+pub fn interpolation_name(mode: pe_core::project::Interpolation) -> &'static str {
+    match mode {
+        pe_core::project::Interpolation::Linear => "linear",
+        pe_core::project::Interpolation::MonotoneSpline => "monotone_spline",
     }
 }
 
@@ -169,12 +299,70 @@ fn settings_set(
     })
 }
 
+/// Sets the second filter layer; null disables it without touching track filters.
+#[tauri::command]
+pub fn set_global_filters(
+    state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
+    filters: Option<crate::tracks::TrackFilters>,
+) -> Result<ProjectSummary> {
+    let state = state.scoped(boat_context);
+    global_filters_set(&state, filters)
+}
+
+/// Global filtering without a Tauri handle, for lifecycle tests.
+pub fn global_filters_set(
+    state: &AppState,
+    filters: Option<crate::tracks::TrackFilters>,
+) -> Result<ProjectSummary> {
+    let filters = filters
+        .map(|f| f.applied_to(&pe_core::source::SampleFilters::default()))
+        .transpose()?;
+    settings_set(state, |settings| {
+        settings.global_filters = filters;
+        settings.validate()?;
+        Ok(())
+    })
+}
+
+/// Configure ordered per-cell fallback groups as one undoable overlay change.
+#[tauri::command]
+pub fn set_priority_filters(
+    state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
+    groups: Vec<crate::tracks::TrackFilters>,
+    minimum: u32,
+) -> Result<ProjectSummary> {
+    let state = state.scoped(boat_context);
+    priority_filters_set(&state, groups, minimum)
+}
+
+/// The command without a Tauri handle for lifecycle tests.
+pub fn priority_filters_set(
+    state: &AppState,
+    groups: Vec<crate::tracks::TrackFilters>,
+    minimum: u32,
+) -> Result<ProjectSummary> {
+    let groups = groups
+        .into_iter()
+        .map(|f| f.applied_to(&pe_core::source::SampleFilters::default()))
+        .collect::<Result<Vec<_>>>()?;
+    settings_set(state, |settings| {
+        settings.priority_groups = groups;
+        settings.priority_min_samples = minimum;
+        settings.validate()?;
+        Ok(())
+    })
+}
+
 /// Shows or hides the blend in every plot (spec.md 8). Export is unchanged.
 #[tauri::command]
 pub fn set_blend_visible(
     state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
     visible: bool,
 ) -> Result<ProjectSummary> {
+    let state = state.scoped(boat_context);
     blend_visible_set(&state, visible)
 }
 
@@ -190,8 +378,10 @@ pub fn blend_visible_set(state: &AppState, visible: bool) -> Result<ProjectSumma
 #[tauri::command]
 pub fn set_blend_colour(
     state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
     colour: String,
 ) -> Result<ProjectSummary> {
+    let state = state.scoped(boat_context);
     blend_colour_set(&state, &colour)
 }
 
@@ -224,6 +414,12 @@ pub struct BlendSettingsInput {
     pub use_corrected: bool,
     /// Include Stokes drift in the global merged current.
     pub stokes_drift: bool,
+    /// Independent port/starboard values.
+    #[serde(default)]
+    pub asymmetric: bool,
+    /// `linear` or `monotone_spline`; absent in older callers means linear.
+    #[serde(default)]
+    pub interpolation: String,
 }
 
 /// Applies the Blend settings dialog as one undoable entry: the output grid
@@ -231,8 +427,10 @@ pub struct BlendSettingsInput {
 #[tauri::command]
 pub fn set_blend_settings(
     state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
     settings: BlendSettingsInput,
 ) -> Result<ProjectSummary> {
+    let state = state.scoped(boat_context);
     blend_settings_set(&state, settings)
 }
 
@@ -242,6 +440,21 @@ pub fn blend_settings_set(state: &AppState, input: BlendSettingsInput) -> Result
         field: "Default statistic",
         value: input.default_statistic.clone(),
     })?;
+    let interpolation = match input.interpolation.as_str() {
+        "" | "linear" => pe_core::project::Interpolation::Linear,
+        "monotone_spline" => pe_core::project::Interpolation::MonotoneSpline,
+        _ => {
+            return Err(AppError::BadOption {
+                field: "Interpolation",
+                value: input.interpolation.clone(),
+            });
+        }
+    };
+    validate_grid_axis(
+        &input.twa,
+        "TWA",
+        if input.asymmetric { 360.0 } else { 180.0 },
+    )?;
     let grid = OutputGrid {
         twa: input.twa.clone(),
         tws: input.tws.clone(),
@@ -256,6 +469,8 @@ pub fn blend_settings_set(state: &AppState, input: BlendSettingsInput) -> Result
             use_corrected: input.use_corrected,
             include_stokes_drift: input.stokes_drift,
             default_statistic: statistic,
+            asymmetric: input.asymmetric,
+            interpolation,
             ..before.clone()
         };
         after.validate()?;
@@ -401,9 +616,14 @@ pub fn export_grid(project: &Project, axes: Option<&ExportAxes>) -> Result<(Blen
     let Some(axes) = axes else {
         return Ok((blend, None));
     };
-    validate_grid_axis(&axes.twa, "TWA", 180.0)?;
+    validate_grid_axis(&axes.twa, "TWA", 360.0)?;
     validate_grid_axis(&axes.tws, "TWS", MAX_GRID_TWS_KN)?;
-    let polar = pe_polar::blend::resample_blend(&blend.polar, &axes.twa, &axes.tws);
+    let polar = pe_polar::blend::resample_blend_mode(
+        &blend.polar,
+        &axes.twa,
+        &axes.tws,
+        project.blend.interpolation,
+    );
     Ok((blend, Some(polar)))
 }
 
@@ -456,9 +676,11 @@ pub fn export_bytes(project: &Project, format: &str, axes: Option<&ExportAxes>) 
 #[tauri::command]
 pub fn export_preview(
     state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
     format: String,
     axes: Option<ExportAxes>,
 ) -> Result<ExportPreview> {
+    let state = state.scoped(boat_context);
     preview(&state, &format, axes.as_ref())
 }
 
@@ -482,10 +704,12 @@ pub struct ExportResult {
 #[tauri::command]
 pub fn export_polar(
     state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
     path: String,
     format: String,
     axes: Option<ExportAxes>,
 ) -> Result<ExportResult> {
+    let state = state.scoped(boat_context);
     export_to(&state, &path, &format, axes.as_ref())
 }
 

@@ -1,6 +1,6 @@
 {
   "fr": [
-    ["empannage", "tracks:manoeuvre", "tracks:manoeuvre"],
+    ["empannage", "tracks:tack-window", "tracks:tack-window"],
     ["marée", "tracks:no-tide", "tracks:no-tide"],
     ["houle", "tracks:hs-max", "tracks:hs-max"],
     ["mer de face", "tracks:wave-mode", "tracks:wave-mode"],
@@ -8,7 +8,7 @@
     ["au portant", "tracks:twa-max", "tracks:twa-max"],
     ["grille de sortie", "blend-settings:twa", "sources:blend-settings"],
     ["Expedition", "export:expedition", "sources:export"],
-    ["routage", "tracks:export-grib", "tracks:export-grib"],
+    ["vitesse d’arrêt", "tracks:stop-speed", "tracks:stop-speed"],
     ["étape", "tracker-import:leg", "tracks:yellowbrick"],
     ["numéro de voile", "orc:field-sail", "orc:field-sail"],
     ["chantier", "orc:field-builder", "orc:field-builder"],
@@ -22,14 +22,14 @@
     ["lasso", "view3d:tool-lasso", "view3d:tool-lasso"]
   ],
   "de": [
-    ["Halse", "tracks:manoeuvre", "tracks:manoeuvre"],
+    ["Halse", "tracks:tack-window", "tracks:tack-window"],
     ["Gezeiten", "tracks:no-tide", "tracks:no-tide"],
     ["Dünung", "tracks:hs-max", "tracks:hs-max"],
     ["Wellen von vorn", "tracks:wave-sectors", "tracks:wave-mode"],
     ["Motorfahrt", "tracks:time-start", "tracks:time-start"],
     ["vor dem Wind", "tracks:twa-max", "tracks:twa-max"],
     ["Ausgaberaster", "export:project-grid", "sources:export"],
-    ["Routing", "tracks:export-grib", "tracks:export-grib"],
+    ["Stillstand", "tracks:stop-speed", "tracks:stop-speed"],
     ["Etappe", "tracker-import:leg", "tracks:yellowbrick"],
     ["Segelnummer", "orc:field-sail", "orc:field-sail"],
     ["Werft", "orc:field-builder", "orc:field-builder"],

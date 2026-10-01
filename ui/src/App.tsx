@@ -1,4 +1,8 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import TrackerProjectDialog from "./boats/TrackerProjectDialog";
+import FleetWorkspace from "./boats/FleetWorkspace";
+import { boatApi } from "./ipc";
+import { resetEditing } from "./polar/editFocus";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 
 import { chordText, isAccel } from "./chords";
@@ -16,16 +20,7 @@ import { api, ENV_CHANGED, ENV_PROGRESS, IpcError, QUIT_REQUESTED } from "./ipc"
 import type { EnvJobsStatus } from "./generated/EnvJobsStatus";
 import { currentEnvJobs, envJobsBusy, setEnvJobs, useEnvJobs } from "./jobs";
 import ConfirmDialog from "./project/ConfirmDialog";
-import MapView from "./map/MapView";
-import LeftNav from "./panels/LeftNav";
 import { formatBytes } from "./panels/trackImport";
-import PolarPlot from "./panels/PolarPlot";
-import CompareView from "./compare/CompareView";
-import { onCompareSource } from "./compare/compareState";
-import PolarView from "./polar/PolarView";
-import { editFocus, editSource, onEditSource } from "./polar/editFocus";
-import RightPanel from "./panels/RightPanel";
-import { loadPanels, reveal, savePanels, togglePanel, type PanelState } from "./panels/layout";
 import { pickProjectToOpen, pickProjectToSave } from "./project/dialogs";
 import LoadingScreen from "./project/LoadingScreen";
 import NewProjectDialog from "./project/NewProjectDialog";
@@ -36,8 +31,7 @@ import StartScreen from "./project/StartScreen";
 import UnsavedChangesDialog from "./project/UnsavedChangesDialog";
 import SettingsDialog from "./settings/SettingsDialog";
 import { applyTheme } from "./settings/themes";
-import StageSwitcher, { type Stage } from "./stage/StageSwitcher";
-import { onFocusMap, resetSelection } from "./selection";
+import { resetSelection } from "./selection";
 
 /**
  * Application shell (spec.md 3). The help window wraps everything so F1 and
@@ -62,12 +56,22 @@ function Shell() {
   const t = useT();
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [project, setProject] = useState<ProjectSummary | null>(null);
+  const [fleetKey, setFleetKey] = useState(0);
+  const [changedBoat, setChangedBoat] = useState<ProjectSummary | null>(null);
+  const [boatToolbar, setBoatToolbar] = useState<HTMLDivElement | null>(null);
+  const activeBoat = useRef<number | undefined>(undefined);
+  const updateProject = useCallback((next: ProjectSummary) => {
+    setProject((current) => current && current.id === next.id && next.revision >= current.revision ? next : current);
+  }, []);
+  const replaceFleetRoot = useCallback((previousId: number, next: ProjectSummary) => {
+    setProject(current => current?.id === previousId ? next : current);
+  }, []);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [showSettings, setShowSettings] = useState(false);
-  const [stage, setStage] = useState<Stage>("map");
   const [status, setStatus] = useState<Line | null>(null);
   // Non-null while the New Project dialog is up; the boolean is the answer the
   // user already gave about unsaved changes, carried through to the command.
+  const [trackerOpening, setTrackerOpening] = useState<{ discardUnsaved: boolean } | null>(null);
   const [creating, setCreating] = useState<{ discardUnsaved: boolean } | null>(null);
   // Set while the unsaved-changes prompt is up: holds the resolver the dialog's
   // buttons complete, which is what lets the guard read as a plain `await`.
@@ -75,10 +79,6 @@ function Shell() {
   const [renaming, setRenaming] = useState<string | null>(null);
   // Set while "cancel the running fetch?" is up, holding the answer's resolver.
   const [askStopJobs, setAskStopJobs] = useState<((stop: boolean) => void) | null>(null);
-  /** Which panels are open: the person's, remembered in `localStorage` (spec.md 3.2). */
-  const [panels, setPanels] = useState<PanelState>(loadPanels);
-  /** The polar plot shown full size over the Map stage, on demand (spec.md 9.2). */
-  const [plotFull, setPlotFull] = useState(false);
 
   useLayoutEffect(() => applyTheme(settings?.theme), [settings?.theme]);
   // The settings file is the authority on the language (spec.md 3.5).
@@ -122,7 +122,7 @@ function Shell() {
       if (refresh !== null) return;
       refresh = window.setTimeout(() => {
         refresh = null;
-        void api.projectSummary().then((open) => { if (open) setProject(open); }).catch(() => undefined);
+        void api.projectSummary().then((open) => { if (open) updateProject(open); }).catch(() => undefined);
       }, 300);
     }).catch(() => null);
     return () => {
@@ -132,70 +132,7 @@ function Shell() {
     };
   }, []);
 
-  const toggle = useCallback((panel: keyof PanelState) => {
-    setPanels((current) => {
-      const next = togglePanel(current, panel);
-      savePanels(next);
-      return next;
-    });
-  }, []);
-
-  /**
-   * The search's reveal steps for what the shell hides (spec.md 3.6):
-   * `panel:<name>` opens a folded panel, `section:<name>` a folded section
-   * and its panel, `stage:<name>` switches the centre stage, and `settings:`
-   * opens Settings (the dialog itself scrolls to the section).
-   */
-  useEffect(() => {
-    const open = (name: keyof PanelState) => setPanels((current) => {
-      const next = reveal(current, name);
-      if (next !== current) savePanels(next);
-      return next;
-    });
-    const offs = [
-      onReveal("panel:left", () => open("left")),
-      onReveal("panel:right", () => open("right")),
-      onReveal("section:orc", () => open("orc")),
-      onReveal("section:polar-files", () => open("polarFiles")),
-      onReveal("section:tracks", () => open("tracks")),
-      onReveal("section:sources", () => open("sources")),
-      onReveal("section:plot", () => open("plot")),
-      onReveal("stage:map", () => setStage("map")),
-      onReveal("stage:3d", () => setStage("3d")),
-      onReveal("stage:compare", () => setStage("compare")),
-      onCompareSource(() => { setStage("compare"); setPlotFull(false); }),
-      onReveal("overlay:plot", () => { setStage("map"); setPlotFull(true); }),
-      onReveal("settings:", () => setShowSettings(true)),
-    ];
-    return () => { for (const off of offs) off(); };
-  }, []);
-
-  // "Show on map" from a polar view or the track list switches to the map,
-  // which frames what was asked for.
-  useEffect(() => onFocusMap(() => setStage("map")), []);
-
-  // Edit on a source opens it in the 3D stage (spec.md 8, 10.4). The
-  // search's `edit:open` step starts editing the first source, and
-  // `edit:open-track` the first track, so the edit tools are on screen to
-  // be found.
-  const firstSource = useRef<number | null>(null);
-  firstSource.current = project?.sources[0]?.id ?? null;
-  const firstTrack = useRef<number | null>(null);
-  firstTrack.current = project?.sources.find((s) => s.kind === "track")?.id ?? null;
-  useEffect(() => {
-    const offs = [
-      onEditSource(() => { setStage("3d"); setPlotFull(false); }),
-      onReveal("edit:open", () => {
-        setStage("3d");
-        if (editFocus() === null && firstSource.current !== null) editSource(firstSource.current);
-      }),
-      onReveal("edit:open-track", () => {
-        setStage("3d");
-        if (firstTrack.current !== null) editSource(firstTrack.current);
-      }),
-    ];
-    return () => { for (const off of offs) off(); };
-  }, []);
+  useEffect(() => onReveal("settings:", () => setShowSettings(true)), []);
 
   const flash = useCallback((message: Line, ms = 2500) => {
     setStatus(message);
@@ -228,11 +165,13 @@ function Shell() {
     reportError(null);
     setRenaming(null);
     setCreating(null);
-    setPlotFull(false);
     // A selection names samples of the project it was made in, and so does
     // the source being edited.
     resetSelection();
-    editSource(null);
+    resetEditing();
+    activeBoat.current = next?.id;
+    setChangedBoat(null);
+    setFleetKey(value => value + 1);
     setProject(next);
   }, []);
 
@@ -244,7 +183,7 @@ function Shell() {
       const path = await pickProjectToSave(project.name);
       if (path === null) return false;
       const saved = await api.saveProjectAs(path);
-      setProject(saved);
+      updateProject(saved);
       flash(later(msg("Saved to {path}"), { path: saved.path ?? path }));
       return true;
     } catch (err) {
@@ -258,7 +197,7 @@ function Shell() {
     // Never saved: Save As rather than failing (spec.md 3.3).
     if (project.path === null) return saveAs();
     try {
-      setProject(await api.saveProject());
+      updateProject(await api.saveProject());
       flash(later(msg("Saved")));
       return true;
     } catch (err) {
@@ -311,6 +250,11 @@ function Shell() {
   const startNewProject = useCallback(async () => {
     const decision = await mayReplace();
     if (decision.proceed) setCreating({ discardUnsaved: decision.discardUnsaved });
+  }, [mayReplace]);
+
+  const startTrackerProject = useCallback(async () => {
+    const decision = await mayReplace();
+    if (decision.proceed) setTrackerOpening({ discardUnsaved: decision.discardUnsaved });
   }, [mayReplace]);
 
   const openPath = useCallback(async (path: string, discardUnsaved: boolean) => {
@@ -392,23 +336,18 @@ function Shell() {
   }, []);
 
   // Escape closes the full-size polar plot overlay, like every other overlay.
-  useEffect(() => {
-    if (!plotFull) return;
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setPlotFull(false); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [plotFull]);
 
   // Standard shortcuts (spec.md 3.2).
-  const modal = creating !== null || askUnsaved !== null || askStopJobs !== null || showSettings;
+  const modal = trackerOpening !== null || creating !== null || askUnsaved !== null || askStopJobs !== null || showSettings;
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       // A dialog is a decision in progress; saving or undoing behind it would
       // change the very thing being decided about.
       if (modal || !isAccel(event)) return;
       const key = event.key.toLowerCase();
-      const target = event.target as HTMLElement | null;
-      const typing = target !== null && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName);
+      const target = event.target;
+      const typing = target instanceof HTMLElement
+        && target.matches('textarea, select, input:not([type="checkbox"]):not([type="radio"])');
       if (key === ",") {
         event.preventDefault();
         setShowSettings(true);
@@ -432,9 +371,12 @@ function Shell() {
       } else if (key === "z" && !typing) {
         // In a text field, Cmd-Z undoes the typing, not the project.
         event.preventDefault();
-        void (event.shiftKey ? api.redo() : api.undo()).then((next) => {
-          const label = event.shiftKey ? project.redo_label : project.undo_label;
-          setProject(next);
+        void boatApi(activeBoat.current).projectSummary().then(async current => {
+          const next = await (event.shiftKey ? boatApi(current?.id).redo() : boatApi(current?.id).undo());
+          setChangedBoat(next);
+          void api.projectSummary().then(root => { if (root) updateProject(root); });
+          const label = event.shiftKey ? current?.redo_label : current?.undo_label;
+          updateProject(next);
           if (label) flash(later(event.shiftKey ? msg("Redone: {action}") : msg("Undone: {action}"), { action: later(label) }));
         }).catch(report);
       }
@@ -446,6 +388,7 @@ function Shell() {
   const settingsDialog = showSettings && settings !== null && (
     <SettingsDialog settings={settings} onSettings={setSettings} onClose={() => setShowSettings(false)} />
   );
+  const trackerDialog = trackerOpening && <TrackerProjectDialog discardUnsaved={trackerOpening.discardUnsaved} onOpened={enter} onClose={() => setTrackerOpening(null)} />;
   const unsavedDialog = <>
     {askUnsaved !== null && <UnsavedChangesDialog name={askUnsaved.name} onChoose={answerUnsaved} />}
     {askStopJobs !== null && (
@@ -457,8 +400,9 @@ function Shell() {
 
   if (!project) {
     return <>
-      <StartScreen onOpened={enter} onSettings={() => setShowSettings(true)} onPreferences={setSettings} />
+      <StartScreen onOpened={enter} onSettings={() => setShowSettings(true)} onPreferences={setSettings} onOpenTracker={() => void startTrackerProject()} />
       {settingsDialog}
+      {trackerDialog}
       {unsavedDialog}
     </>;
   }
@@ -466,14 +410,6 @@ function Shell() {
   return (
     <div className="app">
       <div className="titlebar">
-        <ProjectMenu
-          onNew={() => void startNewProject()}
-          onOpen={() => void openProject()}
-          onOpenRecent={(path) => void openRecent(path)}
-          onSave={() => void save()}
-          onSaveAs={() => void saveAs()}
-          onClose={() => void closeProject()}
-        />
         {/* The name is edited where it is shown: click it, type, Enter. It undoes. */}
         {renaming !== null ? (
           <input
@@ -487,7 +423,7 @@ function Shell() {
             onBlur={() => {
               const name = renaming.trim();
               setRenaming(null);
-              if (name.length > 0 && name !== project.name) void api.renameProject(name).then(setProject).catch(report);
+              if (name.length > 0 && name !== project.name) void api.renameProject(name).then(updateProject).catch(report);
             }}
             onKeyDown={(event) => {
               if (event.key === "Enter") event.currentTarget.blur();
@@ -501,45 +437,26 @@ function Shell() {
             {project.dirty && <span className="dirty" aria-label={t("Unsaved changes")}> •</span>}
           </button>
         )}
-        <span className="spacer" />
-        <StageSwitcher stage={stage} onStage={(next) => { setStage(next); if (next !== "map") setPlotFull(false); }} />
+        <div className="boat-title-actions" ref={setBoatToolbar} />
         <span className="spacer" />
         <HelpMenu />
+        <ProjectMenu
+          onNew={() => void startNewProject()}
+          onTracker={() => void startTrackerProject()}
+          onOpen={() => void openProject()}
+          onOpenRecent={(path) => void openRecent(path)}
+          onSave={() => void save()}
+          onSaveAs={() => void saveAs()}
+          onClose={() => void closeProject()}
+        />
         <button className="settings" onClick={() => setShowSettings(true)} data-feature="shell:settings"
           title={t("Settings ({chord})", { chord: chordText(["accel", ","]) })} aria-label={t("Settings")}>
           ⚙
         </button>
       </div>
 
-      <div className="workspace" style={{
-        "--dock-left": panels.left ? "var(--sidebar-left)" : "0px",
-        "--dock-right": panels.right ? "var(--sidebar-right)" : "0px",
-      } as CSSProperties}>
-        {panels.left && <aside className="sidebar left"><LeftNav project={project} onProject={setProject} panels={panels} onToggle={toggle}
-          {...(settings ? { units: settings.units } : {})} /></aside>}
-        <main className="centre-stage" aria-label={t("Stage")}>
-          {stage === "map" && <MapView project={project} settings={settings} onSettings={setSettings} />}
-          {stage === "3d" && <PolarView project={project} settings={settings} onProject={setProject} />}
-          {/* Keyed by project: nothing of one project's comparison (its answer, its framing, a hovered cell) shows under another's names. */}
-          {stage === "compare" && <CompareView key={project.id} project={project} settings={settings} />}
-          {stage === "map" && plotFull && (
-            <div className="polar-plot-overlay" role="dialog" aria-label={t("Polar plot")}>
-              <PolarPlot project={project} variant="overlay" unit={settings?.units.speed ?? "kn"}
-                onClose={() => setPlotFull(false)} />
-            </div>
-          )}
-        </main>
-        {panels.right && (
-          <aside className="sidebar right">
-            <RightPanel project={project} onProject={setProject} panels={panels} onToggle={toggle}
-              speedUnit={settings?.units.speed ?? "kn"} onFullSizePlot={() => { setStage("map"); setPlotFull(true); }} />
-          </aside>
-        )}
-        <DockToggle side="left" open={panels.left}
-          labels={[msg("Show the navigation"), msg("Hide the navigation")]} onToggle={() => toggle("left")} />
-        <DockToggle side="right" open={panels.right}
-          labels={[msg("Show the sources and polar plot"), msg("Hide the sources and polar plot")]} onToggle={() => toggle("right")} />
-      </div>
+      <FleetWorkspace key={fleetKey} project={project} settings={settings} onSettings={setSettings} onProject={updateProject}
+        toolbarHost={boatToolbar} onReplace={replaceFleetRoot} changedBoat={changedBoat} onActive={id => { activeBoat.current = id; }} />
 
       <div className="statusbar" data-feature="shell:statusbar" title={t("Hints, errors and work in progress")}>
         <BusySpinner />
@@ -556,35 +473,9 @@ function Shell() {
           onCreated={(created) => { setCreating(null); enter(created); }}
           onCancel={() => setCreating(null)} />
       )}
+      {trackerDialog}
       {unsavedDialog}
     </div>
-  );
-}
-
-const DOCK_GLYPH = {
-  left: { open: "◀", closed: "▶" },
-  right: { open: "▶", closed: "◀" },
-} as const;
-
-/**
- * A panel's toggle: a tab on the border between the panel and the stage,
- * which stays put whether the panel is open or closed. Copied from
- * VectorEffects.
- */
-function DockToggle({ side, open, labels, onToggle }: {
-  side: "left" | "right";
-  open: boolean;
-  /** What the tab says while the panel is closed, and while it is open. English, via `msg`. */
-  labels: [show: string, hide: string];
-  onToggle: () => void;
-}) {
-  const t = useT();
-  const label = t(open ? labels[1] : labels[0]);
-  return (
-    <button className={`dock-toggle ${side}`} data-feature={`dock:${side}`} onClick={onToggle}
-      title={label} aria-label={label} aria-expanded={open}>
-      {DOCK_GLYPH[side][open ? "open" : "closed"]}
-    </button>
   );
 }
 

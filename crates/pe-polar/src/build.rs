@@ -2,8 +2,8 @@
 //!
 //! Values are keyed by their canonical form (`pe_core::canonical`), so what
 //! the reader builds is exactly what a saved project reads back, and axes come
-//! out sorted whatever order the file used. Two points that fold onto the
-//! same cell — a file giving both port and starboard — are averaged.
+//! out sorted whatever order the file used. Readers preserve port and
+//! starboard angles; only the explicit symmetric display mode combines them.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -27,7 +27,7 @@ pub(crate) struct Builder {
 }
 
 impl Builder {
-    /// Adds an angle (already folded) to the TWA axis; returns its key.
+    /// Adds an angle (preserving its side) to the TWA axis; returns its key.
     pub(crate) fn twa(&mut self, twa: f64) -> Result<u64, Reason> {
         let k = key(canonical::degrees(twa));
         self.twa.insert(k);

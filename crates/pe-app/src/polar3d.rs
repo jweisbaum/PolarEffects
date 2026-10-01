@@ -6,11 +6,11 @@
 //! would be tens of megabytes of text to parse, where packed `f32` is copied
 //! straight into the GPU buffers (plan.md M7).
 //!
-//! # Wire layout, version 2
+//! # Wire layout, version 3
 //!
 //! The one place the layout is defined on the Rust side; the frontend's
 //! mirror is `ui/src/polar/scenePacket.ts`, and both are held to the same
-//! bytes by `ui/src/polar/fixtures/scene-v2.bin`. Every value is
+//! bytes by `ui/src/polar/fixtures/scene-v3.bin`. Every value is
 //! little-endian and 4 bytes wide except the time origin and the samples
 //! key, and every section starts on a 4-byte boundary, so the frontend views
 //! each array in place.
@@ -18,7 +18,7 @@
 //! ```text
 //! header, 12 × u32 (48 bytes)
 //!   0  magic       0x44334550 (the bytes "PE3D")
-//!   1  version     2
+//!   1  version     3
 //!   2  S           sources
 //!   3  N           polar nodes
 //!   4  M           samples
@@ -28,7 +28,7 @@
 //!   10 samples_mode 0 full, 1 flags only
 //!   11 reserved, 0
 //! sources, S × 4 u32
-//!   id_lo, id_hi, colour 0x00RRGGBB, kind (0 ORC, 1 polar file, 2 track)
+//!   id_lo, id_hi, colour 0x00RRGGBB, kind (0 ORC, 1 polar file, 2 track, 3 ORR)
 //! nodes (structure of arrays)
 //!   f32 [N × 3]  TWA °, TWS kn, BSP kn
 //!   u32 [N]      source, an index into the sources section
@@ -41,6 +41,9 @@
 //!   f32 [M]      Hs, metres (NaN: none)
 //!   f32 [M]      current speed, knots (NaN: none)
 //!   f32 [M]      time, seconds since time_origin
+//!   f32 [M]      wave period, seconds (NaN: none)
+//!   f32 [M]      wave angle off the bow, degrees (NaN: none)
+//!   f32 [M]      wave angle to wind, degrees (NaN: none)
 //!   u32 [M]      flags
 //! samples, flags only
 //!   u32 [M]      flags
@@ -91,7 +94,7 @@ use crate::projects::ProjectSummary;
 /// "PE3D" read as a little-endian u32.
 pub const SCENE_MAGIC: u32 = u32::from_le_bytes(*b"PE3D");
 /// The wire layout's version.
-pub const SCENE_VERSION: u32 = 2;
+pub const SCENE_VERSION: u32 = 3;
 /// Header length in bytes.
 pub const HEADER_BYTES: usize = 48;
 /// The source index a blend surface carries.
@@ -113,6 +116,8 @@ pub const KIND_ORC: u32 = 0;
 pub const KIND_POLAR_FILE: u32 = 1;
 /// A track.
 pub const KIND_TRACK: u32 = 2;
+/// An ORR certificate variant.
+pub const KIND_ORR: u32 = 3;
 
 /// One source the scene refers to.
 #[derive(Debug, Clone, PartialEq)]
@@ -121,7 +126,7 @@ pub struct SceneSource {
     pub id: u64,
     /// `0x00RRGGBB`.
     pub colour: u32,
-    /// [`KIND_ORC`], [`KIND_POLAR_FILE`] or [`KIND_TRACK`].
+    /// [`KIND_ORC`], [`KIND_ORR`], [`KIND_POLAR_FILE`] or [`KIND_TRACK`].
     pub kind: u32,
 }
 
@@ -161,6 +166,12 @@ pub struct SceneSample {
     pub id: u64,
     /// Significant wave height, metres; NaN when unknown.
     pub hs: f32,
+    /// Mean wave period in seconds, NaN when absent.
+    pub wave_period: f32,
+    /// Wave direction relative to the boat, 0–180 degrees.
+    pub wave_angle: f32,
+    /// Angle between wave and wind from-directions, 0–180 degrees.
+    pub wave_wind_angle: f32,
     /// Current speed, knots; NaN when unknown.
     pub current: f32,
     /// Seconds since [`Scene::time_origin`].
@@ -206,6 +217,7 @@ pub struct Scene {
 fn kind_code(kind: &SourceKind) -> u32 {
     match kind {
         SourceKind::Orc { .. } => KIND_ORC,
+        SourceKind::Orr { .. } => KIND_ORR,
         SourceKind::PolarFile { .. } => KIND_POLAR_FILE,
         SourceKind::Track { .. } => KIND_TRACK,
     }
@@ -273,6 +285,9 @@ pub fn scene_with(
                         source: index,
                         id: 0,
                         hs: 0.0,
+                        wave_period: 0.0,
+                        wave_angle: 0.0,
+                        wave_wind_angle: 0.0,
                         current: 0.0,
                         time: 0.0,
                         excluded,
@@ -286,6 +301,27 @@ pub fn scene_with(
                         source: index,
                         id: sample.id.raw(),
                         hs: sample.hs_m.map_or(f32::NAN, |v| v as f32),
+                        wave_period: sample.wave_period_s.map_or(f32::NAN, |v| v as f32),
+                        wave_angle: sample
+                            .wave_from
+                            .zip(if project.blend.use_corrected {
+                                sample.heading_corrected.or(sample.heading)
+                            } else {
+                                sample.heading
+                            })
+                            .map_or(f32::NAN, |(w, h)| {
+                                pe_tracks::geo::angle_between(w, h) as f32
+                            }),
+                        wave_wind_angle: sample
+                            .wave_from
+                            .zip(if project.blend.use_corrected {
+                                sample.twd_from_corrected.or(sample.wind_direction())
+                            } else {
+                                sample.wind_direction()
+                            })
+                            .map_or(f32::NAN, |(w, wind)| {
+                                pe_tracks::geo::angle_between(w, wind) as f32
+                            }),
                         current: sample.current_speed.map_or(f32::NAN, |v| v as f32),
                         // Made relative to the time origin below.
                         time: 0.0,
@@ -299,7 +335,13 @@ pub fn scene_with(
                 continue;
             }
         }
-        add_grid(&mut scene, source, &data.edited, index);
+        add_grid(
+            &mut scene,
+            source,
+            &data.edited,
+            index,
+            project.blend.interpolation,
+        );
     }
     // Sample times travel as f32 seconds from the earliest, which keeps
     // them to the second over about six months (2^24 s).
@@ -310,35 +352,30 @@ pub fn scene_with(
         }
     }
     if let Some(grid) = blend.filter(|grid| pe_polar::blend::has_value_off_zero_row(grid)) {
-        let nj = grid.tws.len();
-        let mut bsp = vec![f32::NAN; grid.twa.len() * nj];
-        for (i, row) in grid.bsp.iter().enumerate() {
-            for (j, value) in row.iter().enumerate() {
-                if let Some(value) = value {
-                    bsp[i * nj + j] = *value as f32;
-                }
-            }
-        }
-        scene.surfaces.push(SceneSurface {
-            source: BLEND_SOURCE,
-            twa: grid.twa.iter().map(|v| *v as f32).collect(),
-            tws: grid.tws.iter().map(|v| *v as f32).collect(),
-            bsp,
-        });
+        add_surface(
+            &mut scene,
+            grid,
+            BLEND_SOURCE,
+            project.blend.interpolation,
+            true,
+        );
     }
     scene
 }
 
 /// A source's grid as nodes and a surface.
-fn add_grid(scene: &mut Scene, source: &Source, grid: &pe_polar::Polar, index: u32) {
-    let (ni, nj) = (grid.twa.len(), grid.tws.len());
-    let mut bsp = vec![f32::NAN; ni * nj];
+fn add_grid(
+    scene: &mut Scene,
+    source: &Source,
+    grid: &pe_polar::Polar,
+    index: u32,
+    mode: pe_core::project::Interpolation,
+) {
     for (i, twa) in grid.twa.iter().enumerate() {
         for (j, tws) in grid.tws.iter().enumerate() {
             let Some(value) = grid.get(i, j) else {
                 continue;
             };
-            bsp[i * nj + j] = value as f32;
             // Axes are at most 512 long (pe-polar's MAX_AXIS_VALUES), so
             // an index always fits; a grid that broke that would lose
             // its node, not the scene.
@@ -357,11 +394,53 @@ fn add_grid(scene: &mut Scene, source: &Source, grid: &pe_polar::Polar, index: u
             });
         }
     }
+    add_surface(scene, grid, index, mode, false);
+}
+
+fn add_surface(
+    scene: &mut Scene,
+    grid: &pe_polar::Polar,
+    index: u32,
+    mode: pe_core::project::Interpolation,
+    blend: bool,
+) {
+    let refined;
+    let grid = if mode == pe_core::project::Interpolation::MonotoneSpline {
+        let axis = |values: &[f64]| {
+            let mut out = values.to_vec();
+            if let (Some(lo), Some(hi)) = (values.first(), values.last()) {
+                out.extend((lo.ceil() as u32..=hi.floor() as u32).map(f64::from));
+                out.sort_by(f64::total_cmp);
+                out.dedup();
+            }
+            out
+        };
+        let twa = axis(&grid.twa);
+        let tws = axis(&grid.tws);
+        refined = if blend {
+            pe_polar::blend::resample_blend_mode(grid, &twa, &tws, mode)
+        } else {
+            let reader = pe_polar::spline::Interpolator::new(grid, mode);
+            let bsp = twa
+                .iter()
+                .map(|a| tws.iter().map(|s| reader.at(*a, *s)).collect())
+                .collect();
+            pe_polar::Polar { twa, tws, bsp }
+        };
+        &refined
+    } else {
+        grid
+    };
     scene.surfaces.push(SceneSurface {
         source: index,
         twa: grid.twa.iter().map(|v| *v as f32).collect(),
         tws: grid.tws.iter().map(|v| *v as f32).collect(),
-        bsp,
+        bsp: grid
+            .bsp
+            .iter()
+            .flatten()
+            .map(|v| v.map_or(f32::NAN, |v| v as f32))
+            .collect(),
     });
 }
 
@@ -379,7 +458,7 @@ pub fn pack(scene: &Scene) -> Vec<u8> {
         .iter()
         .map(|s| 3 + s.twa.len() + s.tws.len() + s.bsp.len())
         .sum();
-    let per_sample = if scene.flags_only { 1 } else { 10 };
+    let per_sample = if scene.flags_only { 1 } else { 13 };
     let words = 12 + scene.sources.len() * 4 + n * 6 + m * per_sample + surface_words;
     let mut out = Vec::with_capacity(words * 4);
     let u = |out: &mut Vec<u8>, value: u32| out.extend_from_slice(&value.to_le_bytes());
@@ -473,6 +552,15 @@ fn pack_samples(out: &mut Vec<u8>, scene: &Scene) {
         u(sample.time.to_bits());
     }
     for sample in samples {
+        u(sample.wave_period.to_bits());
+    }
+    for sample in samples {
+        u(sample.wave_angle.to_bits());
+    }
+    for sample in samples {
+        u(sample.wave_wind_angle.to_bits());
+    }
+    for sample in samples {
         u(flags(sample.excluded, sample.filtered, false));
     }
 }
@@ -484,9 +572,11 @@ fn pack_samples(out: &mut Vec<u8>, scene: &Scene) {
 #[tauri::command]
 pub fn polar_scene(
     state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
     focus: Option<u64>,
     samples_key: Option<u64>,
 ) -> Result<tauri::ipc::Response> {
+    let state = state.scoped(boat_context);
     scene_bytes_for(&state, focus, samples_key).map(tauri::ipc::Response::new)
 }
 
@@ -540,10 +630,12 @@ pub struct PolarNodeRef {
 #[tauri::command]
 pub fn set_excluded(
     state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
     nodes: Vec<PolarNodeRef>,
     samples: Vec<u64>,
     excluded: bool,
 ) -> Result<ProjectSummary> {
+    let state = state.scoped(boat_context);
     excluded_set(&state, &nodes, &samples, excluded)
 }
 
@@ -756,6 +848,9 @@ mod tests {
                 source: 1,
                 id: (1 << 32) | 5,
                 hs: 1.5,
+                wave_period: 8.5,
+                wave_angle: 30.0,
+                wave_wind_angle: 15.0,
                 current: f32::NAN,
                 time: 600.0,
                 excluded: true,
@@ -790,13 +885,13 @@ mod tests {
     #[test]
     fn the_layout_is_the_documented_one() {
         let bytes = pack(&fixture_scene());
-        // 12 header + 2×4 sources + 2×6 nodes + 1×10 samples
-        // + (3 + 2 + 2 + 4) + (3 + 1 + 1 + 1) surfaces = 59 words.
-        assert_eq!(bytes.len(), 59 * 4);
+        // 12 header + 2×4 sources + 2×6 nodes + 1×13 samples
+        // + (3 + 2 + 2 + 4) + (3 + 1 + 1 + 1) surfaces = 62 words.
+        assert_eq!(bytes.len(), 62 * 4);
         assert_eq!(&bytes[0..4], b"PE3D");
         assert_eq!(
             (1..6).map(|i| word(&bytes, i)).collect::<Vec<_>>(),
-            [2, 2, 2, 1, 2]
+            [3, 2, 2, 1, 2]
         );
         assert_eq!(
             i64::from_le_bytes(bytes[24..32].try_into().unwrap()),
@@ -821,7 +916,7 @@ mod tests {
             [0, 0, 1, 2 | (1 << 16), FLAG_EDITED, FLAG_EXCLUDED]
         );
         // Sample: position 32–34, source 35, id 36–37, hs 38, current 39,
-        // time 40, flags 41.
+        // time 40, wave period/angle/wind angle 41–43, flags 44.
         assert_eq!(
             (32..35).map(|i| float(&bytes, i)).collect::<Vec<_>>(),
             [135.0, 14.25, 9.5]
@@ -833,24 +928,27 @@ mod tests {
         assert_eq!(float(&bytes, 38), 1.5);
         assert!(float(&bytes, 39).is_nan());
         assert_eq!(float(&bytes, 40), 600.0);
-        assert_eq!(word(&bytes, 41), FLAG_EXCLUDED | FLAG_FILTERED);
-        // First surface: header 42–44, axes 45–48, values 49–52.
+        assert_eq!(word(&bytes, 44), FLAG_EXCLUDED | FLAG_FILTERED);
+        assert_eq!(float(&bytes, 41), 8.5);
+        assert_eq!(float(&bytes, 42), 30.0);
+        assert_eq!(float(&bytes, 43), 15.0);
+        // First surface: header 45–47, axes 48–51, values 52–55.
         assert_eq!(
-            (42..45).map(|i| word(&bytes, i)).collect::<Vec<_>>(),
+            (45..48).map(|i| word(&bytes, i)).collect::<Vec<_>>(),
             [0, 2, 2]
         );
         assert_eq!(
-            (45..52).map(|i| float(&bytes, i)).collect::<Vec<_>>(),
+            (48..55).map(|i| float(&bytes, i)).collect::<Vec<_>>(),
             [52.0, 90.0, 6.0, 12.0, 5.9, 7.3, 6.8]
         );
-        assert!(float(&bytes, 52).is_nan());
-        // The blend: 53–55, then its one-cell grid.
+        assert!(float(&bytes, 55).is_nan());
+        // The blend: 56–58, then its one-cell grid.
         assert_eq!(
-            (53..56).map(|i| word(&bytes, i)).collect::<Vec<_>>(),
+            (56..59).map(|i| word(&bytes, i)).collect::<Vec<_>>(),
             [u32::MAX, 1, 1]
         );
         assert_eq!(
-            (56..59).map(|i| float(&bytes, i)).collect::<Vec<_>>(),
+            (59..62).map(|i| float(&bytes, i)).collect::<Vec<_>>(),
             [45.0, 10.0, 6.0]
         );
     }
@@ -881,7 +979,7 @@ mod tests {
             flags_only: true,
             ..fixture_scene()
         });
-        for (name, bytes) in [("scene-v2.bin", full), ("scene-v2-flags.bin", flags)] {
+        for (name, bytes) in [("scene-v3.bin", full), ("scene-v3-flags.bin", flags)] {
             let path = dir.join(name);
             if std::env::var_os("PE_BLESS").is_some() {
                 std::fs::create_dir_all(&dir).unwrap();
@@ -910,7 +1008,7 @@ mod tests {
         let started = std::time::Instant::now();
         let bytes = pack(&scene);
         let elapsed = started.elapsed();
-        assert_eq!(bytes.len(), HEADER_BYTES + 200_000 * 10 * 4);
+        assert_eq!(bytes.len(), HEADER_BYTES + 200_000 * 13 * 4);
         println!("packed 200k samples in {elapsed:?}");
     }
 }

@@ -106,10 +106,15 @@ pub fn snapshot_with_hook(state: &AppState, force: bool, between: impl FnOnce())
         Ok(session.open.as_ref().and_then(|open| {
             open.dirty.then(|| {
                 (
-                    open.project.clone(),
+                    session.document().unwrap_or_else(|_| open.project.clone()),
                     open.path.clone(),
                     open.revision,
-                    open.history.recorded(),
+                    open.history.recorded()
+                        + session
+                            .boats
+                            .iter()
+                            .map(|boat| boat.history.recorded())
+                            .sum::<u64>(),
                     open.saves,
                     mode,
                 )
@@ -281,7 +286,7 @@ pub fn recover(state: &AppState, id: u64, discard_unsaved: bool) -> Result<Proje
             None => OpenProject::created(project),
         };
         open.dirty = true;
-        session.open = Some(open);
+        session.replace(open);
         state.env_jobs.cancel(None);
         Ok(ProjectSummary::of(session.require_open()?))
     })

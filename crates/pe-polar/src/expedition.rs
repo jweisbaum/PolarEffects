@@ -15,7 +15,6 @@ use crate::format::{
     PolarError, Reason, Result, Separator, angle, axis_text, bsp_text, fields,
     is_expedition_label_row, meaningful, speed, tws_speed,
 };
-use crate::grid::fold_twa;
 
 /// The comment line the writer starts with.
 const HEADER: &str = "!Expedition polar: TWS, then TWA and BSP pairs (knots, degrees)";
@@ -65,10 +64,9 @@ pub(crate) fn read(text: &str) -> Result<PolarGrid> {
                 ));
             }
             let bsp = speed(line, *bsp_field, sep)?;
-            // `angle` has checked 0..=360, so this always folds.
-            let folded = fold_twa(raw).unwrap_or(raw);
+            // Retain both sides so an asymmetric export reads back losslessly.
             let twa_key = builder
-                .twa(folded)
+                .twa(raw)
                 .map_err(|reason| PolarError::at(line, twa_field.column, reason))?;
             builder.cell(twa_key, tws_key, bsp);
         }
@@ -143,10 +141,13 @@ mod tests {
     }
 
     #[test]
-    fn port_angles_fold_and_both_sides_average() {
+    fn port_angles_keep_independent_values() {
         let polar = read("6 40 5 320 5.5 200 6\n").unwrap();
-        assert_eq!(polar.twa, [40.0, 160.0]);
-        assert_eq!(polar.bsp, [vec![Some(5.25)], vec![Some(6.0)]]);
+        assert_eq!(polar.twa, [40.0, 200.0, 320.0]);
+        assert_eq!(
+            polar.bsp,
+            [vec![Some(5.0)], vec![Some(6.0)], vec![Some(5.5)]]
+        );
     }
 
     #[test]

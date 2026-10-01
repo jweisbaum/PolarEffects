@@ -27,6 +27,12 @@ export default {
     }
     assert.ok(curve >= 50, `the 2D plot shows a curve in ${colour} (${curve} pixels)`);
     await t.shot("plot-curve");
+    await d.click('[data-feature="plot:full-size"]');
+    await d.waitFor(".polar-plot-overlay canvas", { visible: true });
+    assert.equal(await d.exists('[data-feature="stage:map"]'), false);
+    await t.shot("full-size-without-tracks");
+    await d.click('[data-feature="plot:close"]');
+    await d.waitGone(".polar-plot-overlay");
 
     await d.click('[data-feature="stage:3d"]');
     await d.waitFor("canvas.view3d-canvas", { visible: true });

@@ -28,6 +28,13 @@ const jsx = source(ROOT, [], true).join("\n");
 /** `data-feature="x"`, and `feature="x"` on the components that pass one through. */
 const tagged = new Set([...jsx.matchAll(/(?:data-feature|\bfeature)=(?:"([^"$]+)"|\{"([^"$]+)"\})/g)].map(m => m[1] ?? m[2]!));
 /** `data-feature={`stage:${…}`}`: a family of ids built from a prefix. */
+for (const match of jsx.matchAll(/filterFeature\(prefix, "([^"$]+)"\)/g)) {
+  tagged.add(`tracks:${match[1]}`);
+  if (!["time-start", "time-end"].includes(match[1]!)) {
+    tagged.add(`global-filters:${match[1]}`);
+    tagged.add(`priority-filters:${match[1]}`);
+  }
+}
 const families = [...jsx.matchAll(/data-feature=\{`([^`$]*)\$\{/g)].map(m => m[1]!);
 const reveals = [...text.matchAll(/onReveal\(\s*"([^"]+)"/g)].map(m => m[1]!);
 

@@ -1,3 +1,4 @@
+import { useBoatApi } from "../boats/context";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { registerRedraw } from "../automation";
@@ -7,8 +8,8 @@ import type { SampleDetails } from "../generated/SampleDetails";
 import { reportFailure } from "../errors";
 import { later, setHint } from "../hint";
 import { msg, useT } from "../i18n";
-import { api } from "../ipc";
-import { clearSamples, getSampleSelection, onFocusMap, selectSamples, takePendingFocus, useSampleSelection, type MapFocus } from "../selection";
+
+import { useSampleSelection, type MapFocus, useBoatSelection } from "../selection";
 import { mapColour, onThemeChange, rgba } from "../settings/themes";
 import { loadBasemap } from "./basemap";
 import { hoverLines } from "./hover";
@@ -56,6 +57,8 @@ export default function MapView({ project, settings, onSettings }: {
   settings: AppSettings | null;
   onSettings: (settings: AppSettings) => void;
 }) {
+  const { getSampleSelection, takePendingFocus, onFocusMap, clearSamples, selectSamples } = useBoatSelection();
+  const api = useBoatApi();
   const t = useT();
   const projection: ProjectionId = settings?.projection ?? "equirectangular";
   const canvas = useRef<HTMLCanvasElement>(null);

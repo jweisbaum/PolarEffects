@@ -43,12 +43,13 @@ const MAX_REDIRECTS: usize = 10;
 
 /// The YellowBrick and Blue Water Tracks hosts (spec.md 7.2). Geovoile's
 /// are every subdomain of `geovoile.com`, see [`is_geovoile_host`].
-const HOSTS: [&str; 5] = [
+const HOSTS: [&str; 6] = [
     "yb.tl",
     "www.yb.tl",
     "cf.yb.tl",
     "app.yb.tl",
     "api.bluewatertracks.com",
+    "www.regattaman.com",
 ];
 
 /// Whether `host` is `geovoile.com` or one of its subdomains, compared

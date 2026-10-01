@@ -325,6 +325,7 @@ fn era5_pair(label: &str) -> (Reanalysis, PathBuf) {
                     v
                 },
             ),
+            ("mean_wave_period", &|s| flat(6.0 + s as f32 / 2.0)),
             ("mean_wave_direction", &|_| {
                 [350.0, 10.0, 10.0, 350.0, 10.0, 10.0, 350.0, 10.0, 10.0]
             }),
@@ -402,6 +403,14 @@ fn wave_direction_interpolates_as_a_unit_vector_and_land_is_left_out() {
     let got = sample(&p, &[at(4.0, 50.5, -4.5)], HOURLY);
     let waves = got[0].waves.expect("waves");
     assert_eq!(waves.dataset, Dataset::ArcoEra5);
+    assert_eq!(waves.period_s, Some(8.0));
+    assert_eq!(
+        sample(&p, &[at(4.5, 50.5, -4.5)], HOURLY)[0]
+            .waves
+            .unwrap()
+            .period_s,
+        Some(8.25)
+    );
     assert!(close(waves.hs.unwrap(), 0.4, 1e-6), "{:?}", waves.hs);
     let from = waves.from.unwrap();
     assert!(!(1e-6..=360.0 - 1e-6).contains(&from), "{from}");

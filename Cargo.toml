@@ -63,27 +63,16 @@ codegen-units = 1
 [profile.dev]
 opt-level = 1
 debug = "line-tables-only"
+# Rust 1.97.1 on Intel macOS can leave unresolved internal `.llvm.*` symbols
+# after an optimised incremental rebuild, including in pe-core. Apply the
+# workaround to every workspace crate, not just pe-app. Tests inherit this
+# profile; ordinary `tauri dev` now also matches CI and the UI test driver.
+incremental = false
 
 [profile.dev.package."*"]
 opt-level = 2
 
-# The app crate builds unoptimised, deliberately.
-#
-# At the `opt-level = 1` above, an *incremental* rebuild of the app crate
-# produces an rlib whose codegen units reference each other's internalised
-# `.llvm.*` symbols. The linker pulls archive members on demand under
-# `-dead_strip`, leaves those members out, and every binary in the package then
-# fails with "Undefined symbols for architecture x86_64" -- `tauri dev`
-# included, on every single edit. The only recovery was deleting the rlib by
-# hand. Reproduced in VectorEffects on Rust 1.97.1, x86_64-apple-darwin:
-# `touch` any app source and rebuild.
-#
-# `codegen-units = 1` fixes it too, by leaving no cross-unit references to lose,
-# but costs two minutes for a one-file edit against seconds here.
-#
-# Nothing is given up. This crate is IPC glue: every polar, blending, sampling
-# and geodesy call it makes is in a library crate, which keeps its
-# optimisation, and the budgets in spec.md 13 are measured there.
-# `CARGO_INCREMENTAL=0` is the other workaround, and it is slower.
+# Keep IPC glue unoptimised for faster compilation. Polar math, blending,
+# sampling and geodesy remain in optimised library crates.
 [profile.dev.package.pe-app]
 opt-level = 0

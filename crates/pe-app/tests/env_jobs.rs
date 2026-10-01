@@ -88,6 +88,7 @@ fn truth(p: &Point) -> EnvPoint {
             },
         }),
         waves: Some(Waves {
+            period_s: Some(8.5),
             hs: Some(1.0 + 0.01 * p.lon),
             from: Some((p.t / 60).rem_euclid(360) as f64),
             dataset: Dataset::ArcoEra5,
@@ -511,12 +512,16 @@ fn the_estimate_prefers_three_hourly_only_for_a_long_race() {
     let (app, id) = imported(&root);
     let e = env::estimate_for(&app, &[id], false, None).unwrap();
     assert_eq!(e.samples, 61);
-    // Hours 12Z to 22Z: 11 hourly steps, each four 64-byte heads and one
-    // block of u, v, wave height and direction (pe-env's estimate test):
-    // 1,205,249 bytes, about a tenth of the whole chunks (10.1 MB).
-    assert!(e.hourly_bytes >= 11 * 1_205_249, "{}", e.hourly_bytes);
+    // Hours 12Z to 22Z: 11 hourly steps, each five 64-byte heads and one
+    // block of u, v, wave height, direction and period (recorded block sizes).
+    // The period adds a 168,068-byte block and its 64-byte header.
     assert!(
-        e.hourly_bytes < 11 * 1_205_249 + 2_000_000,
+        e.hourly_bytes >= 11 * (1_205_249 + 168_068 + 64),
+        "{}",
+        e.hourly_bytes
+    );
+    assert!(
+        e.hourly_bytes < 11 * (1_205_249 + 168_068 + 64) + 2_000_000,
         "{}",
         e.hourly_bytes
     );
@@ -649,4 +654,35 @@ fn a_provider_warning_reaches_the_status() {
         ])
     );
     assert!(status.failure.is_none());
+}
+
+#[test]
+fn boat_jobs_with_equal_source_ids_are_independent() {
+    let root = TempRoot::new("boat-env-isolation");
+    let (app, id) = imported(&root);
+    let first = projects::summary(&app).unwrap().unwrap().id;
+    let second = pe_app::boats::add(&app, "Sister ship".into()).unwrap().id;
+    let child = app.scoped(Some(second));
+    let imported = tracks::import(
+        &child,
+        &[TrackFileRequest {
+            path: track_file(&root),
+            mapping: None,
+            boats: None,
+        }],
+    )
+    .unwrap();
+    assert_eq!(id, imported.imported[0].source_id);
+    env::queue_fetch(&app, &[id], "hourly", false).unwrap();
+    let queued = env::queue_fetch(&child, &[id], "hourly", false).unwrap();
+    assert_eq!(queued.tracks.len(), 2);
+    assert_eq!(
+        queued.tracks.iter().map(|j| j.boat_id).collect::<Vec<_>>(),
+        [Some(first), Some(second)]
+    );
+    app.env_jobs.cancel_boat(Some(first), Some(&[id]));
+    let outcomes = drain(&app, &Fake::new(), &Sink::default());
+    assert!(outcomes.contains(&Outcome::Done));
+    assert!(!track(&app, id).samples.iter().any(|s| s.env_fetched));
+    assert!(track(&child, id).samples.iter().all(|s| s.env_fetched));
 }

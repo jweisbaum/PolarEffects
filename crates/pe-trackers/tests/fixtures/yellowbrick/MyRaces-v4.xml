@@ -1,0 +1,56 @@
+<?xml version='1.0' encoding='utf-8'?>
+<r>
+  <myraces>
+    <race race-id="121" date="2012-11-15">
+      <title>Atlantic Rally for Cruisers 2012</title>
+      <blurb>This annual transatlantic rally starting each November in Las Palmas de Gran Canaria, has now become the most popular way to cross the Atlantic. The largest transocean sailing event in the world, every year the ARC brings together over 200 yachts from all over the world. The Caribbean destination is Rodney Bay in Saint Lucia, one of the most beautiful islands in the Lesser Antilles. The 2700 nautical mile passage on the NE tradewind route takes on average between 14 and 21 days.</blurb>
+      <url-logo>http://cdn.yb.tl/race_logos/arc_white_logo.png</url-logo>
+      <url-map>http://cdn.yb.tl/mobile_app/arc_map.jpg</url-map>
+      <base-url>arc2012</base-url>
+      <endpoint>https://yb.tl</endpoint>
+      <pro>VIEWER_LEGACY</pro>
+      <pro-url>https://pro.yb.tl/arc2012/?mode=app</pro-url>
+    </race>
+    <race race-id="617" date="2016-03-12">
+      <title>The MINT 400 2016</title>
+      <blurb />
+      <url-logo>http://cdn.yb.tl/race_logos/mint400_logo.png</url-logo>
+      <url-map>http://cdn.yb.tl/mobile_app/default_map.jpg</url-map>
+      <base-url>mint400-2016-group</base-url>
+      <endpoint>https://yb.tl</endpoint>
+      <pro>VIEWER_LEGACY</pro>
+      <pro-url>https://pro.yb.tl/mint400-2016-group/?mode=app</pro-url>
+      <children>
+        <race date="2016-03-12">
+          <title>AM - Limited Race (2 laps)</title>
+          <base-url>mint400-2016</base-url>
+          <endpoint>https://yb.tl</endpoint>
+        </race>
+        <race date="2016-03-12">
+          <title>AM - Limited Race (3 laps)</title>
+          <base-url>mint400-2016-limited3</base-url>
+          <endpoint>https://yb.tl</endpoint>
+        </race>
+        <race date="2016-03-12">
+          <title>PM - Unlimited Race</title>
+          <base-url>mint400-2016-unlimited</base-url>
+          <endpoint>https://yb.tl</endpoint>
+        </race>
+      </children>
+      <base-url>mint400-2016</base-url>
+      <endpointl>https://yb.tl</endpointl>
+      <pro>VIEWER_LEGACY</pro>
+      <pro-url>https://pro.yb.tl/mint400-2016/?mode=app</pro-url>
+    </race>
+  <race race-id="2634" date="2023-03-15">
+      <title>Stars and Spokes 2023</title>
+      <blurb />
+      <url-logo>https://ti.yb.tl/Strevda/a04f4961-6532-4140-a8a2-268c242274b8.png</url-logo>
+      <url-map />
+      <base-url>stars&amp;spokes2023</base-url>
+      <endpoint>https://yb.tl</endpoint>
+      <pro>VIEWER_LEGACY</pro>
+      <pro-url>https://pro.yb.tl/stars&amp;spokes2023/?mode=app</pro-url>
+    </race>
+    </myraces>
+</r>

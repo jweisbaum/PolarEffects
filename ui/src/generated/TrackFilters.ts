@@ -26,6 +26,18 @@ max_bsp: number | null,
  */
 max_heading_change: number | null,
 /**
+ * Maximum apparent wind bearing change, degrees; null disables.
+ */
+max_awa_change: number | null,
+/**
+ * Maximum true wind speed change, knots; null disables.
+ */
+max_wind_speed_change: number | null,
+/**
+ * Maximum true wind direction change, degrees; null disables.
+ */
+max_wind_direction_change: number | null,
+/**
  * `"any"`, `"given"` or `"derived"`.
  */
 heading_origin: string,
@@ -95,4 +107,28 @@ wave_to: number | null,
 /**
  * Leave out samples whose current has no tide (spec.md 7.5.1).
  */
-exclude_no_tide: boolean, };
+exclude_no_tide: boolean,
+/**
+ * Require complete wave data.
+ */
+exclude_unknown_wave: boolean,
+/**
+ * Require complete current data.
+ */
+exclude_unknown_current: boolean,
+/**
+ * Seconds before and after tack/gybe, null to disable.
+ */
+tack_gybe_padding_s: number | null,
+/**
+ * Maximum ground speed considered stopped, knots; null to disable.
+ */
+stop_speed_kn: number | null,
+/**
+ * Seconds before and after a stop.
+ */
+stop_padding_s: number,
+/**
+ * UTC interval in seconds, null to disable.
+ */
+utc_interval_s: number | null, };

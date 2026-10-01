@@ -71,6 +71,8 @@ fn track_source(id: u64, n: u64) -> Source {
     );
     for k in 0..n {
         let fix = Fix {
+            tws: None,
+            twd_from: None,
             t: 1_753_531_200 + k as i64 * 30,
             lat: 50.0 + k as f64 * 1e-4,
             lon: -5.0,
@@ -330,4 +332,102 @@ fn plot_all_mode_with_fifty_tracks_of_ten_thousand_fixes() {
     );
     assert_eq!(dots.len(), 500_000);
     assert!(packed.len() * 4 < text.len());
+}
+
+/// Compare the existing hard-filter pass with per-cell priorities on 200k points.
+#[test]
+#[ignore = "large project; run explicitly for analysis performance"]
+fn priority_filter_pass_at_two_hundred_thousand_samples() {
+    use pe_core::source::{Range, SampleFilters};
+    let root = TempRoot::new("perf-priority");
+    let app = project(&root, 0, 20, 10_000);
+    app.with_session(|session| {
+        let open = session.require_open()?;
+        let start = Instant::now();
+        let hard = pe_app::priority::filter_flags(&open.project);
+        let baseline = ms(start.elapsed());
+        let all = SampleFilters {
+            min_bsp_kn: None,
+            max_heading_change_deg: None,
+            ..Default::default()
+        };
+        open.project.blend.priority_groups = vec![
+            SampleFilters {
+                wave_height_m: Some(Range {
+                    min: None,
+                    max: Some(1.5),
+                }),
+                ..all.clone()
+            },
+            all,
+        ];
+        let start = Instant::now();
+        let selected = pe_app::priority::filter_flags(&open.project);
+        let priority = ms(start.elapsed());
+        assert_eq!(hard.values().map(Vec::len).sum::<usize>(), 200_000);
+        assert_eq!(selected.values().map(Vec::len).sum::<usize>(), 200_000);
+        assert!(selected.values().flatten().any(|flag| *flag));
+        println!(
+            "200,000 points: hard filters {baseline:.1} ms; two priority groups {priority:.1} ms"
+        );
+        assert!(priority < 100.0, "priority selection {priority:.1} ms");
+        Ok(())
+    })
+    .unwrap();
+}
+
+/// Exercise previous/next point changes alongside the existing filter pass.
+#[test]
+#[ignore = "timed analysis pass; run alone after other checks"]
+fn change_filters_at_two_hundred_thousand_samples() {
+    use pe_core::source::SampleFilters;
+    let root = TempRoot::new("perf-changes");
+    let app = project(&root, 0, 20, 10_000);
+    app.with_session(|session| {
+        let open = session.require_open()?;
+        for source in &mut open.project.sources {
+            if let Some(track) = source.track_mut() {
+                for (k, s) in track.samples.iter_mut().enumerate() {
+                    s.heading = Some((k * 7 % 360) as f64);
+                    s.twd_from = Some((k % 360) as f64);
+                    s.relate();
+                }
+            }
+        }
+        let start = Instant::now();
+        let baseline = pe_app::priority::filter_flags(&open.project);
+        let baseline_ms = ms(start.elapsed());
+        open.project.blend.global_filters = Some(SampleFilters {
+            max_heading_change_deg: Some(20.0), max_awa_change_deg: Some(20.0),
+            max_wind_speed_change_kn: Some(2.0), max_wind_direction_change_deg: Some(20.0),
+            min_bsp_kn: None, ..Default::default()
+        });
+        let start = Instant::now();
+        let changed = pe_app::priority::filter_flags(&open.project);
+        let changed_ms = ms(start.elapsed());
+        assert_eq!(baseline.values().map(Vec::len).sum::<usize>(), 200_000);
+        assert_eq!(changed.values().map(Vec::len).sum::<usize>(), 200_000);
+        assert!(changed.values().flatten().all(|flag| *flag));
+        println!("200,000 observations: original filters {baseline_ms:.1} ms; all four change thresholds, previous/next points {changed_ms:.1} ms");
+        assert!(changed_ms < 100.0, "change filters took {changed_ms:.1} ms");
+        // A second pass must evaluate all four metrics: steady heading/wind,
+        // with varying boat speed and therefore varying apparent wind angle.
+        for source in &mut open.project.sources {
+            if let Some(track) = source.track_mut() {
+                for s in &mut track.samples {
+                    s.heading = Some(90.0);
+                    s.twd_from = Some(30.0);
+                    s.tws = Some(12.0);
+                    s.relate();
+                }
+            }
+        }
+        let start = Instant::now();
+        let steady = pe_app::priority::filter_flags(&open.project);
+        let steady_ms = ms(start.elapsed());
+        assert!(steady.values().flatten().all(|flag| !*flag));
+        println!("200,000 steady observations: all four change thresholds, previous/next points {steady_ms:.1} ms");
+        assert!(steady_ms < 100.0, "steady change filters took {steady_ms:.1} ms");
+        Ok(())
+    }).unwrap();
 }

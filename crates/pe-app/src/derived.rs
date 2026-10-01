@@ -46,6 +46,8 @@ pub struct Touches {
     pub sources: Vec<(u64, Touch)>,
     /// Everything derived is stale.
     pub all: bool,
+    /// Refilter every cached track without moving its observations.
+    pub segments: bool,
 }
 
 /// What `command` changes. The match has no wildcard, so a new command does
@@ -74,8 +76,14 @@ fn collect(command: &Command, out: &mut Touches) {
         // ground values moves every sample.
         Command::SetUseCorrected { .. } | Command::SetOutputGrid { .. } => out.all = true,
         Command::SetBlendSettings { before, after } => {
-            if before.use_corrected != after.use_corrected {
+            if before.use_corrected != after.use_corrected || before.asymmetric != after.asymmetric
+            {
                 out.all = true;
+            }
+            if before.global_filters != after.global_filters
+                || before.wave_ranges != after.wave_ranges
+            {
+                out.segments = true;
             }
             // The sample minimum re-bins through each track's key; the rest
             // (colour, visibility, n_full, smoothing) reaches only the
@@ -84,6 +92,7 @@ fn collect(command: &Command, out: &mut Touches) {
         // Colour, label, weight, visibility and order change no source's
         // own derived data; the views read them from the project directly.
         Command::RenameProject { .. }
+        | Command::RenameBoat { .. }
         | Command::SetSourceColour { .. }
         | Command::SetSourceVisible { .. }
         | Command::SetSourceWeight { .. }
@@ -145,6 +154,7 @@ struct TrackKey {
     use_corrected: bool,
     min_samples: u32,
     statistic: SegmentStatistic,
+    priority_revision: u64,
     twa: Vec<f64>,
     tws: Vec<f64>,
 }
@@ -165,6 +175,8 @@ struct BlendKey {
     grid: pe_core::project::OutputGrid,
     n_full: u32,
     smoothing: bool,
+    interpolation: pe_core::project::Interpolation,
+    corrections: Vec<pe_core::source::CellOverride>,
     sources: Vec<(u64, u64, Arc<Derived>)>,
 }
 
@@ -173,6 +185,8 @@ impl PartialEq for BlendKey {
         self.grid == other.grid
             && self.n_full == other.n_full
             && self.smoothing == other.smoothing
+            && self.interpolation == other.interpolation
+            && self.corrections == other.corrections
             && self.sources.len() == other.sources.len()
             && self
                 .sources
@@ -181,6 +195,8 @@ impl PartialEq for BlendKey {
                 .all(|(a, b)| a.0 == b.0 && a.1 == b.1 && Arc::ptr_eq(&a.2, &b.2))
     }
 }
+
+type PriorityFlags = Arc<BTreeMap<u64, Vec<bool>>>;
 
 /// The revisions and the cache of one opening of a project.
 #[derive(Debug, Default)]
@@ -195,6 +211,7 @@ pub struct Derivations {
     revs: BTreeMap<u64, SourceRevs>,
     cache: BTreeMap<u64, Entry>,
     blend: Option<(BlendKey, Arc<pe_polar::Blend>)>,
+    priority: Option<(crate::priority::Key, u64, PriorityFlags)>,
     /// Entries computed since the opening, for tests of what recomputes.
     pub computed: u64,
     /// Blends computed since the opening.
@@ -252,6 +269,16 @@ impl Derivations {
     pub fn record(&mut self, touches: &Touches) {
         if touches.all {
             self.invalidate_all();
+        } else if touches.segments {
+            let tracks: Vec<_> = self
+                .cache
+                .iter()
+                .filter(|(_, entry)| entry.value.track.is_some())
+                .map(|(id, _)| *id)
+                .collect();
+            for id in tracks {
+                self.bump(id, Touch::Segment);
+            }
         }
         for (id, touch) in &touches.sources {
             self.bump(*id, *touch);
@@ -299,9 +326,26 @@ impl Derivations {
         hash & ((1 << 53) - 1)
     }
 
+    fn priority_masks(&mut self, project: &Project) -> (u64, Option<PriorityFlags>) {
+        if project.blend.priority_groups.is_empty() {
+            return (0, None);
+        }
+        let key = crate::priority::Key::of(project, self.epoch, |id| self.revs(id).segment);
+        if let Some((held, revision, masks)) = &self.priority
+            && *held == key
+        {
+            return (*revision, Some(Arc::clone(masks)));
+        }
+        let masks = Arc::new(crate::priority::filter_flags(project));
+        let revision = self.next();
+        self.priority = Some((key, revision, Arc::clone(&masks)));
+        (revision, Some(masks))
+    }
+
     /// What `source` derives to, from the cache when nothing it depends on
     /// has moved.
     pub fn get(&mut self, project: &Project, source: &Source) -> Arc<Derived> {
+        let (priority_revision, priority) = self.priority_masks(project);
         let id = source.id.raw();
         let revs = self.revs(id);
         let base_key = source.track().map(|track| TrackKey {
@@ -311,6 +355,7 @@ impl Derivations {
             use_corrected: project.blend.use_corrected,
             min_samples: project.blend.min_samples,
             statistic: track.statistic,
+            priority_revision,
             twa: project.grid.twa.clone(),
             tws: project.grid.tws.clone(),
         });
@@ -327,7 +372,11 @@ impl Derivations {
         self.computed += 1;
         let (base, track) = match cached {
             Some(entry) if base_fresh => (entry.value.base.clone(), entry.value.track.clone()),
-            _ => derive_base(project, source),
+            _ => derive_base_with_filters(
+                project,
+                source,
+                priority.as_deref().and_then(|m| m.get(&id)),
+            ),
         };
         let edited = pe_polar::with_overlay(base.clone(), &source.overlay, false);
         let blend = pe_polar::with_overlay(edited.clone(), &source.overlay, true);
@@ -358,6 +407,8 @@ impl Derivations {
             grid: project.grid.clone(),
             n_full: project.blend.n_full,
             smoothing: project.blend.smoothing,
+            interpolation: project.blend.interpolation,
+            corrections: project.blend.corrections.clone(),
             sources: project
                 .sources
                 .iter()
@@ -394,23 +445,80 @@ impl Derivations {
     }
 }
 
-/// The editable surface of a source before edits, and a track's samples.
-pub(crate) fn derive_base(
+/// Place port observations on the second half of an asymmetric polar.
+pub fn sample_point(project: &Project, sample: &pe_core::track::Sample) -> Option<(f64, f64, f64)> {
+    let corrected = project.blend.use_corrected;
+    let (mut angle, wind, bsp) = pe_tracks::polar_point(sample, corrected)?;
+    let tack = if corrected && sample.twa_corrected.is_some() {
+        sample.tack_corrected
+    } else {
+        sample.tack
+    };
+    if project.blend.asymmetric && tack == Some(pe_core::track::Tack::Port) {
+        angle = 360.0 - angle;
+    }
+    Some((angle, wind, bsp))
+}
+
+/// Shared filter flags for every view, summary and export.
+pub fn filtered_samples(
     project: &Project,
     source: &Source,
+    track: &pe_core::track::Track,
+) -> Vec<bool> {
+    if !project.blend.priority_groups.is_empty() {
+        return crate::priority::filter_flags(project)
+            .remove(&source.id.raw())
+            .unwrap_or_default();
+    }
+    hard_filters(project, source, track)
+}
+
+/// Individual and global exclusions, before the priority selector runs.
+pub(crate) fn hard_filters(
+    project: &Project,
+    source: &Source,
+    track: &pe_core::track::Track,
+) -> Vec<bool> {
+    let corrected = project.blend.use_corrected;
+    let mut flags = pe_tracks::filtered_out(track, &source.overlay.filters, corrected);
+    if let Some(global) = &project.blend.global_filters {
+        for (out, extra) in flags
+            .iter_mut()
+            .zip(pe_tracks::filtered_out(track, global, corrected))
+        {
+            *out |= extra;
+        }
+    }
+    for (out, sample) in flags.iter_mut().zip(&track.samples) {
+        *out |=
+            pe_tracks::filter::wave_ranges_exclude(sample, &project.blend.wave_ranges, corrected);
+    }
+    flags
+}
+
+fn derive_base_with_filters(
+    project: &Project,
+    source: &Source,
+    flags: Option<&Vec<bool>>,
 ) -> (Polar, Option<Arc<TrackDerived>>) {
     match &source.kind {
-        SourceKind::Orc { .. } | SourceKind::PolarFile { .. } => {
-            (pe_polar::source_polar(source).unwrap_or_default(), None)
-        }
+        SourceKind::Orc { .. } | SourceKind::Orr { .. } | SourceKind::PolarFile { .. } => (
+            pe_polar::grid::directional(
+                &pe_polar::source_polar(source).unwrap_or_default(),
+                project.blend.asymmetric,
+            ),
+            None,
+        ),
         SourceKind::Track { track } => {
-            let use_corrected = project.blend.use_corrected;
             let points: Vec<_> = track
                 .samples
                 .iter()
-                .map(|s| pe_tracks::polar_point(s, use_corrected))
+                .map(|s| sample_point(project, s))
                 .collect();
-            let filtered = pe_tracks::filtered_out(track, &source.overlay.filters, use_corrected);
+            let filtered = flags
+                .cloned()
+                .unwrap_or_else(|| hard_filters(project, source, track));
             let excluded = &source.overlay.excluded_samples;
             // Samples that pass the filters and are not excluded (spec.md
             // 12.1).
@@ -426,7 +534,11 @@ pub(crate) fn derive_base(
                 &project.grid.twa,
                 &project.grid.tws,
                 track.statistic,
-                project.blend.min_samples,
+                if project.blend.priority_groups.is_empty() {
+                    project.blend.min_samples
+                } else {
+                    1
+                },
             );
             let base = segment.polar.clone();
             (
@@ -478,6 +590,8 @@ mod tests {
         );
         for k in 0..n {
             let fix = pe_core::track::Fix {
+                tws: None,
+                twd_from: None,
                 t: k as i64 * 60,
                 lat: 0.0,
                 lon: 0.0,

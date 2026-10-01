@@ -1,23 +1,32 @@
+import { useBoatApi } from "../boats/context";
+import { useFleetSync, correspondingDot } from "../boats/synchronization";
+import WaveRangeControls from "./WaveRangeControls";
+import PolarDotTooltip from "./PolarDotTooltip";
+import { useLiveEdit } from "../panels/useLiveEdit";
+import PriorityFilters from "../panels/PriorityFilters";
+import { SampleFiltersEditor } from "../panels/Tracks";
+import { NO_SAMPLE_FILTERS } from "../panels/sampleFilters";
+import { DEFAULT_UNITS } from "../panels/filterUnits";
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 
-import { registerRedraw } from "../automation";
+import { registerPolarInspection, registerRedraw } from "../automation";
 import { needsOutline } from "../colourContrast";
 import { reportFailure } from "../errors";
 import type { AppSettings } from "../generated/AppSettings";
 import type { ProjectSummary } from "../generated/ProjectSummary";
 import { later, setHint } from "../hint";
 import { msg, useT } from "../i18n";
-import { api } from "../ipc";
-import { focusMap, selectSamples, useSampleSelection } from "../selection";
+
+import { useSampleSelection, useBoatSelection } from "../selection";
 import { onThemeChange } from "../settings/themes";
 import EditPanel, { cellCode } from "./EditPanel";
-import { editSource, useEditFocus } from "./editFocus";
+import { useEditFocus, useBoatEditing } from "./editFocus";
 import { place, type Layout } from "./geometry3d";
 import { PolarScene } from "./scene3d";
 import { emptyScene, ScenePacketError, type ScenePacket } from "./scenePacket";
 import {
   availableModes, buildGuides, buildSurfaces, combine, DEFAULT_TOGGLES, drawnOnly, editCells, emptyKeys,
-  exclusionTargets, focusIndex, hasFiltered, keysOf, mergeDots, nodeDots, nodesAtCells, sampleDots, presetView, range, resolveKeys, sampleIdsOf, sceneBounds,
+  exclusionTargets, modeValues, focusIndex, hasFiltered, keysOf, mergeDots, nodeDots, nodesAtCells, sampleDots, presetView, range, resolveKeys, sampleIdsOf, sceneBounds,
   SPEED_FACTOR, SPEED_SYMBOL, summarise, type CameraPreset, type ColourMode, type Focus, type GuideLabel, type SelectionKeys,
   type Toggles,
 } from "./view3d";
@@ -49,7 +58,9 @@ const PICK_RADIUS_PX = 8;
 
 const LAYOUT_NAMES: Record<Layout, string> = { tower: msg("Polar tower"), cartesian: msg("Cartesian") };
 const MODE_NAMES: Record<ColourMode, string> = {
-  source: msg("By source"), hs: msg("By wave height"), current: msg("By current speed"), time: msg("By time"),
+  source: msg("By source"), hs: msg("By wave height"),
+  wavePeriod: msg("By wave period"), waveAngle: msg("By wave angle"), waveWindAngle: msg("By wave angle to wind"),
+  current: msg("By current speed"), time: msg("By time"),
 };
 const CAMERAS: readonly { id: CameraPreset; label: string; tip: string }[] = [
   { id: "top", label: msg("Top"), tip: msg("Look down the wind-speed axis: the classic polar diagram") },
@@ -81,16 +92,26 @@ function cssColour(name: string, fallback: string): string {
  * The WebGL renderer, its geometries and the orbit controls are disposed on
  * unmount, as the map disposes its own.
  */
-export default function PolarView({ project, settings, onProject }: {
+export default function PolarView({ project, settings, onProject, compact = false }: {
+  compact?: boolean;
   project: ProjectSummary;
   settings: AppSettings | null;
   onProject: (summary: ProjectSummary) => void;
 }) {
+  const { editSource } = useBoatEditing();
+  const { selectSamples, focusMap } = useBoatSelection();
+  const api = useBoatApi();
+  const sync = useFleetSync();
+  const syncRef = useRef(sync);
+  syncRef.current = sync;
+  const linkedLayout = useRef<Layout>("tower");
   const t = useT();
   const canvas = useRef<HTMLCanvasElement>(null);
   const labelsHost = useRef<HTMLDivElement>(null);
   const scene = useRef<PolarScene | null>(null);
   const frame = useRef(0);
+  const hoverFrame = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hoverPoint = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
   const labels = useRef<GuideLabel[]>([]);
   const gesture = useRef<{ x: number; y: number; path: number[] } | null>(null);
   const request = useRef(0);
@@ -101,11 +122,22 @@ export default function PolarView({ project, settings, onProject }: {
   const [unavailable, setUnavailable] = useState<string | null>(null);
   const [packet, setPacket] = useState<ScenePacket>(emptyScene);
   const [layout, setLayout] = useState<Layout>("tower");
+  linkedLayout.current = layout;
+  const [noHoverMatch, setNoHoverMatch] = useState(false);
   const [toggles, setToggles] = useState<Toggles>(DEFAULT_TOGGLES);
+  const [waveRanges, updateWaveRanges] = useLiveEdit(project.blend.wave_ranges, (ranges) => api.setWaveRanges(ranges).then(onProject), project.id);
   const [mode, setMode] = useState<ColourMode>("source");
   const [tool, setTool] = useState<Tool>("rotate");
   const [selection, setSelection] = useState<number[]>([]);
   const [path, setPath] = useState<number[] | null>(null);
+  const [hover, setHover] = useState<{ index: number; x: number; y: number } | null>(null);
+  const clearHover = useCallback(() => {
+    if (hoverFrame.current !== null) clearTimeout(hoverFrame.current);
+    hoverFrame.current = null;
+    hoverPoint.current = null;
+    setHover(null);
+    setNoHoverMatch(false);
+  }, []);
   const [hideOthers, setHideOthers] = useState(false);
   const [dragValue, setDragValue] = useState<{ x: number; y: number; bsp: number } | null>(null);
   const held = useRef<ScenePacket | null>(null);
@@ -158,8 +190,10 @@ export default function PolarView({ project, settings, onProject }: {
     scene.current = made;
     // The WebDriver screenshot's synchronous redraw (development builds only).
     const offRedraw = registerRedraw(element, paint);
+    const offInspection = registerPolarInspection(element, () => ({ view: made.getView(), points: Array.from(made.projected()) }));
     made.setBackground(cssColour("--inset", "#1f2c3c"));
-    made.enableControls(element, draw);
+    made.enableControls(element, draw, () => syncRef.current?.publish({ kind: "camera", boat: project.id, view: made.getView(), layout: linkedLayout.current }));
+    made.setView(syncRef.current?.camera?.view ?? presetView("top", sceneBounds(emptyScene(), "tower"), made.camera.fov));
     const resize = () => {
       made.resize(element.clientWidth, element.clientHeight);
       draw();
@@ -175,6 +209,7 @@ export default function PolarView({ project, settings, onProject }: {
       observer?.disconnect();
       offTheme();
       offRedraw();
+      offInspection();
       cancelAnimationFrame(frame.current);
       frame.current = 0;
       made.dispose();
@@ -262,13 +297,32 @@ export default function PolarView({ project, settings, onProject }: {
   // (spec.md 13, plan.md M13).
   const colourKey = packet.sources.map((s) => `${s.id}${s.colour}`).join(",");
   const sampleDotsBuilt = useMemo(
-    () => sampleDots(packet, toggles, shownMode, focusStyle),
-    [packet.samples, colourKey, packet.nodes.count, toggles, shownMode, focusStyle],
+    () => sampleDots(packet, toggles, shownMode, focusStyle, waveRanges),
+    [packet.samples, colourKey, packet.nodes.count, toggles, shownMode, focusStyle, waveRanges],
   );
   const dots = useMemo(
     () => mergeDots(nodeDots(packet, toggles, focusStyle), sampleDotsBuilt),
     [packet, toggles, focusStyle, sampleDotsBuilt],
   );
+  useEffect(() => {
+    if (!sync) { setNoHoverMatch(false); return; }
+    return sync.subscribe(event => {
+      if (event.boat === project.id) return;
+      if (event.kind === "camera") {
+        clearHover();
+        setLayout(event.layout);
+        scene.current?.setView(event.view);
+        draw();
+      } else if (event.point === null) {
+        setHover(null); setNoHoverMatch(false);
+      } else {
+        const local = correspondingDot(dots.points, event.point);
+        setNoHoverMatch(local < 0);
+        setHover(local < 0 ? null : { index: dots.refs[local]!, x: 12, y: 58 });
+      }
+    });
+  }, [sync, project.id, dots, draw, clearHover]);
+  useEffect(() => { clearHover(); return () => { if (hoverFrame.current !== null) clearTimeout(hoverFrame.current); }; }, [dots, layout, clearHover]);
   // Only what is drawn is counted and acted on: a dot the toggles hide
   // cannot be seen to be selected.
   const acting = useMemo(
@@ -283,7 +337,7 @@ export default function PolarView({ project, settings, onProject }: {
       samples: dots.points, colors: dots.colors, shapes: dots.shapes, layout,
       surfaces: toggles.surfaces ? buildSurfaces(packet, blendColour, focusStyle, blendLine) : [],
     });
-    const guides = buildGuides(bounds, layout, unit);
+    const guides = buildGuides(bounds, layout, unit, project.blend.asymmetric);
     current.setGuides(guides.segments, cssColour("--muted", "#b3c9de"));
     labels.current = guides.labels;
     const host = labelsHost.current;
@@ -295,11 +349,11 @@ export default function PolarView({ project, settings, onProject }: {
       }));
     }
     if (!fitted.current && (packet.nodes.count > 0 || packet.samples.count > 0)) {
-      current.setView(presetView("iso", bounds, current.camera.fov));
+      current.setView(syncRef.current?.camera?.view ?? presetView("top", bounds, current.camera.fov));
       fitted.current = true;
     }
     draw();
-  }, [dots, packet, layout, toggles.surfaces, bounds, unit, draw, focusStyle, blendColour, blendLine]);
+  }, [dots, packet, layout, toggles.surfaces, bounds, unit, draw, focusStyle, blendColour, blendLine, project.blend.asymmetric]);
 
   // Selection is by global index; the scene highlights by drawn index.
   useEffect(() => {
@@ -314,7 +368,9 @@ export default function PolarView({ project, settings, onProject }: {
   const camera = (preset: CameraPreset) => {
     const current = scene.current;
     if (!current) return;
+    clearHover();
     current.setView(presetView(preset, bounds, current.camera.fov));
+    sync?.publish({ kind: "camera", boat: project.id, view: current.getView(), layout });
     draw();
   };
 
@@ -322,6 +378,7 @@ export default function PolarView({ project, settings, onProject }: {
     setLayout(next);
     const current = scene.current;
     if (current) current.setView(presetView("iso", sceneBounds(packet, next), current.camera.fov));
+    if (current) sync?.publish({ kind: "camera", boat: project.id, view: current.getView(), layout: next });
   };
 
   function chooseTool(next: Tool) {
@@ -379,6 +436,7 @@ export default function PolarView({ project, settings, onProject }: {
   const toGlobal = (locals: ArrayLike<number>) => Array.from(locals, (d) => dots.refs[d]!);
 
   const onPointerDown = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    clearHover();
     if (event.button !== 0) return;
     const rect = event.currentTarget.getBoundingClientRect();
     const x = event.clientX - rect.left, y = event.clientY - rect.top;
@@ -390,6 +448,23 @@ export default function PolarView({ project, settings, onProject }: {
     if (tool !== "rotate") event.currentTarget.setPointerCapture?.(event.pointerId);
   };
   const onPointerMove = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    if (!gesture.current && !drag.current && event.buttons === 0) {
+      const rect = event.currentTarget.getBoundingClientRect();
+      const x = event.clientX - rect.left, y = event.clientY - rect.top;
+      hoverPoint.current = { x, y, width: rect.width, height: rect.height };
+      // Throttle hit-testing without relying on animation frames, which WebKit
+      // suspends in an obscured desktop window. Read the latest pointer position.
+      if (hoverFrame.current === null) hoverFrame.current = setTimeout(() => {
+        hoverFrame.current = null;
+        const at = hoverPoint.current;
+        if (!at) return;
+        const hit = scene.current?.pick(at.x, at.y, PICK_RADIUS_PX) ?? -1;
+        setNoHoverMatch(false);
+        setHover(hit < 0 ? null : { index: dots.refs[hit]!, x: Math.max(8, Math.min(at.x + 12, at.width - 280)), y: Math.max(8, Math.min(at.y + 12, at.height - 260)) });
+        sync?.publish({ kind: "hover", boat: project.id, point: hit < 0 ? null : { twa: dots.points[hit * 3]!, tws: dots.points[hit * 3 + 1]! } });
+      }, 16);
+      return;
+    }
     const d = drag.current;
     if (d) {
       const rect = event.currentTarget.getBoundingClientRect();
@@ -451,20 +526,26 @@ export default function PolarView({ project, settings, onProject }: {
   const symbol = SPEED_SYMBOL[unit];
   const speed = (knots: number) => `${(knots * factor).toFixed(1)} ${symbol}`;
   const legendRange = shownMode === "source" ? null
-    : range(shownMode === "hs" ? packet.samples.hs : shownMode === "current" ? packet.samples.current : packet.samples.time);
+    : range(modeValues(packet, shownMode)!);
+  const legendValue = (value: number) => shownMode === "time"
+    ? `${new Date((packet.timeOrigin + value) * 1000).toISOString().replace("T", " ").slice(0, 19)} UTC`
+    : `${value.toFixed(1)}${shownMode === "wavePeriod" ? " s" : shownMode === "waveAngle" || shownMode === "waveWindAngle" ? "°" : ""}`;
   const unavailableModeTip = msg("Colouring by wave height, current or time needs track samples with their wind, which arrives with the environment fetch");
   const noFilteredTip = msg("No sample with wind is filtered out");
   const empty = packet.nodes.count === 0 && packet.samples.count === 0;
 
   return (
-    <div className="view3d" tabIndex={-1}
+    <div className={`view3d${compact ? " compact-comparison" : ""}`} tabIndex={-1}
       onKeyDown={(event) => { if (event.key === "Escape" && selection.length > 0) { event.stopPropagation(); select([]); } }}>
       <canvas ref={canvas} className={`view3d-canvas tool-${tool}`}
         onPointerEnter={() => setHint(later(msg("Drag to turn, right-drag to pan, scroll to zoom. Click a dot to select it; Shift adds.")))}
-        onPointerLeave={() => setHint(null)}
+        onPointerLeave={() => { setHint(null); clearHover(); sync?.publish({ kind: "hover", boat: project.id, point: null }); }} onWheel={clearHover}
         onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
         onPointerCancel={() => { gesture.current = null; drag.current = null; setPath(null); setDragValue(null); }} />
       <div className="view3d-labels" ref={labelsHost} aria-hidden="true" />
+      {hover && <PolarDotTooltip packet={packet} index={hover.index} sources={project.sources}
+        units={settings?.units ?? DEFAULT_UNITS} x={hover.x} y={hover.y} />}
+      {noHoverMatch && <div className="view3d-tooltip" role="tooltip" style={{ left: 12, top: 58 }}>{t("No point at matching wind conditions")}</div>}
       {path && path.length >= 4 && (
         <svg className="view3d-gesture" aria-hidden="true">
           <polygon points={path.join(" ")} />
@@ -509,7 +590,26 @@ export default function PolarView({ project, settings, onProject }: {
           onDone={() => editSource(null)} />
       )}
 
+      <WaveRangeControls samples={packet.samples} ranges={waveRanges} onChange={(ranges) => { void updateWaveRanges(() => ranges); }}
+        units={settings?.units ?? DEFAULT_UNITS} count={sampleDotsBuilt.refs.length} />
+
       <div className="view3d-side">
+        {project.sources.some((source) => source.kind === "track") && <PriorityFilters project={project} units={settings?.units ?? DEFAULT_UNITS} onProject={onProject} />}
+        {project.sources.some((source) => source.kind === "track") && (
+          <details className="global-filters">
+            <summary data-feature="view3d:global-filters">{t("Global point filters")}</summary>
+            <div className="point-filter-body">
+              <p className="muted">{t("Applied after each track's filters, including in the blend.")}</p>
+              <label><input type="checkbox" data-feature="view3d:global-filters-enabled"
+                checked={project.blend.global_filters != null}
+                onChange={(e) => { api.setGlobalFilters(e.target.checked ? NO_SAMPLE_FILTERS : null).then(onProject).catch(reportFailure); }} />
+                {t("Enable global filters")}</label>
+              {project.blend.global_filters && <SampleFiltersEditor prefix="global-filters"
+                filters={project.blend.global_filters} units={settings?.units ?? DEFAULT_UNITS}
+                onChange={(filters) => api.setGlobalFilters(filters).then(onProject)} />}
+            </div>
+          </details>
+        )}
         <fieldset className="view3d-show">
           <legend>{t("Show")}</legend>
           <label title={t("Every track sample as a dot")}>
@@ -543,8 +643,8 @@ export default function PolarView({ project, settings, onProject }: {
             </select>
           </label>
           {legendRange && (
-            <div className="view3d-ramp">
-              <span>{legendRange[0].toFixed(1)}</span><span className="view3d-ramp-bar" /><span>{legendRange[1].toFixed(1)}</span>
+            <div className={`view3d-ramp${shownMode === "time" ? " view3d-ramp-time" : ""}`}>
+              <span>{legendValue(legendRange[0])}</span><span className="view3d-ramp-bar" /><span>{legendValue(legendRange[1])}</span>
             </div>
           )}
         </fieldset>

@@ -164,6 +164,10 @@ impl OpenProject {
 pub struct Session {
     /// The open project, if any.
     pub open: Option<OpenProject>,
+    /// Independent boat sessions, in the same order as the saved tabs.
+    pub boats: Vec<OpenProject>,
+    /// Removed tabs, retained with their independent edit histories for Undo delete.
+    pub removed_boats: Vec<crate::boats::RemovedBoat>,
     /// Global settings, including the recent list.
     pub settings: Settings,
 }
@@ -173,6 +177,8 @@ impl Session {
     pub fn load(settings_file: &Path) -> Self {
         Self {
             open: None,
+            boats: Vec::new(),
+            removed_boats: Vec::new(),
             settings: Settings::load(settings_file),
         }
     }
@@ -180,6 +186,69 @@ impl Session {
     /// The open project, or an error saying there is none.
     pub fn require_open(&mut self) -> Result<&mut OpenProject> {
         self.open.as_mut().ok_or(AppError::NoProjectOpen)
+    }
+
+    /// Installs all tabs from one container without mixing their histories.
+    pub fn replace(&mut self, mut open: OpenProject) {
+        self.removed_boats.clear();
+        self.boats = std::mem::take(&mut open.project.boat_tabs)
+            .into_iter()
+            .map(|project| {
+                let mut boat = OpenProject::created(project);
+                boat.path = open.path.clone();
+                boat.dirty = open.dirty;
+                boat
+            })
+            .collect();
+        self.open = Some(open);
+    }
+
+    /// A complete save/recovery document, always rooted at the first boat.
+    pub fn document(&self) -> Result<Project> {
+        let mut project = self
+            .open
+            .as_ref()
+            .ok_or(AppError::NoProjectOpen)?
+            .project
+            .clone();
+        project.boat_tabs = self.boats.iter().map(|boat| boat.project.clone()).collect();
+        Ok(project)
+    }
+
+    /// Select only for this locked operation and restore even on an error.
+    /// No command ever relies on whichever tab the UI happens to show now.
+    pub fn with_boat<T>(
+        &mut self,
+        id: Option<u64>,
+        f: impl FnOnce(&mut Self) -> Result<T>,
+    ) -> Result<T> {
+        let Some(id) = id else {
+            return f(self);
+        };
+        if self
+            .open
+            .as_ref()
+            .is_some_and(|open| open.project.id.raw() == id)
+        {
+            return f(self);
+        }
+        let index = self
+            .boats
+            .iter()
+            .position(|boat| boat.project.id.raw() == id)
+            .ok_or(AppError::NoProjectOpen)?;
+        let open = self.open.as_mut().ok_or(AppError::NoProjectOpen)?;
+        std::mem::swap(open, &mut self.boats[index]);
+        let before = self.open.as_ref().map(|boat| boat.revision);
+        let result = f(self);
+        let changed = self.open.as_ref().map(|boat| boat.revision) != before;
+        if let Some(open) = self.open.as_mut() {
+            std::mem::swap(open, &mut self.boats[index]);
+            if changed {
+                open.mark();
+            }
+        }
+        result
     }
 
     /// Refuses to drop an open project that has unsaved changes.
@@ -199,8 +268,13 @@ impl Session {
 
     /// Saves the open project to `path` and remembers it as recent.
     pub fn save_to(&mut self, path: PathBuf) -> Result<()> {
+        io::save(&self.document()?, &path).doing("save the project to", path.display())?;
+        for boat in &mut self.boats {
+            boat.path = Some(path.clone());
+            boat.dirty = false;
+            boat.saves += 1;
+        }
         let open = self.require_open()?;
-        io::save(&open.project, &path).doing("save the project to", path.display())?;
         open.path = Some(path.clone());
         open.dirty = false;
         open.saves += 1;

@@ -5,6 +5,10 @@
  * `npm run bindings` and must never be hand-edited. This module is the only
  * place `invoke` is called, so every IPC failure is normalised into one type.
  */
+import type { DatabaseSettings } from "./generated/DatabaseSettings";
+import type { DatabaseProgress } from "./generated/DatabaseProgress";
+import type { BoatTrackSearch } from "./generated/BoatTrackSearch";
+
 import { invoke } from "@tauri-apps/api/core";
 
 import { beginBusy } from "./busy";
@@ -25,14 +29,15 @@ import type { EditOp } from "./generated/EditOp";
 import type { EditSurface } from "./generated/EditSurface";
 import type { EnvEstimate } from "./generated/EnvEstimate";
 import type { EnvJobsStatus } from "./generated/EnvJobsStatus";
-import type { GribExportStatus } from "./generated/GribExportStatus";
-import type { GribPreview } from "./generated/GribPreview";
 import type { ExportAxes } from "./generated/ExportAxes";
 import type { ExportPreview } from "./generated/ExportPreview";
 import type { ExportResult } from "./generated/ExportResult";
 import type { LegacyCacheNotice } from "./generated/LegacyCacheNotice";
 import type { MapProjection } from "./generated/MapProjection";
 import type { NetworkSettings } from "./generated/NetworkSettings";
+import type { OrrCatalogueInfo } from "./generated/OrrCatalogueInfo";
+import type { OrrSearchResult } from "./generated/OrrSearchResult";
+import type { OrrProgress } from "./generated/OrrProgress";
 import type { OrcCatalogueInfo } from "./generated/OrcCatalogueInfo";
 import type { OrcFilters } from "./generated/OrcFilters";
 import type { OrcSearchResult } from "./generated/OrcSearchResult";
@@ -90,7 +95,7 @@ const LONG_RUNNING: Readonly<Record<string, string>> = {
   orc_catalogue_info: msg("Loading the ORC catalogue"),
 };
 
-async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+async function invokeCommand<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   const label = LONG_RUNNING[command];
   const done = label === undefined ? null : beginBusy(label);
   try {
@@ -104,8 +109,31 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
   }
 }
 
+/** The local ORR catalogue changed after a refresh. */
+export const ORR_UPDATED = "orr://updated";
+
 /** Every Rust command reachable from the frontend. */
-export const api = {
+export function boatApi(boatContext?: number) {
+ const call = <T>(command: string, args?: Record<string, unknown>) => invokeCommand<T>(command,
+   boatContext === undefined ? args : { ...args, boatContext });
+ return {
+  openTrackerProject: (tracker: string, url: string, discardUnsaved = false, matchMode: import("./generated/BoatMatchMode").BoatMatchMode = "identical_model") => call<import("./generated/TrackerProjectResult").TrackerProjectResult>("open_tracker_project", { tracker, url, discardUnsaved, matchMode }),
+  boatImportStatus: () => call<import("./generated/BoatImportProgress").BoatImportProgress>("boat_import_status"),
+  cancelBoatImport: () => call<void>("cancel_boat_import"),
+  confirmTrackerProject: (projectId: number) => call<ProjectSummary>("confirm_tracker_project", { projectId }),
+  discardTrackerProject: (projectId: number) => call<void>("discard_tracker_project", { projectId }),
+  boatTabs: () => call<import("./generated/BoatTabs").BoatTabs>("boat_tabs"),
+  addBoat: (name: string) => call<ProjectSummary>("add_boat", { name }),
+  deleteBoat: (projectId: number, boatId: number) => call<ProjectSummary>("delete_boat", { projectId, boatId }),
+  restoreBoat: (projectId: number) => call<ProjectSummary>("restore_boat", { projectId }),
+  renameBoat: (name: string) => call<ProjectSummary>("rename_boat", { name }),
+  exportAllPolars: (directory: string, format: string) => call<import("./generated/BoatExportResult").BoatExportResult>("export_all_polars", { directory, format }),
+  orrCatalogueInfo: () => call<OrrCatalogueInfo>("orr_catalogue_info"),
+  orrSearch: (query: string, filters: OrcFilters, limit = 50, offset = 0) => call<OrrSearchResult>("orr_search", { query, filters, limit, offset }),
+  orrAdd: (id: string) => call<ProjectSummary>("orr_add", { id }),
+  orrScrapeStatus: () => call<OrrProgress>("orr_scrape_status"),
+  startOrrScrape: (year: number) => call<OrrProgress>("start_orr_scrape", { year }),
+  cancelOrrScrape: () => call<void>("cancel_orr_scrape"),
   /** Product name and version, for the start screen and About panel. */
   appInfo: () => call<AppInfo>("app_info"),
 
@@ -257,6 +285,7 @@ export const api = {
   setTrackFilters: (id: number, filters: TrackFilters) =>
     call<ProjectSummary>("set_track_filters", { id, filters }),
   /** Changes a track's maximum gap and given-or-derived preference (undoable). */
+  setTrackWind: (id: number, downloadedOnly: boolean): Promise<ProjectSummary> => invoke("set_track_wind", { id, downloadedOnly }),
   setTrackDerivation: (id: number, maxGapS: number, prefer: "given" | "derived") =>
     call<ProjectSummary>("set_track_derivation", { id, maxGapS, prefer }),
   /** One sample's time, position, motion and environment, for the map's hover. */
@@ -287,19 +316,11 @@ export const api = {
   /** Includes Stokes drift in the global merged current from the next fetch (undoable). */
   setStokesDrift: (on: boolean) => call<ProjectSummary>("set_stokes_drift", { on }),
 
-  // Reanalysis GRIB export (spec.md 7.8). Progress arrives as
-  // `GRIB_PROGRESS` events; one export runs at a time.
-
-  /** The area, times, file size and download of exporting a track's reanalysis. */
-  gribPreview: (sourceId: number, interval: "hourly" | "three_hourly", waves: boolean, current: boolean) =>
-    call<GribPreview>("grib_preview", { sourceId, interval, waves, current }),
-  /** Starts writing a track's reanalysis to `path` in the background. */
-  startGribExport: (sourceId: number, path: string, interval: "hourly" | "three_hourly", waves: boolean, current: boolean) =>
-    call<GribExportStatus>("start_grib_export", { sourceId, path, interval, waves, current }),
-  /** Stops the running export; nothing is written. */
-  cancelGribExport: () => call<GribExportStatus>("cancel_grib_export"),
-  /** The running or last export. */
-  gribExportStatus: () => call<GribExportStatus>("grib_export_status"),
+  /** Ordered priority groups and the additional global point filter layer. */
+  setPriorityFilters: (groups: TrackFilters[], minimum: number) =>
+    call<ProjectSummary>("set_priority_filters", { groups, minimum }),
+  setWaveRanges: (ranges: import("./generated/WaveRangesInput").WaveRangesInput): Promise<ProjectSummary> => invoke("set_wave_ranges", { ranges }),
+  setGlobalFilters: (filters: TrackFilters | null) => call<ProjectSummary>("set_global_filters", { filters }),
 
   /** Every visible track for the map, packed as binary (layout in `map/trackPacket.ts`). */
   mapTracks: async (): Promise<TrackPacket> => {
@@ -354,8 +375,8 @@ export const api = {
   /** The catalogue's size, provenance, countries and years; loads it on first call. */
   orcCatalogueInfo: () => call<OrcCatalogueInfo>("orc_catalogue_info"),
   /** Searches the catalogue: every word must match; best first, at most `limit`. */
-  orcSearch: (query: string, filters: OrcFilters, limit: number) =>
-    call<OrcSearchResult>("orc_search", { query, filters, limit }),
+  orcSearch: (query: string, filters: OrcFilters, limit: number, offset = 0) =>
+    call<OrcSearchResult>("orc_search", { query, filters, limit, offset }),
   /**
    * Adds a certificate as an ORC source (undoable). One the project already
    * holds fails with kind "orc-duplicate" unless `allowDuplicate`.
@@ -365,6 +386,13 @@ export const api = {
   // Settings (spec.md 3.4). Each returns the settings as saved.
 
   /** The settings. */
+  testDatabaseConnection: (settings: DatabaseSettings) => call<string>("test_database_connection", { settings }),
+  setDatabaseSettings: (settings: DatabaseSettings) => call<AppSettings>("set_database_settings", { settings }),
+  databaseJobStatus: () => call<DatabaseProgress>("database_job_status"),
+  startDatabaseJob: (operation: string, path: string | null = null) => call<DatabaseProgress>("start_database_job", { operation, path }),
+  cancelDatabaseJob: () => call<void>("cancel_database_job"),
+  searchDatabaseBoats: (query: string, offset = 0) => call<BoatTrackSearch>("search_database_boats", { query, offset }),
+  importDatabaseTrack: (id: string) => call<TrackImportResult>("import_database_track", { id }),
   appSettings: () => call<AppSettings>("app_settings"),
   /** Sets the interface language; the native menu follows. */
   setLanguage: (language: string) => call<AppSettings>("set_language", { language }),
@@ -408,13 +436,13 @@ export const api = {
   quitApp: (discardUnsaved: boolean) => call<void>("quit_app", { discardUnsaved }),
 };
 
+}
+export const api = boatApi();
+
 /** The event carrying the environment fetch queue as it changes. */
 export const ENV_PROGRESS = "env://progress";
 /** The event saying a fetch wrote into the open project. */
 export const ENV_CHANGED = "env://changed";
-
-/** The event carrying the GRIB export's progress. */
-export const GRIB_PROGRESS = "grib://progress";
 
 /** The event carrying a tracker download's progress. */
 export const TRACKER_PROGRESS = "tracker://progress";

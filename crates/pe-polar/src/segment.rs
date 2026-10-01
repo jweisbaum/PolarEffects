@@ -25,7 +25,7 @@
 use pe_core::track::SegmentStatistic;
 
 use crate::Polar;
-use crate::grid::fold_twa;
+use crate::grid::angle_on_axis;
 
 /// A polar segment: the statistic grid, and what it was made from.
 #[derive(Debug, Clone, PartialEq)]
@@ -104,7 +104,7 @@ pub fn bin(
     let (ni, nj) = (twa.len(), tws.len());
     let mut cells: Vec<Vec<f64>> = vec![Vec::new(); ni * nj];
     for (angle, wind, bsp) in points {
-        let Some(angle) = fold_twa(angle) else {
+        let Some(angle) = angle_on_axis(twa, angle) else {
             continue;
         };
         if !bsp.is_finite() || bsp < 0.0 {
@@ -113,7 +113,10 @@ pub fn bin(
         let (Some(i), Some(j)) = (bin_index(twa, angle), bin_index(tws, wind)) else {
             continue;
         };
-        if twa.get(i).is_some_and(|node| *node == 0.0) {
+        if twa
+            .get(i)
+            .is_some_and(|node| *node == 0.0 || *node == 360.0)
+        {
             continue;
         }
         if let Some(cell) = cells.get_mut(i * nj + j) {

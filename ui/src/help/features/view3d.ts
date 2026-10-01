@@ -9,6 +9,19 @@ const onStage = ["stage:3d"];
 const topic = "polar-3d";
 
 const features: Feature[] = [
+  { id: "view3d:wave-height-move", label: msg("Move wave height range"), description: msg("Drag to move both limits. Arrow keys move the range; Home and End move it to either end."), keywords: [msg("filters"), msg("samples"), msg("waves")], topic, reveal: onStage },
+  { id: "view3d:wave-angle-move", label: msg("Move wave angle range"), description: msg("Drag to move both limits. Arrow keys move the range; Home and End move it to either end."), keywords: [msg("filters"), msg("samples"), msg("waves")], topic, reveal: onStage },
+  { id: "view3d:wave-period-move", label: msg("Move wave period range"), description: msg("Drag to move both limits. Arrow keys move the range; Home and End move it to either end."), keywords: [msg("filters"), msg("samples"), msg("waves")], topic, reveal: onStage },
+  { id: "view3d:wave-height-min", label: msg("Minimum wave height shown"), description: msg("Filter track samples and update the blend in both views. These ranges apply in addition to other filters."), keywords: [msg("filters"), msg("samples"), msg("waves")], topic, reveal: onStage },
+  { id: "view3d:wave-height-max", label: msg("Maximum wave height shown"), description: msg("Filter track samples and update the blend in both views. These ranges apply in addition to other filters."), keywords: [msg("filters"), msg("samples"), msg("waves")], topic, reveal: onStage },
+  { id: "view3d:wave-angle-min", label: msg("Minimum wave angle shown"), description: msg("Filter track samples and update the blend in both views. These ranges apply in addition to other filters."), keywords: [msg("filters"), msg("samples"), msg("waves")], topic, reveal: onStage },
+  { id: "view3d:wave-angle-max", label: msg("Maximum wave angle shown"), description: msg("Filter track samples and update the blend in both views. These ranges apply in addition to other filters."), keywords: [msg("filters"), msg("samples"), msg("waves")], topic, reveal: onStage },
+  { id: "view3d:wave-period-min", label: msg("Minimum wave period shown"), description: msg("Filter track samples and update the blend in both views. These ranges apply in addition to other filters."), keywords: [msg("filters"), msg("samples"), msg("waves")], topic, reveal: onStage },
+  { id: "view3d:wave-period-max", label: msg("Maximum wave period shown"), description: msg("Filter track samples and update the blend in both views. These ranges apply in addition to other filters."), keywords: [msg("filters"), msg("samples"), msg("waves")], topic, reveal: onStage },
+  { id: "view3d:wave-ranges-reset", label: msg("Reset ranges"), description: msg("Filter track samples and update the blend in both views. These ranges apply in addition to other filters."), keywords: [msg("filters"), msg("samples"), msg("waves")], topic, reveal: onStage },
+
+  { id: "view3d:global-filters", label: msg("Global point filters"), description: msg("Applied after each track's filters, including in the blend."), keywords: [msg("filters"), msg("track")], topic, reveal: onStage },
+  { id: "view3d:global-filters-enabled", label: msg("Enable global filters"), description: msg("Applied after each track's filters, including in the blend."), keywords: [msg("filters"), msg("track")], topic, reveal: onStage, landing: "view3d:global-filters" },
   { id: "view3d:layout", label: msg("3D layout"), description: msg("Draw the polar as a tower (angle, radius, height) or on straight axes."),
     keywords: [msg("polar tower"), msg("Cartesian"), msg("axes")], topic, reveal: onStage },
   { id: "view3d:camera-top", label: msg("Top view"), description: msg("Look down the wind-speed axis: the classic polar diagram."),
@@ -31,7 +44,7 @@ const features: Feature[] = [
     keywords: [msg("mesh"), msg("polar")], topic, reveal: onStage },
   { id: "view3d:show-filtered", label: msg("Show filtered samples"), description: msg("Show the samples the filters remove, dimmed."),
     keywords: [msg("filters"), msg("dimmed")], topic, reveal: onStage },
-  { id: "view3d:colour", label: msg("Colour dots by"), description: msg("Colour the dots by source, wave height, current speed or time."),
+  { id: "view3d:colour", label: msg("Colour dots by"), description: msg("Colour the dots by source, wave height, period or angle, current speed or UTC time."),
     keywords: [msg("colour"), "Hs", msg("current"), msg("time")], topic, reveal: onStage },
   { id: "view3d:exclude", label: msg("Exclude from the blend"), description: msg("Remove the selected dots from the blend. Undo puts them back."),
     keywords: [msg("remove"), msg("outlier"), msg("selection")], topic, reveal: onStage },

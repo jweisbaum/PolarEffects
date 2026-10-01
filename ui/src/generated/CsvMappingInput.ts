@@ -25,6 +25,14 @@ heading: number | null,
  */
 speed: number | null,
 /**
+ * Supplied true wind speed column; optional.
+ */
+tws: number | null,
+/**
+ * Supplied true wind direction column; optional.
+ */
+twd: number | null,
+/**
  * Boat column; optional.
  */
 boat: number | null,
@@ -39,4 +47,8 @@ custom_format: string,
 /**
  * `"kn"`, `"ms"`, `"kmh"` or `"mph"`.
  */
-speed_unit: string, };
+speed_unit: string,
+/**
+ * Supplied wind unit, independent of boat speed: kn, ms, kmh or mph.
+ */
+wind_speed_unit: string, };

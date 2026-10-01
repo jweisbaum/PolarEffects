@@ -21,6 +21,7 @@ pub mod geovoile;
 pub mod http;
 pub mod kml;
 pub mod net;
+pub mod orr;
 pub mod yellowbrick;
 
 pub use error::{Result, TrackerError};
@@ -49,3 +50,6 @@ mod tests {
         assert_eq!(super::wrap_lon(-900.0), 180.0 - 360.0);
     }
 }
+
+/// Native SYRF database scraper discovery and geometry.
+pub mod library;

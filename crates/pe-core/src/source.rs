@@ -150,6 +150,7 @@ impl Source {
                     )));
                 }
             }
+            SourceKind::Orr { record } => record.polar.validate()?,
             SourceKind::PolarFile { polar, .. } => polar.validate()?,
             SourceKind::Track { track } => {
                 track.derivation.validate()?;
@@ -248,6 +249,11 @@ pub enum SourceKind {
         /// The record as the catalogue held it.
         record: Box<OrcRecord>,
     },
+    /// A public ORR certificate, copied from the user's local catalogue.
+    Orr {
+        /// The immutable certificate variant and boat-speed grid.
+        record: Box<crate::orr::OrrRecord>,
+    },
     /// An imported Expedition or Adrena polar, parsed at import.
     PolarFile {
         /// How it was read.
@@ -269,6 +275,7 @@ impl SourceKind {
     pub fn name(&self) -> &'static str {
         match self {
             Self::Orc { .. } => "orc",
+            Self::Orr { .. } => "orr",
             Self::PolarFile { .. } => "polar_file",
             Self::Track { .. } => "track",
         }
@@ -365,7 +372,7 @@ impl CellRef {
     /// Checks the cell is on the polar's axes' ranges.
     pub fn validate(&self) -> Result<()> {
         if self.twa.is_finite()
-            && (0.0..=180.0).contains(&self.twa)
+            && (0.0..=360.0).contains(&self.twa)
             && self.tws.is_finite()
             && self.tws >= 0.0
         {
@@ -433,6 +440,11 @@ pub enum WaveDirectionFilter {
         /// The range kept.
         range: Range,
     },
+    /// Wave angle relative to course over ground, without current correction.
+    Cog {
+        /// The range kept, degrees in [0, 180].
+        range: Range,
+    },
     /// Keep samples whose waves come from this compass range.
     Absolute {
         /// The "from" directions kept.
@@ -480,6 +492,15 @@ pub struct SampleFilters {
     /// neighbours (manoeuvres), degrees.
     #[serde(with = "canonical::optional_degrees_field")]
     pub max_heading_change_deg: Option<f64>,
+    /// Largest allowed change of apparent wind bearing, degrees.
+    #[serde(with = "canonical::optional_degrees_field")]
+    pub max_awa_change_deg: Option<f64>,
+    /// Largest allowed change of true wind speed, knots.
+    #[serde(with = "canonical::optional_knots_field")]
+    pub max_wind_speed_change_kn: Option<f64>,
+    /// Largest allowed change of true wind direction, degrees.
+    #[serde(with = "canonical::optional_degrees_field")]
+    pub max_wind_direction_change_deg: Option<f64>,
     /// Given versus derived heading.
     pub heading_origin: OriginFilter,
     /// Given versus derived speed.
@@ -487,6 +508,20 @@ pub struct SampleFilters {
     /// Exclude samples whose current came from a tier without tides
     /// (spec.md 7.5.1).
     pub exclude_no_tide: bool,
+    /// Require both wave height and wave direction.
+    pub exclude_unknown_wave: bool,
+    /// Require both current speed and direction; calm current is known.
+    pub exclude_unknown_current: bool,
+    /// Exclude a time window on both sides of an observed tack/gybe.
+    /// None disables this filter; zero still removes the bounding fixes.
+    pub tack_gybe_padding_s: Option<i64>,
+    /// A stop is a ground speed at or below this threshold, in knots.
+    #[serde(with = "canonical::optional_knots_field")]
+    pub stop_speed_kn: Option<f64>,
+    /// Time excluded before and after every observed stop.
+    pub stop_padding_s: i64,
+    /// Keep only times aligned to this many seconds since UTC midnight.
+    pub utc_interval_s: Option<i64>,
 }
 
 impl Default for SampleFilters {
@@ -501,9 +536,18 @@ impl Default for SampleFilters {
             min_bsp_kn: Some(1.0),
             max_bsp_kn: None,
             max_heading_change_deg: Some(30.0),
+            max_awa_change_deg: None,
+            max_wind_speed_change_kn: None,
+            max_wind_direction_change_deg: None,
             heading_origin: OriginFilter::Any,
             speed_origin: OriginFilter::Any,
             exclude_no_tide: false,
+            exclude_unknown_wave: false,
+            exclude_unknown_current: false,
+            tack_gybe_padding_s: None,
+            stop_speed_kn: None,
+            stop_padding_s: 0,
+            utc_interval_s: None,
         }
     }
 }
@@ -547,6 +591,25 @@ impl SampleFilters {
                 "a manoeuvre threshold of {limit}° is outside 0° to 180°"
             )));
         }
+        for (threshold, name, upper) in [
+            (self.max_awa_change_deg, "apparent wind change", 180.0),
+            (
+                self.max_wind_direction_change_deg,
+                "wind direction change",
+                180.0,
+            ),
+            (self.max_wind_speed_change_kn, "wind speed change", 200.0),
+        ] {
+            check_range(
+                &threshold.map(|v| Range {
+                    min: Some(v),
+                    max: None,
+                }),
+                name,
+                0.0,
+                upper,
+            )?;
+        }
         if let Some(window) = &self.time_window
             && let (Some(start), Some(end)) = (window.start, window.end)
             && start > end
@@ -555,8 +618,36 @@ impl SampleFilters {
                 "the time window ends before it starts".to_owned(),
             ));
         }
+        for padding in self
+            .tack_gybe_padding_s
+            .into_iter()
+            .chain([self.stop_padding_s])
+        {
+            if !(0..=86400).contains(&padding) {
+                return Err(CoreError::Invalid(
+                    "an exclusion window must be 0 to 86400 seconds".to_owned(),
+                ));
+            }
+        }
+        if self
+            .utc_interval_s
+            .is_some_and(|v| !(1..=86400).contains(&v))
+        {
+            return Err(CoreError::Invalid(
+                "a timestamp interval must be 1 to 86400 seconds".to_owned(),
+            ));
+        }
+        check_range(
+            &self.stop_speed_kn.map(|v| Range {
+                min: Some(v),
+                max: None,
+            }),
+            "stop speed",
+            0.0,
+            100.0,
+        )?;
         match &self.wave_direction {
-            Some(WaveDirectionFilter::Relative { range }) => {
+            Some(WaveDirectionFilter::Relative { range } | WaveDirectionFilter::Cog { range }) => {
                 check_range(&Some(range.clone()), "wave angle", 0.0, 180.0)?;
             }
             Some(WaveDirectionFilter::Absolute { range }) => {
@@ -571,6 +662,27 @@ impl SampleFilters {
             Some(WaveDirectionFilter::Sectors { .. }) | None => {}
         }
         Ok(())
+    }
+}
+
+/// Additional wave constraints from the main view, independent of other filters.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WaveRanges {
+    /// Significant wave height, metres.
+    pub height_m: Range,
+    /// Wave angle off the selected bow, degrees 0–180.
+    pub angle_deg: Range,
+    /// Mean wave period, seconds.
+    pub period_s: Range,
+}
+
+impl WaveRanges {
+    /// Validate every saved range before applying an overlay.
+    pub fn validate(&self) -> Result<()> {
+        check_range(&Some(self.height_m.clone()), "wave height", 0.0, 100.0)?;
+        check_range(&Some(self.angle_deg.clone()), "wave angle", 0.0, 180.0)?;
+        check_range(&Some(self.period_s.clone()), "wave period", 0.0, 1000.0)
     }
 }
 

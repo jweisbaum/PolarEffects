@@ -17,6 +17,14 @@ use crate::{MAX_FIXES, RawTrack, check_heading, check_speed, position};
 const TIME_KEYS: [&str; 3] = ["time", "timestamp", "date"];
 const HEADING_KEYS: [&str; 4] = ["cog", "heading", "hdg", "course"];
 const SPEED_KEYS: [&str; 4] = ["sog", "speed", "bsp", "stw"];
+const TWS_KEYS: [&str; 4] = ["tws", "truewindspeed", "true_wind_speed", "wind_speed"];
+const TWD_KEYS: [&str; 5] = [
+    "twd",
+    "twd_from",
+    "truewinddirection",
+    "true_wind_direction",
+    "wind_direction",
+];
 const BOAT_KEYS: [&str; 2] = ["boat", "name"];
 const LINE_TIME_KEYS: [&str; 2] = ["times", "coordtimes"];
 
@@ -44,7 +52,7 @@ fn time_of(value: &Value, feature: usize) -> Result<i64> {
 
 fn number_of(value: Option<&Value>, feature: usize) -> Result<Option<f64>> {
     match value {
-        None => Ok(None),
+        None | Some(Value::Null) => Ok(None),
         Some(Value::Number(n)) => Ok(n.as_f64()),
         Some(Value::String(s)) => s
             .trim()
@@ -121,6 +129,10 @@ fn read_feature(
             let sog = number_of(property(properties, &SPEED_KEYS), index)?;
             let range = |r| TrackFileError::in_feature(index, r);
             fixes.push(Fix {
+                tws: crate::check_wind_speed(number_of(property(properties, &TWS_KEYS), index)?)
+                    .map_err(range)?,
+                twd_from: check_heading(number_of(property(properties, &TWD_KEYS), index)?)
+                    .map_err(range)?,
                 t,
                 lat,
                 lon,
@@ -152,7 +164,7 @@ fn read_feature(
                     .collect::<Option<_>>()
                     .ok_or_else(not_geojson)?
             };
-            for (vertices, times) in lines {
+            for (line_index, (vertices, times)) in lines.into_iter().enumerate() {
                 if vertices.len() != times.len() {
                     return Err(TrackFileError::in_feature(
                         index,
@@ -162,14 +174,41 @@ fn read_feature(
                         },
                     ));
                 }
-                for (vertex, time) in vertices.iter().zip(times) {
+                let series = |keys: &[&str], vertex_index: usize| -> Result<Option<f64>> {
+                    let mut value = property(properties, keys);
+                    if kind == "MultiLineString"
+                        && let Some(Value::Array(parts)) = value
+                    {
+                        value = parts.get(line_index);
+                    }
+                    if let Some(Value::Array(values)) = value {
+                        if values.len() != vertices.len() {
+                            return Err(TrackFileError::in_feature(
+                                index,
+                                Reason::TimesMismatch {
+                                    vertices: vertices.len(),
+                                    times: values.len(),
+                                },
+                            ));
+                        }
+                        value = values.get(vertex_index);
+                    }
+                    number_of(value, index)
+                };
+                for (vertex_index, (vertex, time)) in vertices.iter().zip(times).enumerate() {
                     let (lat, lon) = lon_lat(vertex, index)?;
                     fixes.push(Fix {
+                        tws: crate::check_wind_speed(series(&TWS_KEYS, vertex_index)?)
+                            .map_err(|r| TrackFileError::in_feature(index, r))?,
+                        twd_from: check_heading(series(&TWD_KEYS, vertex_index)?)
+                            .map_err(|r| TrackFileError::in_feature(index, r))?,
                         t: time_of(time, index)?,
                         lat,
                         lon,
-                        cog: None,
-                        sog: None,
+                        cog: check_heading(series(&HEADING_KEYS, vertex_index)?)
+                            .map_err(|r| TrackFileError::in_feature(index, r))?,
+                        sog: check_speed(series(&SPEED_KEYS, vertex_index)?)
+                            .map_err(|r| TrackFileError::in_feature(index, r))?,
                     });
                 }
             }
@@ -236,6 +275,30 @@ mod tests {
     const NOON: i64 = 1_753_531_200;
 
     #[test]
+    fn supplied_wind_on_points_and_multiline_vertices() {
+        let point = br#"{"type":"Feature","properties":{"time":0,"TWS":12,"TWD":350},"geometry":{"type":"Point","coordinates":[1,2]}}"#;
+        let fix = &read_geojson(point).unwrap()[0].fixes[0];
+        assert_eq!(fix.tws.zip(fix.twd_from), Some((12.0, 350.0)));
+        let multi = br#"{"type":"Feature","properties":{"times":[[0],[60,120]],"tws":[[12],[null,14]],"twd":[[350],[10,20]]},"geometry":{"type":"MultiLineString","coordinates":[[[1,2]],[[2,3],[3,4]]]}}"#;
+        let raw = read_geojson(multi).unwrap();
+        assert_eq!(
+            raw[0]
+                .fixes
+                .iter()
+                .map(|f| f.tws.zip(f.twd_from))
+                .collect::<Vec<_>>(),
+            [Some((12.0, 350.0)), None, Some((14.0, 20.0))]
+        );
+        let bad = String::from_utf8(multi.to_vec())
+            .unwrap()
+            .replace("[null,14]", "[14]");
+        assert_eq!(
+            read_geojson(bad.as_bytes()).unwrap_err().reason.code(),
+            "times-mismatch"
+        );
+    }
+
+    #[test]
     fn points_grouped_by_boat_with_any_case_properties() {
         let text = r#"{"type":"FeatureCollection","features":[
           {"type":"Feature","geometry":{"type":"Point","coordinates":[-1.3,50.1]},
@@ -253,6 +316,8 @@ mod tests {
         assert_eq!(
             tracks[0].fixes[0],
             Fix {
+                tws: None,
+                twd_from: None,
                 t: NOON,
                 lat: 50.1,
                 lon: -1.3,

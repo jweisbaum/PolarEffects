@@ -49,27 +49,27 @@ HTMLElement.prototype.scrollIntoView = () => undefined;
 /** An imported Adrena polar, as the source list and Polar files section show it. */
 const POLAR: SourceSummary = {
   id: 7, kind: "polar_file", label: "boat.pol", colour: "#4e79a7", visible: true, weight: 1, count: 71, used: null,
-  polar_file: { format: "adrena", file_name: "boat.pol", twa: [0, 42.5, 180], tws: [6, 8, 20] }, orc: null, track: null, edits: 0,
+  polar_file: { format: "adrena", file_name: "boat.pol", twa: [0, 42.5, 180], tws: [6, 8, 20] }, orr: null, orc: null, track: null, edits: 0,
 };
 const TRACK: SourceSummary = {
   id: 8, kind: "track", label: "Fastnet 2025", colour: "#f28e2b", visible: false, weight: 0.5, count: 120, used: 100,
-  polar_file: null, orc: null, track: null, edits: 0,
+  polar_file: null, orr: null, orc: null, track: null, edits: 0,
 };
 /** A visible track with its summary, as the Tracks section lists it. */
 const TRACKED: SourceSummary = {
   ...TRACK, id: 10, visible: true, track: {
     origin: "file", boat_name: "Alpha", event_title: "race.geojson", start: 1_753_531_200, end: 1_753_617_600,
     samples: 120, filtered: 20, excluded: 0, used: 100, with_wind: 0, env_status: "not_fetched", env_fetched: 0, env_interval: null, no_tide: 0, max_gap_s: 10_800,
-    prefer: "given", environment_filters: false,
-    filters: { time_start: null, time_end: null, min_bsp: 1, max_bsp: null, max_heading_change: 30, heading_origin: "any", speed_origin: "any",
+    prefer: "given", supplied_wind: 0, downloaded_wind_only: false, environment_filters: false,
+    filters: { max_awa_change: null, max_wind_speed_change: null, max_wind_direction_change: null, time_start: null, time_end: null, min_bsp: 1, max_bsp: null, max_heading_change: 30, heading_origin: "any", speed_origin: "any",
     tws_min: null, tws_max: null, twa_min: null, twa_max: null, hs_min: null, hs_max: null, current_min: null, current_max: null,
-    wave_mode: "off", wave_sectors: [], wave_min: null, wave_max: null, wave_from: null, wave_to: null, exclude_no_tide: false },
+    wave_mode: "off", wave_sectors: [], wave_min: null, wave_max: null, wave_from: null, wave_to: null, exclude_no_tide: false, exclude_unknown_wave: false, exclude_unknown_current: false, tack_gybe_padding_s: null, stop_speed_kn: null, stop_padding_s: 0, utc_interval_s: null },
   },
 };
 /** An ORC certificate, as the source list and the ORC polars section show it. */
 const ORC: SourceSummary = {
   id: 9, kind: "orc", label: "Eratosthenes", colour: "#e15759", visible: true, weight: 1, count: 70, used: null,
-  polar_file: null, orc: { sail_no: "GBR 1124", model: "Swan 112", year: 1999, certificate_year: 2023 }, track: null, edits: 0,
+  polar_file: null, orr: null, orc: { sail_no: "GBR 1124", model: "Swan 112", year: 1999, certificate_year: 2023 }, track: null, edits: 0,
 };
 /** A search result for it. */
 const HIT: OrcHit = {
@@ -98,6 +98,7 @@ function backend() {
     calls.push([command, args]);
     switch (command) {
       case "app_settings": return settings;
+      case "database_job_status": return { running: false, operation: "", failures: [], done: 0, total: 0, tracks: 0, skipped: 0, failed: 0, current: "", cancelled: false, error: null };
       case "app_info": return { name: "PolarEffects", version: "0.1.0" };
       case "project_summary": return project;
       case "recent_projects": return [
@@ -132,7 +133,7 @@ function backend() {
         // An empty scene: the header alone (layout in polar/scenePacket.ts).
         const header = new ArrayBuffer(48);
         new DataView(header).setUint32(0, 0x44334550, true);
-        new DataView(header).setUint32(4, 2, true);
+        new DataView(header).setUint32(4, 3, true);
         return header;
       }
       case "compare_polars": {
@@ -246,6 +247,7 @@ beforeEach(() => {
   legacyNotice = null;
   compareAnswer = "fixture";
   settings = {
+    database: { host: "localhost", port: 5432, name: "syrfbackendprod", user: "postgres", password: "", tls: false, geojson_directory: "", metadata_directory: "", scrape_schedule: "on_demand", scrape_urls: "", yellowbrick_user_key: "", yellowbrick_device_id: "", pg_dump: "" },
     recent_projects: [], autosave: "recovery", language: "en", theme: "harbour",
     units: { speed: "kn", wave_height: "m", distance: "nm" },
     weather_memory_mb: 256, network: { concurrency: 8, timeout_s: 60 },
@@ -288,13 +290,15 @@ describe("the start screen", () => {
     expect(calls.find(([c]) => c === "new_project")?.[1]).toEqual({
       name: "Untitled polar", boat: { name: "", notes: "" }, discardUnsaved: false,
     });
-    for (const id of ["shell:project-menu", "shell:rename", "stage:map", "stage:3d", "stage:compare", "shell:search",
-      "shell:help", "shell:settings", "nav:orc", "nav:polar-files", "nav:tracks", "panel:sources", "panel:plot",
-      "shell:statusbar", "dock:left", "dock:right", "map:projection"]) {
+    for (const id of ["shell:project-menu", "shell:rename", "stage:3d", "stage:compare", "shell:search",
+      "shell:help", "shell:settings", "shell:asymmetric", "nav:orc", "nav:polar-files", "nav:tracks", "panel:sources", "panel:plot",
+      "shell:statusbar", "dock:left", "dock:right", "view3d:layout"]) {
       expect(feature(id), id).not.toBeNull();
     }
+    expect(feature("stage:map")).toBeNull();
+    expect(feature("stage:3d")?.getAttribute("aria-selected")).toBe("true");
     // The three navigation sections, in the spec's order.
-    expect([...document.querySelectorAll(".left-nav h2")].map((h) => h.textContent)).toEqual(["ORC polars", "Polar files", "Tracks"]);
+    expect([...document.querySelectorAll(".left-nav h2")].map((h) => h.textContent)).toEqual(["ORC / ORR polars", "Polar files", "Tracks"]);
     expect(q(".project-name")?.textContent).toContain("•");
   });
 });
@@ -341,6 +345,28 @@ describe("errors", () => {
 });
 
 describe("the project window", () => {
+  it("keeps newer analysis revisions when an older mutation response arrives last", async () => {
+    project = summary(false, "/p.wpsproj", [POLAR, ORC]);
+    await mount();
+    const backend = invoke.getMockImplementation()!;
+    let older!: (value: ProjectSummary) => void;
+    let newer!: (value: ProjectSummary) => void;
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "set_source_visible") return new Promise<ProjectSummary>((resolve) => {
+        if (args?.id === POLAR.id) older = resolve; else newer = resolve;
+      });
+      return backend(command, args);
+    });
+    const boxes = () => [...document.querySelectorAll<HTMLInputElement>('[data-feature="sources:visible"]')];
+    await click(boxes()[0]!);
+    await click(boxes()[1]!);
+    const latest = { ...project!, revision: 3, sources: [{ ...POLAR, visible: false }, { ...ORC, visible: false }] };
+    await act(async () => newer(latest));
+    expect(boxes().map(box => box.checked)).toEqual([false, false]);
+    await act(async () => older({ ...latest, revision: 2, sources: [{ ...POLAR, visible: false }, ORC] }));
+    expect(boxes().map(box => box.checked)).toEqual([false, false]);
+  });
+
   it("folds the navigation and its sections, and remembers it for the person", async () => {
     project = summary(false, "/p.wpsproj");
     await mount();
@@ -366,7 +392,7 @@ describe("the project window", () => {
   });
 
   it("switches the stage", async () => {
-    project = summary(false, "/p.wpsproj");
+    project = summary(false, "/p.wpsproj", [TRACKED]);
     await mount();
     await click(feature("stage:3d"));
     expect(feature("map:projection")).toBeNull();
@@ -542,7 +568,7 @@ describe("switching language (plan.md M2 acceptance)", () => {
   const data = new Set(["Fastnet", "/boats/Fastnet.wpsproj", "v0.1.0", "PolarEffects", "English", "Français",
     "Deutsch", "/cache/chunks", "…", "Old", "/gone/Old.wpsproj", "Lost", "?",
     // Country codes and the catalogue's commit, from the ORC polars section.
-    "GBR", "NED", "c2ca870c6b22cc02c25afd5bac0f2d8297bf95de"]);
+    "ORC", "ORR", "GBR", "NED", "c2ca870c6b22cc02c25afd5bac0f2d8297bf95de"]);
   const untranslated = (target: "fr" | "de", before: string[], after: string[]) =>
     before.filter((text, index) =>
       text === after[index] && !data.has(text) && CATALOGUES[target][text] !== text && /\p{L}{2}/u.test(text)
@@ -607,7 +633,7 @@ describe("switching language (plan.md M2 acceptance)", () => {
       const data = new Set(["Fastnet", "/boats/Fastnet.wpsproj", "v0.1.0", "PolarEffects", "English", "Français",
         "Deutsch", "/cache/chunks", "…",
         // Country codes and the catalogue's commit, from the ORC polars section.
-        "GBR", "NED", "c2ca870c6b22cc02c25afd5bac0f2d8297bf95de"]);
+        "ORC", "ORR", "GBR", "NED", "c2ca870c6b22cc02c25afd5bac0f2d8297bf95de"]);
       const untranslated = before.filter((text, index) =>
         text === after[index] && !data.has(text) && catalogue[text] !== text && /\p{L}{2}/u.test(text)
         && !/^(Cmd|Ctrl)\+/.test(text));
@@ -663,6 +689,8 @@ describe("finding every control (plan.md M2 acceptance)", () => {
         // The map and 3D stages are hidden behind the Compare stage, to be
         // revealed; the Compare stage's own controls behind the 3D stage.
         await click(feature(entry.id.startsWith("compare:") ? "stage:3d" : "stage:compare"));
+        // Boat tabs are hidden by the fleet comparison layout, not by a stage.
+        if (entry.reveal?.includes("boats:tabs")) await click(feature("boats:split"));
         if (entry.reveal?.length) {
           expect(feature(entry.id), `${entry.id} starts hidden`).toBeNull();
         }
@@ -704,7 +732,7 @@ describe("polar files and the source list (plan.md M4)", () => {
     dialog.open.mockResolvedValue(["/boats/boat.pol", "/boats/bad.csv"]);
     await click(feature("polar-files:import"));
     expect(dialog.open.mock.calls[0]![0]).toMatchObject({ multiple: true });
-    expect(commands("import_polar_files")).toEqual([{ paths: ["/boats/boat.pol", "/boats/bad.csv"] }]);
+    expect(commands("import_polar_files")).toEqual([{ boatContext: 1,  paths: ["/boats/boat.pol", "/boats/bad.csv"] }]);
     const listed = q(".polar-file-list")!.textContent!;
     expect(listed).toContain("boat.pol");
     expect(listed).toContain("Adrena · TWA 0–180° (3) · TWS 6–20 kn (3)");
@@ -725,7 +753,7 @@ describe("polar files and the source list (plan.md M4)", () => {
   it("removes a polar file from its section", async () => {
     await open([POLAR]);
     await click(feature("polar-files:remove"));
-    expect(commands("remove_source")).toEqual([{ id: 7 }]);
+    expect(commands("remove_source")).toEqual([{ boatContext: 1,  id: 7 }]);
   });
 
   it("puts the blend first, then each source with its kind and count", async () => {
@@ -770,6 +798,8 @@ describe("polar files and the source list (plan.md M4)", () => {
     const hooks = window as unknown as { __peOpen: (path: string) => Promise<string> };
     await act(async () => { await hooks.__peOpen("/other.wpsproj"); });
     await settle();
+    expect(feature("stage:3d")?.getAttribute("aria-selected")).toBe("true");
+    await click(feature("stage:compare"));
     expect(q(".compare-summary")!.textContent).toContain("0 cells compared");
     expect(q(".compare-legend")!.textContent).toContain("No compared cell");
   });
@@ -826,7 +856,7 @@ describe("polar files and the source list (plan.md M4)", () => {
     await open([POLAR]);
     const visible = feature("sources:blend-visible") as HTMLInputElement;
     await click(visible);
-    expect(commands("set_blend_visible")).toEqual([{ visible: false }]);
+    expect(commands("set_blend_visible")).toEqual([{ boatContext: 1,  visible: false }]);
     expect(q(".blend-row")!.classList.contains("hidden-source")).toBe(true);
 
     await click(feature("sources:blend-settings"));
@@ -841,10 +871,10 @@ describe("polar files and the source list (plan.md M4)", () => {
     await type(feature("blend-settings:n-full") as HTMLInputElement, "12");
     await click(feature("blend-settings:smoothing"));
     await click(apply());
-    expect(commands("set_blend_settings")).toEqual([{
+    expect(commands("set_blend_settings")).toEqual([{ boatContext: 1,
       settings: {
         twa: [0, 45, 90, 135, 180], tws: [4, 6, 8, 10, 12, 14, 16, 20, 25, 30], min_samples: 5, n_full: 12,
-        smoothing: true, default_statistic: "p90", use_corrected: true, stokes_drift: false,
+        smoothing: true, default_statistic: "p90", use_corrected: true, stokes_drift: false, asymmetric: false, interpolation: "linear",
       },
     }]);
     expect(feature("blend-settings:twa")).toBeNull();
@@ -853,7 +883,7 @@ describe("polar files and the source list (plan.md M4)", () => {
   it("previews the export on either grid and saves it through the native dialog (spec.md 12)", async () => {
     await open([POLAR]);
     await click(feature("sources:export"));
-    expect(commands("export_preview")).toEqual([{ format: "expedition", axes: null }]);
+    expect(commands("export_preview")).toEqual([{ boatContext: 1,  format: "expedition", axes: null }]);
     expect(q(".export-preview td.filled")!.textContent).toBe("0.00");
     await click(feature("export:csv"));
     await click(feature("export:custom-grid"));
@@ -863,7 +893,7 @@ describe("polar files and the source list (plan.md M4)", () => {
     dialog.save.mockResolvedValue("/boats/blend.csv");
     await click(buttonNamed("Save…"));
     expect(dialog.save.mock.calls.at(-1)![0]).toMatchObject({ defaultPath: "Fastnet.csv" });
-    expect(commands("export_polar")).toEqual([{ path: "/boats/blend.csv", format: "csv", axes: expect.objectContaining({ tws: [8, 12] }) }]);
+    expect(commands("export_polar")).toEqual([{ boatContext: 1,  path: "/boats/blend.csv", format: "csv", axes: expect.objectContaining({ tws: [8, 12] }) }]);
     expect(feature("export:preview")).toBeNull();
   });
 
@@ -872,7 +902,7 @@ describe("polar files and the source list (plan.md M4)", () => {
     await click(feature("sources:edit"));
     await settle();
     expect(calls.some(([command, args]) => command === "polar_scene" && (args as { focus: number }).focus === 7)).toBe(true);
-    expect(commands("polar_edit_surface")).toEqual([{ sourceId: 7 }]);
+    expect(commands("polar_edit_surface")).toEqual([{ boatContext: 1,  sourceId: 7 }]);
     expect(feature("view3d:tool-drag")).not.toBeNull();
     const cell = q<HTMLInputElement>(".view3d-edit-table input")!;
     await act(async () => cell.focus());
@@ -880,7 +910,7 @@ describe("polar files and the source list (plan.md M4)", () => {
     await act(async () => cell.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
     await settle();
     expect(commands("edit_polar")).toEqual([
-      { sourceId: 7, op: { type: "type", bsp: 6.25 }, cells: [{ twa_index: 0, tws_index: 0 }], gesture: null },
+      { boatContext: 1,  sourceId: 7, op: { type: "type", bsp: 6.25 }, cells: [{ twa_index: 0, tws_index: 0 }], gesture: null },
     ]);
     await click(feature("edit:done"));
     expect(q(".view3d-edit")).toBeNull();
@@ -889,21 +919,21 @@ describe("polar files and the source list (plan.md M4)", () => {
   it("edits a source through Rust: visibility, name, colour, order and removal", async () => {
     await open([POLAR, TRACK]);
     await click(feature("sources:visible"));
-    expect(commands("set_source_visible")).toEqual([{ id: 7, visible: false }]);
+    expect(commands("set_source_visible")).toEqual([{ boatContext: 1,  id: 7, visible: false }]);
 
     await click(feature("sources:rename"));
     const input = q<HTMLInputElement>("input.source-rename")!;
     await type(input, "  Sister ship  ");
     await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
     await settle();
-    expect(commands("set_source_label")).toEqual([{ id: 7, label: "Sister ship" }]);
+    expect(commands("set_source_label")).toEqual([{ boatContext: 1,  id: 7, label: "Sister ship" }]);
 
     await click(feature("sources:colour"));
     const swatches = [...document.querySelectorAll<HTMLButtonElement>(".palette-swatch")];
     expect(swatches).toHaveLength(16);
     expect(swatches[0]!.getAttribute("aria-pressed")).toBe("true");
     await click(swatches[3]!);
-    expect(commands("set_source_colour")).toEqual([{ id: 7, colour: "#76b7b2" }]);
+    expect(commands("set_source_colour")).toEqual([{ boatContext: 1,  id: 7, colour: "#76b7b2" }]);
     expect(q(".colour-popover")).toBeNull();
 
     const handle = feature("sources:reorder")!;
@@ -911,10 +941,10 @@ describe("polar files and the source list (plan.md M4)", () => {
     await act(async () => handle.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true })));
     await settle();
     // Down moves the first source to 1; up from the first row goes nowhere.
-    expect(commands("move_source")).toEqual([{ id: 7, to: 1 }]);
+    expect(commands("move_source")).toEqual([{ boatContext: 1,  id: 7, to: 1 }]);
 
     await click(feature("sources:remove"));
-    expect(commands("remove_source")).toEqual([{ id: 7 }]);
+    expect(commands("remove_source")).toEqual([{ boatContext: 1,  id: 7 }]);
   });
 
   it("drags the weight slider as one gesture", async () => {
@@ -965,13 +995,13 @@ describe("ORC polars (plan.md M5)", () => {
     expect(searches.map((s) => s.query)).toEqual(["G", "GBR 1124"]);
     expect(searches[1]!.filters).toEqual({
       year_min: null, year_max: null, country: null,
-      name: "", sail_no: "", model: "", builder: "", designer: "", certificate_year: "",
+      name: "", sail_no: "", model: "", builder: "", designer: "", certificate_year: "", size_min: Array(9).fill(null), size_max: Array(9).fill(null),
     });
     const row = q(".orc-results li")!;
     expect(row.querySelector(".orc-name")!.textContent).toBe("Eratosthenes");
     expect(row.querySelector(".orc-meta")!.textContent).toBe("GBR 1124 · Swan 112 · 1999 · Nautor");
     expect(row.querySelector("svg.orc-thumb path")!.getAttribute("d")).toMatch(/^M/);
-    expect(q(".orc-count")!.textContent).toBe("Best 1 of 120 certificates");
+    expect(q(".orc-count")!.textContent).toBe("Certificates 1–1 of 120");
 
     await click(feature("orc:fields"));
     const country = feature("orc:country") as HTMLSelectElement;
@@ -1006,7 +1036,7 @@ describe("ORC polars (plan.md M5)", () => {
     expect(searches.map((s) => s.query)).toEqual(["", ""]);
     expect(searches.at(-1)!.filters).toEqual({
       year_min: null, year_max: null, country: null,
-      name: "", sail_no: "GBR/1124", model: "", builder: "", designer: "frers", certificate_year: "",
+      name: "", sail_no: "GBR/1124", model: "", builder: "", designer: "frers", certificate_year: "", size_min: Array(9).fill(null), size_max: Array(9).fill(null),
     });
     expect(q(".orc-results li .orc-name")!.textContent).toBe("Eratosthenes");
 
@@ -1068,7 +1098,7 @@ describe("ORC polars (plan.md M5)", () => {
     await open([]);
     await search("eratosthenes");
     await click(feature("orc:add"));
-    expect(commands("orc_add")).toEqual([{ id: 4242, allowDuplicate: false }]);
+    expect(commands("orc_add")).toEqual([{ boatContext: 1,  id: 4242, allowDuplicate: false }]);
     expect(q(".orc-added")!.textContent).toContain("Eratosthenes");
     expect(q(".orc-added")!.textContent).toContain("GBR 1124 · Swan 112 · 1999 · Certificate 2023");
 
@@ -1080,7 +1110,7 @@ describe("ORC polars (plan.md M5)", () => {
     expect(commands("orc_add")).toHaveLength(1);
     await click(feature("orc:add"));
     await click(buttonNamed("Add again"));
-    expect(commands("orc_add")).toEqual([{ id: 4242, allowDuplicate: false }, { id: 4242, allowDuplicate: true }]);
+    expect(commands("orc_add")).toEqual([{ boatContext: 1,  id: 4242, allowDuplicate: false }, { boatContext: 1,  id: 4242, allowDuplicate: true }]);
   });
 
   it("asks when Rust finds a duplicate the list did not know about", async () => {
@@ -1092,13 +1122,13 @@ describe("ORC polars (plan.md M5)", () => {
     await click(feature("orc:add"));
     expect(q("[role=dialog]")!.textContent).toContain("Eratosthenes is already in the project.");
     await click(buttonNamed("Add again"));
-    expect(commands("orc_add")).toEqual([{ id: 4242, allowDuplicate: false }, { id: 4242, allowDuplicate: true }]);
+    expect(commands("orc_add")).toEqual([{ boatContext: 1,  id: 4242, allowDuplicate: false }, { boatContext: 1,  id: 4242, allowDuplicate: true }]);
     expect(q(".statusbar .hint.error"), "the duplicate is asked about, not reported").toBeNull();
   });
 
   it("removes an ORC polar from its section", async () => {
     await open([ORC]);
     await click(feature("orc:remove"));
-    expect(commands("remove_source")).toEqual([{ id: 9 }]);
+    expect(commands("remove_source")).toEqual([{ boatContext: 1,  id: 9 }]);
   });
 });

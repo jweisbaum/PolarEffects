@@ -6,7 +6,8 @@
  * `env://progress` events and publishes each status here; any component
  * reads it. Nothing here starts or stops a job — that is `api`.
  */
-import { useSyncExternalStore } from "react";
+import { useMemo, useSyncExternalStore } from "react";
+import { useBoatId } from "./boats/context";
 
 import type { EnvJobTrack } from "./generated/EnvJobTrack";
 import type { EnvJobsStatus } from "./generated/EnvJobsStatus";
@@ -38,7 +39,9 @@ export function envJobOf(status: EnvJobsStatus, sourceId: number): EnvJobTrack |
 }
 
 export function useEnvJobs(): EnvJobsStatus {
-  return useSyncExternalStore(subscribe, () => snapshot);
+  const id = useBoatId();
+  const all = useSyncExternalStore(subscribe, () => snapshot);
+  return useMemo(() => id === undefined ? all : { ...all, tracks: all.tracks.filter(job => job.boat_id === undefined || job.boat_id === id) }, [id, all]);
 }
 
 function subscribe(listener: () => void): () => void {

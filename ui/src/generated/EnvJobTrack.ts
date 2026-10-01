@@ -5,6 +5,10 @@
  */
 export type EnvJobTrack = {
 /**
+ * Boat owning this source; absent only in older UI fixtures.
+ */
+boat_id?: number,
+/**
  * The track source.
  */
 source_id: number,

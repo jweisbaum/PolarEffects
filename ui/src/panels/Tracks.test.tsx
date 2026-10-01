@@ -40,7 +40,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 vi.mock("../project/dialogs", () => ({ pickTrackFiles: () => Promise.resolve(["/races/log.csv", "/races/fleet.geojson"]) }));
 const focus = vi.fn();
-vi.mock("../selection", () => ({ focusMap: (f: unknown) => focus(f) }));
+vi.mock("../selection", () => ({ useBoatSelection: () => ({ focusMap: (f: unknown) => focus(f) }) }));
 
 const { default: Tracks } = await import("./Tracks");
 
@@ -51,14 +51,14 @@ let root: Root;
 const TRACK: TrackSummary = {
   origin: "file", boat_name: "Alpha", event_title: "fleet.geojson", start: 1_753_531_200, end: 1_753_617_600,
   samples: 120, filtered: 20, excluded: 0, used: 100, with_wind: 0, env_status: "not_fetched", env_fetched: 0, env_interval: null, no_tide: 0, max_gap_s: 10_800,
-  prefer: "given", environment_filters: false,
-  filters: { time_start: null, time_end: null, min_bsp: 1, max_bsp: null, max_heading_change: 30, heading_origin: "any", speed_origin: "any",
+  prefer: "given", supplied_wind: 0, downloaded_wind_only: false, environment_filters: false,
+  filters: { max_awa_change: null, max_wind_speed_change: null, max_wind_direction_change: null, time_start: null, time_end: null, min_bsp: 1, max_bsp: null, max_heading_change: 30, heading_origin: "any", speed_origin: "any",
     tws_min: null, tws_max: null, twa_min: null, twa_max: null, hs_min: null, hs_max: null, current_min: null, current_max: null,
-    wave_mode: "off", wave_sectors: [], wave_min: null, wave_max: null, wave_from: null, wave_to: null, exclude_no_tide: false },
+    wave_mode: "off", wave_sectors: [], wave_min: null, wave_max: null, wave_from: null, wave_to: null, exclude_no_tide: false, exclude_unknown_wave: false, exclude_unknown_current: false, tack_gybe_padding_s: null, stop_speed_kn: null, stop_padding_s: 0, utc_interval_s: null },
 };
 const SOURCE: SourceSummary = {
   id: 5, kind: "track", label: "Alpha", colour: "#e15759", visible: true, weight: 1, count: 120, used: 100,
-  polar_file: null, orc: null, track: TRACK, edits: 0,
+  polar_file: null, orr: null, orc: null, track: TRACK, edits: 0,
 };
 const project = (sources: SourceSummary[]): ProjectSummary => ({
   id: 1, name: "P", path: null, dirty: false, revision: 1, boat_name: "", boat_notes: "", sources,
@@ -71,7 +71,7 @@ const CSV: TrackFileInspection = {
   },
   csv: {
     header: ["when", "lat", "lon"], rows: [["26/07/2025 12:00", "50", "-1"]], row_count: 1,
-    mapping: { time: null, lat: 1, lon: 2, heading: null, speed: null, boat: null, time_format: "auto", custom_format: "", speed_unit: "kn" },
+    mapping: { time: null, lat: 1, lon: 2, heading: null, speed: null, boat: null, time_format: "auto", custom_format: "", speed_unit: "kn", wind_speed_unit: "kn", tws: null, twd: null },
   },
 };
 const GEOJSON: TrackFileInspection = {
@@ -136,13 +136,44 @@ it("edits the filters and the derivation through their commands", async () => {
     tws.dispatchEvent(new Event("input", { bubbles: true }));
   });
   await act(async () => { tws.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); });
-  expect(calls.filter(([n]) => n === "setTrackFilters").at(-1)?.[1]).toEqual([5, { ...TRACK.filters, tws_min: 8 }]);
+  expect(calls.filter(([n]) => n === "setTrackFilters").at(-1)?.[1]).toEqual([5, { ...TRACK.filters, min_bsp: 3, tws_min: 8 }]);
   const mode = q('[data-feature="tracks:wave-mode"]') as HTMLSelectElement;
   await act(async () => {
     mode.value = "sectors";
     mode.dispatchEvent(new Event("change", { bubbles: true }));
   });
-  expect(calls.filter(([n]) => n === "setTrackFilters").at(-1)?.[1]).toEqual([5, { ...TRACK.filters, wave_mode: "sectors" }]);
+  expect(calls.filter(([n]) => n === "setTrackFilters").at(-1)?.[1]).toEqual([5, { ...TRACK.filters, min_bsp: 3, tws_min: 8, wave_mode: "sectors" }]);
+});
+
+it("applies numeric filters while typing and preserves edits made during a slow response", async () => {
+  let release!: (value: unknown) => void;
+  responses.setTrackFilters = new Promise((resolve) => { release = resolve; });
+  await act(async () => root.render(<Tracks project={project([SOURCE])} onProject={() => undefined} />));
+  await click(q('[data-feature="tracks:filters"]'));
+  const type = async (name: string, value: string) => {
+    const input = q(`[data-feature="tracks:${name}"]`) as HTMLInputElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => { await new Promise((r) => setTimeout(r, 150)); });
+  };
+  await type("min-bsp", "3");
+  expect(calls.filter(([name]) => name === "setTrackFilters")).toHaveLength(1);
+  await type("wind-speed-change", "2");
+  await type("wind-direction-change", "120");
+  expect(calls.filter(([name]) => name === "setTrackFilters")).toHaveLength(1);
+  await act(async () => {
+    responses.setTrackFilters = project([SOURCE]);
+    release(project([SOURCE]));
+  });
+  const sent = calls.filter(([name]) => name === "setTrackFilters");
+  expect(sent).toHaveLength(2);
+  expect(sent[1]![1]).toEqual([5, { ...TRACK.filters, min_bsp: 3, max_wind_speed_change: 2, max_wind_direction_change: 120 }]);
+  const wind = q('[data-feature="tracks:wind-source"]') as HTMLSelectElement;
+  await act(async () => { wind.value = "weather"; wind.dispatchEvent(new Event("change", { bubbles: true })); });
+  expect(calls.find(([name]) => name === "setTrackWind")?.[1]).toEqual([5, true]);
+  delete responses.setTrackFilters;
 });
 
 it("imports files without fetching weather; Fetch weather… shows the estimate and starts it", async () => {
@@ -263,7 +294,7 @@ it("maps a CSV, picks boats and imports them as one request", async () => {
   expect(q("[role=dialog]")).toBeNull();
 });
 
-it("commits a time-window edit once, on leaving the field, not on every keystroke", async () => {
+it("applies a complete time-window edit without requiring blur", async () => {
   await act(async () => root.render(<Tracks project={project([SOURCE])} onProject={() => undefined} />));
   await click(q('[data-feature="tracks:filters"]'));
   const start = q('[data-feature="tracks:time-start"]') as HTMLInputElement;
@@ -274,7 +305,7 @@ it("commits a time-window edit once, on leaving the field, not on every keystrok
       start.dispatchEvent(new Event("input", { bubbles: true }));
     });
   }
-  expect(calls.filter(([n]) => n === "setTrackFilters")).toEqual([]);
+  expect(calls.filter(([n]) => n === "setTrackFilters")).toHaveLength(1);
   await act(async () => { start.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); });
   const sent = calls.filter(([n]) => n === "setTrackFilters");
   expect(sent).toHaveLength(1);
@@ -524,7 +555,7 @@ it("fetches the weather of the ticked tracks together", async () => {
   expect(calls.find(([n]) => n === "startEnvFetch")?.[1]).toEqual([[5, 8], "three_hourly", false]);
 });
 
-it("fetches the ticked tracks not already fetching, then clears the ticks (M17a)", async () => {
+it("selects all imported tracks, fetches those not already fetching, then clears the ticks", async () => {
   const { setEnvJobs, resetEnvJobs } = await import("../jobs");
   const bravo: SourceSummary = { ...SOURCE, id: 6, label: "Bravo" };
   const charlie: SourceSummary = { ...SOURCE, id: 7, label: "Charlie" };
@@ -536,7 +567,10 @@ it("fetches the ticked tracks not already fetching, then clears the ticks (M17a)
   setEnvJobs({ tracks: [{ source_id: 6, label: "Bravo", state: "fetching", fraction: 0.5 }], failure: null, warning: null });
   await act(async () => root.render(<Tracks project={project([SOURCE, bravo, charlie])} onProject={() => undefined} />));
   const boxes = () => [...host.querySelectorAll<HTMLInputElement>('[data-feature="tracks:select"]')];
-  for (const box of boxes()) await click(box);
+  const selectAll = q('[data-feature="tracks:select-all"]') as HTMLButtonElement;
+  await click(selectAll);
+  expect(boxes().map(box => box.checked)).toEqual([true, true, true]);
+  expect(selectAll.disabled).toBe(true);
   const button = q('[data-feature="tracks:fetch-weather-selected"]') as HTMLButtonElement;
   // Bravo is fetching: two of the three ticked tracks are asked for.
   expect(button.textContent).toBe("Fetch weather for 2 selected tracks…");
@@ -548,6 +582,7 @@ it("fetches the ticked tracks not already fetching, then clears the ticks (M17a)
   expect(calls.find(([n]) => n === "startEnvFetch")?.[1]).toEqual([[5, 7], "hourly", false]);
   expect(q("[role=dialog]")).toBeNull();
   expect(boxes().map((box) => box.checked)).toEqual([false, false, false]);
+  expect(selectAll.disabled).toBe(false);
   expect(button.disabled).toBe(true);
   await act(async () => resetEnvJobs());
 });

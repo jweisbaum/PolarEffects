@@ -64,7 +64,7 @@ pub struct TrackerSession {
 }
 
 impl TrackerSession {
-    fn cached(&self, tracker: Tracker, key: &str) -> Option<Arc<TrackerEvent>> {
+    pub(crate) fn cached(&self, tracker: Tracker, key: &str) -> Option<Arc<TrackerEvent>> {
         let direct = self
             .events
             .lock()
@@ -93,7 +93,7 @@ impl TrackerSession {
     /// Keeps `event`, downloaded for `requested` (the key it was asked
     /// for, before the download, which may differ from `event.event.key`
     /// once a race in legs answers with the leg the page actually shows).
-    fn keep(&self, event: Arc<TrackerEvent>, requested: &str) {
+    pub(crate) fn keep(&self, event: Arc<TrackerEvent>, requested: &str) {
         if let Ok(mut events) = self.events.lock() {
             events.retain(|e| {
                 !(e.event.tracker == event.event.tracker && e.event.key == event.event.key)
@@ -158,7 +158,7 @@ fn tracker_name(tracker: Tracker) -> &'static str {
     }
 }
 
-fn client_of(tracker: Tracker) -> Result<Box<dyn TrackerClient>> {
+pub(crate) fn client_of(tracker: Tracker) -> Result<Box<dyn TrackerClient>> {
     #[cfg(feature = "webdriver")]
     if let Some(client) = automation_client(tracker) {
         return Ok(client);
@@ -506,7 +506,11 @@ pub async fn tracker_event(
 
 /// Stops the running event download.
 #[tauri::command]
-pub fn cancel_tracker_event(state: tauri::State<'_, AppState>) -> Result<()> {
+pub fn cancel_tracker_event(
+    state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
+) -> Result<()> {
+    let state = state.scoped(boat_context);
     state.trackers.cancel();
     Ok(())
 }
@@ -514,7 +518,7 @@ pub fn cancel_tracker_event(state: tauri::State<'_, AppState>) -> Result<()> {
 // --------------------------------------------------------------- import
 
 /// The track of one boat, ready for its ids.
-fn pending(event: &TrackerEvent, boat: &pe_trackers::TrackerBoat) -> Pending {
+pub(crate) fn pending(event: &TrackerEvent, boat: &pe_trackers::TrackerBoat) -> Pending {
     let label = if boat.name.is_empty() {
         boat.sail.clone().unwrap_or_else(|| boat.id.clone())
     } else {
@@ -611,10 +615,12 @@ pub fn import_boats(
 #[tauri::command]
 pub async fn import_tracker_boats(
     state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
     tracker: String,
     key: String,
     boats: Vec<String>,
 ) -> Result<TrackImportResult> {
+    let state = state.scoped(boat_context);
     import_boats(&state, tracker_of(&tracker)?, &key, &boats)
 }
 
@@ -625,6 +631,8 @@ mod tests {
     #[test]
     fn previews_keep_the_ends_and_stay_small() {
         let fix = |t: i64| pe_core::track::Fix {
+            tws: None,
+            twd_from: None,
             t,
             lat: t as f64,
             lon: -(t as f64),
@@ -654,6 +662,8 @@ mod tests {
 
     fn event(key: &str, fixes: usize) -> Arc<TrackerEvent> {
         let fix = pe_core::track::Fix {
+            tws: None,
+            twd_from: None,
             t: 0,
             lat: 0.0,
             lon: 0.0,
@@ -670,6 +680,7 @@ mod tests {
             start: None,
             stop: None,
             boats: vec![pe_trackers::TrackerBoat {
+                details: Default::default(),
                 id: "1".to_owned(),
                 name: String::new(),
                 sail: None,

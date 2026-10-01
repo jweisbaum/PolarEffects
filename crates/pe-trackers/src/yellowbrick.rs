@@ -2,8 +2,8 @@
 //!
 //! An event is two public responses: `RaceSetup` (JSON, ISO-8859-1: title,
 //! start, stop and the teams) and `AllPositions3` (a big-endian binary with
-//! every team's full history). Neither needs a credential; the app.yb.tl
-//! purchase flow and any device key are never used (D5).
+//! every team's full history). Neither needs a credential. Catalogue code
+//! discovery uses optional local credentials separately in library::yellowbrick.
 
 use std::time::Duration;
 
@@ -23,14 +23,27 @@ const HOSTS: [&str; 4] = ["yb.tl", "www.yb.tl", "cf.yb.tl", "app.yb.tl"];
 
 const TRACKER: &str = "YellowBrick";
 
-/// Whether `key` can be a race key: 1–64 of `[A-Za-z0-9_-]`, so it can be
-/// put in a request path as it is.
+/// Mobile catalogue codes include ampersands, dots and internal spaces.
+/// Restrict them to one path segment and encode spaces before constructing URLs.
 fn valid_key(key: &str) -> bool {
     !key.is_empty()
         && key.len() <= 64
+        && key != "."
+        && key != ".."
         && key
             .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '&' | '.' | ' '))
+}
+
+pub(crate) fn url_key(key: &str) -> String {
+    // Every other accepted character is legal literally inside a URL path.
+    key.replace(' ', "%20")
+}
+fn decoded_key(text: &str) -> Option<String> {
+    let key = percent_encoding::percent_decode_str(text)
+        .decode_utf8()
+        .ok()?;
+    valid_key(&key).then(|| key.into_owned())
 }
 
 /// The race key in a pasted address: `https://yb.tl/<key>`, a `cf.yb.tl`
@@ -45,14 +58,14 @@ pub fn race_key(input: &str) -> Result<String> {
         input: input.to_owned(),
     };
     let text = input.trim();
-    let valid = valid_key;
+    let valid = decoded_key;
     let rest = text
         .strip_prefix("https://")
         .or_else(|| text.strip_prefix("http://"));
     let rest = match rest {
         Some(rest) => rest,
         // A bare key.
-        None if valid(text) => return Ok(text.to_owned()),
+        None if valid(text).is_some() => return valid(text).ok_or_else(not_an_event),
         // A host and path without a scheme.
         None if text.contains('/') => text,
         None => return Err(not_an_event()),
@@ -64,9 +77,9 @@ pub fn race_key(input: &str) -> Result<String> {
     }
     for pair in query.split('&') {
         if let Some(key) = pair.strip_prefix("race=")
-            && valid(key)
+            && let Some(key) = valid(key)
         {
-            return Ok(key.to_owned());
+            return Ok(key);
         }
     }
     let mut segments = path
@@ -78,16 +91,15 @@ pub fn race_key(input: &str) -> Result<String> {
     } else {
         first
     };
-    if valid(key) {
-        Ok(key.to_owned())
-    } else {
-        Err(not_an_event())
-    }
+    valid(key).ok_or_else(not_an_event)
 }
 
 /// One team (boat) as `RaceSetup` lists it.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, serde::Serialize)]
 pub struct Team {
+    /// Unrecognized fields are retained for boat/model resolution.
+    #[serde(flatten)]
+    pub extra: std::collections::BTreeMap<String, serde_json::Value>,
     /// The id `AllPositions3` names the team by.
     pub id: u16,
     /// Boat name.
@@ -214,6 +226,8 @@ impl TeamTrack {
         self.moments
             .iter()
             .map(|m| Fix {
+                tws: None,
+                twd_from: None,
                 t: m.at,
                 lat: m.lat,
                 lon: crate::wrap_lon(m.lon),
@@ -470,6 +484,7 @@ fn event_of(
         .teams
         .iter()
         .map(|team| TrackerBoat {
+            details: crate::event::boat_details(&serde_json::to_value(team).unwrap_or_default()),
             id: team.id.to_string(),
             name: team.name.trim().to_owned(),
             sail: non_empty(&team.sail),
@@ -528,11 +543,37 @@ impl TrackerClient for YellowBrick {
         Tracker::YellowBrick
     }
 
+    fn fetch_for_scrape(
+        &self,
+        event: &EventRef,
+        fetcher: &Fetcher,
+        progress: &mut dyn FnMut(Progress),
+        now: i64,
+    ) -> Result<crate::library::completion::ScrapeFetch> {
+        if !valid_key(&event.key) {
+            return Err(TrackerError::NotAnEvent {
+                tracker: TRACKER,
+                input: event.key.clone(),
+            });
+        }
+        // Unlike the interactive import, never start AllPositions3 alongside
+        // RaceSetup: an ongoing race must not download positions or KML.
+        let bytes = fetcher.get(
+            &format!("{}/JSON/{}/RaceSetup", self.cdn, url_key(&event.key)),
+            &mut |_, _| {},
+        )?;
+        let setup = parse_race_setup(&bytes)?;
+        let metadata = event_of(event, &setup, |_| Vec::new(), PositionsFrom::Primary);
+        crate::library::completion::after_check(metadata, now, || {
+            self.fetch(event, fetcher, progress)
+        })
+    }
+
     fn resolve(&self, input: &str) -> Result<EventRef> {
         let key = race_key(input)?;
         Ok(EventRef {
             tracker: Tracker::YellowBrick,
-            url: format!("{SITE}/{key}"),
+            url: format!("{SITE}/{}", url_key(&key)),
             key,
         })
     }
@@ -550,7 +591,7 @@ impl TrackerClient for YellowBrick {
         listed: &mut dyn FnMut(TrackerEvent),
     ) -> Result<TrackerEvent> {
         let key = event.key.as_str();
-        // The key goes into request paths as it is.
+        // Validate before encoding the one path segment used by every request.
         if !valid_key(key) {
             return Err(TrackerError::NotAnEvent {
                 tracker: TRACKER,
@@ -577,7 +618,7 @@ impl TrackerClient for YellowBrick {
         // The positions start at once: the setup is small and quick, and
         // the dialog lists the boats from it while the binary still reads.
         let binary = fetcher.spawn(
-            format!("{}/BIN/{key}/AllPositions3", self.cdn),
+            format!("{}/BIN/{}/AllPositions3", self.cdn, url_key(key)),
             None,
             |bytes| {
                 if is_html(&bytes) {
@@ -593,7 +634,7 @@ impl TrackerClient for YellowBrick {
 
         let at = step(0);
         let bytes = fetcher.get(
-            &format!("{}/JSON/{key}/RaceSetup", self.cdn),
+            &format!("{}/JSON/{}/RaceSetup", self.cdn, url_key(key)),
             &mut |b, t| {
                 progress(at(b, t));
             },
@@ -645,7 +686,7 @@ impl TrackerClient for YellowBrick {
         let at = step(2);
         let bytes = fetcher
             .get_with_timeout(
-                &format!("{}/{key}.kml", self.site),
+                &format!("{}/{}.kml", self.site, url_key(key)),
                 KML_TIMEOUT,
                 &mut |b, t| {
                     progress(at(b, t));
@@ -699,13 +740,29 @@ mod tests {
         }
     }
 
+    #[test]
+    fn mobile_codes_with_path_punctuation_round_trip() {
+        for (key, url) in [
+            ("stars&spokes2023", "https://yb.tl/stars&spokes2023"),
+            ("n2e2026.admin", "https://yb.tl/n2e2026.admin"),
+            ("ISORA2026_ 05CW3", "https://yb.tl/ISORA2026_%2005CW3"),
+        ] {
+            assert_eq!(race_key(url).unwrap(), key);
+            assert_eq!(YellowBrick::default().resolve(key).unwrap().url, url);
+        }
+        assert_eq!(
+            race_key("https://app.yb.tl/?race=stars%26spokes2023").unwrap(),
+            "stars&spokes2023"
+        );
+    }
+
     /// A key goes into the request path as it is, so a key `race_key` would
     /// not produce is refused before any request.
     #[test]
     fn fetch_refuses_a_key_that_is_not_a_race_key() {
         let fetcher =
             Fetcher::new(TRACKER, Duration::from_secs(1), Default::default()).expect("a client");
-        for key in ["", "../JSON/x", "a b", "x?y=1", &"k".repeat(65)] {
+        for key in ["", "../JSON/x", "a\nb", "x?y=1", &"k".repeat(65)] {
             let event = EventRef {
                 tracker: Tracker::YellowBrick,
                 key: key.to_owned(),
@@ -738,7 +795,9 @@ mod tests {
             "https://example.invalid/fastnet2025",
             "https://yb.tl/",
             "",
-            "fast net",
+            "fast\nnet",
+            "https://yb.tl/%2E%2E",
+            "https://yb.tl/race%2Fother",
             "https://yb.tl.example.invalid/fastnet2025",
         ] {
             assert!(race_key(input).is_err(), "{input}");

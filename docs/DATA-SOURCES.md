@@ -14,6 +14,20 @@ the application. The native About panel records the embedded catalogue's
 commit, source date, build date and certificate count. Its source polars are
 based on ORC certificates; inclusion does not imply endorsement by ORC.
 
+## ORR catalogue
+
+Complete public certificates, ratings and offshore/short-course polar tables
+come from [RegattaMan’s ORR valid list](https://www.regattaman.com/valid_list_ora.php?crule=ORR&sdir=true&ssdir=true&sort=3&ssort=0).
+The bundled 2026 snapshot contains 300 certificates and 600 table variants,
+captured 2026-09-30. Settings can refresh a chosen year. The snapshot preserves
+all named list columns and certificate fields, public ownership and comments,
+hull/rig/sail/stability/trim measurements, performance metrics, drawing
+parameters, every embedded rating block, and original speed/time-allowance
+tables. Rating values come from the page's embedded JSON, not its initially
+empty display inputs. Only normalized certificate data is stored, not raw HTML,
+page scripts or login/session state.
+See `assets/orr/README.md` for the snapshot’s provenance and rebuild command.
+
 ## Wind and waves: ERA5
 
 Contains modified Copernicus Climate Change Service information. ERA5 is
@@ -59,3 +73,18 @@ YellowBrick, Geovoile and Blue Water Tracks provide user-selected race tracks.
 Their event data and any files you import remain subject to the rights and
 terms of their respective providers. PolarEffects' application licence does
 not grant rights to third-party event data.
+
+The optional SYRF library uses the user's PostgreSQL database and local
+GeoJSON files. Its schema and native scraper mapping follow
+[syrf-schema](https://github.com/sailing-yacht-research-foundation/syrf-schema),
+[tracker-scraper](https://github.com/sailing-yacht-research-foundation/tracker-scraper)
+and the individual-track formatter in
+[raw-data-server](https://github.com/sailing-yacht-research-foundation/raw-data-server).
+Original race URLs and source identifiers accompany searchable tracks.
+Scraping uses public YellowBrick, Geovoile and Blue Water tracks in Rust;
+it does not run the upstream Node or browser scrapers. YellowBrick catalogue
+discovery uses configured, user-authorized mobile credentials to resolve race
+codes and associate only products explicitly listed as free. Credentials are
+local settings, never bundled into builds, logged or included in metadata.
+The metadata snapshot is limited to the selected provider families. Full SQL
+export covers all database records, and is separate from the GeoJSON files.

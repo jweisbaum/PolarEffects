@@ -93,7 +93,10 @@ fn csv_round_trips_through_its_golden_file() {
 
 #[test]
 fn messy_files_read_as_the_golden_polars() {
-    let expedition = read(&fixture("expedition-messy.txt")).unwrap();
+    let mut expedition = read(&fixture("expedition-messy.txt")).unwrap();
+    assert_eq!(cell(&expedition.polar, 185.0, 25.0), Some(8.25));
+    assert_eq!(cell(&expedition.polar, 250.0, 10.0), Some(7.6));
+    expedition.polar = pe_polar::grid::directional(&expedition.polar, false);
     assert_eq!(expedition.format, PolarFileFormat::Expedition);
     assert_eq!(expedition.polar, read(EXPEDITION).unwrap().polar);
     // 185° and 250° were folded onto 175° and 110°.
@@ -110,7 +113,8 @@ fn messy_files_read_as_the_golden_polars() {
         ("grid-semicolon.csv", PolarFileFormat::Csv),
         ("grid-comma.csv", PolarFileFormat::Csv),
     ] {
-        let parsed = read(&fixture(name)).unwrap();
+        let mut parsed = read(&fixture(name)).unwrap();
+        parsed.polar = pe_polar::grid::directional(&parsed.polar, false);
         assert_eq!(parsed.format, format, "{name}");
         assert_eq!(parsed.polar, golden, "{name}");
         assert_eq!(

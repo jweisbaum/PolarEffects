@@ -6,7 +6,7 @@ import { SHAPE_CROSS, SHAPE_DISC, SHAPE_RING, SHAPE_SQUARE } from "./scene3d";
 import {
   availableModes, buildDots, buildGuides, buildSurfaces, combine, DEFAULT_TOGGLES, drawnOnly, editCells, exclusionTargets,
   FADED_OPACITY, focusIndex, hasFiltered, keysOf, nodesAtCells, presetView, ramp, resolveKeys, sampleIdsOf, sceneBounds, summarise,
-  surfaceGrid, ticks,
+  sampleDots, surfaceGrid, ticks,
 } from "./view3d";
 
 /**
@@ -31,6 +31,7 @@ function packet(): ScenePacket {
       flags: Uint32Array.from([0, FLAG_EXCLUDED, 0]),
     },
     samples: {
+      wavePeriod: new Float32Array(0), waveAngle: new Float32Array(0), waveWindAngle: new Float32Array(0),
       count: 2,
       points: Float32Array.from([120, 14, 9, 150, 16, 10]),
       source: Uint32Array.from([2, 2]),
@@ -81,10 +82,10 @@ describe("the dots drawn (spec.md 10.2, 10.3)", () => {
   });
 
   it("offers a colour mode only when some sample has its value", () => {
-    expect(availableModes(packet())).toEqual({ source: true, hs: true, current: false, time: true });
+    expect(availableModes(packet())).toEqual({ source: true, hs: true, current: false, time: true, wavePeriod: false, waveAngle: false, waveWindAngle: false });
     const none = packet();
     none.samples = { ...none.samples, count: 0, hs: new Float32Array(0), time: new Float32Array(0), flags: new Uint32Array(0) };
-    expect(availableModes(none)).toEqual({ source: true, hs: false, current: false, time: false });
+    expect(availableModes(none)).toEqual({ source: true, hs: false, current: false, time: false, wavePeriod: false, waveAngle: false, waveWindAngle: false });
     expect(hasFiltered(packet())).toBe(true);
     expect(hasFiltered(none)).toBe(false);
   });
@@ -174,6 +175,7 @@ describe("what the selection acts on", () => {
       ...packet(),
       nodes: { count: 0, points: new Float32Array(), source: new Uint32Array(), cell: new Uint32Array(), flags: new Uint32Array() },
       samples: {
+      wavePeriod: new Float32Array(0), waveAngle: new Float32Array(0), waveWindAngle: new Float32Array(0),
         count, points: new Float32Array(count * 3), source: new Uint32Array(count),
         ids: Uint32Array.from({ length: count * 2 }, (_, i) => (i % 2 === 0 ? i / 2 : 0)),
         hs: new Float32Array(count), current: new Float32Array(count), time: new Float32Array(count), flags: new Uint32Array(count),
@@ -239,6 +241,12 @@ describe("cameras and guides (spec.md 10.1)", () => {
     const cartesian = buildGuides(sceneBounds(packet(), "cartesian"), "cartesian", "kmh");
     expect(cartesian.segments.length).toBe(3 * 6);
     expect(cartesian.labels.map((l) => l.text)).toContain("180°");
+    const fullTower = buildGuides(bounds, "tower", "kn", true).labels.filter(l => l.text.endsWith("°"));
+    expect(fullTower.map(l => l.text)).toEqual(["0°", "30°", "60°", "90°", "120°", "150°", "180°", "150°", "120°", "90°", "60°", "30°"]);
+    expect(fullTower.filter(l => l.text === "90°").map(l => Math.sign(l.at[0]))).toEqual([1, -1]);
+    const fullCartesian = buildGuides(bounds, "cartesian", "kn", true).labels.filter(l => l.text.endsWith("°"));
+    expect(fullCartesian.at(-1)).toMatchObject({ text: "0°", at: [36, -0.8, 0] });
+    expect(fullCartesian[6]!.text).toBe("180°");
   });
 });
 
@@ -309,4 +317,26 @@ describe("edit mode (spec.md 10.4)", () => {
     const summary = summarise(scene, [3]);
     expect([summary.included, summary.excluded]).toEqual([0, 0]);
   });
+});
+
+it("composes temporary wave limits with analysis flags and keeps boundary samples and their IDs", () => {
+  const scene = packet();
+  scene.samples = {
+    ...scene.samples, count: 6,
+    points: Float32Array.from([10, 6, 1, 20, 6, 2, 30, 6, 3, 40, 6, 4, 50, 6, 5, 60, 6, 6]),
+    source: Uint32Array.from([2, 2, 2, 2, 2, 2]), ids: Uint32Array.from([10, 0, 11, 0, 12, 0, 13, 0, 14, 0, 15, 0]),
+    hs: Float32Array.from([0.7, 1.2, 1, NaN, 1, 1]),
+    waveAngle: Float32Array.from([30, 120, 90, 90, 160, 90]),
+    wavePeriod: Float32Array.from([7, 9, 8, 8, 8, 12]),
+    flags: Uint32Array.from([0, 0, FLAG_FILTERED, 0, 0, 0]),
+  };
+  const limits = { hs: { min: 0.7, max: 1.2 }, waveAngle: { min: 30, max: 120 }, wavePeriod: { min: 7, max: 9 } };
+  const original = structuredClone(scene);
+  const shown = sampleDots(scene, DEFAULT_TOGGLES, "source", null, limits);
+  expect([...shown.refs]).toEqual([3, 4]);
+  expect(sampleIdsOf(scene, [...shown.refs])).toEqual([10, 11]);
+  expect(drawnOnly([3, 4, 5, 6, 7, 8], shown.refs, 9)).toEqual([3, 4]);
+  expect([...sampleDots(scene, { ...DEFAULT_TOGGLES, filtered: true }, "source", null, limits).refs]).toEqual([3, 4, 5]);
+  expect([...sampleDots(scene, DEFAULT_TOGGLES, "source").refs]).toEqual([3, 4, 6, 7, 8]);
+  expect(scene).toEqual(original);
 });

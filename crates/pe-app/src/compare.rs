@@ -229,10 +229,12 @@ pub fn pack(c: &Comparison) -> Vec<u8> {
 #[tauri::command]
 pub fn compare_polars(
     state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
     a: CompareOperand,
     b: CompareOperand,
     threshold_kn: f64,
 ) -> Result<tauri::ipc::Response> {
+    let state = state.scoped(boat_context);
     compare_bytes(&state, a, b, threshold_kn).map(tauri::ipc::Response::new)
 }
 

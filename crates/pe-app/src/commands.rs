@@ -13,8 +13,22 @@ use crate::paths::AppPaths;
 use crate::session::Session;
 
 /// Everything the running application holds, managed by Tauri.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AppState {
+    shared: std::sync::Arc<AppServices>,
+    boat_context: Option<u64>,
+}
+
+impl std::ops::Deref for AppState {
+    type Target = AppServices;
+    fn deref(&self) -> &Self::Target {
+        &self.shared
+    }
+}
+
+/// Shared services; scoped command handles select a boat under the session lock.
+#[derive(Debug)]
+pub struct AppServices {
     /// Resolved application directories.
     pub paths: AppPaths,
     /// The open project and the settings.
@@ -33,6 +47,11 @@ pub struct AppState {
     /// Tracker events downloaded this session, and the running download
     /// (spec.md 7.2).
     pub trackers: crate::trackers::TrackerSession,
+    /// Public ORR catalogue and user-started scraping job.
+    pub orr: crate::orr::OrrCatalogue,
+    /// Database background job and local metadata cache.
+    pub database: crate::database::DatabaseState,
+    pub boat_import: crate::boats::tracker_project::BoatImportJob,
     /// Whether this session has looked for an earlier version's on-disk
     /// chunk cache to remove (`settings::remove_legacy_cache`).
     pub legacy_cache_checked: std::sync::atomic::AtomicBool,
@@ -44,17 +63,38 @@ impl AppState {
     /// State over `paths`, with the settings read from disk.
     pub fn new(paths: AppPaths) -> Self {
         let session = Session::load(&paths.settings_file());
+        let database =
+            crate::database::DatabaseState::load(&paths.config_dir.join("database-last-job.json"));
         Self {
-            paths,
-            session: std::sync::Mutex::new(session),
-            exit_allowed: std::sync::atomic::AtomicBool::new(false),
-            env_jobs: crate::env::EnvJobs::default(),
-            env_provider: std::sync::Mutex::new(None),
-            grib_jobs: crate::grib::GribJobs::default(),
-            trackers: crate::trackers::TrackerSession::default(),
-            legacy_cache_checked: std::sync::atomic::AtomicBool::new(false),
-            legacy_cache_pending: std::sync::Mutex::new(None),
+            shared: std::sync::Arc::new(AppServices {
+                paths,
+                session: std::sync::Mutex::new(session),
+                exit_allowed: std::sync::atomic::AtomicBool::new(false),
+                env_jobs: crate::env::EnvJobs::default(),
+                env_provider: std::sync::Mutex::new(None),
+                grib_jobs: crate::grib::GribJobs::default(),
+                trackers: crate::trackers::TrackerSession::default(),
+                orr: crate::orr::OrrCatalogue::default(),
+                database,
+                boat_import: Default::default(),
+                legacy_cache_checked: std::sync::atomic::AtomicBool::new(false),
+                legacy_cache_pending: std::sync::Mutex::new(None),
+            }),
+            boat_context: None,
         }
+    }
+
+    /// An explicit boat context survives delayed IPC and background work.
+    pub fn scoped(&self, boat_context: Option<u64>) -> Self {
+        Self {
+            shared: self.shared.clone(),
+            boat_context: boat_context.or(self.boat_context),
+        }
+    }
+
+    /// Same access convention as Tauri's state handle.
+    pub fn inner(&self) -> &Self {
+        self
     }
 
     /// Runs `f` with the session locked.
@@ -63,7 +103,7 @@ impl AppState {
             .session
             .lock()
             .map_err(|_| AppError::Internal("the session lock was poisoned".to_owned()))?;
-        f(&mut session)
+        session.with_boat(self.boat_context, f)
     }
 }
 

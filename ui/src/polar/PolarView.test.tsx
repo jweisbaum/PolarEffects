@@ -16,6 +16,7 @@ import { TEST_BLEND } from "../testBlend";
 const scenes = vi.hoisted(() => ({ made: [] as FakeScene[], fail: false, pick: -1 }));
 
 interface FakeScene {
+  setView: ReturnType<typeof vi.fn>;
   setData: ReturnType<typeof vi.fn>;
   setSelection: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
@@ -37,7 +38,7 @@ vi.mock("./scene3d", async (original) => {
     setRotateEnabled() {}
     resize() {}
     setGuides() {}
-    setView() {}
+    setView = vi.fn();
     render() {}
     toScreen() { return [0, 0]; }
     pick() { return scenes.pick; }
@@ -48,7 +49,7 @@ vi.mock("./scene3d", async (original) => {
 });
 
 const api = vi.hoisted(() => ({
-  polarScene: vi.fn(), setExcluded: vi.fn(), editPolar: vi.fn(), polarEditSurface: vi.fn(), setSegmentStatistic: vi.fn(),
+  setWaveRanges: vi.fn(), polarScene: vi.fn(), setExcluded: vi.fn(), editPolar: vi.fn(), polarEditSurface: vi.fn(), setSegmentStatistic: vi.fn(),
 }));
 vi.mock("../ipc", () => ({ api }));
 
@@ -70,6 +71,7 @@ function packet(excluded = false): ScenePacket {
       cell: Uint32Array.from([0, 1 | (1 << 16)]), flags: Uint32Array.from([0, excluded ? FLAG_EXCLUDED : 0]),
     },
     samples: {
+      wavePeriod: new Float32Array(0), waveAngle: new Float32Array(0), waveWindAngle: new Float32Array(0),
       count: 0, points: new Float32Array(0), source: new Uint32Array(0), ids: new Uint32Array(0),
       hs: new Float32Array(0), current: new Float32Array(0), time: new Float32Array(0), flags: new Uint32Array(0),
     },
@@ -79,11 +81,38 @@ function packet(excluded = false): ScenePacket {
 
 const project = (revision: number): ProjectSummary => ({
   id: 1, name: "P", path: null, dirty: false, revision, boat_name: "", boat_notes: "",
-  sources: [{ id: 10, kind: "orc", label: "Farr 40", colour: "#ff0000", visible: true, weight: 1, count: 2, used: null, polar_file: null, orc: null, track: null, edits: 0 }],
+  sources: [{ id: 10, kind: "orc", label: "Farr 40", colour: "#ff0000", visible: true, weight: 1, count: 2, used: null, polar_file: null, orr: null, orc: null, track: null, edits: 0 }],
   can_undo: false, can_redo: false, undo_label: null, redo_label: null, use_corrected: true, stokes_drift: false, blend: TEST_BLEND,
 });
 
 const onProject = vi.fn();
+
+it("shows details for the picked visible dot and clears hover when dragging or leaving", async () => {
+  api.polarScene.mockResolvedValue(withSamples());
+  await render();
+  const canvas = q("canvas")!;
+  const hover = async (index: number) => {
+    scenes.pick = index;
+    await act(async () => {
+      canvas.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 60, clientY: 70, buttons: 0 }));
+      await new Promise((r) => setTimeout(r, 30));
+    });
+  };
+  await hover(0);
+  expect(q('[role="tooltip"]')?.textContent).toContain("Farr 40");
+  expect(q('[role="tooltip"]')?.textContent).toContain("52 °");
+  await hover(2); // visible local #2 maps to the first track sample
+  expect(q('[role="tooltip"]')?.textContent).toContain("14.0 kn");
+  expect(q('[role="tooltip"]')?.textContent).toContain("Wave period");
+  expect(q('[role="tooltip"]')?.textContent).toContain("1970-01-01");
+  await act(async () => { canvas.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0 })); });
+  expect(q('[role="tooltip"]')).toBeNull();
+  await act(async () => { canvas.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, button: 0 })); });
+  await hover(0);
+  expect(q('[role="tooltip"]')).not.toBeNull();
+  await act(async () => { canvas.dispatchEvent(new PointerEvent("pointerout", { bubbles: true })); });
+  expect(q('[role="tooltip"]')).toBeNull();
+});
 
 async function render(revision = 1, id = 1) {
   await act(async () => root.render(<PolarView project={{ ...project(revision), id }} settings={null} onProject={onProject} />));
@@ -108,6 +137,7 @@ function withSamples(): ScenePacket {
     ...base,
     sources: [...base.sources, { id: 30, colour: "#0000ff", kind: "track" }],
     samples: {
+      wavePeriod: new Float32Array(0), waveAngle: new Float32Array(0), waveWindAngle: new Float32Array(0),
       count: 2, points: Float32Array.from([120, 14, 9, 150, 16, 10]), source: Uint32Array.from([1, 1]),
       ids: Uint32Array.from([5, 0, 6, 1]), hs: Float32Array.from([Number.NaN, Number.NaN]),
       current: Float32Array.from([Number.NaN, Number.NaN]), time: Float32Array.from([0, 600]),
@@ -119,6 +149,7 @@ function withSamples(): ScenePacket {
 beforeEach(() => {
   selection.resetSelection();
   editSource(null);
+  api.setWaveRanges.mockReset().mockResolvedValue(project(3));
   api.editPolar.mockReset().mockResolvedValue(project(3));
   api.polarEditSurface.mockReset().mockResolvedValue({
     source_id: 10, kind: "orc", twa: [52, 90], tws: [6, 12], source: [[6, 7], [7, 8]], bsp: [[6, 7], [7, 8]],
@@ -146,6 +177,20 @@ it("fetches the scene on mount and again on every revision, and draws its dots",
   expect(last.surfaces).toHaveLength(1);
   await render(2);
   expect(api.polarScene).toHaveBeenCalledTimes(2);
+});
+
+it("starts empty and populated boats with the zero-degree axis at the top", async () => {
+  await render();
+  const calls = scenes.made[0]!.setView.mock.calls;
+  expect(calls.length).toBeGreaterThanOrEqual(2);
+  for (const [view] of calls) {
+    // The polar's 0° ray is +y. Looking from +z with a slight -y offset
+    // places +y straight up and +x (90°) to the right, without camera roll.
+    expect(view.position[0]).toBeCloseTo(view.target[0], 8);
+    expect(view.position[1]).toBeLessThan(view.target[1]);
+    expect(view.position[2]).toBeGreaterThan(view.target[2]);
+    expect(Math.abs(view.position[1]-view.target[1]) / (view.position[2]-view.target[2])).toBeCloseTo(0.001, 6);
+  }
 });
 
 it("selects the clicked dot, summarises it and excludes it through Rust", async () => {
@@ -192,7 +237,7 @@ it("adds with Shift, clears on an empty click and on Escape", async () => {
 it("offers colour modes only when samples have the data", async () => {
   await render();
   const options = [...(feature("view3d:colour") as HTMLSelectElement).options];
-  expect(options.map((o) => [o.value, o.disabled])).toEqual([["source", false], ["hs", true], ["current", true], ["time", true]]);
+  expect(options.map((o) => [o.value, o.disabled])).toEqual([["source", false], ["hs", true], ["wavePeriod", true], ["waveAngle", true], ["waveWindAngle", true], ["current", true], ["time", true]]);
   expect((feature("view3d:show-filtered") as unknown as HTMLInputElement).disabled).toBe(true);
 });
 
@@ -296,4 +341,69 @@ it("never sends another project's samples key: a new project fetches the whole s
   expect(api.polarScene.mock.calls[1]![1]).not.toBeNull();
   await render(1, 2);
   expect(api.polarScene).toHaveBeenLastCalledWith(null, null);
+});
+
+it("shows UTC endpoints for time and enables the three wave colour dimensions", async () => {
+  const data = withSamples();
+  data.timeOrigin = Date.UTC(2026, 8, 30, 12, 0, 0) / 1000;
+  data.samples.wavePeriod = Float32Array.from([6, 9]);
+  data.samples.waveAngle = Float32Array.from([20, 150]);
+  data.samples.waveWindAngle = Float32Array.from([30, 60]);
+  api.polarScene.mockResolvedValue(data);
+  await render();
+  const select = feature("view3d:colour") as HTMLSelectElement;
+  for (const value of ["wavePeriod", "waveAngle", "waveWindAngle"]) {
+    expect([...select.options].find((o) => o.value === value)?.disabled).toBe(false);
+  }
+  await act(async () => { select.value = "time"; select.dispatchEvent(new Event("change", { bubbles: true })); });
+  expect(q(".view3d-ramp")?.textContent).toBe("2026-09-30 12:00:00 UTC2026-09-30 12:10:00 UTC");
+});
+
+
+it("previews wave limits immediately and sends them to the native blend", async () => {
+  const data = withSamples();
+  data.samples.hs = Float32Array.from([0.7, 1.2]);
+  data.samples.waveAngle = Float32Array.from([30, 120]);
+  data.samples.wavePeriod = Float32Array.from([7, 9]);
+  api.polarScene.mockResolvedValue(data);
+  await render();
+  const scene = scenes.made[0]!;
+  const last = () => scene.setData.mock.calls.at(-1)![0];
+  const originalSurfaces = last().surfaces;
+  const slide = async (id: string, value: number) => {
+    const input = feature(id) as unknown as HTMLInputElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, String(value));
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  };
+  expect(last().samples.length / 3).toBe(3); // Two nodes, one unfiltered sample.
+  await slide("view3d:wave-height-min", 0.8);
+  expect(last().samples.length / 3).toBe(2);
+  expect(q(".wave-range-footer")!.textContent).toContain("0 samples shown");
+  await slide("view3d:wave-height-min", 0.7);
+  expect(last().samples.length / 3).toBe(3);
+  await slide("view3d:wave-angle-max", 20);
+  expect(last().samples.length / 3).toBe(2);
+  await slide("view3d:wave-angle-min", 50); // Lower handle stops at upper.
+  expect((feature("view3d:wave-angle-min") as unknown as HTMLInputElement).value).toBe("20");
+  await act(async () => feature("view3d:wave-ranges-reset")!.click());
+  expect(last().samples.length / 3).toBe(3);
+  await slide("view3d:wave-period-max", 6);
+  expect(last().samples.length / 3).toBe(2);
+  expect(last().surfaces).toEqual(originalSurfaces);
+  expect(api.polarScene).toHaveBeenCalledTimes(1);
+  expect(api.setWaveRanges).toHaveBeenLastCalledWith({ hs: { min: null, max: null }, waveAngle: { min: null, max: null }, wavePeriod: { min: null, max: 6 } });
+  expect(onProject).toHaveBeenCalled();
+  expect(api.setExcluded).not.toHaveBeenCalled();
+  await render(1, 2);
+  expect(last().samples.length / 3).toBe(3); // A new project resets view limits.
+});
+
+it("offers disabled wave sliders when the scene has no wave measurements", async () => {
+  await render();
+  for (const metric of ["height", "angle", "period"]) {
+    expect((feature(`view3d:wave-${metric}-min`)!.closest("fieldset") as HTMLFieldSetElement).disabled).toBe(true);
+  }
+  expect(feature("view3d:wave-ranges-reset")!.disabled).toBe(true);
 });

@@ -13,8 +13,8 @@ type Action = () => void;
  * As…, Close. Copied from VectorEffects, with Open Recent added. Every item
  * goes through App's handlers, which hold the save guard.
  */
-export default function ProjectMenu({ onNew, onOpen, onOpenRecent, onSave, onSaveAs, onClose }: {
-  onNew: Action; onOpen: Action; onOpenRecent: (path: string) => void; onSave: Action; onSaveAs: Action; onClose: Action;
+export default function ProjectMenu({ onNew, onOpen, onTracker, onOpenRecent, onSave, onSaveAs, onClose }: {
+  onTracker?: Action; onNew: Action; onOpen: Action; onOpenRecent: (path: string) => void; onSave: Action; onSaveAs: Action; onClose: Action;
 }) {
   const t = useT();
   const [open, setOpen] = useState(false);
@@ -95,6 +95,7 @@ export default function ProjectMenu({ onNew, onOpen, onOpenRecent, onSave, onSav
       }}>
       {item(actions[0]!)}
       {item(actions[1]!)}
+      <button role="menuitem" tabIndex={-1} data-feature="project:tracker" onClick={() => { close(); onTracker?.(); }}>{t("Open project from tracker…")}</button>
       <button role="menuitem" tabIndex={-1} data-feature="project:open-recent" aria-haspopup="menu"
         aria-expanded={recentOpen} title={t("Open one of the ten most recent projects")}
         onClick={() => setRecentOpen(!recentOpen)}>

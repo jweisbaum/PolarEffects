@@ -91,7 +91,7 @@ pub fn race_slug(input: &str) -> Result<String> {
 }
 
 /// One rating system's entry for a boat.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, serde::Serialize)]
 pub struct Handicap {
     /// The rating system's name, e.g. `"IRC"`.
     #[serde(default)]
@@ -105,8 +105,11 @@ pub struct Handicap {
 }
 
 /// One boat as `race.boats[]` lists it.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, serde::Serialize)]
 pub struct Boat {
+    /// Preserve vendor metadata not needed by the position decoder.
+    #[serde(flatten)]
+    pub extra: std::collections::BTreeMap<String, serde_json::Value>,
     /// The id `positions[].properties.boat_id` names the boat by.
     pub boat_id: String,
     /// Boat name.
@@ -275,6 +278,8 @@ fn fix_of(at: usize, feature: &PositionFeature) -> Result<(String, Fix)> {
     Ok((
         boat,
         Fix {
+            tws: None,
+            twd_from: None,
             t,
             lat,
             lon: crate::wrap_lon(lon),
@@ -304,6 +309,9 @@ fn event_of(event: &EventRef, response: RaceResponse) -> Result<TrackerEvent> {
             let (fixes, _normalised) =
                 pe_tracks::normalise(fixes_by_boat.remove(&boat.boat_id).unwrap_or_default());
             TrackerBoat {
+                details: crate::event::boat_details(
+                    &serde_json::to_value(boat).unwrap_or_default(),
+                ),
                 id: boat.boat_id.clone(),
                 name: boat.boat_name.trim().to_owned(),
                 sail: non_empty(&boat.sail_no),
@@ -358,6 +366,30 @@ impl BlueWaterTracks {
 impl TrackerClient for BlueWaterTracks {
     fn tracker(&self) -> Tracker {
         Tracker::BlueWaterTracks
+    }
+
+    fn fetch_for_scrape(
+        &self,
+        event: &EventRef,
+        fetcher: &Fetcher,
+        progress: &mut dyn FnMut(Progress),
+        now: i64,
+    ) -> Result<crate::library::completion::ScrapeFetch> {
+        // This API puts positions and metadata in one response; its race list
+        // has start times only. Never persist that response unless completion
+        // is verified. finishTime is authoritative despite a stale Racing flag.
+        let mut event = self.fetch(event, fetcher, progress)?;
+        for boat in &mut event.boats {
+            if boat
+                .details
+                .get("finishTime")
+                .and_then(|s| iso(s))
+                .is_some_and(|t| t > 0 && t <= now)
+            {
+                boat.status = Some("FINISHED".into());
+            }
+        }
+        Ok(crate::library::completion::ScrapeFetch::checked(event, now))
     }
 
     fn resolve(&self, input: &str) -> Result<EventRef> {
@@ -531,6 +563,7 @@ mod tests {
                 race_start_time: Some("2025-12-27T02:30:00.000Z".to_owned()),
                 track_time_finish: Some("2026-01-31T12:00:00.000Z".to_owned()),
                 boats: vec![Boat {
+                    extra: Default::default(),
                     boat_id: "b1".to_owned(),
                     boat_name: "Alien".to_owned(),
                     sail_no: Some("R880".to_owned()),

@@ -121,7 +121,7 @@ fn check_axis(values: &[f64], axis: Axis, max: f64) -> Result<(), ExportProblem>
 
 /// Checks a polar can be written and read back as the same grid.
 pub fn check(polar: &PolarGrid) -> Result<(), ExportProblem> {
-    check_axis(&polar.twa, Axis::Twa, 180.0)?;
+    check_axis(&polar.twa, Axis::Twa, 360.0)?;
     check_axis(&polar.tws, Axis::Tws, MAX_TWS_KN)?;
     for (i, twa) in polar.twa.iter().enumerate() {
         for (j, tws) in polar.tws.iter().enumerate() {

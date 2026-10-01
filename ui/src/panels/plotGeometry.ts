@@ -4,10 +4,9 @@
  *
  * The projection matches the 3D "polar tower" layout (`ui/src/polar/geometry3d.ts`):
  * TWA 0° points up, 90° points right, 180° points down — `x = BSP·sin(TWA)`,
- * `y = -BSP·cos(TWA)` before the canvas's own y-down flip. TWA is folded to
- * [0, 180] everywhere in this codebase, so only the starboard half is drawn;
- * that also matches the tower view rather than inventing a mirrored butterfly
- * this codebase does not otherwise use.
+ * `y = -BSP·cos(TWA)` before the canvas's own y-down flip. Symmetric mode draws
+ * the starboard half; asymmetric mode centres a full circle with independent
+ * port values at 180–360 degrees.
  */
 
 import type { PolarCurve } from "../generated/PolarCurve";
@@ -24,14 +23,14 @@ export interface PlotLayout {
 }
 
 /** A layout that fits a fan of `maxBsp` knots' radius into `width` × `height`, with `padding` pixels kept clear on every side. */
-export function fitLayout(width: number, height: number, maxBsp: number, padding = 28): PlotLayout {
+export function fitLayout(width: number, height: number, maxBsp: number, padding = 28, asymmetric = false): PlotLayout {
   const usableWidth = Math.max(width - padding * 2, 1);
   const usableHeight = Math.max(height - padding * 2, 1);
   // The fan spans one radius across (0° to 180° is straight up to straight
   // down: height = 2 × radius) and one radius wide (90° is the widest point).
-  const radius = maxBsp > 0 ? Math.min(usableWidth, usableHeight / 2) : 1;
+  const radius = maxBsp > 0 ? Math.min(usableWidth / (asymmetric ? 2 : 1), usableHeight / 2) : 1;
   const scale = maxBsp > 0 ? radius / maxBsp : 0;
-  return { centerX: padding, centerY: height / 2, scale };
+  return { centerX: asymmetric ? width / 2 : padding, centerY: height / 2, scale };
 }
 
 /** The canvas position of one (TWA, BSP) point. */
@@ -79,6 +78,7 @@ export function speedTicks(maxKnots: number, factor = 1): { value: number; knots
 
 /** The angular gridlines a classic polar diagram draws, degrees. */
 export const ANGLE_TICKS: readonly number[] = [0, 30, 60, 90, 120, 150, 180];
+export const FULL_ANGLE_TICKS: readonly number[] = [...ANGLE_TICKS, 210, 240, 270, 300, 330];
 
 /** One axis label as drawn: its text and the box it occupies, canvas pixels. */
 export interface AxisLabel {
@@ -114,21 +114,23 @@ export function axisLabels(
   measure: (text: string) => number,
   fontSize = 10,
   factor = 1,
+  asymmetric = false,
 ): AxisLabel[] {
   const gap = 3;
   const labels: AxisLabel[] = [];
   const ticks = speedTicks(maxBsp, factor);
   const outer = Math.max(maxBsp, ticks[ticks.length - 1]?.knots ?? 0) * layout.scale;
   const angleRadius = Math.max(maxBsp * 1.06 * layout.scale, outer + gap + fontSize / 2);
-  for (const angle of ANGLE_TICKS) {
-    const text = `${angle}°`;
+  for (const angle of asymmetric ? FULL_ANGLE_TICKS : ANGLE_TICKS) {
+    // Each tack reads 0–180°; its full-circle angle still places the label.
+    const text = `${Math.min(angle, 360 - angle)}°`;
     const width = measure(text);
     const rad = angle * RAD;
     const cx = layout.centerX + angleRadius * Math.sin(rad);
     const cy = layout.centerY - angleRadius * Math.cos(rad);
     // Centred over the spoke at 0° and 180°; otherwise starting at it, and
     // at 90° lifted clear of the ring labels under the spoke.
-    const x = angle === 0 || angle === 180 ? cx - width / 2 : cx;
+    const x = angle === 0 || angle === 180 ? cx - width / 2 : angle > 180 ? cx - width : cx;
     const y = angle === 90 ? cy - gap - fontSize : cy - fontSize / 2;
     labels.push({ text, x, y, width, height: fontSize });
   }

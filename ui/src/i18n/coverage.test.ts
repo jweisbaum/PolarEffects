@@ -28,7 +28,7 @@ const ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 /** Words that read the same in every language offered. */
 const VERBATIM = new Set([
-  "PolarEffects", "VectorEffects", "ORC", "TWA", "TWS", "BSP", "VMG", "Expedition", "Adrena", "YellowBrick",
+  "PolarEffects", "VectorEffects", "ORC", "ORR", "TWA", "TWS", "BSP", "VMG", "Expedition", "Adrena", "YellowBrick",
   "Geovoile", "GRIB", "GRIB2", "UTC", "ERA5", "GeoJSON", "CSV", "JSON", "WebGL2", "wpsproj", "Cmd", "Ctrl",
   "Alt", "Shift", "Esc", "Enter", "Tab", "F1", "kn", "km", "nm", "ft", "GB", "MB", "kB", "OK",
 ]);

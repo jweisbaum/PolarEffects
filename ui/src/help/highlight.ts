@@ -13,22 +13,27 @@ import type { Feature } from "./features";
 
 type Reveal = (step: string) => void | Promise<void>;
 
-const handlers = new Map<string, Reveal>();
+const handlers = new Map<string, { handler: Reveal; available: () => boolean }[]>();
 
 /**
  * Handles a reveal step: an exact step (`"panel:left"`) or every step with a
  * prefix (`"tool:"`). Returns the unregistration, for an effect's cleanup.
  */
-export function onReveal(step: string, handler: Reveal): () => void {
-  handlers.set(step, handler);
-  return () => { if (handlers.get(step) === handler) handlers.delete(step); };
+export function onReveal(step: string, handler: Reveal, available: () => boolean = () => true): () => void {
+  const entry = { handler, available };
+  handlers.set(step, [...(handlers.get(step) ?? []), entry]);
+  return () => {
+    const remaining = (handlers.get(step) ?? []).filter(item => item !== entry);
+    if (remaining.length) handlers.set(step, remaining); else handlers.delete(step);
+  };
 }
 
 function handlerFor(step: string): Reveal | undefined {
-  const exact = handlers.get(step);
+  const eligible = (key: string) => [...(handlers.get(key) ?? [])].reverse().find(entry => entry.available())?.handler;
+  const exact = eligible(step);
   if (exact) return exact;
   const colon = step.indexOf(":");
-  return colon >= 0 ? handlers.get(step.slice(0, colon + 1)) : undefined;
+  return colon >= 0 ? eligible(step.slice(0, colon + 1)) : undefined;
 }
 
 const frame = () => new Promise<void>(resolve => {
@@ -41,7 +46,10 @@ const frame = () => new Promise<void>(resolve => {
 
 /** The element for a feature, if it is laid out and visible. */
 export function elementFor(id: string): HTMLElement | null {
-  for (const element of document.querySelectorAll<HTMLElement>(`[data-feature="${CSS.escape(id)}"]`)) {
+  const elements = [...document.querySelectorAll<HTMLElement>(`[data-feature="${CSS.escape(id)}"]`)];
+  elements.sort((a,b) => Number(Boolean(b.closest(".boat-pane.active"))) - Number(Boolean(a.closest(".boat-pane.active"))));
+  for (const element of elements) {
+    if (element.closest("[hidden]")) continue;
     const rect = element.getBoundingClientRect();
     if (rect.width > 0 && rect.height > 0) return element;
   }

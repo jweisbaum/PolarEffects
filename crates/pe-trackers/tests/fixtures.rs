@@ -249,8 +249,16 @@ fn rmsr_kml_matches_the_binary() {
 
 /// A local server answering by path from recorded responses.
 fn serve(routes: Vec<(&'static str, &'static str, Vec<u8>)>) -> String {
+    serve_recorded(routes).0
+}
+
+fn serve_recorded(
+    routes: Vec<(&'static str, &'static str, Vec<u8>)>,
+) -> (String, Arc<std::sync::Mutex<Vec<String>>>) {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("binds");
     let port = listener.local_addr().expect("an address").port();
+    let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = requests.clone();
     std::thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { break };
@@ -258,6 +266,7 @@ fn serve(routes: Vec<(&'static str, &'static str, Vec<u8>)>) -> String {
             let n = stream.read(&mut buf).unwrap_or(0);
             let request = String::from_utf8_lossy(&buf[..n]).into_owned();
             let path = request.split_whitespace().nth(1).unwrap_or("").to_owned();
+            seen.lock().unwrap().push(path.clone());
             // A route ending in `*` matches every path it starts (the
             // Geovoile versions file's cache-busting number).
             let (status, body) = routes
@@ -275,7 +284,7 @@ fn serve(routes: Vec<(&'static str, &'static str, Vec<u8>)>) -> String {
             let _ = stream.write_all(&body);
         }
     });
-    format!("http://127.0.0.1:{port}")
+    (format!("http://127.0.0.1:{port}"), requests)
 }
 
 fn fetch_rmsr(
@@ -1218,4 +1227,203 @@ fn geovoile_lists_the_boats_before_the_positions() {
     assert!(listed[0].boats.iter().all(|b| b.fixes.is_empty()));
     assert_eq!(listed[0].boats[0].name, out.boats[0].name);
     assert_eq!(out.boat("4").map(|b| b.fixes.len()), Some(470));
+}
+
+// --- Finished-only library scraping -----------------------------------------
+const SCRAPE_NOW: i64 = 1_800_000_000;
+fn scrape_fetcher() -> Fetcher {
+    Fetcher::new("scrape test", Duration::from_secs(5), Arc::default()).unwrap()
+}
+
+#[test]
+fn yellowbrick_scraping_checks_all_results_before_any_position_request() {
+    use pe_trackers::library::completion::ScrapeFetch;
+    let original: serde_json::Value = serde_json::from_str(
+        &fixture("yellowbrick/rmsr2024-RaceSetup.json")
+            .iter()
+            .map(|b| char::from(*b))
+            .collect::<String>(),
+    )
+    .unwrap();
+    for scenario in ["finished", "racing", "unknown", "future"] {
+        let mut setup = original.clone();
+        if scenario != "finished" {
+            setup["teams"][0]
+                .as_object_mut()
+                .unwrap()
+                .remove("finishedAt");
+            setup["teams"][0]["status"] = match scenario {
+                "racing" => "RACING".into(),
+                "unknown" => serde_json::Value::Null,
+                _ => "FINISHED".into(),
+            };
+            if scenario == "future" {
+                setup["stop"] = (SCRAPE_NOW + 1).into();
+            }
+        }
+        let (host, seen) = serve_recorded(vec![
+            (
+                "/JSON/rmsr2024/RaceSetup",
+                "200 OK",
+                serde_json::to_vec(&setup).unwrap(),
+            ),
+            (
+                "/BIN/rmsr2024/AllPositions3",
+                "200 OK",
+                fixture("yellowbrick/rmsr2024-AllPositions3-first3.bin"),
+            ),
+        ]);
+        let client = YellowBrick::at(&host, &host);
+        let event = client.resolve("rmsr2024").unwrap();
+        let result = client
+            .fetch_for_scrape(&event, &scrape_fetcher(), &mut |_| {}, SCRAPE_NOW)
+            .unwrap();
+        assert_eq!(
+            matches!(result, ScrapeFetch::Finished(_)),
+            scenario == "finished",
+            "{scenario}"
+        );
+        let paths = seen.lock().unwrap();
+        assert_eq!(
+            paths.iter().any(|p| p.contains("AllPositions3")),
+            scenario == "finished",
+            "{paths:?}"
+        );
+        assert!(!paths.iter().any(|p| p.ends_with(".kml")));
+    }
+}
+
+// Literal-only encoding of synthetic report changes, using Appendix A's
+// keystream. The viewer and position response remain recorded provider files.
+fn literal_hwx(bytes: &[u8], seeds: geovoile::Seeds) -> Vec<u8> {
+    let [mut x, mut y, mut z, mut w] = seeds.0;
+    let mut enc = |b: u8| {
+        let out = b ^ x as u8;
+        let mut t = x ^ ((x << 11) & 0xff_ffff);
+        t ^= (t >> 8) & 0xff_ffff;
+        x = y;
+        y = z;
+        z = w;
+        w ^= (w >> 19) & 0xff_ffff;
+        w ^= t;
+        out
+    };
+    let len = bytes.len();
+    let mut out = vec![
+        0,
+        enc((len >> 16) as u8),
+        enc((len >> 8) as u8),
+        enc(len as u8),
+    ];
+    for chunk in bytes.chunks(8) {
+        out.push(out.len() as u8 ^ 0xa3);
+        out.extend(chunk.iter().map(|b| enc(*b)));
+    }
+    out
+}
+
+#[test]
+fn geovoile_scraping_does_not_request_tracks_without_terminal_reports() {
+    use pe_trackers::library::completion::ScrapeFetch;
+    let page = fixture("geovoile/24hultim2025/viewer.html");
+    let seeds = geovoile::parse_viewer(&String::from_utf8_lossy(&page))
+        .unwrap()
+        .seeds;
+    let config = literal_hwx(
+        br#"<config name="Test" date="2025-09-27T10:00:00Z"><boat id="4" name="Boat"/></config>"#,
+        seeds,
+    );
+    for scenario in ["finished", "racing", "unknown", "future"] {
+        let status = if scenario == "racing" { "RAC" } else { "ARV" };
+        let date = if scenario == "future" {
+            "2099-01-01T00:00:00Z"
+        } else {
+            "2025-09-28T10:00:00Z"
+        };
+        let reports = serde_json::json!({"reports":{"columns":["boat","heading","speed","racestatus"],"history":[{"date":date,"lines":[[4,0,0,status]]}]}});
+        let (host, seen) = serve_recorded(vec![
+            ("/2025/tracker/", "200 OK", page.clone()),
+            (
+                "/2025/tracker/resources/versions/v*",
+                "200 OK",
+                fixture("geovoile/24hultim2025/versions.txt"),
+            ),
+            (
+                "/2025/tracker/resources/config/v20251006074618",
+                "200 OK",
+                config.clone(),
+            ),
+            (
+                "/2025/tracker/resources/reports/v20250928152939",
+                "200 OK",
+                if scenario == "unknown" {
+                    vec![]
+                } else {
+                    literal_hwx(&serde_json::to_vec(&reports).unwrap(), seeds)
+                },
+            ),
+            (
+                "/2025/tracker/resources/tracks/v20250928152939",
+                "200 OK",
+                fixture("geovoile/24hultim2025/tracks.hwx"),
+            ),
+        ]);
+        let client = geovoile::Geovoile::at(&host);
+        let event = client
+            .resolve("https://24hultim.geovoile.com/2025/tracker/")
+            .unwrap();
+        let result = client
+            .fetch_for_scrape(&event, &scrape_fetcher(), &mut |_| {}, SCRAPE_NOW)
+            .unwrap();
+        assert_eq!(
+            matches!(result, ScrapeFetch::Finished(_)),
+            scenario == "finished",
+            "{scenario}"
+        );
+        let paths = seen.lock().unwrap();
+        assert_eq!(
+            paths.iter().any(|p| p.contains("/tracks/")),
+            scenario == "finished",
+            "{paths:?}"
+        );
+    }
+}
+
+#[test]
+fn bluewater_scraping_discards_unfinished_combined_responses() {
+    use pe_trackers::library::completion::ScrapeFetch;
+    let original: serde_json::Value = serde_json::from_slice(&fixture(
+        "bluewater/melbournehobartwestcoaster2025-race.json",
+    ))
+    .unwrap();
+    for scenario in ["finished", "racing", "unknown", "future"] {
+        let mut body = original.clone();
+        if scenario != "finished" {
+            body["race"]["boats"][0]
+                .as_object_mut()
+                .unwrap()
+                .remove("finishTime");
+            if scenario == "unknown" {
+                body["race"]["boats"][0]["status"] = serde_json::Value::Null;
+            }
+            if scenario == "future" {
+                body["race"]["trackTimeFinish"] = "2099-01-01T00:00:00Z".into();
+            }
+        }
+        let (host, _) = serve_recorded(vec![(
+            "/api/race/test",
+            "200 OK",
+            serde_json::to_vec(&body).unwrap(),
+        )]);
+        let client = BlueWaterTracks::at(&host);
+        let event = client.resolve("test").unwrap();
+        let result = client
+            .fetch_for_scrape(&event, &scrape_fetcher(), &mut |_| {}, SCRAPE_NOW)
+            .unwrap();
+        assert_eq!(
+            matches!(result, ScrapeFetch::Finished(_)),
+            scenario == "finished",
+            "{scenario}"
+        );
+    }
 }

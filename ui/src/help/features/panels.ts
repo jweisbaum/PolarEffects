@@ -6,7 +6,7 @@ const left = ["panel:left"];
 const right = ["panel:right"];
 
 const features: Feature[] = [
-  { id: "nav:orc", label: msg("ORC polars"), description: msg("Search the ORC catalogue and add certificates."),
+  { id: "nav:orc", label: msg("ORC / ORR polars"), description: msg("Search polar catalogues and add certificates"),
     keywords: [msg("certificate"), "VPP", msg("catalogue"), msg("sister ship")], topic: "orc", reveal: left },
   { id: "nav:polar-files", label: msg("Polar files"), description: msg("Import Expedition and Adrena polars."),
     keywords: [msg("import"), "Expedition", "Adrena"], topic: "polar-files", reveal: left },

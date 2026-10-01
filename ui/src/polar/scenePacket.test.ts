@@ -1,6 +1,6 @@
 /**
  * The frontend half of the scene transport: it reads the very bytes the Rust
- * packing test pins (`fixtures/scene-v2.bin`, and its flags-only twin), and
+ * packing test pins (`fixtures/scene-v3.bin`, and its flags-only twin), and
  * refuses malformed ones.
  */
 import { readFileSync } from "node:fs";
@@ -10,7 +10,7 @@ import {
   BLEND_SOURCE, FLAG_EDITED, FLAG_EXCLUDED, FLAG_FILTERED, HEADER_BYTES, sampleId, ScenePacketError, unpackScene,
 } from "./scenePacket";
 
-function fixture(name = "scene-v2.bin"): ArrayBuffer {
+function fixture(name = "scene-v3.bin"): ArrayBuffer {
   const bytes = readFileSync(new URL(`./fixtures/${name}`, import.meta.url));
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
@@ -38,6 +38,9 @@ describe("unpackScene", () => {
     expect(scene.samples.source[0]).toBe(1);
     expect(sampleId(scene.samples.ids, 0)).toBe(2 ** 32 + 5);
     expect(scene.samples.hs[0]).toBe(1.5);
+    expect(scene.samples.wavePeriod[0]).toBe(8.5);
+    expect(scene.samples.waveAngle[0]).toBe(30);
+    expect(scene.samples.waveWindAngle[0]).toBe(15);
     expect(Number.isNaN(scene.samples.current[0])).toBe(true);
     expect(scene.samples.time[0]).toBe(600);
     expect(scene.samples.flags[0]).toBe(FLAG_EXCLUDED | FLAG_FILTERED);
@@ -68,8 +71,8 @@ describe("unpackScene", () => {
     new DataView(foreign).setUint32(0, 0x12345678, true);
     expect(() => unpackScene(foreign)).toThrow(/not a 3D scene/);
     const newer = good.slice(0);
-    new DataView(newer).setUint32(4, 3, true);
-    expect(() => unpackScene(newer)).toThrow(/version 3/);
+    new DataView(newer).setUint32(4, 4, true);
+    expect(() => unpackScene(newer)).toThrow(/version 4/);
     const longer = new Uint8Array(good.byteLength + 4);
     longer.set(new Uint8Array(good));
     expect(() => unpackScene(longer.buffer)).toThrow(/after its last surface/);
@@ -82,15 +85,15 @@ describe("unpackScene", () => {
   it("takes a flags-only scene's samples from the scene held, with the new flags", () => {
     const held = unpackScene(fixture());
     const changed = { ...held, samples: { ...held.samples, flags: Uint32Array.from([0]) } };
-    const delta = unpackScene(fixture("scene-v2-flags.bin"), changed);
+    const delta = unpackScene(fixture("scene-v3-flags.bin"), changed);
     expect(delta.samples.points).toBe(held.samples.points);
     expect([...delta.samples.flags]).toEqual([FLAG_EXCLUDED | FLAG_FILTERED]);
     // Flags that did not change keep the very samples held.
-    expect(unpackScene(fixture("scene-v2-flags.bin"), held).samples).toBe(held.samples);
+    expect(unpackScene(fixture("scene-v3-flags.bin"), held).samples).toBe(held.samples);
     expect(delta.surfaces).toHaveLength(2);
     // Without the scene it updates, or with another, it is refused.
-    expect(() => unpackScene(fixture("scene-v2-flags.bin"))).toThrow(/does not match/);
+    expect(() => unpackScene(fixture("scene-v3-flags.bin"))).toThrow(/does not match/);
     const other = { ...held, samplesKey: 1 };
-    expect(() => unpackScene(fixture("scene-v2-flags.bin"), other)).toThrow(/does not match/);
+    expect(() => unpackScene(fixture("scene-v3-flags.bin"), other)).toThrow(/does not match/);
   });
 });

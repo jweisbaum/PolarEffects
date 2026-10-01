@@ -52,14 +52,14 @@ export function context(test, driver) {
 
 /**
  * From the start screen, creates a project called `name` through the form and
- * waits for the project window (the Map stage, the default).
+ * waits for the project window (the 3D stage, the default).
  */
 export async function newProject(driver, name = "UX test") {
   await driver.waitFor('[data-feature="new:create"]');
   await driver.type('[data-feature="new:name"] input', name);
   await driver.click('[data-feature="new:create"]');
-  await driver.waitFor('[data-feature="stage:map"][aria-selected="true"]', { timeoutMs: 30_000 });
-  await driver.waitFor("canvas.map-canvas", { visible: true });
+  await driver.waitFor('[data-feature="stage:3d"][aria-selected="true"]', { timeoutMs: 30_000 });
+  await driver.waitFor("canvas.view3d-canvas", { visible: true });
 }
 
 /**

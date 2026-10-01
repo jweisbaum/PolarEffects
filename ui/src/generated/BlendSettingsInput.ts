@@ -35,4 +35,12 @@ use_corrected: boolean,
 /**
  * Include Stokes drift in the global merged current.
  */
-stokes_drift: boolean, };
+stokes_drift: boolean,
+/**
+ * Independent port/starboard values.
+ */
+asymmetric: boolean,
+/**
+ * `linear` or `monotone_spline`; absent in older callers means linear.
+ */
+interpolation: string, };

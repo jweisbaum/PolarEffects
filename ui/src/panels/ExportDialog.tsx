@@ -1,3 +1,4 @@
+import { useBoatApi } from "../boats/context";
 import { useEffect, useMemo, useState } from "react";
 
 import { describeError, reportFailure } from "../errors";
@@ -6,7 +7,7 @@ import type { ExportProblemView } from "../generated/ExportProblemView";
 import type { ProjectSummary } from "../generated/ProjectSummary";
 import { later, setHint } from "../hint";
 import { msg, useT } from "../i18n";
-import { api } from "../ipc";
+
 import { pickExportPath } from "../project/dialogs";
 import { formatAxis, parseAxis } from "./axes";
 
@@ -52,6 +53,7 @@ export default function ExportDialog({ project, onClose }: {
   project: ProjectSummary;
   onClose: () => void;
 }) {
+  const api = useBoatApi();
   const t = useT();
   const [format, setFormat] = useState("expedition");
   const [custom, setCustom] = useState(false);
@@ -69,7 +71,7 @@ export default function ExportDialog({ project, onClose }: {
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const twa = parseAxis(twaText, "twa");
+  const twa = parseAxis(twaText, "twa", project.blend.asymmetric);
   const tws = parseAxis(twsText, "tws");
   const axes = useMemo(
     () => (custom && twa.values && tws.values ? { twa: twa.values, tws: tws.values } : null),

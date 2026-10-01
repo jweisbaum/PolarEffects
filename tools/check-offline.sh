@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Enforces invariant 4: nothing is fetched that the user did not ask for, and
-# only two crates may use the network, each for its allow-listed hosts.
+# HTTP is limited to two crates; pe-app additionally connects to the user-configured PostgreSQL server.
 #
 # Adapted from VectorEffects. Four layers, each checking what it can check:
 #
@@ -43,7 +43,7 @@ URL='https?://[^"'"'"'`[:space:])>]+'
 # smuggle a second one past the check. `{…}` stands for a format placeholder
 # in a subdomain, which is how Geovoile's per-race hosts are built.
 ENV_HOSTS='^https?://(storage\.googleapis\.com/weatherbench2|storage\.googleapis\.com/gcp-public-data-arco-era5|s3\.waw3-1\.cloudferro\.com/mdl-arco-)'
-TRACKER_HOSTS='^https?://((cf\.)?yb\.tl|([A-Za-z0-9_{}-]+\.)*geovoile\.com|(api|race)\.bluewatertracks\.com)([/:?#]|$)'
+TRACKER_HOSTS='^https?://(((cf|app)\.)?yb\.tl|([A-Za-z0-9_{}-]+\.)*geovoile\.com|(api|race)\.bluewatertracks\.com|www\.regattaman\.com)([/:?#]|$)'
 
 fail=0
 report() {
@@ -72,6 +72,7 @@ hits=$(grep -rnE 'https?://' ui/src ui/index.html 2>/dev/null \
 # that creeps into another crate is caught -- which is the whole point of
 # naming the exceptions here.
 hits=$(find crates -name '*.rs' -not -path 'crates/pe-env/*' -not -path 'crates/pe-trackers/*' \
+  -not -path 'crates/pe-app/src/database/tests.rs' \
   -exec grep -nHE 'https?://' {} + 2>/dev/null \
   | grep -vE "$COMMENT" | grep -vE "$ALLOW" || true)
 [ -n "$hits" ] && report "absolute URL in rust source" "$hits"
@@ -83,6 +84,11 @@ hits=$(urls_in crates/pe-env | grep -vE ":[0-9]+:${ENV_HOSTS#^}" || true)
 hits=$(urls_in crates/pe-trackers | grep -vE ":[0-9]+:${TRACKER_HOSTS#^}" || true)
 [ -n "$hits" ] && report "unexpected remote host in pe-trackers" "$hits"
 
+# The cfg(test)-only database integration tests exercise the real tracker
+# clients against an isolated DB. Apply the same host restrictions to their URLs.
+hits=$(urls_in crates/pe-app/src/database/tests.rs | grep -vE ":[0-9]+:${TRACKER_HOSTS#^}" || true)
+[ -n "$hits" ] && report "unexpected remote host in database tests" "$hits"
+
 hits=$(grep -nE 'https?://' "$CONF" 2>/dev/null | grep -vE "$ALLOW" || true)
 [ -n "$hits" ] && report "absolute URL in tauri.conf.json" "$hits"
 
@@ -92,6 +98,11 @@ NET_CRATES='reqwest|ureq|hyper|hyper-util|isahc|curl|attohttpc|surf|tokio-tungst
 hits=$(find crates -name Cargo.toml -not -path 'crates/pe-env/*' -not -path 'crates/pe-trackers/*' \
   -exec grep -nHE "^[[:space:]]*($NET_CRATES)[[:space:]]*=" {} + 2>/dev/null || true)
 [ -n "$hits" ] && report "network client dependency outside pe-env and pe-trackers" "$hits"
+
+# PostgreSQL is explicitly configured by the user and belongs only in pe-app.
+hits=$(find crates -name Cargo.toml -not -path 'crates/pe-app/*' \
+  -exec grep -nHE '^[[:space:]]*(postgres|tokio-postgres)[[:space:]]*=' {} + 2>/dev/null || true)
+[ -n "$hits" ] && report "PostgreSQL dependency outside pe-app" "$hits"
 
 # C libraries the Windows ARM64 and cross-compiled builds cannot rely on
 # (spec.md 1.3, CLAUDE.md): rustls with ring instead of OpenSSL or native-tls,
@@ -125,6 +136,6 @@ elif echo "$csp" | grep -qE "\*|https://" ; then
 fi
 
 if [ "$fail" -eq 0 ]; then
-  echo "offline check passed: no remote references, network only in pe-env and pe-trackers, CSP is 'self'-only"
+  echo "offline check passed: HTTP only in pe-env/pe-trackers, configured PostgreSQL only in pe-app, CSP is 'self'-only"
 fi
 exit "$fail"

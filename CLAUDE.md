@@ -12,7 +12,7 @@ question below has no answer, look at how VectorEffects solved it first.
 
 ## What this is
 
-PolarEffects is a Tauri desktop app that builds a sailing polar for one boat.
+PolarEffects is a Tauri desktop app that builds sailing polars in independent boat tabs within a project.
 It blends ORC polars, imported Expedition/Adrena polars, and polar segments
 derived from historical race tracks. Each track position is matched with
 reanalysis wind, waves and current, and the result is exported as an
@@ -46,7 +46,13 @@ stop and raise it rather than working around it.
    in.** No CDN fonts, no map tiles, no telemetry, no remote schema fetches.
    The webview's CSP stays `'self'`-only. Only two crates may use the network:
    `pe-env` (reanalysis archives) and `pe-trackers` (YellowBrick, Geovoile,
-   Blue Water Tracks), each for its allow-listed hosts only.
+   Blue Water Tracks, and user-started ORR catalogue scraping on
+   `www.regattaman.com`), each for its allow-listed hosts only.
+   `pe-app` may additionally connect to the PostgreSQL host explicitly saved
+   in Settings, for the user-requested SYRF library. Library HTTP discovery
+   remains in `pe-trackers`; startup/shutdown scraping runs only after the
+   user selects that schedule. Whole-database export invokes installed
+   `pg_dump` only; scraping never uses a sidecar.
    `npm run check:offline` enforces this. The ORC catalogue is bundled at
    build time and never fetched at run time.
    **The invariant runs both ways** (D25): an *inbound* socket that drives the
@@ -173,7 +179,7 @@ npm run tools:test                         # the driver's parsing and the MCP ha
 | Topic | Rule |
 |---|---|
 | Speeds | Boat speed and wind speed are stored in **knots** (the unit of every polar format and of ORC data). Reanalysis m/s is converted once, on ingest, in `pe-env`. |
-| Angles | Degrees. TWA in [0, 180], symmetric (port and starboard folded). Headings and directions in [0, 360). |
+| Angles | Degrees. TWA in [0, 180] in symmetric mode; [0, 360] with independent port and starboard in asymmetric mode. Full-circle imports preserve both sides. Headings and directions in [0, 360). |
 | Direction sense | Wind and waves use the meteorological **"from"** direction. Currents use the oceanographic **"toward"** direction. Name the field accordingly (`twd_from`, `current_toward`). |
 | Components | `u` east, `v` north, as stored by ERA5 and CMEMS. `speed = hypot(u, v)`. |
 | Longitude | [−180, 180) everywhere except inside `pe-env` and `pe-grib`, which use the archive's 0–360 grid. Every geodesy function has antimeridian tests. |
@@ -238,6 +244,12 @@ and, in CI, ecCodes.
   `tauri dev` running. Editing Rust restarts *their* `tauri dev` app too (its
   watcher rebuilds), so batch Rust edits.
 
+- **Keep incremental compilation disabled.** The workspace dev profile sets
+  `incremental = false` for ordinary `npm run dev` and tests. Rust 1.97.1 on
+  Intel macOS can otherwise leave unresolved internal `.llvm.*` symbols in
+  optimised workspace crates. Do not set `CARGO_INCREMENTAL=1`; the test driver
+  and CI explicitly use `CARGO_INCREMENTAL=0`.
+
 - The whole back end is Rust. No Python, Node or browser sidecars, and no
   headless browser for scraping. Tracker formats are decoded in Rust.
 - Use `rustls` with the `ring` provider and `reqwest` blocking with
@@ -261,8 +273,10 @@ and, in CI, ecCodes.
 - The YellowBrick `RaceSetup` JSON is ISO-8859-1, not UTF-8.
 - Blue Water Tracks answers an unknown slug with HTTP 200, `race` an empty
   array rather than an object; check for that, not only for a 404.
-- Never reuse credentials, device ids or cookies found in the
-  `tracker-index` reference repository.
+- Never bundle credentials, device ids or cookies from reference repositories.
+  YellowBrick catalogue discovery may use credentials explicitly authorized by
+  the user and saved in local Settings. Only products listed as free may be
+  associated; authenticated request URLs and credentials must not enter logs.
 
 ---
 

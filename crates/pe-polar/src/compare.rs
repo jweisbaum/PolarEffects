@@ -130,7 +130,7 @@ pub enum CompareError {
 }
 
 fn is_zero_row(twa: f64) -> bool {
-    twa.abs() <= ON_AXIS
+    twa.abs() <= ON_AXIS || (twa - 360.0).abs() <= ON_AXIS
 }
 
 fn cell(grid: &Polar, i: usize, j: usize) -> Option<f64> {

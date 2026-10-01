@@ -1,3 +1,4 @@
+import { useBoatApi } from "../boats/context";
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 
 import { needsOutline } from "../colourContrast";
@@ -7,13 +8,13 @@ import type { PolarPlotResult } from "../generated/PolarPlotResult";
 import type { ProjectSummary } from "../generated/ProjectSummary";
 import type { SpeedUnit } from "../generated/SpeedUnit";
 import { useT } from "../i18n";
-import { api } from "../ipc";
+
 import { SPEED_FACTOR, SPEED_SYMBOL } from "../polar/view3d";
 import { useSampleSelection } from "../selection";
 import { onThemeChange } from "../settings/themes";
 import { DOT_EXCLUDED, DOT_FILTERED, dotSampleId, emptyDots, type DotPacket } from "./dotPacket";
 import {
-  ANGLE_TICKS, axisLabels, fitLayout, maxBoatSpeed, nearestPoint, project as projectPoint, speedTicks,
+  ANGLE_TICKS, FULL_ANGLE_TICKS, axisLabels, fitLayout, maxBoatSpeed, nearestPoint, project as projectPoint, speedTicks,
   type Hover, type SourceStyle,
 } from "./plotGeometry";
 
@@ -67,7 +68,7 @@ export function displaySpeed(knots: number, unit: SpeedUnit, digits: number): st
  * hollow, selected ones ringed), and the hovered point.
  */
 function draw(canvas: HTMLCanvasElement, result: PolarPlotResult | null, dots: DotPacket, hover: Hover | null,
-  colours: ReadonlyMap<number, SourceStyle>, selected: ReadonlySet<number>, unit: SpeedUnit) {
+  colours: ReadonlyMap<number, SourceStyle>, selected: ReadonlySet<number>, unit: SpeedUnit, asymmetric: boolean) {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
   const dpr = window.devicePixelRatio || 1;
@@ -88,7 +89,7 @@ function draw(canvas: HTMLCanvasElement, result: PolarPlotResult | null, dots: D
   const blend = result?.blend ?? [];
   const maxBsp = plotMaxBsp(result, dots);
   if (maxBsp <= 0) return;
-  const layout = fitLayout(width, height, maxBsp);
+  const layout = fitLayout(width, height, maxBsp, 28, asymmetric);
 
   ctx.font = "10px sans-serif";
   ctx.textBaseline = "top";
@@ -100,17 +101,17 @@ function draw(canvas: HTMLCanvasElement, result: PolarPlotResult | null, dots: D
   for (const tick of speedTicks(maxBsp, factor)) {
     const r = tick.knots * layout.scale;
     ctx.beginPath();
-    ctx.arc(layout.centerX, layout.centerY, r, -Math.PI / 2, Math.PI / 2);
+    ctx.arc(layout.centerX, layout.centerY, r, -Math.PI / 2, asymmetric ? Math.PI * 1.5 : Math.PI / 2);
     ctx.stroke();
   }
-  for (const angle of ANGLE_TICKS) {
+  for (const angle of asymmetric ? FULL_ANGLE_TICKS : ANGLE_TICKS) {
     const edge = projectPoint(angle, maxBsp, layout);
     ctx.beginPath();
     ctx.moveTo(layout.centerX, layout.centerY);
     ctx.lineTo(edge.x, edge.y);
     ctx.stroke();
   }
-  for (const label of axisLabels(layout, maxBsp, (text) => ctx.measureText(text).width, 10, factor)) {
+  for (const label of axisLabels(layout, maxBsp, (text) => ctx.measureText(text).width, 10, factor, asymmetric)) {
     ctx.fillText(label.text, label.x, label.y);
   }
 
@@ -185,13 +186,14 @@ export default function PolarPlot({ project, variant, unit = "kn", onFullSize, o
   project: ProjectSummary;
   /** The display speed unit (Settings); every value arrives and is kept in knots. */
   unit?: SpeedUnit;
-  /** `"panel"` in the right panel; `"overlay"` full size over the map. */
+  /** `"panel"` in the right panel; `"overlay"` full size over the current view. */
   variant: "panel" | "overlay";
   /** Panel variant only: opens the full-size overlay. */
   onFullSize?: () => void;
   /** Overlay variant only: closes it. */
   onClose?: () => void;
 }) {
+  const api = useBoatApi();
   const t = useT();
   const wrap = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -220,6 +222,7 @@ export default function PolarPlot({ project, variant, unit = "kn", onFullSize, o
         if (request.current !== id) return;
         setResult(next);
         setDots(nextDots);
+        setHover(null);
       })
       .catch((err) => { if (request.current === id) reportFailure(err); });
   }, [project.id, project.revision, tws, showFiltered]);
@@ -231,8 +234,8 @@ export default function PolarPlot({ project, variant, unit = "kn", onFullSize, o
   }, [project.sources]);
 
   const redraw = useCallback(() => {
-    if (canvas.current) draw(canvas.current, result, dots, hover, sourcesById, selection.ids, unit);
-  }, [result, dots, hover, sourcesById, selection, unit]);
+    if (canvas.current) draw(canvas.current, result, dots, hover, sourcesById, selection.ids, unit, project.blend.asymmetric);
+  }, [result, dots, hover, sourcesById, selection, unit, project.blend.asymmetric]);
 
   useEffect(redraw, [redraw]);
 
@@ -249,7 +252,7 @@ export default function PolarPlot({ project, variant, unit = "kn", onFullSize, o
   const onMove = useCallback((event: MouseEvent<HTMLCanvasElement>) => {
     if (!result) return;
     const rect = event.currentTarget.getBoundingClientRect();
-    const layout = fitLayout(rect.width, rect.height, Math.max(plotMaxBsp(result, dots), 1));
+    const layout = fitLayout(rect.width, rect.height, Math.max(plotMaxBsp(result, dots), 1), 28, project.blend.asymmetric);
     const hit = nearestPoint(
       [...result.curves, ...blendCurves(result, t)], dots, sourcesById,
       event.clientX - rect.left, event.clientY - rect.top, layout, HOVER_DISTANCE_PX,
@@ -291,7 +294,7 @@ export default function PolarPlot({ project, variant, unit = "kn", onFullSize, o
         </label>
         {variant === "panel" && (
           <button className="small" data-feature="plot:full-size" onClick={onFullSize}
-            title={t("Open the polar plot full size over the map")}>
+            title={t("Open the polar plot full size over the current view")}>
             {t("Full size")}
           </button>
         )}
@@ -307,10 +310,10 @@ export default function PolarPlot({ project, variant, unit = "kn", onFullSize, o
         <div className="polar-plot-canvas-wrap" ref={wrap}>
           <canvas ref={canvas} onMouseMove={onMove} onMouseLeave={() => setHover(null)} />
           {hover && (
-            <div className="polar-plot-tooltip" style={{ left: hover.x + 10, top: hover.y + 10 }}>
+            <div role="tooltip" className="polar-plot-tooltip" style={{ left: hover.x + 10, top: hover.y + 10 }}>
               <strong style={{ color: hover.colour }}>{hover.label}</strong>
               <div>{t("TWA {twa}°, TWS {tws} {unit}, BSP {bsp} {unit}", {
-                twa: hover.twa.toFixed(0), tws: (hover.tws * SPEED_FACTOR[unit]).toFixed(1),
+                twa: Math.min(hover.twa, 360 - hover.twa).toFixed(0), tws: (hover.tws * SPEED_FACTOR[unit]).toFixed(1),
                 bsp: (hover.bsp * SPEED_FACTOR[unit]).toFixed(2), unit: SPEED_SYMBOL[unit],
               })}</div>
             </div>

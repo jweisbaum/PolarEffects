@@ -154,6 +154,8 @@ pub enum MapProjection {
 #[ts(export_to = "AppSettings.ts", rename = "AppSettings")]
 #[serde(default)]
 pub struct Settings {
+    /// Local SYRF database, metadata and scraper preferences.
+    pub database: crate::database::DatabaseSettings,
     /// Most recently opened or saved projects, newest first.
     #[ts(type = "Array<string>")]
     pub recent_projects: Vec<PathBuf>,
@@ -181,6 +183,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            database: crate::database::DatabaseSettings::default(),
             recent_projects: Vec::new(),
             autosave: AutosaveMode::default(),
             language: LANGUAGES[0].to_owned(),
@@ -231,6 +234,41 @@ impl Settings {
             .and_then(|text| serde_json::from_str(&text).ok());
         let mut settings = Self::default();
         if let Some(serde_json::Value::Object(object)) = value {
+            if let Some(serde_json::Value::Object(db)) = object.get("database") {
+                read_field(db, "host", &mut settings.database.host);
+                read_field(db, "port", &mut settings.database.port);
+                read_field(db, "name", &mut settings.database.name);
+                read_field(db, "user", &mut settings.database.user);
+                read_field(db, "password", &mut settings.database.password);
+                read_field(db, "tls", &mut settings.database.tls);
+                read_field(
+                    db,
+                    "geojson_directory",
+                    &mut settings.database.geojson_directory,
+                );
+                read_field(
+                    db,
+                    "metadata_directory",
+                    &mut settings.database.metadata_directory,
+                );
+                read_field(
+                    db,
+                    "scrape_schedule",
+                    &mut settings.database.scrape_schedule,
+                );
+                read_field(db, "scrape_urls", &mut settings.database.scrape_urls);
+                read_field(
+                    db,
+                    "yellowbrick_user_key",
+                    &mut settings.database.yellowbrick_user_key,
+                );
+                read_field(
+                    db,
+                    "yellowbrick_device_id",
+                    &mut settings.database.yellowbrick_device_id,
+                );
+                read_field(db, "pg_dump", &mut settings.database.pg_dump);
+            }
             read_field(&object, "recent_projects", &mut settings.recent_projects);
             read_field(&object, "autosave", &mut settings.autosave);
             read_field(&object, "language", &mut settings.language);
@@ -304,6 +342,12 @@ impl Settings {
         }
         pe_core::io::write_atomic(file, json.as_bytes())
             .doing("write the settings to", file.display())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o600))
+                .doing("protect the settings at", file.display())?;
+        }
         Ok(())
     }
 

@@ -1,9 +1,10 @@
+import { useBoatApi } from "../boats/context";
 import { useEffect, useRef, useState } from "react";
 
 import { reportFailure } from "../errors";
 import type { EnvEstimate } from "../generated/EnvEstimate";
 import { useT } from "../i18n";
-import { api } from "../ipc";
+
 import { formatBytes } from "./trackImport";
 
 type Interval = "hourly" | "three_hourly";
@@ -32,6 +33,7 @@ export default function EnvFetchDialog({ sourceIds, restart, onClose, onStarted 
   /** Once the fetch has started: Fetch weather for selected tracks… clears the ticks (M17a). */
   onStarted?: (() => void) | undefined;
 }) {
+  const api = useBoatApi();
   const t = useT();
   const [estimate, setEstimate] = useState<EnvEstimate | null>(null);
   const [choice, setChoice] = useState<Interval>("hourly");

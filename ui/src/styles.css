@@ -78,6 +78,31 @@ select, input, textarea {
 .spacer { flex: 1; }
 
 .app { display: flex; flex-direction: column; height: 100%; }
+.fleet-workspace { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.boat-actions, .boat-tabs-row, .boat-view-toolbar { display: flex; align-items: center; gap: 8px; padding: 5px 10px; background: var(--surface); border-bottom: 1px solid var(--border); }
+.boat-actions { font-size: 11px; }
+.boat-actions [role="group"] { display: flex; gap: 4px; }
+.boat-actions button[aria-pressed="true"], .boat-tabs button[aria-selected="true"] { background: var(--selected-bg); color: var(--selected-ink); border-color: var(--accent); }
+.boat-tabs-row { min-height: 38px; }
+.boat-tabs { display: flex; flex: 1; gap: 5px; overflow-x: auto; }
+.boat-tabs button { flex-shrink: 0; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.boat-tab-name { width: 20ch; flex-shrink: 0; }
+.boat-title-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.boat-grid { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+.boat-grid.boats-2, .boat-grid.boats-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px; background: var(--border); }
+.boat-grid.boats-4 { grid-template-rows: repeat(2, minmax(0, 1fr)); }
+.boat-pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; position: relative; background: var(--bg); }
+.boat-pane[hidden] { display: none; }
+.boat-pane-picker { align-self: stretch; border: 0; border-radius: 0; font-weight: 600; }
+.boat-pane.active > .boat-pane-picker { color: var(--accent); }
+.boat-pane.empty { align-items: center; justify-content: center; color: var(--muted); }
+.boat-view-toolbar { justify-content: center; min-height: 34px; font-size: 11px; }
+.boat-view-toolbar .polar-mode { display: flex; align-items: center; gap: 6px; }
+.boats-2 .view3d-side, .boats-4 .view3d-side { width: min(210px, 40%); }
+.boats-2 .wave-range-row, .boats-4 .wave-range-row { grid-template-columns: minmax(70px, 1fr) 3em minmax(60px, 2fr) 3em; }
+.boats-4 .view3d-side { max-height: calc(100% - 190px); }
+.boats-4 .view3d-toolbar { max-width: calc(100% - 20px); flex-wrap: wrap; }
+.boat-export-dialog { max-height: 80vh; overflow: auto; }
 
 /* --- Title bar --------------------------------------------------------- */
 
@@ -98,7 +123,7 @@ select, input, textarea {
   position: absolute;
   z-index: 50;
   top: calc(100% + 6px);
-  left: 0;
+  right: 0;
   min-width: 220px;
   padding: 5px;
   border: 1px solid var(--border);
@@ -135,6 +160,8 @@ select, input, textarea {
 }
 .dirty { color: var(--accent); }
 .titlebar .settings { font-size: 14px; line-height: 1; padding: 4px 8px; }
+.titlebar .polar-mode { display: flex; align-items: center; gap: 6px; flex-shrink: 0; white-space: nowrap; cursor: pointer; }
+.titlebar .polar-mode input { margin: 0; }
 
 .stage-switcher { display: flex; }
 .stage-switcher button { border-radius: 0; margin-left: -1px; padding: 3px 14px; }
@@ -204,6 +231,9 @@ select, input, textarea {
   min-height: 0;
 }
 .sidebar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
   min-height: 0;
   overflow-y: auto;
   background: var(--surface);
@@ -211,16 +241,18 @@ select, input, textarea {
   flex-direction: column;
 }
 .sidebar.left {
-  flex: 0 0 var(--sidebar-left);
+  left: 0;
   width: var(--sidebar-left);
   border-right: 1px solid var(--border);
 }
 .sidebar.right {
-  flex: 0 0 var(--sidebar-right);
+  right: 0;
   width: var(--sidebar-right);
   border-left: 1px solid var(--border);
 }
-.centre-stage { position: relative; flex: 1; min-width: 0; background: var(--bg); }
+.centre-stage { position: relative; z-index: 0; flex: 1; min-width: 0; background: var(--bg); }
+/* The stage keeps the full workspace viewport. Panels paint above it without
+   creating stacking contexts that would trap their fixed-position dialogs. */
 
 /* A tab on the border between a panel and the stage, which stays put whether
    the panel is open or closed. */
@@ -311,9 +343,6 @@ button.icon-button { padding: 0 5px; line-height: 16px; font-size: 11px; }
 .env-fetch-interval { border: none; margin: 8px 0; padding: 0; min-width: 0; }
 .env-fetch-interval legend { padding: 0; margin-bottom: 4px; }
 .env-fetch-interval > label { display: block; margin-top: 4px; }
-.grib-parts, .grib-interval { border: none; margin: 8px 0; padding: 0; display: grid; gap: 4px; }
-.grib-export .grib-area { margin-top: 0; }
-.grib-parts legend, .grib-interval legend { padding: 0; white-space: nowrap; }
 .env-jobs { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; white-space: nowrap; }
 .env-jobs-bar { display: inline-block; width: 60px; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; }
 .env-jobs-bar > span { display: block; height: 100%; background: var(--accent); }
@@ -455,12 +484,16 @@ button.source-label:hover { border-color: var(--border); background: var(--raise
 
 .compare { --compare-side: 320px; }
 .compare .compare-canvas, .compare .compare-labels { width: calc(100% - var(--compare-side) - 10px); right: auto; }
-.compare .compare-toolbar { left: calc((100% - var(--compare-side) - 10px) / 2); }
+.compare .compare-toolbar {
+  left: calc((100% + var(--dock-left, 0px) - var(--dock-right, 0px) - var(--compare-side) - 10px) / 2);
+  max-width: calc(100% - var(--dock-left, 0px) - var(--dock-right, 0px) - var(--compare-side) - 30px);
+  flex-wrap: wrap;
+}
 .compare .compare-empty { right: calc(var(--compare-side) + 10px); }
 .compare-side {
   position: absolute;
   top: 10px;
-  right: 10px;
+  right: calc(var(--dock-right, 0px) + 10px);
   bottom: 10px;
   width: var(--compare-side);
   display: flex;
@@ -527,7 +560,7 @@ button.source-label:hover { border-color: var(--border); background: var(--raise
 .map-controls {
   position: absolute;
   top: 10px;
-  left: 50%;
+  left: calc((100% + var(--dock-left, 0px) - var(--dock-right, 0px)) / 2);
   transform: translateX(-50%);
   display: flex;
   gap: 8px;
@@ -588,14 +621,17 @@ button.source-label:hover { border-color: var(--border); background: var(--raise
 .view3d-side {
   position: absolute;
   top: 10px;
-  right: 10px;
+  right: calc(var(--dock-right, 0px) + 10px);
   width: 220px;
+  max-height: calc(100% - 190px);
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 8px;
   font-size: 12px;
 }
 .view3d-side > * {
+  flex-shrink: 0;
   padding: 8px;
   background: var(--panel);
   border: 1px solid var(--border);
@@ -610,7 +646,11 @@ button.source-label:hover { border-color: var(--border); background: var(--raise
 .view3d-colour select { min-width: 0; flex: 1; }
 /* The 3D toolbar is centred in the room left of the side panel and wraps
    there rather than run under it (French and German tool names, M17b). */
-.view3d-toolbar:not(.compare-toolbar) { left: calc((100% - 240px) / 2); max-width: calc(100% - 260px); flex-wrap: wrap; }
+.view3d-toolbar:not(.compare-toolbar) {
+  left: calc((100% + var(--dock-left, 0px) - var(--dock-right, 0px) - 240px) / 2);
+  max-width: calc(100% - var(--dock-left, 0px) - var(--dock-right, 0px) - 260px);
+  flex-wrap: wrap;
+}
 .view3d-show legend { padding: 0 4px; }
 .view3d-colour { display: flex; gap: 6px; align-items: center; justify-content: space-between; }
 .view3d-ramp { display: flex; gap: 6px; align-items: center; }
@@ -639,10 +679,10 @@ button.source-label:hover { border-color: var(--border); background: var(--raise
 /* Edit mode (spec.md 10.4): the table and tools of the source being edited. */
 .view3d-edit {
   position: absolute;
-  left: 10px;
-  bottom: 10px;
-  max-width: min(520px, calc(100% - 260px));
-  max-height: calc(100% - 70px);
+  left: calc(var(--dock-left, 0px) + 10px);
+  bottom: 190px;
+  max-width: min(520px, calc(100% - var(--dock-left, 0px) - var(--dock-right, 0px) - 260px));
+  max-height: calc(100% - 250px);
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -1003,3 +1043,149 @@ button.source-label:hover { border-color: var(--border); background: var(--raise
 .tracker-boats table { border-collapse: collapse; width: 100%; }
 .tracker-boats th { position: sticky; top: 0; background: var(--surface); text-align: left; }
 .tracker-boats th, .tracker-boats td { border-bottom: 1px solid var(--border-subtle); padding: 2px 6px; white-space: nowrap; }
+
+.global-filters { max-width: 340px; padding: 8px; }
+.global-filters summary { cursor: pointer; font-weight: 600; }
+.global-filters .track-field { white-space: normal; }
+.global-filters .point-filter-body > label { display: flex; gap: 6px; margin-bottom: 8px; }
+.point-filter-body { max-height: 46vh; overflow: auto; }
+
+.orc-measurements { grid-column: 1 / -1; min-width: 0; border: 1px solid var(--border); }
+.orc-pages { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin: 4px 0; }
+.view3d-ramp-time { flex-direction: column; align-items: stretch; }
+.view3d-ramp-time span { white-space: nowrap; }
+.view3d-ramp-time .view3d-ramp-bar { flex: none; min-height: 8px; }
+
+.blend-correction { width: fit-content; min-width: min(600px, 94vw); max-width: 94vw; max-height: 90vh; display: flex; flex-direction: column; }
+.blend-correction .view3d-edit { position: static; width: auto; max-width: none; max-height: 78vh; }
+.priority-filters { border-bottom: 1px solid var(--border); padding: 8px; }
+.priority-filters summary { cursor: pointer; }
+.priority-filters p { margin: 6px 0; }
+.priority-filters input[type=number] { width: 70px; margin: 4px; }
+.priority-group { margin: 8px 0; padding: 6px; border: 1px solid var(--border); }
+.catalogue-picker { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.orr-scraper progress { width: 100%; margin-top: 6px; }
+.orr-scraper details { max-height: 180px; overflow: auto; }
+
+.track-field:has(> input[type="checkbox"]) { display: flex; gap: 6px; }
+.track-field input[type="checkbox"] { width: auto; flex: none; }
+.global-filters > summary, .priority-filters > summary { padding: 6px 0; }
+.blend-settings .settings-buttons label { display: flex; align-items: center; gap: 6px; }
+
+/* PostgreSQL library controls and local boat search. */
+.database-settings input:not([type="checkbox"]), .database-settings textarea { min-width: 0; width: 100%; }
+.database-settings .settings-field { display: grid; grid-template-columns: minmax(10rem, 1fr) minmax(12rem, 2fr); }
+.database-settings .settings-buttons { flex-wrap: wrap; gap: .5rem; margin: .75rem 0; }
+.database-connection { font-weight: 600; }
+.database-connection.ok { color: #47c979; }
+.database-connection.failed { color: var(--error); }
+.database-urls { display: grid; gap: .4rem; margin: .75rem 0; }
+.database-urls textarea { min-height: 5rem; resize: vertical; }
+.database-current, .database-settings details { overflow-wrap: anywhere; }
+.boat-track-search { margin: .7rem 0; }
+.boat-track-search label { display: grid; gap: .35rem; }
+.boat-track-search input { width: 100%; min-width: 0; }
+.boat-track-results { list-style: none; padding: 0; max-height: 24rem; overflow-y: auto; }
+.boat-track-results li { display: grid; gap: .3rem; padding: .6rem; margin-bottom: .4rem; border: 1px solid var(--border-subtle); border-radius: .3rem; }
+.boat-track-results small { color: var(--muted); overflow-wrap: anywhere; }
+
+.database-settings input[type="checkbox"] { justify-self: start; }
+
+/* Bottom-centred wave constraints: one shared rail and two native handles. */
+.wave-display-ranges {
+  position: absolute;
+  z-index: 1;
+  bottom: 12px;
+  left: calc((100% + var(--dock-left, 0px) - var(--dock-right, 0px)) / 2);
+  transform: translateX(-50%);
+  width: min(580px, calc(100% - var(--dock-left, 0px) - var(--dock-right, 0px) - 24px));
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 3px 12px #0003;
+  font-size: 11px;
+}
+.wave-range-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; margin-bottom: 4px; }
+.wave-display-ranges h3 { margin: 0; font-size: 12px; }
+.wave-display-ranges fieldset { padding: 0; margin: 0; border: 0; min-width: 0; }
+.wave-range-row { display: grid; grid-template-columns: minmax(96px, 1fr) 3.2em minmax(70px, 2fr) 3.2em; align-items: center; gap: 6px; min-height: 30px; }
+.wave-range-label { font-weight: 600; }
+.wave-range-slider { position: relative; height: 28px; min-width: 0; }
+.wave-range-track { position: absolute; top: 12px; left: 7px; right: 7px; height: 4px; border-radius: 2px; background: var(--border); pointer-events: none; }
+.wave-range-track span { position: absolute; height: 100%; border-radius: inherit; background: var(--accent); }
+.wave-range-selection { position: absolute; z-index: 1; top: -12px; height: 28px; min-width: 0; padding: 0; border: 0; border-radius: 0; background: transparent; pointer-events: auto; touch-action: none; cursor: grab; }
+.wave-range-selection:hover, .wave-range-selection:active { background: transparent; }
+.wave-range-selection:active { cursor: grabbing; }
+.wave-range-selection:focus-visible { outline: 2px solid var(--accent); outline-offset: -5px; }
+.wave-range-slider input[type="range"] {
+  appearance: none;
+  -webkit-appearance: none;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 28px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  cursor: ew-resize;
+}
+.wave-range-slider input::-webkit-slider-runnable-track { height: 4px; background: transparent; }
+.wave-range-slider input::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  background: var(--selected-bg);
+}
+.wave-range-slider input::-moz-range-track { height: 4px; background: transparent; }
+.wave-range-slider input::-moz-range-progress { background: transparent; }
+.wave-range-slider input::-moz-range-thumb {
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  background: var(--selected-bg);
+}
+.wave-range-slider input:focus-visible { outline: none; }
+.wave-range-slider input:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px var(--selected-bg); }
+.wave-range-slider input:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 3px var(--selected-bg); }
+.wave-display-ranges fieldset:disabled .wave-range-slider { opacity: .4; }
+.wave-display-ranges fieldset:disabled input, .wave-display-ranges fieldset:disabled button { cursor: default; }
+.wave-display-ranges output { text-align: right; font-variant-numeric: tabular-nums; }
+.wave-range-missing { display: block; font-size: 10px; font-weight: normal; }
+.wave-range-footer { display: flex; justify-content: space-between; align-items: center; gap: 6px; font-size: 10px; }
+.wave-range-footer button { font-size: 10px; padding: 2px 4px; }
+
+.view3d-tooltip { position: absolute; z-index: 2; pointer-events: none; max-width: 264px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); box-shadow: 0 3px 12px #0005; font-size: 11px; }
+.view3d-tooltip dl { margin: 5px 0 0; }
+.view3d-tooltip dl > div { display: flex; justify-content: space-between; gap: 12px; }
+.view3d-tooltip dd { margin: 0; font-variant-numeric: tabular-nums; }
+.tracker-project { max-width: 760px; }
+.tracker-project.has-report { width: min(1000px, calc(100vw - 48px)); max-width: 1000px; }
+.tracker-project > label { display: flex; gap: 12px; align-items: center; margin: 14px 0; }
+.tracker-project input { flex: 1; min-width: 200px; }
+.tracker-project progress { width: 100%; }
+.boat-import-report { max-height: 40vh; overflow: auto; }
+.boat-import-report table { width: 100%; border-collapse: collapse; }
+.boat-import-report td, .boat-import-report th { padding: 6px 10px; text-align: left; border-bottom: 1px solid var(--border); }
+.boat-import-report td { vertical-align: top; }
+.boat-import-report td:first-child { width: 48%; }
+.boat-import-report details { margin-top: 6px; font-size: 11px; }
+.tracker-boat-details { margin: 5px 0 0; font-size: 11px; font-weight: normal; max-width: 420px; }
+.tracker-boat-details > div { display: grid; grid-template-columns: minmax(80px, 1fr) minmax(100px, 2fr); gap: 8px; }
+.tracker-boat-details dt { color: var(--muted); overflow-wrap: anywhere; }
+.tracker-boat-details dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.tracker-project details { max-height: 150px; overflow: auto; }
+/* Comparison panes start with clear data views; filters remain one click away. */
+.view3d.compact-comparison .view3d-side, .view3d.compact-comparison .wave-display-ranges { display: none; }
+.view3d.compact-comparison .view3d-toolbar:not(.compare-toolbar) { left: 50%; max-width: calc(100% - 24px); }
+.boat-view-toolbar button[aria-pressed="true"] { background: var(--selected-bg); color: var(--selected-ink); }

@@ -84,6 +84,7 @@ export default {
     await t.shot("track-imported");
 
     // The track on the map, framed: its colour is on the map canvas.
+    await d.click('[data-feature="stage:map"]');
     await d.click('[data-feature="map:fit-tracks"]');
     const colour = toHex(await d.run(
       `done(getComputedStyle(document.querySelector('[data-feature="sources:colour"]')).backgroundColor);`));

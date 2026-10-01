@@ -43,6 +43,8 @@ pub struct SourceSummary {
     pub polar_file: Option<PolarFileSummary>,
     /// For an ORC polar, which certificate it is (spec.md 5.3).
     pub orc: Option<OrcSourceSummary>,
+    /// For an ORR polar, the certificate metadata.
+    pub orr: Option<OrcSourceSummary>,
     /// For a track, what the Tracks section lists (spec.md 7.1).
     pub track: Option<crate::tracks::TrackSummary>,
     /// Polar edits the source holds (spec.md 10.4).
@@ -96,10 +98,21 @@ impl SourceSummary {
             }),
             _ => None,
         };
+        let orr = match &source.kind {
+            SourceKind::Orr { record } => Some(OrcSourceSummary {
+                sail_no: record.sail_no.clone(),
+                model: record.model.clone(),
+                year: record.build_year(),
+                certificate_year: Some(record.year),
+            }),
+            _ => None,
+        };
         let (cells, polar_file) = match &source.kind {
             // The cells of the polar it gives: the table plus the beat and
             // run points (spec.md 5.3).
-            SourceKind::Orc { .. } => (pe_polar::cell_count(&derived.base), None),
+            SourceKind::Orc { .. } | SourceKind::Orr { .. } => {
+                (pe_polar::cell_count(&derived.base), None)
+            }
             SourceKind::PolarFile {
                 format,
                 file_name,
@@ -132,6 +145,7 @@ impl SourceSummary {
             used,
             polar_file,
             orc,
+            orr,
             track,
             edits: count(source.overlay.cell_overrides.len()),
         }
@@ -251,7 +265,7 @@ fn now_unix_s() -> i64 {
 
 /// Drops the recovery snapshot of whatever project is about to be replaced
 /// or closed: what the user chose to put down is not offered back.
-fn forget_open(state: &AppState, session: &Session) {
+pub(crate) fn forget_open(state: &AppState, session: &Session) {
     if let Some(open) = &session.open {
         crate::autosave::forget(state, open.project.id.raw());
     }
@@ -297,10 +311,11 @@ pub fn create(
             Boat {
                 name: boat.name.trim().to_owned(),
                 notes: boat.notes,
+                ..Boat::default()
             },
             now_unix_s(),
         );
-        session.open = Some(OpenProject::created(project));
+        session.replace(OpenProject::created(project));
         // Jobs belong to the project they were started for (spec.md 3.3).
         state.env_jobs.cancel(None);
         Ok(ProjectSummary::of(session.require_open()?))
@@ -338,7 +353,7 @@ pub fn open(state: &AppState, path: String, discard_unsaved: bool) -> Result<Pro
     state.with_session(|session| {
         session.refuse_to_discard(discard_unsaved)?;
         forget_open(state, session);
-        session.open = Some(OpenProject::loaded(project, path.clone()));
+        session.replace(OpenProject::loaded(project, path.clone()));
         // Jobs belong to the project they were started for (spec.md 3.3).
         state.env_jobs.cancel(None);
         session.settings.remember(&path);
@@ -420,6 +435,8 @@ pub fn close(state: &AppState, discard_unsaved: bool) -> Result<()> {
         session.refuse_to_discard(discard_unsaved)?;
         forget_open(state, session);
         session.open = None;
+        session.boats.clear();
+        session.removed_boats.clear();
         // Jobs belong to the project they were started for (spec.md 3.3).
         state.env_jobs.cancel(None);
         Ok(())
@@ -428,7 +445,11 @@ pub fn close(state: &AppState, discard_unsaved: bool) -> Result<()> {
 
 /// The open project, or null on the start screen.
 #[tauri::command]
-pub fn project_summary(state: tauri::State<'_, AppState>) -> Result<Option<ProjectSummary>> {
+pub fn project_summary(
+    state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
+) -> Result<Option<ProjectSummary>> {
+    let state = state.scoped(boat_context);
     summary(&state)
 }
 

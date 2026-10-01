@@ -57,6 +57,8 @@ fn track_source() -> Source {
     );
     for k in 0..10u64 {
         let fix = Fix {
+            tws: None,
+            twd_from: None,
             t: 1_753_531_200 + k as i64 * 60,
             lat: 50.0,
             lon: -5.0,

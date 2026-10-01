@@ -22,7 +22,7 @@ let root: Root;
 
 const source = (overrides: Partial<SourceSummary> = {}): SourceSummary => ({
   id: 1, kind: "polar_file", label: "A", colour: "#4e79a7", visible: true, weight: 1,
-  count: 4, used: null, polar_file: null, orc: null, track: null, edits: 0, ...overrides,
+  count: 4, used: null, polar_file: null, orr: null, orc: null, track: null, edits: 0, ...overrides,
 });
 
 const project = (overrides: Partial<ProjectSummary> = {}): ProjectSummary => ({

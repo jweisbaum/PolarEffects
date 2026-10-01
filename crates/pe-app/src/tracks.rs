@@ -55,6 +55,15 @@ pub struct TrackFilters {
     pub max_bsp: Option<f64>,
     /// Manoeuvre threshold: heading change between neighbours, degrees.
     pub max_heading_change: Option<f64>,
+    /// Maximum apparent wind bearing change, degrees; null disables.
+    #[serde(default)]
+    pub max_awa_change: Option<f64>,
+    /// Maximum true wind speed change, knots; null disables.
+    #[serde(default)]
+    pub max_wind_speed_change: Option<f64>,
+    /// Maximum true wind direction change, degrees; null disables.
+    #[serde(default)]
+    pub max_wind_direction_change: Option<f64>,
     /// `"any"`, `"given"` or `"derived"`.
     pub heading_origin: String,
     /// `"any"`, `"given"` or `"derived"`.
@@ -92,6 +101,24 @@ pub struct TrackFilters {
     pub wave_to: Option<f64>,
     /// Leave out samples whose current has no tide (spec.md 7.5.1).
     pub exclude_no_tide: bool,
+    /// Require complete wave data.
+    #[serde(default)]
+    pub exclude_unknown_wave: bool,
+    /// Require complete current data.
+    #[serde(default)]
+    pub exclude_unknown_current: bool,
+    /// Seconds before and after tack/gybe, null to disable.
+    #[serde(default)]
+    pub tack_gybe_padding_s: Option<i64>,
+    /// Maximum ground speed considered stopped, knots; null to disable.
+    #[serde(default)]
+    pub stop_speed_kn: Option<f64>,
+    /// Seconds before and after a stop.
+    #[serde(default)]
+    pub stop_padding_s: i64,
+    /// UTC interval in seconds, null to disable.
+    #[serde(default)]
+    pub utc_interval_s: Option<i64>,
 }
 
 const SECTORS: [(WaveSector, &str); 5] = [
@@ -140,6 +167,9 @@ impl TrackFilters {
             min_bsp: filters.min_bsp_kn,
             max_bsp: filters.max_bsp_kn,
             max_heading_change: filters.max_heading_change_deg,
+            max_awa_change: filters.max_awa_change_deg,
+            max_wind_speed_change: filters.max_wind_speed_change_kn,
+            max_wind_direction_change: filters.max_wind_direction_change_deg,
             heading_origin: origin_filter_name(filters.heading_origin).to_owned(),
             speed_origin: origin_filter_name(filters.speed_origin).to_owned(),
             tws_min: bounds(filters.tws_kn.as_ref()).0,
@@ -154,6 +184,7 @@ impl TrackFilters {
                 None => "off",
                 Some(WaveDirectionFilter::Sectors { .. }) => "sectors",
                 Some(WaveDirectionFilter::Relative { .. }) => "relative",
+                Some(WaveDirectionFilter::Cog { .. }) => "cog",
                 Some(WaveDirectionFilter::Absolute { .. }) => "absolute",
             }
             .to_owned(),
@@ -166,11 +197,15 @@ impl TrackFilters {
                 _ => Vec::new(),
             },
             wave_min: match &filters.wave_direction {
-                Some(WaveDirectionFilter::Relative { range }) => range.min,
+                Some(
+                    WaveDirectionFilter::Relative { range } | WaveDirectionFilter::Cog { range },
+                ) => range.min,
                 _ => None,
             },
             wave_max: match &filters.wave_direction {
-                Some(WaveDirectionFilter::Relative { range }) => range.max,
+                Some(
+                    WaveDirectionFilter::Relative { range } | WaveDirectionFilter::Cog { range },
+                ) => range.max,
                 _ => None,
             },
             wave_from: match &filters.wave_direction {
@@ -182,6 +217,12 @@ impl TrackFilters {
                 _ => None,
             },
             exclude_no_tide: filters.exclude_no_tide,
+            exclude_unknown_wave: filters.exclude_unknown_wave,
+            exclude_unknown_current: filters.exclude_unknown_current,
+            tack_gybe_padding_s: filters.tack_gybe_padding_s,
+            stop_speed_kn: filters.stop_speed_kn,
+            stop_padding_s: filters.stop_padding_s,
+            utc_interval_s: filters.utc_interval_s,
         }
     }
 
@@ -205,6 +246,12 @@ impl TrackFilters {
                 Some(WaveDirectionFilter::Sectors { sectors })
             }
             "relative" => Some(WaveDirectionFilter::Relative {
+                range: Range {
+                    min: self.wave_min,
+                    max: self.wave_max,
+                },
+            }),
+            "cog" => Some(WaveDirectionFilter::Cog {
                 range: Range {
                     min: self.wave_min,
                     max: self.wave_max,
@@ -238,6 +285,9 @@ impl TrackFilters {
             min_bsp_kn: self.min_bsp,
             max_bsp_kn: self.max_bsp,
             max_heading_change_deg: self.max_heading_change,
+            max_awa_change_deg: self.max_awa_change,
+            max_wind_speed_change_kn: self.max_wind_speed_change,
+            max_wind_direction_change_deg: self.max_wind_direction_change,
             heading_origin: origin_filter(&self.heading_origin)?,
             speed_origin: origin_filter(&self.speed_origin)?,
             tws_kn: range(self.tws_min, self.tws_max),
@@ -246,6 +296,12 @@ impl TrackFilters {
             current_speed_kn: range(self.current_min, self.current_max),
             wave_direction: self.wave_direction()?,
             exclude_no_tide: self.exclude_no_tide,
+            exclude_unknown_wave: self.exclude_unknown_wave,
+            exclude_unknown_current: self.exclude_unknown_current,
+            tack_gybe_padding_s: self.tack_gybe_padding_s,
+            stop_speed_kn: self.stop_speed_kn,
+            stop_padding_s: self.stop_padding_s,
+            utc_interval_s: self.utc_interval_s,
         };
         filters.validate()?;
         Ok(filters)
@@ -289,6 +345,10 @@ pub struct TrackSummary {
     pub max_gap_s: i64,
     /// `"given"` or `"derived"`.
     pub prefer: String,
+    /// Use downloaded weather even when the track supplies wind.
+    pub downloaded_wind_only: bool,
+    /// Fixes containing both supplied true wind speed and direction.
+    pub supplied_wind: u32,
     /// The editable filters.
     pub filters: TrackFilters,
     /// Whether any environment filter (wind, waves, current) is set.
@@ -361,6 +421,14 @@ impl TrackSummary {
                 .map(|s| if s == 3600 { "hourly" } else { "three_hourly" }.to_owned()),
             no_tide: count(no_tide),
             max_gap_s: track.derivation.max_gap_s,
+            downloaded_wind_only: track.derivation.downloaded_wind_only,
+            supplied_wind: count(
+                track
+                    .fixes
+                    .iter()
+                    .filter(|f| f.tws.zip(f.twd_from).is_some())
+                    .count(),
+            ),
             prefer: match track.derivation.prefer {
                 PreferValues::Given => "given",
                 PreferValues::Derived => "derived",
@@ -372,7 +440,13 @@ impl TrackSummary {
                 || filters.current_speed_kn.is_some()
                 || filters.tws_kn.is_some()
                 || filters.twa_deg.is_some()
-                || filters.exclude_no_tide,
+                || filters.max_awa_change_deg.is_some()
+                || filters.max_wind_speed_change_kn.is_some()
+                || filters.max_wind_direction_change_deg.is_some()
+                || filters.exclude_no_tide
+                || filters.exclude_unknown_wave
+                || filters.exclude_unknown_current
+                || filters.tack_gybe_padding_s.is_some(),
         }
     }
 }
@@ -393,6 +467,12 @@ pub struct CsvMappingInput {
     pub heading: Option<u32>,
     /// SOG or boat speed column; optional.
     pub speed: Option<u32>,
+    /// Supplied true wind speed column; optional.
+    #[serde(default)]
+    pub tws: Option<u32>,
+    /// Supplied true wind direction column; optional.
+    #[serde(default)]
+    pub twd: Option<u32>,
     /// Boat column; optional.
     pub boat: Option<u32>,
     /// `"auto"`, `"iso"`, `"epoch_s"`, `"epoch_ms"` or `"custom"`.
@@ -401,6 +481,9 @@ pub struct CsvMappingInput {
     pub custom_format: String,
     /// `"kn"`, `"ms"`, `"kmh"` or `"mph"`.
     pub speed_unit: String,
+    /// Supplied wind unit, independent of boat speed: kn, ms, kmh or mph.
+    #[serde(default)]
+    pub wind_speed_unit: String,
 }
 
 fn index(value: Option<u32>) -> Option<usize> {
@@ -416,6 +499,8 @@ impl CsvMappingInput {
             lon: col(g.lon),
             heading: col(g.heading),
             speed: col(g.speed),
+            tws: col(g.tws),
+            twd: col(g.twd),
             boat: col(g.boat),
             time_format: match &g.time_format {
                 None | Some(TimeFormat::Auto) => "auto",
@@ -427,6 +512,13 @@ impl CsvMappingInput {
             .to_owned(),
             custom_format: String::new(),
             speed_unit: match g.speed_unit {
+                SpeedUnit::Knots => "kn",
+                SpeedUnit::MetresPerSecond => "ms",
+                SpeedUnit::KilometresPerHour => "kmh",
+                SpeedUnit::MilesPerHour => "mph",
+            }
+            .to_owned(),
+            wind_speed_unit: match g.wind_speed_unit {
                 SpeedUnit::Knots => "kn",
                 SpeedUnit::MetresPerSecond => "ms",
                 SpeedUnit::KilometresPerHour => "kmh",
@@ -460,6 +552,14 @@ impl CsvMappingInput {
             lon: lon as usize,
             heading: index(self.heading),
             speed: index(self.speed),
+            tws: index(self.tws),
+            twd: index(self.twd),
+            wind_speed_unit: match self.wind_speed_unit.as_str() {
+                "ms" => SpeedUnit::MetresPerSecond,
+                "kmh" => SpeedUnit::KilometresPerHour,
+                "mph" => SpeedUnit::MilesPerHour,
+                _ => SpeedUnit::Knots,
+            },
             boat: index(self.boat),
             time_format,
             speed_unit,
@@ -847,8 +947,10 @@ fn prepare(request: &TrackFileRequest) -> std::result::Result<Vec<Pending>, Trac
 #[tauri::command]
 pub async fn import_track_files(
     state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
     files: Vec<TrackFileRequest>,
 ) -> Result<TrackImportResult> {
+    let state = state.scoped(boat_context);
     import(&state, &files)
 }
 
@@ -875,8 +977,35 @@ pub(crate) fn add_tracks(
     pending: Vec<Pending>,
     failures: Vec<TrackImportFailure>,
 ) -> Result<TrackImportResult> {
+    add_tracks_to_project(state, pending, failures, None)
+}
+
+/// A database import reads disk outside the lock. Check the destination and
+/// duplicates under the same lock that commits the sources.
+pub(crate) fn add_tracks_to_project(
+    state: &AppState,
+    pending: Vec<Pending>,
+    failures: Vec<TrackImportFailure>,
+    expected_project: Option<pe_core::ProjectId>,
+) -> Result<TrackImportResult> {
     state.with_session(|session| {
         let open = session.require_open()?;
+        if let Some(expected) = expected_project {
+            if open.project.id != expected {
+                return Err(AppError::Internal(
+                    "The project changed during import".into(),
+                ));
+            }
+            if pending.iter().any(|p| {
+                open.project.sources.iter().any(
+                    |s| matches!(&s.kind,SourceKind::Track{track} if track.origin==p.track.origin),
+                )
+            }) {
+                return Err(AppError::Internal(
+                    "This boat track is already in the project".into(),
+                ));
+            }
+        }
         let mut imported = Vec::new();
         if !pending.is_empty() {
             let project = &mut open.project;
@@ -959,9 +1088,11 @@ fn track_source(project: &pe_core::Project, id: u64) -> Result<(&Source, &Track)
 #[tauri::command]
 pub fn set_track_filters(
     state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
     id: u64,
     filters: TrackFilters,
 ) -> Result<ProjectSummary> {
+    let state = state.scoped(boat_context);
     track_filters_set(&state, id, &filters)
 }
 
@@ -988,10 +1119,12 @@ pub fn track_filters_set(
 #[tauri::command]
 pub fn set_track_derivation(
     state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
     id: u64,
     max_gap_s: i64,
     prefer: String,
 ) -> Result<ProjectSummary> {
+    let state = state.scoped(boat_context);
     track_derivation_set(&state, id, max_gap_s, &prefer)
 }
 
@@ -1004,6 +1137,7 @@ pub fn track_derivation_set(
 ) -> Result<ProjectSummary> {
     let after = DerivationSettings {
         max_gap_s,
+        downloaded_wind_only: false,
         prefer: match prefer {
             "given" => PreferValues::Given,
             "derived" => PreferValues::Derived,
@@ -1018,6 +1152,10 @@ pub fn track_derivation_set(
     after.validate()?;
     edit::apply(state, |project| {
         let (_, track) = track_source(project, id)?;
+        let after = DerivationSettings {
+            downloaded_wind_only: track.derivation.downloaded_wind_only,
+            ..after.clone()
+        };
         if track.derivation == after {
             return Ok(None);
         }
@@ -1027,6 +1165,38 @@ pub fn track_derivation_set(
             after: after.clone(),
             motion_before: track.samples.iter().map(|s| s.motion()).collect(),
             motion_after: pe_tracks::rederive(track, &after),
+        }))
+    })
+}
+
+/// Select supplied wind where available, or downloaded weather only.
+#[tauri::command]
+pub fn set_track_wind(
+    state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
+    id: u64,
+    downloaded_only: bool,
+) -> Result<ProjectSummary> {
+    let state = state.scoped(boat_context);
+    track_wind_set(&state, id, downloaded_only)
+}
+
+/// Undoable wind choice; fetched data and original fixes remain intact.
+pub fn track_wind_set(state: &AppState, id: u64, downloaded_only: bool) -> Result<ProjectSummary> {
+    edit::apply(state, |project| {
+        let (_, track) = track_source(project, id)?;
+        if track.derivation.downloaded_wind_only == downloaded_only {
+            return Ok(None);
+        }
+        let mut after = track.derivation.clone();
+        after.downloaded_wind_only = downloaded_only;
+        let motion = track.samples.iter().map(|s| s.motion()).collect::<Vec<_>>();
+        Ok(Some(Command::SetDerivation {
+            source: SourceId(id),
+            before: track.derivation.clone(),
+            after,
+            motion_before: motion.clone(),
+            motion_after: motion,
         }))
     })
 }
@@ -1088,9 +1258,11 @@ fn origin_name(origin: Option<ValueOrigin>) -> Option<String> {
 #[tauri::command]
 pub fn sample_details(
     state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
     source_id: u64,
     sample_id: u64,
 ) -> Result<SampleDetails> {
+    let state = state.scoped(boat_context);
     details(&state, source_id, sample_id)
 }
 
@@ -1110,7 +1282,7 @@ pub fn details(state: &AppState, source_id: u64, sample_id: u64) -> Result<Sampl
             })?;
         let s = &track.samples[k];
         let point = pe_tracks::polar_point(s, use_corrected);
-        let filtered = pe_tracks::filtered_out(track, &source.overlay.filters, use_corrected)
+        let filtered = crate::derived::filtered_samples(&open.project, source, track)
             .get(k)
             .copied()
             .unwrap_or(false);
@@ -1125,7 +1297,7 @@ pub fn details(state: &AppState, source_id: u64, sample_id: u64) -> Result<Sampl
             speed: s.speed,
             speed_origin: origin_name(s.speed_origin),
             bsp: pe_tracks::boat_speed(s, use_corrected),
-            tws: point.map(|p| p.1).or(s.tws),
+            tws: point.map(|p| p.1).or(s.wind_speed()),
             twa: point.map(|p| p.0).or(s.twa),
             hs: s.hs_m,
             current_speed: s.current_speed,

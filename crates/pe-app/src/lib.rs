@@ -9,8 +9,10 @@
 pub mod autosave;
 pub mod basemap;
 pub mod blend;
+pub mod boats;
 pub mod commands;
 pub mod compare;
+pub mod database;
 pub mod derived;
 pub mod edit;
 pub mod env;
@@ -19,11 +21,13 @@ pub mod grib;
 pub mod map_tracks;
 pub mod menu;
 pub mod orc;
+pub mod orr;
 pub mod paths;
 pub mod polar3d;
 pub mod polar_edit;
 pub mod polar_files;
 pub mod polar_plot;
+pub mod priority;
 pub mod projects;
 pub mod quit;
 pub mod session;
@@ -61,6 +65,7 @@ pub fn run() -> anyhow::Result<()> {
             app.set_menu(menu::build(app.handle(), &language)?)?;
             autosave::start(app.handle().clone());
             env::start(app.handle().clone());
+            database::on_startup(app.handle().clone());
             Ok(())
         })
         .on_menu_event(|app, event| match event.id().as_ref() {
@@ -73,15 +78,35 @@ pub fn run() -> anyhow::Result<()> {
         })
         // The window's close button, and Close Window, ask first too.
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event
-                && !quit::may_exit(&window.state::<commands::AppState>())
-            {
-                api.prevent_close();
-                quit::ask(window.app_handle());
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if !quit::may_exit(&window.state::<commands::AppState>()) {
+                    api.prevent_close();
+                    quit::ask(window.app_handle());
+                } else if database::shutdown(window.app_handle()) {
+                    api.prevent_close();
+                }
             }
         })
         .invoke_handler(tauri::generate_handler![
+            boats::boat_tabs,
+            boats::add_boat,
+            boats::rename_boat,
+            boats::delete_boat,
+            boats::restore_boat,
+            boats::export_all_polars,
+            boats::tracker_project::open_tracker_project,
+            boats::tracker_project::confirm_tracker_project,
+            boats::tracker_project::discard_tracker_project,
+            boats::tracker_project::boat_import_status,
+            boats::tracker_project::cancel_boat_import,
             commands::app_info,
+            database::test_database_connection,
+            database::set_database_settings,
+            database::catalogue::search_database_boats,
+            database::catalogue::import_database_track,
+            database::jobs::database_job_status,
+            database::jobs::start_database_job,
+            database::jobs::cancel_database_job,
             basemap::basemap,
             projects::new_project,
             projects::open_project,
@@ -109,6 +134,7 @@ pub fn run() -> anyhow::Result<()> {
             tracks::import_track_files,
             tracks::set_track_filters,
             tracks::set_track_derivation,
+            tracks::set_track_wind,
             tracks::sample_details,
             trackers::tracker_event,
             trackers::cancel_tracker_event,
@@ -119,10 +145,6 @@ pub fn run() -> anyhow::Result<()> {
             env::env_jobs,
             env::set_use_corrected,
             env::set_stokes_drift,
-            grib::grib_preview,
-            grib::start_grib_export,
-            grib::cancel_grib_export,
-            grib::grib_export_status,
             map_tracks::map_tracks,
             polar3d::polar_scene,
             polar3d::set_excluded,
@@ -132,11 +154,20 @@ pub fn run() -> anyhow::Result<()> {
             blend::set_blend_visible,
             blend::set_blend_colour,
             blend::set_blend_settings,
+            blend::set_global_filters,
+            blend::set_wave_ranges,
+            blend::set_priority_filters,
             blend::export_preview,
             blend::export_polar,
             compare::compare_polars,
             orc::orc_catalogue_info,
             orc::orc_search,
+            orr::orr_catalogue_info,
+            orr::orr_search,
+            orr::orr_add,
+            orr::orr_scrape_status,
+            orr::start_orr_scrape,
+            orr::cancel_orr_scrape,
             orc::orc_add,
             autosave::recovered_projects,
             autosave::open_recovered,
@@ -158,13 +189,13 @@ pub fn run() -> anyhow::Result<()> {
     app.run(|app, event| {
         // The platform's own quit (the Dock, logging out) arrives here with
         // no exit code; `app.exit` from `quit_app` arrives with one.
-        if let tauri::RunEvent::ExitRequested {
-            code: None, api, ..
-        } = event
-            && !quit::may_exit(&app.state::<commands::AppState>())
-        {
-            api.prevent_exit();
-            quit::ask(app);
+        if let tauri::RunEvent::ExitRequested { api, .. } = event {
+            if !quit::may_exit(&app.state::<commands::AppState>()) {
+                api.prevent_exit();
+                quit::ask(app);
+            } else if database::shutdown(app) {
+                api.prevent_exit();
+            }
         }
     });
     Ok(())

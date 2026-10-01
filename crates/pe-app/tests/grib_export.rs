@@ -190,6 +190,7 @@ fn write_archives(root: &Path) {
                 &height,
             ),
             ("mean_wave_direction", &direction),
+            ("mean_wave_period", &|_, _, _| 8.0),
         ],
     );
     let lats: Vec<f32> = (0..48).map(|i| 44.125 + 0.25 * i as f32).collect();

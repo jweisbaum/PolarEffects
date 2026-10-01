@@ -20,6 +20,7 @@ use crate::Polar;
 pub fn source_polar(source: &Source) -> Option<Polar> {
     match &source.kind {
         SourceKind::Orc { record } => Some(crate::vpp_to_polar(&record.vpp)),
+        SourceKind::Orr { record } => Some(record.polar.clone()),
         SourceKind::PolarFile { polar, .. } => Some(polar.clone()),
         SourceKind::Track { .. } => None,
     }

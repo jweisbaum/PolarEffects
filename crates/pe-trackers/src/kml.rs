@@ -177,6 +177,8 @@ pub fn parse_tracks(bytes: &[u8]) -> Result<Vec<KmlTrack>> {
                                     .into_iter()
                                     .zip(coords)
                                     .map(|(t, (lat, lon))| Fix {
+                                        tws: None,
+                                        twd_from: None,
                                         t,
                                         lat,
                                         lon,

@@ -2,8 +2,7 @@
 const catalogue: Record<string, string> = {
   // A source row's button: the verb, where the stage tab says the noun.
   "Compare@@verb": "Vergleichen",
-  "ORC polars": "ORC-Polaren",
-  "Search the ORC catalogue and add certificates.": "Den ORC-Katalog durchsuchen und Messbriefe hinzufügen.",
+
   "certificate": "Messbrief",
   "catalogue": "Katalog",
   "sister ship": "Schwesterschiff",
@@ -23,7 +22,7 @@ const catalogue: Record<string, string> = {
   "Boat speed against wind angle for one wind speed.": "Bootsgeschwindigkeit über dem Windwinkel für eine Windgeschwindigkeit.",
   "polar diagram": "Polardiagramm",
   "Sources to add": "Hinzuzufügende Quellen",
-  "Search the ORC catalogue and add certificates": "Den ORC-Katalog durchsuchen und Messbriefe hinzufügen",
+
   "No ORC polars in this project yet.": "Noch keine ORC-Polaren in diesem Projekt.",
   "Import Expedition and Adrena polars": "Expedition- und Adrena-Polaren importieren",
   "No polar files in this project yet.": "Noch keine Polardateien in diesem Projekt.",
@@ -136,7 +135,7 @@ const catalogue: Record<string, string> = {
   "Only certificates from this country": "Nur Messbriefe aus diesem Land",
   "All countries": "Alle Länder",
   "No certificate matches.": "Kein Messbrief passt.",
-  "Best {shown} of {total} certificates": "Die besten {shown} von {total} Messbriefen",
+
   "1 certificate": "1 Messbrief",
   "{total} certificates": "{total} Messbriefe",
   "Certificate {year}": "Messbrief {year}",
@@ -208,10 +207,10 @@ const catalogue: Record<string, string> = {
   "{tws} {unit}": "{tws} {unit}",
   "Full size": "Volle Größe",
   "Full-size polar plot": "Polardiagramm in voller Größe",
-  "Open the polar plot full size over the map": "Das Polardiagramm groß über der Karte öffnen",
-  "Open the polar plot full size over the map.": "Das Polardiagramm groß über der Karte öffnen.",
+  "Open the polar plot full size over the current view": "Das Polardiagramm groß über der aktuellen Ansicht öffnen",
+  "Open the polar plot full size over the current view.": "Das Polardiagramm groß über der aktuellen Ansicht öffnen.",
   "Close the full-size polar plot": "Das große Polardiagramm schließen",
-  "Close the full-size polar plot and return to the map.": "Das große Polardiagramm schließen und zur Karte zurückkehren.",
+  "Close the full-size polar plot and return to the current view.": "Das große Polardiagramm schließen und zur aktuellen Ansicht zurückkehren.",
   "TWA {twa}°, TWS {tws} {unit}, BSP {bsp} {unit}": "TWA {twa}°, TWS {tws} {unit}, BSP {bsp} {unit}",
   "No source has data at this wind speed.": "Keine Quelle hat Daten bei dieser Windgeschwindigkeit.",
   "all": "alle",

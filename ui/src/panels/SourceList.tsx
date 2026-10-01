@@ -1,21 +1,24 @@
+import { useBoatApi } from "../boats/context";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 
 import { needsOutline, themeColour } from "../colourContrast";
 import { reportFailure } from "../errors";
 import type { ProjectSummary } from "../generated/ProjectSummary";
 import type { SourceSummary } from "../generated/SourceSummary";
-import { onReveal } from "../help/highlight";
+import { useBoatReveal } from "../boats/context";
 import { msg, useT } from "../i18n";
-import { api } from "../ipc";
+
 import { compareSource } from "../compare/compareState";
-import { editSource } from "../polar/editFocus";
+import { useBoatEditing } from "../polar/editFocus";
 import { onThemeChange } from "../settings/themes";
+import BlendCorrectionDialog from "./BlendCorrectionDialog";
 import BlendSettingsDialog from "./BlendSettingsDialog";
 import ExportDialog from "./ExportDialog";
 import PALETTE from "./palette.json";
 
 /** A glyph and a name per kind of source. */
 const KINDS: Readonly<Record<string, { glyph: string; name: string }>> = {
+  orr: { glyph: "◆", name: msg("ORR polar") },
   orc: { glyph: "◆", name: msg("ORC polar") },
   polar_file: { glyph: "▦", name: msg("Polar file") },
   track: { glyph: "〰", name: msg("Track") },
@@ -33,14 +36,18 @@ let gestures = 0;
  * arrow keys on it. Every change is one undoable command in Rust; the list
  * shows whatever summary comes back.
  */
-export default function SourceList({ project, onProject }: {
+export default function SourceList({ project, onProject, unit = "kn" }: {
+  unit?: import("../generated/SpeedUnit").SpeedUnit;
   project: ProjectSummary;
   onProject: (project: ProjectSummary) => void;
 }) {
+  const { editSource } = useBoatEditing();
+  const api = useBoatApi();
+  const onReveal = useBoatReveal();
   const t = useT();
   const [picking, setPicking] = useState<number | null>(null);
   const [pickingBlend, setPickingBlend] = useState(false);
-  const [dialog, setDialog] = useState<"settings" | "export" | null>(null);
+  const [dialog, setDialog] = useState<"settings" | "export" | "correction" | null>(null);
   // The blend swatch's outline depends on the theme's background.
   const [, setThemeTick] = useState(0);
   useEffect(() => {
@@ -123,6 +130,9 @@ export default function SourceList({ project, onProject }: {
             onClick={() => setDialog("settings")}>
             {t("Blend settings")}
           </button>
+          <button className="small" data-feature="sources:blend-edit" onClick={() => setDialog("correction")}>
+            {t("Correct blend")}
+          </button>
           <button className="small" data-feature="sources:export"
             title={t("Write the blend as an Expedition, Adrena or CSV polar")}
             onClick={() => setDialog("export")}>
@@ -138,6 +148,7 @@ export default function SourceList({ project, onProject }: {
         {dialog === "settings" && (
           <BlendSettingsDialog project={project} onProject={onProject} onClose={() => setDialog(null)} />
         )}
+        {dialog === "correction" && <BlendCorrectionDialog unit={unit} project={project} onProject={onProject} onClose={() => setDialog(null)} />}
         {dialog === "export" && <ExportDialog project={project} onClose={() => setDialog(null)} />}
       </li>
       {sources.length === 0 && <li className="muted placeholder">{t("No sources yet.")}</li>}

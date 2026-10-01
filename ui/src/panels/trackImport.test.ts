@@ -5,7 +5,7 @@ import { assign, dateRange, describeImportLine, describeTrackFailure, fromLocalI
 
 const mapping: CsvMappingInput = {
   time: 0, lat: 1, lon: 2, heading: null, speed: 3, boat: null,
-  time_format: "auto", custom_format: "", speed_unit: "kn",
+  time_format: "auto", custom_format: "", speed_unit: "kn", wind_speed_unit: "kn", tws: null, twd: null,
 };
 
 describe("the track import's words", () => {

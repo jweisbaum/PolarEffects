@@ -23,7 +23,7 @@ let root: Root;
 
 const project: ProjectSummary = {
   id: 1, name: "P", path: null, dirty: false, revision: 1, boat_name: "", boat_notes: "",
-  sources: [{ id: 30, kind: "track", label: "Alpha", colour: "#0000ff", visible: true, weight: 1, count: 12, used: 12, polar_file: null, orc: null, track: null, edits: 1 }],
+  sources: [{ id: 30, kind: "track", label: "Alpha", colour: "#0000ff", visible: true, weight: 1, count: 12, used: 12, polar_file: null, orr: null, orc: null, track: null, edits: 1 }],
   can_undo: false, can_redo: false, undo_label: null, redo_label: null, use_corrected: true, stokes_drift: false, blend: TEST_BLEND,
 };
 

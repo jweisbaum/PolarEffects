@@ -13,7 +13,7 @@ defined in `plan.md`).
 
 ### 1.1 Purpose
 
-PolarEffects builds a sailing polar for one specific boat. The user gathers
+PolarEffects builds sailing polars in independent boat tabs within a project. The user gathers
 evidence about how the boat sails:
 
 - ORC velocity predictions for the boat and its sister ships,
@@ -85,7 +85,7 @@ These are repeated from `CLAUDE.md`, which is authoritative:
 
 Live tracking, routing, VPP computation from hull measurements, sail
 crossover charts, polars per sail, instrument log import (NMEA/Expedition
-logs: see §14), multi-boat projects.
+logs: see §14).
 
 ---
 
@@ -93,7 +93,8 @@ logs: see §14), multi-boat projects.
 
 | Term | Meaning |
 |---|---|
-| **Project** | One attempt to build one polar for one boat. Saved as `.wpsproj`. |
+| **Project** | One or more independent boat tabs, saved together as `.wpsproj`. |
+| **Boat tab** | One boat's sources, blend, filters, undo history and view state. |
 | **Source** | Anything that contributes to the polar: an ORC polar, an imported polar file, or a track. |
 | **Polar** | Boat speed (BSP) as a function of true wind angle (TWA) and true wind speed (TWS), on a TWA × TWS grid. |
 | **Sample** | One track position with its derived heading and speed and the wind, wave and current found for it. A dot in the plots. |
@@ -105,6 +106,60 @@ logs: see §14), multi-boat projects.
 ---
 
 ## 3. Application shell
+
+### 3.0 Boat tabs and fleet comparison
+
+A new project starts with one boat tab. **Add boat**, beside the project name
+in the top bar, creates another empty tab in any project, including tracker
+projects; there is no fixed tab limit. Double-click a boat tab (or press F2) to
+edit its name in place, Enter/blur to keep it and Escape to cancel. There is no
+separate rename button. **Delete boat…** removes the selected boat and cancels
+its weather jobs, keeping at least one boat. **Undo delete boat** restores removed
+tabs, sources and local edit histories while the project remains open. Deleting
+the first boat preserves the project title and save location. Every boat starts
+in the top camera view with 0° upwards, including empty boats and tracker tabs.
+Every boat has the same left/right overlay panels and centre view selector,
+with isolated sources, filters and undo history. Save, recovery and reopen retain
+all boats; older single-boat projects open as one tab. Boat-specific IPC requests
+carry the boat identity, so switching tabs cannot redirect in-flight work.
+
+Above the tabs, **Export all** appears when there are multiple boats and exports
+each boat's blend in the chosen existing polar format, with collision-free file
+names. A split layout compares two selected boats; a four-pane layout compares
+up to four. These layouts only show 3D and hide the tab row; each pane's boat
+dropdown replaces tab navigation. Rotation is synchronized; hovering a point
+shows each boat's nearby point at the corresponding TWA/TWS, or no matching point
+when that boat has none. Each pane retains independent sources and filters.
+Comparison filter/display overlays start collapsed behind **Filters and display**;
+single-view panel states are retained when switching layouts.
+
+**Open tracker link** accepts YellowBrick and Blue Water event links and creates
+one tab per boat. It imports the event track and all available local polars and
+library tracks confidently identified as the same model. Both historical tracks
+and polars may come from other boats of that identical model (user clarification,
+2026-10-01). Preserve the original tracker details and URLs. Use all available
+details including MMSI, sail number, boat/team aliases, length, builder, model,
+class and type to resolve the model; model-like values may occur under any of
+those descriptive labels. Generic racing classes, a shared builder alone, or a
+name alone must not establish an identical model. Conflicting model numbers,
+builders or materially different lengths reject an automatic association.
+Conflicting MMSIs also reject an individual-vessel identity match used to fill
+missing model information; different vessels can still share the same model.
+Discovery/import reports progress, supports cancellation, avoids duplicate
+sources and reports unavailable files or unresolved model information.
+The opening dialog offers **Identical models** (default) or **Exact boat only**
+for both polars and historical tracks. Exact matching requires a valid matching
+MMSI or a matching qualified sail number corroborated by builder and known
+length. Names and model specifications alone do not establish identity;
+contradictory MMSIs, models, builders or lengths reject an association. The race
+track itself is included in either mode. The boat report displays the original
+available metadata, including model/class/type, builder, length, MMSI, sail number,
+and provider-specific fields and URLs; none of those original values is replaced
+by the normalized model used for matching.
+The boat list is a preview: **Open project** commits it. **Cancel** or Escape
+discards it and closes the dialog, preserving the previous project, unsaved
+edits, undo history and recovery snapshot (or returning to the start screen).
+Changes to the current project while reviewing the list prevent replacement.
 
 ### 3.1 Start screen
 
@@ -150,13 +205,13 @@ deferred (§14).
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│ [Project ▾]  Fastnet polar •        [Map | 3D | Compare]   [? search] ⚙ │
+│ Fastnet polar •   [3D | Map | Compare]   [? search]  [Project ▾]  ⚙    │
 ├──────────────┬───────────────────────────────────────────┬─────────────┤
 │ ◀ ORC polars │                                           │ Sources     │
 │   search…    │                                           │ ■ ORC Bxx   │
 │   added list │         centre stage:                     │ ■ Exp file  │
-│ ▸ Polar files│         world map (default),              │ ■ Track 1   │
-│   import…    │         3D polar, or compare              │ □ Track 2   │
+│ ▸ Polar files│         3D polar (default),               │ ■ Track 1   │
+│   import…    │         world map, or compare             │ □ Track 2   │
 │ ▸ Tracks     │                                           │─────────────│
 │   + YB / GV  │                                           │ Polar plot  │
 │   + BWT / file                                           │ (2D, dots)  │
@@ -166,9 +221,11 @@ deferred (§14).
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Title bar**: the project menu, the project name (click to rename), a dirty
-  dot, the stage switcher, the help search (a search box and a "?" button
-  that opens the help window) and settings (Cmd/Ctrl-,).
+- **Title bar**: the project name (click to rename), a dirty dot, the stage
+  switcher, the **Asymmetric polar** checkbox, the help search (a search
+  box and a "?" button that opens the help window), the Project menu and
+  settings (Cmd/Ctrl-,). The Project menu sits
+  between search and settings; its popup opens towards the left.
 - **Project menu**: New…, Open…, Open Recent ▸, Save, Save As…, Close, each
   with `data-feature="project:*"`. Standard shortcuts (Cmd/Ctrl-N, O, S,
   Shift-S, W). Cmd/Ctrl-Z and Shift-Z undo and redo outside text fields. The
@@ -177,9 +234,16 @@ deferred (§14).
 - **Left navigation**: collapsible as a whole (◀) and per section. Three
   sections, in this order: ORC polars (§5), Polar files (§6), Tracks (§7).
   Collapse state is remembered per user, not per project.
-- **Centre stage**: one of Map (default, §9.1), 3D (§10) or Compare (§11).
+- **Centre stage**: 3D (default, §10), Map (§9.1), then Compare (§11). Map
+  appears only when the project contains an imported track (including hidden
+  tracks). Removing the last track while on Map returns to 3D. Opening or
+  creating a project starts in 3D.
 - **Right panel**: the source list (§8) and the 2D polar plot (§9.2).
   Collapsible.
+- Both side panels overlay the centre stage. Opening or closing either panel
+  leaves the stage viewport, canvas dimensions and camera framing unchanged.
+  Floating view controls stay in the uncovered area; panel dialogs and the
+  full-size polar plot open above the side panels.
 - **Status bar**: hints, errors, and a progress line for running jobs, with
   Cancel.
 
@@ -201,7 +265,7 @@ The VectorEffects save guard is copied unchanged (D9):
   emits `app://quit-requested`, the frontend runs the same guard, and exits
   through `quit_app(discard_unsaved)`, which Rust checks like any other
   discard. "Don't save" also drops the recovery snapshot.
-- A running job (scrape, reanalysis fetch, GRIB export) belongs to the
+- A running track job (tracker download or reanalysis fetch) belongs to the
   project. Replacing the project asks to cancel the job first.
 
 ### 3.4 Settings (global)
@@ -235,6 +299,115 @@ or a failed write leaves the previous setting in place.
 - **Polar plot dot band** (§9.2): how far from the plot's wind speed a
   sample may be and still be drawn, ±0.25 to ±5 kn (default ±1 kn). A display
   preference; it never changes the blend.
+
+### 3.4.1 PostgreSQL track library
+
+Settings includes a PostgreSQL host, port, database, user, masked password,
+and optional certificate-verified TLS. **Test connection** checks login and
+read access to the relevant schema on a blocking worker, showing green
+success or red failure with diagnostics. Database settings are applied with
+**Save database settings**; Download, Scrape and Export also save them first.
+Passwords belong only to the local settings, never project files, metadata or
+connection logs. Defaults are localhost:5432, postgres, syrfbackendprod, no
+password, and on-demand scraping. There is no automatic connection on launch
+unless startup scraping was explicitly selected.
+
+The GeoJSON directory is the root containing the database's relative storage
+keys. On the development machine the verified root is
+`/Volumes/Disk_Three/s3/syrf-tracks-individual-production`, containing
+`individual-tracks/<competition GUID>/vessel/provided/<participant GUID>.geojson`.
+The earlier `syrftracksgeojson` directory contains race collections from a
+nonmatching database snapshot; it is also supported when GUIDs match.
+Directory changes never move or delete existing tracks. Storage keys cannot
+escape the selected directory through traversal or symlinks.
+
+**Download boat metadata** reads one repeatable PostgreSQL snapshot and
+atomically replaces `boat-metadata.json` in the chosen metadata directory
+(default: the application's config directory, `boat-metadata/`). It includes
+full Vessels, VesselParticipants, VesselParticipantEvents, CalendarEvents,
+Courses and CourseUnsequencedUntimedGeometries rows, plus CompetitionUnits,
+VesselParticipantGroups and VesselParticipantTrackJsons needed to connect
+boats to files. Every branch is limited to YellowBrick, Geovoile, Blue Water,
+old Geovoile, Regadata and America's Cup (including 2021); soft-deleted vessels
+are excluded. Other database sources are never searchable.
+
+The Tracks panel searches values in every field of the full local Vessels rows,
+including name, model, class, make, builder, sail number, IDs, measurements and
+custom fields. Text, numbers, booleans and nested JSON values are searchable;
+nulls and field names are not treated as values. Matching ignores case, accents
+and punctuation. Every query word must match the same vessel, but words may
+match different fields. Folded text is cached once per vessel, shared by its
+tracks, and rebuilt from existing version-1 snapshots without a new download.
+Results retain deterministic pages of 100 tracks. Each result shows
+boat, event, provider, model, sail number, date, original URL and file availability.
+Importing a result preserves the query, current page and remaining results so
+several tracks can be added without repeating the search. A successfully added
+track is removed from that search's results and count, including when revisiting
+its page. Failed imports remain available to retry. These removals are temporary
+search state; catalogue pagination keeps its original offsets to avoid skipping
+other tracks.
+Import selects the participant GUID, reads SYRF LineStrings with millisecond
+timestamps and optional speed/heading columns (including `properties.detail`),
+and creates an ordinary immutable track source with undo and project persistence.
+Project identity and duplicates are checked under the import commit lock.
+Weather remains a separate per-track or selected-tracks action (§7.5).
+
+**Scrape tracks now** runs native Rust YellowBrick, Geovoile and Blue Water
+clients and course decoders. Schedule options are on demand, startup or
+shutdown; no Python, Node, browser, Docker, libpq or downloaded executable is
+used for scraping in any build. An optional list of explicit race URLs refreshes
+those events. Otherwise discovery uses public provider listings and original
+URLs already in the database, skipping completed races whose registered files
+exist. Every scrape mode, including explicitly entered URLs, imports only
+finished races. A published terminal result is required for every participant;
+an actual finish timestamp can supply that result despite a stale Racing flag.
+Future dates, missing results and ongoing races are skipped, counted in job
+progress, and produce no track files or race rows. Old last fixes and planned
+end times alone do not establish completion. YellowBrick setup and Geovoile
+reports are checked before requesting their track files. Geovoile legs are
+checked independently even when the current leg is unfinished. Blue Water's
+API combines metadata and positions in one response; it must be read to check
+completion, but is discarded without ingestion when completion is unverified.
+YellowBrick discovery reads `App/Races?version=3`, then the configured
+user key/device ID's `App/MyRaces?version=4` for actual race codes. Missing
+products explicitly listed as free are associated via the mobile API before
+MyRaces is read again. Paid and unknown-price products are never associated.
+Parent and child codes and repeated base URLs are parsed and deduplicated;
+codes containing ampersands, dots and encoded spaces are supported.
+Numeric catalogue IDs and product IDs are never guessed to be tracker codes.
+Without credentials, exact catalogue IDs can reuse known database URLs.
+`yellowbrick-races.json` in the metadata directory records catalogue IDs,
+titles, dates and resolved URLs, including unresolved entries. Job details
+report unresolved counts instead of claiming that an empty URL list is success.
+Credentials stay in local Settings, never source code, metadata, exports or
+diagnostics. Association progress is cancellable; three consecutive failures
+stop further associations. Catalogue IDs preserve parent calendar identity
+across newly discovered child races. Geovoile's separate legs are fetched independently.
+
+Ingestion serializes app writers with a PostgreSQL transaction advisory lock,
+reuses existing provider/race and boat/participant identities, and assigns
+stable UUIDs to new records. Calendar events, competition units, participant
+groups, vessels, participants, courses, available course geometries and track
+storage references are updated. SYRF individual-track Features are published
+atomically before their database references; interrupted transactions can leave
+complete unreferenced files, reused on retry. Original URLs and existing derived
+storage references are retained. These three providers do not publish SYRF mark
+crossing/rounding events: existing VesselParticipantEvents are preserved, not
+invented from track endpoints. No remote-service analysis engine is invoked.
+
+Jobs report progress, contextual failures and cancellation in Settings. Completed
+races survive cancellation, and their metadata is refreshed. Shutdown waits for
+writers and any selected shutdown scrape, keeping cancellation available, and
+rechecks the project if edits occurred while waiting. The last job result is
+saved in the config directory and visible after reopening the app.
+
+**Export entire database…** writes a complete plain SQL dump through installed
+PostgreSQL `pg_dump` (auto-detected on macOS, Linux or Windows, or explicitly
+configured). It exports all database tables and schema, including PostGIS,
+without source ownership or privilege grants. It does not embed connection
+passwords and needs no source password on restore. Authentication to the target
+PostgreSQL server remains that server's policy. Export runs off the UI thread,
+can be cancelled, and publishes the selected output only on success.
 
 ### 3.5 Language, help and tooltips
 
@@ -314,12 +487,16 @@ Project
                                                 //  min_samples, n_full,
                                                 //  smoothing, use_corrected,
                                                 //  include_stokes_drift, colour,
-                                                //  visible, default_statistic
+                                                //  visible, default_statistic,
+                                                //  asymmetric, interpolation, corrections,
+                                                //  global_filters, priority_groups,
+                                                //  priority_min_samples
   sources: [Source]                             // ordered as the user sees them
   next_id                                       // ids never exceed 2^53 − 1
 Source
   id, kind, label, colour "#rrggbb", visible, weight (0..=2, default 1)
   kind = Orc { record: OrcRecord }                     // copied from the catalogue
+       | Orr { record: OrrRecord }                     // immutable certificate variant
        | PolarFile { format, file_name, polar: Polar } // parsed at import
        | Track { track: Track }
   overlay: Overlay
@@ -343,7 +520,7 @@ Track
 The form has one required field, **Project name**. Optional: boat name and
 notes. The grid and blend settings start from defaults (§12.2) and are
 changed later from the Blend section of the source list. A new project opens
-straight into the project window with the Map stage.
+straight into the project window with the 3D stage.
 
 ### 4.3 File format: `.wpsproj`
 
@@ -358,6 +535,11 @@ Same container rules as VectorEffects' `.veproj` (D11):
     its samples by column, only what is not derived (schema 2, §7.5; schema
     1 wrote one object per sample and is migrated on open). Kept separate so
     `project.json` stays small and diffable.
+  - `boats/<boat project id>/tracks/<track id>.json`: additional boats’ bulk
+    data (schema 6). The first boat retains the original track paths.
+    `project.json` stores additional boat documents under `boat_tabs`; tabs
+    cannot be nested. Each boat owns its own sources, grid, IDs and overlays.
+    Schemas 1–5 open as one boat without changing imported data.
 - Every entry has a fixed timestamp, so saving an unchanged project twice
   gives identical bytes.
 - No rendered images and no blend results (invariant 2). A test fails on any
@@ -545,8 +727,9 @@ The ORC catalogue is **embedded in the app** (D3):
     or a short row is an empty cell, and a row longer than the header is an
     error. In tab- and semicolon-separated files (and Expedition), a comma
     inside a number is its decimal point (`5,25`).
-  - Angles in (180°, 360°] are the port side and are folded (`360 − TWA`);
-    where a file gives both sides of one angle, the two speeds are averaged.
+  - Angles in (180°, 360°] preserve the independent port side. Symmetric
+    display mode averages opposite original nodes as a derived operation;
+    full-circle display and exports retain both sides.
     Angles below 0° or above 360° are refused. The same TWS twice, or the
     same written TWA twice in a row or table, is refused.
   - Files over 4 MB, or with more than 512 distinct angles or wind speeds,
@@ -569,12 +752,14 @@ The ORC catalogue is **embedded in the app** (D3):
 The Tracks section lists every track source: colour, boat name, event title,
 date range, sample count, and a weather status (not fetched, queued,
 fetching n %, ready, partial, failed). Each has a tick box, **Fetch
-weather…** (Cancel fetch while it runs), Show on map, Remove, and Export
-reanalysis GRIB (§7.8).
+weather…** (Cancel fetch while it runs), Show on map and Remove.
 
 Buttons above the list: **YellowBrick…**, **Geovoile…**, **Blue Water…**,
-**File…**; and, once there are tracks, **Fetch weather for selected
-tracks…**, over the ticked tracks. Several events and several files can be
+**File…**; and, once there are tracks, **Select all** and **Fetch weather for
+selected tracks…**, over the ticked tracks. Select all ticks every imported
+track and is disabled when all are already ticked. It does not start a download;
+the weather button opens the usual estimate, leaving queued/running tracks out.
+Several events and several files can be
 imported into one project, and several boats from one event. Importing never
 fetches weather (D24): an imported track shows "Weather: not fetched" until
 the user asks for it.
@@ -679,7 +864,8 @@ In detail (M10):
 - Some keys return 5xx (an unknown key's `RaceSetup` answers 500); the
   dialog says the tracker is not answering and offers Retry. A `RaceSetup`
   that is a web page is "no public event at this address".
-- The app.yb.tl purchase flow and any device credential are never used (D5).
+- Direct track import does not need app credentials. Catalogue discovery may
+  use the person's configured credentials and free-race associations (§3.4.1).
 
 **Geovoile** (hosts `*.geovoile.com`):
 
@@ -801,6 +987,18 @@ In detail (M11):
   undo entry. The import summary gives, per track, the positions kept, how
   many were out of order and sorted, how many duplicate times were merged,
   and how many headings and speeds were given or derived.
+
+#### Supplied true wind
+
+CSV mapping includes optional TWS and TWD columns and a separate wind speed unit.
+GeoJSON accepts `tws`/`twd` (also true_wind_speed/true_wind_direction) on Points
+and matching per-vertex arrays on LineString/MultiLineString. SYRF detail maps
+may identify TWS/TWD coordinate columns. Directions are true degrees **from**
+north; speeds are converted to knots. A complete supplied pair takes precedence
+by default, falling back to downloaded weather for other points. Track details
+can choose downloaded weather only, undoably. Both sources survive weather
+refetch, rederivation, save and reopen. Schema 5 adds optional fields; older
+projects keep their previous result.
 
 ### 7.4 Deriving heading and speed
 
@@ -972,6 +1170,110 @@ HTTP 403 or 404; both mean "no data".
 
 ### 7.6 Sample filters
 
+**Live analysis extension.** Valid number edits apply after a 120 ms typing
+pause, with blur flushing immediately. Writes are serialized and newer drafts
+survive older responses. Track, global and priority filter changes invalidate
+derived points, segments and blend in both views. Main wave sliders apply an
+additional saved constraint to track samples and the blend, without replacing
+track/global/priority filters.
+
+Direction, apparent wind angle (AWA), true wind speed and true wind direction
+can each have a maximum change threshold. Compare each observation only with
+the immediately previous and next points, as confirmed by the user. Never skip
+an unknown neighbour to compare farther away, or bridge a gap exceeding the track's
+maximum gap. Thresholds are inclusive: only a strictly greater change excludes
+points. Missing observations cannot establish a change. Angles use the shortest
+circular separation; AWA is the bearing of air velocity relative to the moving
+boat, retaining port/starboard sign. All comparisons use original observations,
+so another filter cannot hide a change. Wind speed/direction and heading follow
+the current-correction selection; apparent air velocity is frame invariant and
+AWA uses the selected bow heading.
+Stop detection uses ground speed with padding on both sides; tack/gybe windows
+cover the two bounding fixes plus padding before and after.
+
+**M19 extension (requested 2026-09-30).** All filters remain reversible
+overlays. Optional switches exclude samples with unknown wave data (height
+or direction missing) and unknown current (speed or direction missing).
+Zero height/speed is known, not missing. Wave direction can also be compared
+with COG, independently of current correction (0° ahead, 180° astern).
+
+An optional tack/gybe window removes both observations bounding a change
+of tack and a configurable number of seconds before and after them. Neutral
+head-to-wind or dead-downwind observations can bridge the change; missing
+wind or gaps longer than the track's maximum derivation gap cannot. An
+optional stop threshold uses ground speed, including exact zero, with a
+configurable exclusion window before and after each stopped observation.
+The existing heading-change filter remains independent.
+
+The timestamp filter keeps samples at multiples of a configurable interval
+in minutes or seconds from UTC midnight (60 seconds for minutes, 3600 for whole hours); it
+never moves or rounds a sample's time. Track start/end inputs accept seconds.
+
+The 3D view exposes **Global point filters** only when the project has track
+data. These offer the same settings without start/end times, apply after
+each track's own filters, and affect the derived segments, blend and every
+view consistently. They start disabled; enabling an empty global layer
+adds no exclusions. All changes are saved and undoable (schema 3); schema 2
+projects migrate with every new option disabled.
+
+The user-requested ORR catalogue source is [RegattaMan's public ORR valid
+list](https://www.regattaman.com/valid_list_ora.php?crule=ORR&sdir=true&ssdir=true&sort=3&ssort=0).
+The app includes a captured catalogue and Settings offers a year-specific,
+user-started refresh with progress and cancellation. Only `pe-trackers` contacts
+`www.regattaman.com`; source lookup and project imports work offline. The two
+boat-speed tables (offshore and short-course) remain separate variants; time
+allowances are never read as boat speeds. Physical measurements come from
+metric original inputs, not converted display spans. Each SKU/variant is stored
+once, repeat scrapes update that record, and repeat project imports are no-ops.
+Failures name their certificates; cancellation leaves the prior catalogue intact.
+Complete public certificate data is cached: every named valid-list column
+(including effective/expiry dates, IR and BM-PHRF spin/non-spin ratings), all
+Data and performance-metric fields, public ownership, comments, and line-drawing
+parameters. Field identifiers, labels, original metric values and enum display
+labels are retained, including blanks, zeros and negative values. Original
+offshore/short-course speed and time-allowance tables keep their wind columns,
+row labels, units and footnotes. All embedded rating blocks are decoded directly
+from `data-ratingjson`, including custom/general TCF, GPH, wind-band TCF and PCS
+ratings, their course/wind/system keys, and both spin and non-spin values.
+Rating precision is preserved as published; missing values stay missing.
+Missing/malformed ratings or mismatched certificate identity fail explicitly.
+Raw HTML, scripts, login/session state and generic glossary tables are not saved.
+Imported records are immutable copies with ordinary overlays. Schema 4 adds an
+optional certificate payload; older imports retain their original polar-only
+data. An old polar-only catalogue cache cannot mask a complete bundled record.
+Builder and build year searches use the newly captured certificate fields.
+
+The top bar's **Asymmetric polar** checkbox selects full-circle
+asymmetric mode in every stage; it is not in Blend settings. Starboard occupies
+0–180°, port 180–360°. Half-circle sources seed both sides; full-circle imports
+retain their independent values. Symmetric mode averages opposite source cells
+without modifying the import. Exports preserve full-circle axes and read back
+without folding. Switching the mode immediately changes the output grid in one
+undoable step. Unchecked selects symmetric mode. Blend settings edits the grid
+using the selected mode.
+Grid presets offer 1/2/5/10° TWA and 1/2/5/10 kn TWS spacing; changing
+the TWS step rounds the existing upper limit up to the next step.
+
+Interpolation is selectable: linear (the old default) or shape-preserving
+monotone cubic Hermite interpolation (PCHIP), first along TWA then TWS.
+The slope rule follows the [SciPy PCHIP reference](https://docs.scipy.org/doc/scipy/reference/generated/scipy.interpolate.PchipInterpolator.html).
+Both modes preserve source coverage and exclusions and never extrapolate.
+The chosen rule applies to source resampling, blend filling, plots and export.
+The 0° and 360° rows stay zero and never anchor interpolation. Manual blend
+corrections are saved as cell overlays after blending; resetting them restores
+the current derived result. No computed blend is persisted.
+
+Optional priority groups are evaluated after individual/global filters and
+manual sample exclusions. For each TWA/TWS cell, pool eligible observations
+from visible tracks with positive weight; select the first group with at least
+the configurable minimum. Only that group's matching samples contribute,
+once each even if groups overlap. If no group qualifies the cell has no track
+evidence. A group's filters are independent of other groups, and may loosen
+criteria in later groups. With priorities enabled, the pooled group minimum
+replaces each individual track's minimum; each contributing track still uses
+its own statistic and the unchanged sample-confidence blend weight. Ordered
+groups, their minimum and edits are undoable and saved.
+
 Per track source, editable any time, undoable:
 
 - **Wave height** range (m) and **wave direction**: relative to the bow
@@ -1011,13 +1313,12 @@ Filtered-out samples stay in the project and appear dimmed in the plots when
 
 ### 7.7 Jobs
 
-Scraping, reanalysis fetches and GRIB exports are **jobs**: they run on a
-worker pool, show progress in the status bar and the track list, and can be
-cancelled. The exceptions are a tracker event's download, whose progress
-and Cancel show in the tracker dialog that started it (§7.2), and a GRIB
-export, whose progress and Cancel export show in its dialog (§7.8), since
-nothing else can go on in the dialog meanwhile; the boat list it sends ahead can be
-searched and ticked while it runs. A tracker download never includes weather
+Reanalysis fetches run on a worker pool, show progress in the status bar
+and track list, and can be cancelled. Tracker downloads show progress and
+Cancel in their import dialog; the boat list can be searched while downloading.
+ORR catalogue refreshes show progress and cancellation in Settings, continue
+while Settings is closed, and are independent of the open project.
+A tracker download never includes weather
 (D24). A cancelled or failed fetch keeps whatever samples completed
 (status "partial") and can be resumed with Fetch weather…. Jobs for tracks from the
 same event share the session's in-memory blocks, so the second boat of a
@@ -1061,76 +1362,11 @@ The environment fetch in detail (M9):
   are kept for the session, so only the first track pays their metadata
   requests.
 
-### 7.8 Reanalysis GRIB export
+### 7.8 Reanalysis GRIB export — removed in M19
 
-Per track: **Export reanalysis GRIB…** (in the track's unfolded details)
-writes the 10 m wind (u, v) over the track's area to a `.grib2` file
-(M16):
-
-- Area: the track's bounding box plus a 2° margin, on the native 0.25° grid
-  (the north and east edges rounded up, the south and west down to grid
-  lines), handling the antimeridian: the box is the shortest arc of
-  longitude holding every fix, so a race across 180° gets a box a few
-  degrees wide there, and one whose longitudes and margins go all the way
-  round is global from 0°E. Latitudes stop at the poles.
-- Times: every hour from the first fix to the last (the hour at or before
-  the first fix to the hour at or after the last), or every third hour
-  (00, 03, … UTC) if chosen.
-- Options: include wave height and direction, include current (both
-  offered with what they add to the download).
-- Values are the archives': at a grid node and a whole hour the wind and
-  waves are ERA5's own values (WeatherBench2 until it ends, then
-  ARCO-ERA5, as §7.5), in m/s, metres and degrees "from". The current
-  comes from the same tier chain as sampling (§7.5.1, with the project's
-  Stokes-drift choice) and is regridded to the 0.25° nodes by bilinear
-  interpolation, land corners left out (so a coastal node may take its sea
-  neighbours' value). A node with no value — land for waves and current,
-  or an hour an archive does not have — is written as missing with a
-  bitmap, never as zero.
-- Messages: at each time, in this order, wind u and v (discipline 0,
-  category 2, parameters 2 and 3, 10 m above ground), wave height and
-  mean wave direction (discipline 10, category 0, parameters 3 and 14 —
-  14 is ERA5's `mwd`, "direction of combined wind waves and swell", as
-  ecCodes names it — the surface), current u and v (discipline 10, category 1, parameters 2 and
-  3, 0 m below the sea surface). Time convention (VectorEffects'): the
-  reference time is the first time written, and each message carries its
-  offset from it in hours as the forecast hour.
-- **Writer** (D14): the VectorEffects approach, native Rust with a fixed
-  message template. Sections 0–8 are laid out once with constant values
-  (shape of earth 6, template 3.0 lat/lon grid, template 4.0, template 5.0
-  simple packing at 16 bits, no bitmap unless a value is missing, the
-  local-use section "Created with PolarEffects", centre 255). Per message
-  only the reference time, forecast hour, grid corners, parameter and data
-  array change. Ported from `ve-grib::writer` with regional grids added:
-  `Lo1` and `Lo2` in 0–360°, so a box across the prime meridian has `Lo2`
-  < `Lo1` and one across the antimeridian `Lo2` past 180°.
-- The data is fetched at export time, only the blocks covering the box's
-  rows for each hour (as §7.5), into the session's memory, with nothing
-  cached on disk. The current's geoChunks hold months of a small box each,
-  so it is read first, tile by tile (16 × 16 nodes over every time), into
-  a temporary file beside the export (two `f32` a node and time); then
-  the wind and waves a few hours at a time — an area of more than 200,000
-  nodes in runs of nodes — each hour's messages written as its values
-  arrive. Neither the file nor the current is held whole in memory. The
-  dialog warns when the current's temporary file would pass 1 GB.
-- The dialog shows the area, the number of times with the first and last,
-  what the wind, the waves and the current would download (§13's
-  estimate, less what this session holds of the parts ticked) and the
-  file's size, before anything is fetched. The estimate is worked out
-  from the area's extent and each archive's chunk and block geometry —
-  ERA5's blocks per row, the current tiers' boxes and blocks of hours —
-  never position by position, so a global area over 90 days costs no more
-  than a bay. Save… asks for the file, then the export runs as a
-  job with its progress (and the bytes downloaded) in the dialog; Cancel
-  export stops it. One export runs at a time. An archive that fails
-  (other than by the cancel) fails the export with the reason; an export
-  that stops unexpectedly ends "failed", never stuck running.
-- The file is written to `<name>.tmp` and renamed into place when
-  complete: a cancelled or failed export writes nothing and leaves what
-  was at the path. On success the status line says where it went, and how
-  many fields had no data at all.
-- Output is byte-reproducible (invariant 5; a golden file pins it) and
-  validated by ecCodes in CI.
+The track GRIB export option, its dialog and its help/search entries have
+been removed at the user's request. Weather fetching for track samples is
+unchanged. The GRIB encoder and backend fixture tests are retained internally.
 
 ---
 
@@ -1165,8 +1401,9 @@ The right panel lists every source (ORC, file, track) in one list:
 
 ### 9.1 Map
 
-The default centre stage. A WebGL2 world map with the VectorEffects basemap
-(Natural Earth land and coastlines, embedded; no tiles). Projections:
+Available only when tracks have been imported. A WebGL2 world map with the
+VectorEffects basemap (Natural Earth land and coastlines, embedded; no tiles).
+Projections:
 equirectangular and orthographic, chosen on the map and remembered in the
 settings. Drag pans the flat map or turns the globe; the wheel zooms, about the
 pointer on the flat map and about the centre on the globe; "Fit the world"
@@ -1192,7 +1429,7 @@ mask texture, so no land triangle folds across the horizon.
 
 ### 9.2 Polar plot
 
-A classic 2D polar diagram in the right panel (and full-size as a Map stage
+A classic 2D polar diagram in the right panel (and full-size as a centre stage
 overlay on demand):
 
 - A TWS slider (or "all") chooses the slice (D21). One value draws one curve
@@ -1221,13 +1458,16 @@ overlay on demand):
 - Ring values (BSP) sit just under the 90° spoke and angle labels just
   outside the outermost ring; no two labels overlap, and a ring value that
   would touch another label is left out.
+- Asymmetric polar angle labels read 0–180° on each side of the diagram.
+  Full-circle angles still position independent port/starboard curves and dots;
+  only tick text is mirrored (270° is labelled 90°, 330° is labelled 30°).
 - The rings, the slice's wind speed, its dot band and the hover are in the
   display speed unit (§3.4): rings at round values of that unit, placed at
   their speed in knots. Everything arrives in knots and is converted only
   where it is drawn as text (M17b). So does the 3D drag readout (§10.4).
-- Full size opens the same plot as a large overlay owned by the Map stage
-  (D21): the panel's "Full size" button switches to the Map stage and opens
-  it; its own button, Escape, or switching stage again closes it.
+- Full size opens the same plot as a large overlay on the current stage,
+  including projects without tracks. Its own button, Escape, or switching
+  stage closes it (M19b supersedes the Map-only overlay in D21).
 
 ---
 
@@ -1250,6 +1490,9 @@ overlay on demand):
   tower, the classic polar diagram with every TWS stacked); side looks
   across it, so each TWS is a level; the axes carry tick labels in the
   display speed unit.
+- Asymmetric angle ticks read 0–180° on each half, as in the 2D plot; the
+  Cartesian axis reads 0–180–0°. The geometry, stored grid and editable cell
+  identities retain their full-circle angles.
 - Every surface is the source's own grid over its own axes, as edited
   (its cell overrides written in, §10.4): nothing is
   resampled or extrapolated, and an empty cell is a hole.
@@ -1275,6 +1518,26 @@ Polar nodes have no environment, so they keep their source colour in every
 colour mode. A mode, or "show filtered", with nothing to show (no sample has
 that value, no sample is filtered) is offered disabled with a tooltip saying
 why.
+
+**Wave range filters** sits at the bottom centre of the 3D view, between the
+open side panels. Each metric uses one horizontal slider with round start/end
+handles on a shared rail and a value at each end: significant wave height
+(the Settings height unit), wave angle off the selected bow (0–180°), and wave
+period (seconds). Both handles remain reachable when they coincide and support
+native keyboard adjustment. Clicking and dragging the selected rail between the
+handles moves both bounds together, preserving the range width and stopping at
+either end of the scale. The selected rail is keyboard-focusable: arrow keys
+move it one step, and Home/End move it to the start/end of the scale. Pressing
+the rail without moving does not change either bound. All three inclusive ranges apply together, in addition
+to track/global/priority filters. Moving a slider previews the dots immediately
+and updates the native blend, 2D/3D surfaces, sample counts and exports. The
+constraints are saved and undoable, surviving changes of stage and reopen.
+Missing measurements cannot satisfy active bounds; inactive bounds keep them.
+A metric with no data has disabled sliders. Bounds cannot cross. Show the
+resulting sample count and offer **Reset ranges**, which clears only these
+additional wave bounds. Imported polar sources remain intact. Dots outside the
+ranges are not actionable selections (§10.3).
+The right-side controls and polar editor reserve space above the wave sliders.
 
 ### 10.3 Excluding dots
 
@@ -1546,6 +1809,12 @@ a Snapdragon X Windows ARM64 laptop):
 | Second boat from the same event | < 5 s when its blocks are in memory; otherwise only the hours and boxes the first boat did not need |
 | Tracker address to a pickable boat list | as short as the tracker allows: the first response naming the boats, no weather (D24) |
 
+The native live-analysis filter pass was measured on the Intel development Mac
+with 200,000 observations and all four previous/next change thresholds: 45.4 ms
+for changing data and 48.8 ms for steady sailing (optimized development
+libraries). The comparisons are O(n). These timings cover filtering, not IPC or
+rendering.
+
 Reanalysis is read by block (§7.5, D27): one hour of one variable is a
 64-byte head and usually one block of its global field — about 0.43 MB of
 wind, 0.17–0.31 MB of wave height or direction at mid-latitudes — instead
@@ -1582,3 +1851,8 @@ UTC and interpolates linearly between them; currents are always hourly.
 ## 15. Resolved questions
 
 See the decisions log in `plan.md` §5.
+
+
+3D dots show source, TWA, TWS and BSP on hover. Track dots additionally show UTC
+time, wave height, angle and period, current speed, and excluded/filtered status.
+Hover follows visible dot picking and clears during navigation or selection.

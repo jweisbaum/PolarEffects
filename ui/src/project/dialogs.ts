@@ -107,17 +107,17 @@ export async function pickExportPath(format: string, suggestedName: string): Pro
   return typeof chosen === "string" ? chosen : null;
 }
 
-/**
- * Asks where to write a track's reanalysis GRIB (spec.md 7.8), suggesting
- * `<track>.grib2`. Returns null if the user cancelled.
- */
-export async function pickGribPath(suggestedName: string): Promise<string | null> {
-  const chosen = await whileChoosing(msg("Choosing where to export"), () =>
-    save({
-      title: t("Export reanalysis GRIB"),
-      defaultPath: `${suggestedName.replace(/[\\/:*?"<>|]/g, "_")}.grib2`,
-      filters: [{ name: t("GRIB file"), extensions: ["grib2", "grb2", "grib"] }],
-    }),
-  );
+/** Local database library paths, shared with the development dialog seam. */
+export async function pickLibraryDirectory(): Promise<string | null> {
+  const chosen = await whileChoosing(msg("Choosing a library directory"), () => open({ directory: true, multiple: false }));
+  return typeof chosen === "string" ? chosen : null;
+}
+
+export async function pickExportDirectory(): Promise<string | null> {
+  const chosen = await whileChoosing(msg("Choosing where to export"), () => open({ directory: true, multiple: false, title: t("Export all polars") }));
+  return typeof chosen === "string" ? chosen : null;
+}
+export async function pickDatabaseExport(): Promise<string | null> {
+  const chosen = await whileChoosing(msg("Choosing where to export the database"), () => save({ defaultPath: "syrfbackendprod.sql", filters: [{ name: t("SQL database export"), extensions: ["sql"] }] }));
   return typeof chosen === "string" ? chosen : null;
 }

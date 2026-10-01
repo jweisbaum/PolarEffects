@@ -2,7 +2,7 @@
  * The title bar's help search in each language: a feature's label → its
  * result → the orange flash around the control.
  */
-import { assert, newProject, setLanguageInSettings } from "./harness.mjs";
+import { assert, setLanguageInSettings } from "./harness.mjs";
 
 const LABELS = { en: "Fit the world", fr: "Voir le monde entier", de: "Ganze Welt zeigen" };
 
@@ -10,7 +10,7 @@ export default {
   name: "help search",
   async run(t) {
     const d = t.driver;
-    await newProject(d, "Help search");
+    await d.open(t.path("tools/webdriver/fixtures/analysis.wpsproj"));
     for (const [language, label] of Object.entries(LABELS)) {
       if (language !== "en") {
         await setLanguageInSettings(d, language);

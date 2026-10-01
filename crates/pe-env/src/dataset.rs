@@ -267,6 +267,14 @@ pub mod vars {
         Sense::From,
         true,
     );
+    /// Mean period of combined wind waves and swell, seconds.
+    pub const ARCO_MWP: Variable = v(
+        Dataset::ArcoEra5,
+        "mean_wave_period",
+        "s",
+        Sense::None,
+        true,
+    );
     /// NW Shelf total current, eastward (int16, scale 0.001).
     pub const NWS_UO: Variable = current(Dataset::CmemsNwsMy, "uo");
     /// NW Shelf total current, northward.

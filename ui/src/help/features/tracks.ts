@@ -18,6 +18,21 @@ const trackers = "trackers";
 const dialog = { topic: trackers, reveal: section, landing: "tracks:yellowbrick" };
 
 const features: Feature[] = [
+  { id: "tracks:awa-change", label: msg("AWA change (°)"), description: msg("Exclude points when apparent wind angle changes by more than this from the previous or next point."), keywords: ["AWA", msg("filters")], topic, reveal: details },
+  { id: "tracks:wind-speed-change", label: msg("True wind speed"), description: msg("Exclude points when true wind speed changes by more than this from the previous or next point."), keywords: ["TWS", msg("filters")], topic, reveal: details },
+  { id: "tracks:wind-direction-change", label: msg("Wind direction change (°)"), description: msg("Exclude points when true wind direction changes by more than this from the previous or next point."), keywords: ["TWD", msg("filters")], topic, reveal: details },
+  { id: "tracks:wind-source", label: msg("Wind source"), description: msg("Supplied wind is used where both speed and direction are available; other points use downloaded weather."), keywords: ["TWS", "TWD", msg("wind")], topic, reveal: details },
+  { id: "track-import:tws", label: msg("True wind speed"), description: msg("Supplied wind where available"), keywords: ["CSV", "TWS", msg("column")], topic, reveal: section, landing: "tracks:import-file" },
+  { id: "track-import:twd", label: msg("True wind direction"), description: msg("Supplied wind where available"), keywords: ["CSV", "TWD", msg("column")], topic, reveal: section, landing: "tracks:import-file" },
+  { id: "track-import:wind-speed-unit", label: msg("Wind speed unit"), description: msg("Supplied wind where available"), keywords: ["CSV", "TWS", msg("knots")], topic, reveal: section, landing: "tracks:import-file" },
+  { id: "tracks:tack-window", label: msg("Tack/gybe window (s)"), description: msg("Exclude points before and after a tack or gybe. Empty disables the filter."), keywords: [msg("filters"), msg("track")], topic, reveal: details },
+  { id: "tracks:stop-speed", label: msg("Stop speed"), description: msg("Treat ground speeds at or below this as stops. Empty disables the filter."), keywords: [msg("filters"), msg("track")], topic, reveal: details },
+  { id: "tracks:stop-window", label: msg("Stop window (s)"), description: msg("Exclude points this many seconds before and after each stop."), keywords: [msg("filters"), msg("track")], topic, reveal: details },
+  { id: "tracks:utc-unit", label: msg("Interval unit"), description: msg("Choose minutes or seconds for timestamp filtering."), keywords: [msg("filters"), msg("track")], topic, reveal: details },
+  { id: "tracks:utc-interval", label: msg("Timestamp interval (s)"), description: msg("Keep times aligned to this interval from UTC midnight: 60 for minutes, 3600 for hours. Empty keeps every time."), keywords: [msg("filters"), msg("track")], topic, reveal: details },
+  { id: "tracks:unknown-wave", label: msg("Exclude unknown waves"), description: msg("Exclude samples without wave height or direction."), keywords: [msg("filters"), msg("track")], topic, reveal: details },
+  { id: "tracks:unknown-current", label: msg("Exclude unknown current"), description: msg("Exclude samples without current speed or direction."), keywords: [msg("filters"), msg("track")], topic, reveal: details },
+
   { id: "tracks:import-file", label: msg("Import track files"),
     description: msg("Import GeoJSON and CSV tracks, several files at once, choosing the boats and mapping the columns."),
     keywords: [msg("import"), "GeoJSON", "CSV", msg("race"), msg("positions"), msg("column mapping"), msg("boat picker"),
@@ -36,6 +51,8 @@ const features: Feature[] = [
     keywords: [msg("delete"), msg("remove")], topic, reveal: section },
   { id: "tracks:fetch-weather", label: msg("Fetch weather"), description: msg("Fetch a track's wind, waves and current: the missing samples, or all of them again once it is ready. Importing never does it."),
     keywords: [msg("reanalysis"), msg("wind"), msg("environment"), msg("resume")], topic: environment, reveal: section },
+  { id: "tracks:select-all", label: msg("Select all imported tracks"), description: msg("Select all imported tracks for weather download"),
+    keywords: [msg("select all"), msg("weather"), msg("several")], topic: environment, reveal: section },
   { id: "tracks:select", label: msg("Select tracks"), description: msg("Tick tracks to fetch their weather together with Fetch weather for selected tracks."),
     keywords: [msg("select"), msg("weather"), msg("several")], topic: environment, reveal: section },
   { id: "tracks:fetch-weather-selected", label: msg("Fetch weather for selected tracks"), description: msg("Fetch the wind, waves and current of every ticked track, one after another, after one download estimate."),
@@ -50,16 +67,6 @@ const features: Feature[] = [
     keywords: [msg("current"), msg("tide"), "BSP"], topic: environment, reveal: section },
   { id: "tracks:stokes-drift", label: msg("Include Stokes drift"), description: msg("Add the waves' Stokes drift to the global merged current, from the next fetch."),
     keywords: [msg("current"), msg("waves")], topic: environment, reveal: section },
-  { id: "tracks:export-grib", label: msg("Export reanalysis GRIB"), description: msg("Write the reanalysis wind over a track's area and hours to a GRIB file, with its waves and current if you want them."),
-    keywords: ["GRIB", msg("export"), msg("wind"), msg("routing"), "ERA5"], topic: environment, reveal: details },
-  { id: "grib:waves", label: msg("GRIB export: waves"), description: msg("In the GRIB export dialog (Export reanalysis GRIB first): add the wave height and direction."),
-    keywords: ["GRIB", msg("waves"), msg("wave height")], topic: environment, reveal: details, landing: "tracks:export-grib" },
-  { id: "grib:current", label: msg("GRIB export: current"), description: msg("In the GRIB export dialog (Export reanalysis GRIB first): add the surface current."),
-    keywords: ["GRIB", msg("current"), msg("tide")], topic: environment, reveal: details, landing: "tracks:export-grib" },
-  { id: "grib:hourly", label: msg("GRIB export: every hour"), description: msg("In the GRIB export dialog (Export reanalysis GRIB first): write every hour."),
-    keywords: ["GRIB", msg("interval"), msg("download size")], topic: environment, reveal: details, landing: "tracks:export-grib" },
-  { id: "grib:three-hourly", label: msg("GRIB export: every 3 hours"), description: msg("In the GRIB export dialog (Export reanalysis GRIB first): write every third hour: a third of the file and of the wind and wave download."),
-    keywords: ["GRIB", msg("interval"), msg("long race")], topic: environment, reveal: details, landing: "tracks:export-grib" },
   { id: "tracks:time-start", label: msg("Time window start"), description: msg("Leave out samples before this time, such as before the start."),
     keywords: [msg("time window"), msg("start"), msg("motoring"), msg("filters")], topic, reveal: details },
   { id: "tracks:time-end", label: msg("Time window end"), description: msg("Leave out samples after this time, such as after the finish."),
@@ -146,4 +153,19 @@ const features: Feature[] = [
     keywords: [msg("select all"), msg("choose"), msg("fleet")], ...dialog },
 ];
 
-export default features;
+const sharedFilterIds = new Set([
+  "min-bsp", "max-bsp", "manoeuvre", "awa-change", "wind-speed-change", "wind-direction-change", "tack-window", "stop-speed", "stop-window", "utc-interval", "utc-unit",
+  "heading-origin", "speed-origin", "unknown-wave", "unknown-current", "tws-min", "tws-max", "twa-min", "twa-max",
+  "hs-min", "hs-max", "wave-mode", "wave-sectors", "wave-min", "wave-max", "wave-from", "wave-to", "current-min", "current-max", "no-tide",
+]);
+const globalFilters = features.filter((f) => sharedFilterIds.has(f.id.slice(7))).map((f) => ({
+  ...f, id: f.id.replace("tracks:", "global-filters:"),
+  description: msg("Global point filters apply after individual track filters. Open the 3D filter panel to enable or edit them."),
+  topic: "polar-3d", reveal: ["stage:3d"], landing: "view3d:global-filters",
+}));
+const priorityFilters = globalFilters.map((f) => ({
+  ...f, id: f.id.replace("global-filters:", "priority-filters:"),
+  description: msg("Priority groups are tried in order for each TWA/TWS cell. The first group with enough samples supplies that cell."),
+  landing: "view3d:priority-filters",
+}));
+export default [...features, ...globalFilters, ...priorityFilters];

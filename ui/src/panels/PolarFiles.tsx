@@ -1,3 +1,4 @@
+import { useBoatApi } from "../boats/context";
 import { useState } from "react";
 
 import { reportFailure } from "../errors";
@@ -5,7 +6,7 @@ import type { PolarImportFailure } from "../generated/PolarImportFailure";
 import type { ProjectSummary } from "../generated/ProjectSummary";
 import { later, setHint } from "../hint";
 import { msg, useT } from "../i18n";
-import { api } from "../ipc";
+
 import { pickPolarFiles } from "../project/dialogs";
 import { describeAxes, describeFailure, FORMAT_NAMES } from "./polarImport";
 
@@ -20,6 +21,7 @@ export default function PolarFiles({ project, onProject }: {
   project: ProjectSummary;
   onProject: (project: ProjectSummary) => void;
 }) {
+  const api = useBoatApi();
   const t = useT();
   const [failures, setFailures] = useState<PolarImportFailure[]>([]);
   const files = project.sources.filter((source) => source.polar_file !== null);

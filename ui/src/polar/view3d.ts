@@ -8,6 +8,7 @@
  * `k` is `nodes.count + k`. The scene draws only the dots the toggles leave
  * on, so `DotBuild.refs` maps each drawn dot back to its global index.
  */
+import { NO_WAVE_RANGES, waveRangePredicate, type WaveRanges } from "./waveRanges";
 import type { PolarCell } from "../generated/PolarCell";
 import type { PolarNodeRef } from "../generated/PolarNodeRef";
 import type { SpeedUnit } from "../generated/SpeedUnit";
@@ -15,7 +16,7 @@ import { CARTESIAN_TWA_SCALE, place, type Layout, type PolarGrid } from "./geome
 import { BLEND_SOURCE, FLAG_EDITED, FLAG_EXCLUDED, FLAG_FILTERED, sampleId, type ScenePacket } from "./scenePacket";
 import { SHAPE_CROSS, SHAPE_DISC, SHAPE_RING, SHAPE_SQUARE, type SurfaceInput, type View } from "./scene3d";
 
-export type ColourMode = "source" | "hs" | "current" | "time";
+export type ColourMode = "source" | "hs" | "current" | "time" | "wavePeriod" | "waveAngle" | "waveWindAngle";
 
 /** The show toggles (spec.md 10.2). */
 export interface Toggles {
@@ -78,10 +79,11 @@ export function ramp(t: number): [number, number, number] {
 }
 
 /** The sample values a colour mode reads, or null for "by source". */
-function modeValues(packet: ScenePacket, mode: ColourMode): Float32Array | null {
+export function modeValues(packet: ScenePacket, mode: ColourMode): Float32Array | null {
   if (mode === "hs") return packet.samples.hs;
   if (mode === "current") return packet.samples.current;
   if (mode === "time") return packet.samples.time;
+  if (mode === "wavePeriod" || mode === "waveAngle" || mode === "waveWindAngle") return packet.samples[mode];
   return null;
 }
 
@@ -106,6 +108,9 @@ export function availableModes(packet: ScenePacket): Record<ColourMode, boolean>
     hs: range(packet.samples.hs) !== null,
     current: range(packet.samples.current) !== null,
     time: packet.samples.count > 0,
+    wavePeriod: range(packet.samples.wavePeriod) !== null,
+    waveAngle: range(packet.samples.waveAngle) !== null,
+    waveWindAngle: range(packet.samples.waveWindAngle) !== null,
   };
 }
 
@@ -144,8 +149,8 @@ export function nodeDots(packet: ScenePacket, toggles: Toggles, focus: Focus | n
 }
 
 /** The samples' part of `buildDots`. */
-export function sampleDots(packet: ScenePacket, toggles: Toggles, mode: ColourMode, focus: Focus | null = null): DotBuild {
-  return dotsOf(packet, toggles, mode, focus, "samples");
+export function sampleDots(packet: ScenePacket, toggles: Toggles, mode: ColourMode, focus: Focus | null = null, waveRanges: WaveRanges = NO_WAVE_RANGES): DotBuild {
+  return dotsOf(packet, toggles, mode, focus, "samples", waveRanges);
 }
 
 /** Two parts drawn together, nodes first. */
@@ -164,7 +169,7 @@ export function mergeDots(a: DotBuild, b: DotBuild): DotBuild {
   };
 }
 
-function dotsOf(packet: ScenePacket, toggles: Toggles, mode: ColourMode, focus: Focus | null, which: "nodes" | "samples"): DotBuild {
+function dotsOf(packet: ScenePacket, toggles: Toggles, mode: ColourMode, focus: Focus | null, which: "nodes" | "samples", waveRanges: WaveRanges = NO_WAVE_RANGES): DotBuild {
   const { nodes, samples } = packet;
   const sourceColours = packet.sources.map((s) => rgb(s.colour));
   const values = which === "samples" ? modeValues(packet, mode) : null;
@@ -179,9 +184,10 @@ function dotsOf(packet: ScenePacket, toggles: Toggles, mode: ColourMode, focus: 
     for (let k = 0; k < nodes.count; k++) if (!hidden(nodes.source[k]!)) refs[n++] = k;
   }
   if (which === "samples" && toggles.samples) {
+    const inWaveRange = waveRangePredicate(samples, waveRanges);
     for (let k = 0; k < samples.count; k++) {
       if ((samples.flags[k]! & FLAG_FILTERED) && !toggles.filtered) continue;
-      if (hidden(samples.source[k]!)) continue;
+      if (hidden(samples.source[k]!) || !inWaveRange(k)) continue;
       refs[n++] = nodes.count + k;
     }
   }
@@ -378,7 +384,8 @@ export function ticks(max: number, count = 5): number[] {
  * 30° with their angles, and the TWS axis up the middle with its speeds.
  * Cartesian: the three axes from the origin with ticks.
  */
-export function buildGuides(bounds: Bounds, layout: Layout, unit: SpeedUnit): Guides {
+export function buildGuides(bounds: Bounds, layout: Layout, unit: SpeedUnit, asymmetric = false): Guides {
+  const maxAngle = asymmetric ? 360 : 180;
   const factor = SPEED_FACTOR[unit];
   const symbol = SPEED_SYMBOL[unit];
   const segments: number[] = [];
@@ -390,14 +397,14 @@ export function buildGuides(bounds: Bounds, layout: Layout, unit: SpeedUnit): Gu
   if (layout === "tower") {
     const maxBsp = Math.max(1, ...[0, 1].flatMap((a) => [Math.abs(bounds.min[a]!), Math.abs(bounds.max[a]!)]));
     for (const r of ticks(maxBsp, 4).filter((r) => r > 0)) {
-      for (let a = 0; a < 180; a += 10) {
+      for (let a = 0; a < maxAngle; a += 10) {
         line(place(a, 0, r, "tower"), place(a + 10, 0, r, "tower"));
       }
       labels.push({ at: place(90, 0, r, "tower"), text: speed(r) });
     }
-    for (let a = 0; a <= 180; a += 30) {
+    for (let a = 0; a <= (asymmetric ? maxAngle - 30 : maxAngle); a += 30) {
       line([0, 0, 0], place(a, 0, maxBsp, "tower"));
-      labels.push({ at: place(a, 0, maxBsp * 1.08, "tower"), text: `${a}°` });
+      labels.push({ at: place(a, 0, maxBsp * 1.08, "tower"), text: `${Math.min(a, 360 - a)}°` });
     }
     line([0, 0, 0], [0, 0, maxTws]);
     for (const w of ticks(maxTws, 5).filter((w) => w > 0)) {
@@ -406,11 +413,11 @@ export function buildGuides(bounds: Bounds, layout: Layout, unit: SpeedUnit): Gu
     }
   } else {
     const maxBsp = Math.max(1, bounds.max[2]);
-    const xEnd = 180 / CARTESIAN_TWA_SCALE;
+    const xEnd = maxAngle / CARTESIAN_TWA_SCALE;
     line([0, 0, 0], [xEnd, 0, 0]);
     line([0, 0, 0], [0, maxTws, 0]);
     line([0, 0, 0], [0, 0, maxBsp]);
-    for (let a = 0; a <= 180; a += 30) labels.push({ at: [a / CARTESIAN_TWA_SCALE, -0.8, 0], text: `${a}°` });
+    for (let a = 0; a <= maxAngle; a += 30) labels.push({ at: [a / CARTESIAN_TWA_SCALE, -0.8, 0], text: `${Math.min(a, 360 - a)}°` });
     for (const w of ticks(maxTws, 5).filter((w) => w > 0)) labels.push({ at: [-0.8, w, 0], text: speed(w) });
     for (const b of ticks(maxBsp, 4).filter((b) => b > 0)) labels.push({ at: [-0.8, 0, b], text: speed(b) });
   }

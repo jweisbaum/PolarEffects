@@ -18,7 +18,7 @@ use crate::error::{CoreError, Result};
 /// to fill it (spec.md 5.3).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct PolarGrid {
-    /// True wind angles, degrees in [0, 180], strictly increasing.
+    /// True wind angles, degrees in [0, 360], strictly increasing.
     #[serde(with = "canonical::degrees_list")]
     pub twa: Vec<f64>,
     /// True wind speeds, knots, strictly increasing.
@@ -43,7 +43,7 @@ impl PolarGrid {
 
     /// Checks the grid's shape and ranges.
     pub fn validate(&self) -> Result<()> {
-        validate_axis(&self.twa, "TWA", 0.0, 180.0)?;
+        validate_axis(&self.twa, "TWA", 0.0, 360.0)?;
         validate_axis(&self.tws, "TWS", 0.0, f64::MAX)?;
         if self.bsp.len() != self.twa.len() {
             return Err(CoreError::Invalid(format!(
@@ -119,7 +119,7 @@ mod tests {
         grid.bsp[1].push(Some(3.0));
         assert!(grid.validate().is_err());
 
-        let grid = PolarGrid::empty(vec![0.0, 190.0], vec![6.0]);
+        let grid = PolarGrid::empty(vec![0.0, 361.0], vec![6.0]);
         assert!(grid.validate().is_err());
 
         let grid = PolarGrid::empty(vec![90.0, 45.0], vec![6.0]);

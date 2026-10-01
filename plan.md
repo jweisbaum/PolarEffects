@@ -1110,6 +1110,129 @@ review and reference-device installation/launch/performance checks remain open.
 
 ---
 
+### M19 — Track filtering and polar analysis · **complete** (2026-09-30)
+
+Requested 2026-09-30, after the M18 artifact builds. Preserve imported
+sources and store new edits as undoable overlays; old projects keep their
+existing behaviour.
+
+- [x] Track filters: unknown waves/current, tack/gybe and stop exclusion
+  windows, wave direction relative to COG, UTC timestamp filtering with
+  selectable minute/second intervals.
+- [x] Global filters in the 3D view, shown only with tracks, applied after
+  individual filters; no global start/end dates.
+- [x] Remove the GRIB export option and its help/search entries.
+- [x] Colour by wave period, wave angle and wave/wind angle; UTC date/time
+  range for time colouring.
+- [x] Numeric boat measurement search and paginated polar results.
+- [x] ORR polar support and a user-started Settings scraper, deduplicated;
+  RegattaMan’s supplied valid list (300 certificates, 600 polar variants).
+- [x] Independent port/starboard in the blend, corrections and export, with
+  asymmetric 360° mode in 2D/3D; linear/monotone spline interpolation;
+  TWA steps 1/2/5/10° and TWS steps 1/2/5/10 kn.
+- [x] Manual blend corrections as reversible cell overlays.
+- [x] Ordered priority filter groups with fallback for sparsely sampled
+  TWA/TWS cells (first group meeting the pooled minimum, as confirmed).
+- [x] Migration/round-trip/undo, numerical and UI checks, translations,
+  help, documentation and actual-app visual verification.
+
+Validation on the Intel Mac (2026-09-30): the actual-app
+`09-polar-analysis` walkthrough passes with eight inspected screenshots,
+covering ORR measurement search and pagination, duplicate prevention,
+full-circle plots, a port-only correction, track/global filters, a two-minute
+interval, UTC colour legends and ordered priorities. French/German strings
+and help controls pass their coverage checks. Production UI build, TypeScript,
+formatting and strict workspace clippy pass. The final workspace run passes
+631 tests with no failures; the default suite skips 21 live/performance tests,
+with the three edit/filter performance tests run separately below. The UI suite
+and focused reruns pass, IPC bindings are regenerated, and the offline check
+passes against the production bundle.
+
+Release-mode measurements: 200,000 points take 8.6 ms for hard filters and
+25.1 ms for two priority groups; edits update the Rust data for all views in
+25–36 ms (100 ms budget). Gathering 500,000 2D dots takes 24.6 ms and packing
+23.7 ms. All three Rust performance tests and all four UI performance tests
+pass; two 512×512 surfaces update in 22–71 ms, and a 444-boat list takes
+317 ms to display, 23 ms to tick and 39 ms to search.
+
+### M19a — Complete ORR certificate capture · **complete** (2026-09-30)
+
+Requested 2026-09-30: extend the polar-only ORR scrape to retain all public
+certificate data and ratings. Preserve named list fields, original metric
+measurements and enum labels, ownership/comments, drawing parameters, all
+rating JSON blocks, and the original speed/time-allowance tables. Keep stable
+SKU/variant deduplication and immutable imported copies. Schema 4 adds optional
+details while keeping older projects readable. Refresh the bundled catalogue,
+check full-catalogue completeness, and verify parser fixtures, metadata
+round-trip/undo, legacy caches, search, translations and the app workflow.
+
+All 300 certificates were refreshed successfully: 600 unique SKU/variant keys,
+77,097 fields and 18,360 rating entries. Each certificate retains all 21 list
+columns, five rating groups and four original tables. The original 600 speed
+grids compare equal to the earlier snapshot. The maintainer refresh refuses to
+replace a snapshot if any certificate fails, and the completeness integration
+test checks every bundled record.
+
+Validation: 636 workspace tests pass (21 intentionally skipped live/performance
+tests), strict workspace clippy and formatting pass, bindings regenerate,
+26 translation/help tests and four UI performance tests pass. The production
+UI build and offline check pass. The 42-second actual-app walkthrough passes
+with eight screenshots; ORR builder/build-year search and the updated Settings
+description were inspected in the captured images.
+
+### M19b — Project navigation · **complete** (2026-09-30)
+
+3D becomes the first and default stage. Map follows it only when imported
+tracks exist; removing the final track from Map returns to 3D. Full-size 2D
+plots remain available without tracks. Move the Project menu between Search
+and Settings, with its popup aligned to stay within the window. Update the
+help, translations and existing UI walkthroughs.
+
+Validation: all 342 UI tests pass across the full run and the focused rerun
+of the comparison test updated for the new default. The production UI build,
+TypeScript checks and offline check pass. Five actual-app walkthroughs pass
+with 25 screenshots, covering the default view, menu placement and bounds,
+track import/removal/undo, full-size 2D plots without tracks, help navigation
+in three languages and French settings. The changed layouts were inspected.
+
+### M19c — Wave display ranges and retained boat searches · **complete** (2026-09-30)
+
+- [x] Add immediate lower/upper 3D display sliders for wave height, angle off
+  the bow and period, intersected with existing visibility and analysis filters.
+- [x] Preserve metre/feet conversion, inclusive boundaries, sample identities
+  and selection safety; leave project data, blend and surfaces unchanged.
+- [x] Add a visible sample count, reset, disabled states for absent wave data,
+  French/German translations and help entries.
+- [x] Keep boat search query, page and remaining results after importing a track;
+  remove successfully imported rows and update the count without changing
+  catalogue offsets. Failed imports remain available to retry.
+- [x] Complete unit, performance and real desktop checks, including consecutive
+  boat imports and wave sliders over the recorded weather fixture.
+
+Validation: 651 Rust tests, 346 UI tests and all five performance checks pass;
+formatting, clippy, TypeScript, production UI build and offline checks pass.
+For 200k samples, warmed dot-building plus scene updates take 36–47 ms with
+all samples and 16–27 ms with the three ranges active. Two desktop walkthroughs
+pass with nine screenshots, covering consecutive imports, all six slider bounds,
+actual canvas changes, filter composition and reset. The changed layouts were
+visually inspected.
+
+**Follow-up — search imports and asymmetric labels (complete).**
+Successfully imported boat rows now leave the current search, while its query,
+page and remaining rows stay available. Both polar views show 0–180° tick
+labels on each half; full-circle geometry, source values and editable grid
+identities are preserved. Validation: the full 346-test UI suite and the updated
+44 geometry tests pass, as do the 651 Rust tests, five performance checks,
+formatting, clippy, TypeScript, production UI build and offline checks.
+Database-library and polar-analysis desktop walkthroughs pass; the remaining
+search rows and mirrored labels in both plots were inspected in screenshots.
+
+**Follow-up — select all imported tracks (complete).**
+Add Select all beside the batch weather button above the imported tracks list.
+It ticks every imported track, using the existing download estimate and job
+queue; running/queued tracks are omitted from the request. The control is
+translated and searchable in Help.
+
 ## 3. Testing strategy
 
 - **Unit**: geodesy, derivation, interpolation, binning, blending, parsers,
@@ -1145,7 +1268,7 @@ review and reference-device installation/launch/performance checks remain open.
 | D2 | Back end is Rust only; no headless browser. Tracker formats decoded in Rust | Requested; the `tracker-index` scrapers use puppeteer, which cannot ship |
 | D3 | ORC catalogue built from jieter/orc-data per-boat files and embedded | `ALL2025.json` is Python repr with 34 boats; per-boat files hold ~18k. Settled with the user 2026-09-27 |
 | D4 | One tracker dialog flow: URL → download all boats → pick → import | Requested behaviour, identical across trackers |
-| D5 | Never use the app.yb.tl purchase flow or any stored device key or cookie | Credentials in the reference repo are not ours to reuse; public JSON/BIN endpoints suffice |
+| D5 | Direct track imports use public JSON/BIN endpoints. Catalogue discovery may use explicitly authorized local YellowBrick credentials and associate only products listed as free. Never bundle credentials. | Updated 2026-09-30 at the user's request to use the SYRF scraper credentials for catalogue code lookup |
 | D6 | No C/C++ dependencies beyond Tauri's own; rustls with ring | Windows ARM64 target and "Rust only" requirement |
 | D7 | Speeds stored in knots, directions in degrees | Every polar format and ORC is knots; avoids conversion noise in exports |
 | D8 | Default theme "Harbour" (blue); same structure as VectorEffects | Requested "same styling, slightly different colours" |
@@ -1262,3 +1385,286 @@ The alt, lap and pc layouts are unverified (the Fastnet data had those flags
 off); cover them with a fixture from a race that sets them before relying
 on them. The M3 decoder follows the table literally: in a delta moment,
 `alt` and `pc` are read as values, not deltas, and only `dDtf` accumulates.
+
+
+## SYRF PostgreSQL library — 2026-09-30
+
+Implemented database settings and connection test, local filtered boat metadata,
+boat-name track search/import, native scraping and startup/shutdown scheduling,
+and portable full-database SQL export (spec §3.4.1). Matched the supplied database
+to `syrf-tracks-individual-production` after the user corrected the archive root.
+Read-only validation found 79,440 searchable tracks and imported a real Lurline
+track. Isolated PostgreSQL ingestion and SQL export/restore checks verify stable
+identities and schema compatibility. The initial anonymous-only YB discovery
+limitation is addressed by the authenticated catalogue follow-up below.
+
+Validation: all 644 Rust tests and all 342 UI tests pass, including help
+and translation coverage. The database desktop UX test covers failed/successful
+connections, persisted directories, search, import and the weather button, with
+inspected screenshots. Live native scrapes into an isolated schema clone passed
+for Fastnet 2025 (444 tracks), 24 Heures Ultim 2025 (14 tracks) and Melbourne
+Hobart Westcoaster 2025 (5 tracks), including a repeat scrape without duplicate
+rows and reimport of the resulting individual GeoJSON. A separate regression
+check verifies reuse of an upstream calendar GUID for a new Geovoile leg,
+preserving original URLs, IDs, privacy and the earlier start time.
+Historical reused provider boat IDs are matched to existing race track
+references; ambiguous matches fail instead of overwriting another boat.
+Formatting, clippy, TypeScript, UI performance and the network-boundary check
+pass. The macOS production build (`npm run build -- --no-bundle`, no WebDriver)
+passes. Windows and Linux builds were not executed on this host.
+
+### Follow-up: search every vessel field
+
+Implemented local search across every Vessels value, including model, class,
+make, builder, measurements, booleans and nested/custom JSON values. Query words
+may span fields of the same vessel. The folded search index is cached in memory
+and shared across that vessel's tracks. Existing version-1 metadata snapshots
+work without rewriting or downloading them again. Updated the search label,
+placeholder, help keywords, French/German translations and user guide.
+
+Validation: 645 Rust tests and 342 UI tests pass, along with clippy, formatting,
+TypeScript, UI performance and the network-boundary check. The desktop test
+individually searches model/class/make/builder, combines fields, then imports
+the result and verifies the weather control; its screenshot was inspected.
+
+### Follow-up: asymmetric mode in the top bar
+
+Moved **Asymmetric polar (360°)** from Blend settings to the title bar beside
+the stage switcher. The checkbox applies the existing mode and output-axis
+change immediately through the same undoable settings command. Blend settings
+uses the selected mode for axis validation, presets and defaults. Help search
+lands on the top-bar control, with the existing French/German translations.
+Undo/Redo works with the checkbox focused. Updated the guide and specification.
+
+Validation: 645 Rust tests and 342 UI tests pass; the focused shell/settings
+rerun, formatting, clippy, TypeScript, production UI build, UI performance and
+offline checks pass. The desktop polar-analysis walkthrough verifies the
+top-bar toggle and Undo/Redo, then edits the full-circle grid and renders both
+plots; the top-bar and Blend settings screenshots were inspected. Its catalogue
+pagination check now waits for the new rows, not just the updated page number.
+
+
+### Follow-up: YellowBrick v3 catalogue and authenticated race codes
+
+YellowBrick discovery now reads `App/Races?version=3`, resolves codes through
+configured `MyRaces?version=4` credentials, associates missing products only
+when explicitly listed as free, and re-reads the codes. The user's authorized
+SYRF credentials are stored only in their local settings, never bundled or
+logged. Settings exposes masked user-key and UDID fields with help and French /
+German translations. Authentication errors redact request URLs, cancellation
+stops further association, and three consecutive failures end association.
+
+Recorded mobile XML fixtures cover repeated noncontiguous base URLs and child
+races. Codes with ampersands, dots and encoded spaces round-trip through import.
+Known database URLs are matched by exact catalogue ID; numeric IDs, product IDs
+and titles are never guessed into tracker codes. The metadata directory's
+`yellowbrick-races.json` records every catalogue entry, including unresolved
+ones. Ingestion groups new child races under the numeric parent calendar ID,
+retains existing GUIDs and original URLs, and treats YB key case aliases as one
+race.
+
+Live validation on 2026-09-30 found 1,689 catalogue entries and 2,767 distinct
+URLs after exact database matches. 48 entries had no available code and remain
+explicitly unresolved. Public RaceSetup checks passed for Aeolian 2026,
+Palermo–Montecarlo 2021 and Stars and Spokes 2023; the historical ARC 2011 endpoint
+returned HTTP 503 after bounded retries. No production track database writes
+were made for this follow-up's verification.
+
+Validation: 651 Rust tests and 342 UI tests pass, together with formatting,
+clippy, TypeScript and the network-boundary check. An isolated PostgreSQL test
+verifies parent grouping, case alias deduplication and original URL/GUID
+preservation; its scratch database was removed afterward. The desktop database
+walkthrough passes with six screenshots, including masked credentials, settings
+persistence, a green read-only database connection, vessel-field search and
+track import with weather actions. Credential and connection screenshots were
+inspected.
+
+The four serial UI performance checks and the macOS production build
+(`npm run build -- --no-bundle`, WebDriver excluded) pass. The final built-bundle
+network check passes. Windows and Linux builds were not run on this host.
+
+
+### Follow-up: side panels overlay the centre view
+
+The left navigation and right source/plot panel are positioned over a stage
+that always fills the workspace. Toggling either panel preserves the map and
+polar canvas bounds, drawing buffer and camera framing. Floating view controls
+stay in the uncovered area. Panel dialogs remain above the title bar and both
+panels; the full-size polar plot also opens above the panels. Existing toggle
+state and section behaviour are preserved. Updated spec §3.2 and the user guide.
+
+The desktop project walkthrough measures the stage and canvas in 3D, Map and
+Compare through all four panel combinations, verifies pointer hit targets, and
+checks modal and full-size plot stacking. The walkthrough passes; 3D and Compare
+screenshots were inspected.
+
+Validation: 651 Rust tests, 342 UI tests, four UI performance checks, formatting,
+clippy, TypeScript, the production UI build and network-boundary check pass.
+Both desktop walkthroughs (project layout and polar analysis/editing) pass.
+No Rust domain code or project formats changed.
+
+
+### Follow-up: live analysis, supplied wind and dot tooltips · **complete** (2026-10-01)
+
+Add 3D dot hover details, supplied true wind in CSV/GeoJSON/SYRF imports with an
+undoable per-track choice, and AWA/wind change thresholds in track, global and
+priority filters. All change thresholds compare only the immediately previous
+and next points, as confirmed by the user. Preserve downloaded weather separately
+from immutable supplied data
+(schema 5), and keep stop/tack/gybe windows available at every filter level.
+Apply valid numeric edits while typing, serialize rapid changes and ignore stale
+project summaries. Shorten the top-bar label to Asymmetric polar.
+
+The main wave sliders now also feed the native blend and both views as saved,
+undoable additional constraints. This supersedes M19c's display-only behaviour;
+other analysis filters remain independent.
+
+Validation: 660 Rust tests and 349 UI tests pass (the full UI run plus the
+focused rerun after correcting a German help-search wording conflict). Formatting,
+workspace clippy, TypeScript, the production UI build and the offline boundary
+check pass. All five UI performance checks pass. The native filter pass over
+200,000 points with all four change thresholds takes 45.4 ms for changing data
+and 48.8 ms for steady sailing. The wave-range and live-analysis desktop
+walkthroughs pass, with screenshots inspected. These cover live edits without
+blur, supplied/downloaded wind switching, each filter family, and real dot hover.
+Save/reopen tests include high-precision supplied wind, undo/redo, and unchanged
+project bytes. Supplied wind used in calculations matches document precision;
+the source data and downloaded weather remain separate.
+
+### Follow-up: compact wave range controls · complete (2026-10-01)
+
+Place wave height, angle and period ranges at the bottom centre of the 3D view.
+Each row uses one rail with two round start/end handles and visible bound values.
+Retain native keyboard adjustment, separate hit areas even when handles meet,
+unit conversion, non-crossing bounds, reset, and live updates to the blend.
+
+Validation: 660 Rust tests, 349 UI tests and all five UI performance checks pass.
+Formatting, workspace clippy, TypeScript, the production UI build and the offline
+boundary check pass. The desktop wave-range walkthrough passes with screenshots
+inspected, including both handles at a shared endpoint, centring as either dock
+opens or closes, and clearance below the polar editor.
+
+### Follow-up: drag the selected wave range · complete (2026-10-01)
+
+Make the selected section between each pair of wave handles draggable. Move both
+limits together without changing their width, clamp at the scale endpoints,
+retain independent handle interaction and live filtering, and provide keyboard
+movement of the selected range.
+
+Validation: all 660 Rust tests, the full UI suite (351 tests), the final focused
+UI run (46 tests, including an added saved-range scale regression), and five UI
+performance checks pass. Formatting, clippy, TypeScript, the production UI build
+and the offline boundary check pass. The desktop walkthrough and inspected
+screenshots confirm the middle rail receives pointer input, handles remain
+reachable, and dragging updates the native blend before release. Unit checks
+cover endpoint clamping, pointer cancellation, feet conversion, keyboard
+movement and a stable scale when saved bounds exceed the remaining samples.
+
+### Follow-up: multiple boats, synchronized comparison and tracker projects · complete (2026-10-01)
+
+1. Persist independent boat documents in one project, migrate older projects,
+   scope requests and background work to boat identities, and preserve recovery.
+2. Add editable boat tabs, add-boat and export-all controls, and two/four-pane
+   3D comparison with synchronized rotation and corresponding-point hover.
+3. Preserve tracker boat metadata and build a native, cancellable event-project
+   import that finds polars and tracks of identical models, using synonymous
+   descriptive fields and identity clues without broad class/name-only matches.
+4. Validate model matching, save/reopen, isolation, export, synchronized views,
+   and offline tracker import with unit/integration and real desktop checks.
+
+Implemented independent boat documents with save/recovery and scoped background
+jobs, editable tabs and export-all, two/four-pane 3D comparison, and native
+YellowBrick/Blue Water project creation. Automatic polars and historical routes
+require specific model evidence. Names never establish identity; contradictory
+models, builders, lengths or identity MMSIs prevent the relevant association.
+Unresolved boats retain their original race track without guessed sources.
+
+Validation: 674 native tests, the full 356-test UI suite plus two new help
+isolation tests, targeted final UI checks, typecheck/production UI build,
+fmt/clippy and offline checks pass. Desktop tests 11, 13 and 14 cover wave
+filters, linked camera gestures and four-way hover, restored single-view panels
+and rendering, boat creation/renaming, and same-name tracker boats with different
+model evidence. Screenshots were inspected. All five serial performance tests
+pass: 200k-sample wave-range updates take 15–32 ms; two 512×512 polar surfaces
+take 21–39 ms; three comparison surfaces take 62–94 ms (100 ms budget).
+
+### Follow-up: scrape finished races only · complete (2026-10-01)
+
+Apply one completion gate to on-demand, startup and shutdown library scraping,
+including explicit URLs. Require terminal results for all participants and
+reject future or unverified completion. Check YellowBrick setup and Geovoile
+reports before track requests; check each Geovoile leg independently. Blue
+Water's combined metadata/positions response must be read to establish status
+and must never be ingested when unfinished. Preserve normal interactive imports.
+Verify skipped downloads against recorded HTTP requests and completed imports
+against provider fixtures, then run repository and desktop checks.
+
+Validation: 680 native tests, 358 UI tests and all five serial performance tests
+pass. Typecheck/production UI build, fmt, workspace clippy and offline checks
+pass. Recorded HTTP tests prove no YellowBrick positions/KML or Geovoile tracks
+are requested for ongoing, future or unverified races; completed fixtures still
+download. Blue Water's combined response is rejected before ingestion when any
+boat lacks a terminal result. The database-library desktop walkthrough passes,
+and the finished-races policy screenshot was inspected.
+
+### Follow-up: repair Intel macOS development linking · complete (2026-10-01)
+
+Disable incremental compilation throughout the development profile to prevent
+Rust 1.97.1 from reusing broken internal LLVM symbol references in optimised
+workspace crates. Keep the existing math optimisations and release profile.
+Update build guidance and verify normal Tauri development compilation and an
+edit/rebuild with the default profile.
+
+Validation: the native app links, and `npm run dev` launches with
+`CARGO_INCREMENTAL` unset (reusing the existing Vite server). A timestamp-only
+change to `pe-core/src/lib.rs` triggers the person's existing development
+watcher, which recompiles pe-core without `-C incremental` and successfully
+relaunches the app. All 680 native tests, formatting, workspace clippy,
+TypeScript, five UI performance checks and the offline check pass. The unchanged
+frontend also passed its full 358-test suite immediately before this build fix.
+The Homebrew Rust library deployment-version warnings are separate from the
+undefined-symbol failure; the application's deployment target is unchanged.
+
+### Follow-up: boat controls and exact-vessel tracker projects · complete (2026-10-01)
+
+Move Add boat beside the project title, rename tabs in place, hide tabs during
+comparison, and add reversible boat deletion. Start every boat with 0° upwards.
+Offer exact-vessel matching as an alternative to identical-model matching and
+show all available tracker boat metadata in the project-opening report. Verify
+identity safeguards, deletion/save/recovery, initial camera direction, and the
+complete desktop interactions.
+
+Implemented Add boat beside the project title, inline tab renaming (double-click
+or F2), dropdown-only navigation in comparison layouts, 0°-up initial cameras,
+and Delete boat/Undo delete boat. Root promotion preserves the fleet title, file
+location, sibling views and comparison layout; removed boat identities cannot
+redirect late work. Exact-boat matching applies to both polars and historical
+tracks, requiring corroborated identity and rejecting conflicting specifications.
+Reports show primary vessel details and expandable complete original metadata.
+
+Validation: all 683 native tests pass, including saved-file/recovery deletion
+round trips, restoration of local edit history, stale identities, and positive
+and negative exact-vessel matches for polars and historical tracks. The full
+361-test UI suite passes, plus the added first-boat comparison-deletion test
+and final focused checks (50 tests; the final boat-only rerun also passes).
+The final app lifecycle/UI rerun passes all 44 selected tests. Formatting,
+workspace clippy, TypeScript/production UI build, offline checks and five UI
+performance checks pass. Both desktop walkthroughs pass; inspected screenshots
+cover the top-bar control, two/four-pane navigation, 0°-up orientation, deletion
+and restoration, both tracker matching modes, original boat details and adding
+a boat to a tracker-created project.
+
+### Follow-up: cancel the tracker boat list · complete (2026-10-01)
+
+Add Cancel beside Open project in the boat-list report. Stage the import until
+explicit confirmation so cancellation and Escape preserve the existing fleet,
+unsaved edits, history and recovery. Guard confirmation against stale previews
+and changes to the current project. Verify both native state and desktop flows.
+
+Validation: all 686 native tests and 365 UI tests pass, plus five performance
+checks, formatting, clippy, TypeScript/production UI build and offline checks.
+The desktop walkthrough verifies cancellation from the start screen and an
+unsaved three-boat project, then confirms normal opening still works; screenshots
+were inspected. Native tests preserve saved bytes, unsaved edits, boat history
+and recovery, and reject stale confirmation. The help walkthrough now hides
+boat tabs using the fleet comparison layout before testing their reveal action.

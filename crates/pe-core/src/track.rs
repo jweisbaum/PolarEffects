@@ -158,6 +158,8 @@ pub struct SampleColumns {
     pub twd_from: Vec<Option<f64>>,
     /// Significant wave height, metres, to 0.01.
     pub hs_m: Vec<Option<f64>>,
+    /// Mean wave period in seconds; absent in schema 2 projects.
+    pub wave_period_s: Vec<Option<f64>>,
     /// Mean wave direction ("from"), degrees, to 0.1.
     pub wave_from: Vec<Option<f64>>,
     /// Current speed, knots, to 0.01.
@@ -265,6 +267,7 @@ impl SampleColumns {
             tws: column(samples, "wind speed", |s| s.tws, env_knots)?,
             twd_from: column(samples, "wind direction", |s| s.twd_from, env_degrees)?,
             hs_m: column(samples, "wave height", |s| s.hs_m, env_metres)?,
+            wave_period_s: column(samples, "wave period", |s| s.wave_period_s, env_metres)?,
             wave_from: column(samples, "wave direction", |s| s.wave_from, env_degrees)?,
             current_speed: column(samples, "current speed", |s| s.current_speed, env_knots)?,
             current_toward: column(
@@ -311,6 +314,9 @@ impl SampleColumns {
         check("tws", self.tws.len())?;
         check("twd_from", self.twd_from.len())?;
         check("hs_m", self.hs_m.len())?;
+        if !self.wave_period_s.is_empty() {
+            check("wave_period_s", self.wave_period_s.len())?;
+        }
         check("wave_from", self.wave_from.len())?;
         check("current_speed", self.current_speed.len())?;
         check("current_toward", self.current_toward.len())?;
@@ -355,6 +361,7 @@ impl SampleColumns {
             s.twd_from = self.twd_from[k];
             s.hs_m = self.hs_m[k];
             s.wave_from = self.wave_from[k];
+            s.wave_period_s = self.wave_period_s.get(k).copied().flatten();
             s.current_speed = self.current_speed[k];
             s.current_toward = self.current_toward[k];
             s.wind_dataset = self.wind_dataset[k];
@@ -441,6 +448,31 @@ pub struct Fix {
     /// Speed over ground (or boat speed) the track supplied, knots.
     #[serde(default, with = "canonical::optional_knots_field")]
     pub sog: Option<f64>,
+    /// Supplied true wind speed over ground, knots; never replaced by weather.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "canonical::optional_knots_field"
+    )]
+    pub tws: Option<f64>,
+    /// Supplied true wind direction, meteorological "from", degrees.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "canonical::optional_degrees_field"
+    )]
+    pub twd_from: Option<f64>,
+}
+
+impl Fix {
+    /// Complete supplied wind at the precision used by the project file.
+    /// Raw imported values remain untouched; derived samples must agree before
+    /// and after saving and reopening, including converted wind-speed units.
+    pub fn supplied_wind(&self) -> Option<(f64, f64)> {
+        self.tws
+            .zip(self.twd_from)
+            .map(|(speed, direction)| (canonical::knots(speed), canonical::degrees(direction)))
+    }
 }
 
 /// Whether a value came with the track or was computed from neighbours.
@@ -473,6 +505,12 @@ pub enum Tack {
 /// fail to find is optional.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Sample {
+    /// Rebuilt from the immutable fix; the downloaded wind remains in `tws`/`twd_from`.
+    #[serde(skip)]
+    pub supplied_wind: Option<(f64, f64)>,
+    /// Rebuilt from the track's derivation overlay.
+    #[serde(skip)]
+    pub downloaded_wind_only: bool,
     /// Named by exclusions in the overlay.
     pub id: SampleId,
     /// Index of the fix this sample is for.
@@ -538,6 +576,9 @@ pub struct Sample {
     /// Significant wave height, metres.
     #[serde(default, with = "canonical::optional_metres_field")]
     pub hs_m: Option<f64>,
+    /// Mean wave period, seconds.
+    #[serde(default, with = "canonical::optional_ratio_field")]
+    pub wave_period_s: Option<f64>,
     /// Mean wave direction, "from", degrees in [0, 360).
     #[serde(default, with = "canonical::optional_degrees_field")]
     pub wave_from: Option<f64>,
@@ -577,6 +618,8 @@ impl Sample {
     pub fn at(id: SampleId, fix_index: u32, fix: &Fix) -> Self {
         Self {
             id,
+            supplied_wind: fix.supplied_wind(),
+            downloaded_wind_only: false,
             fix: fix_index,
             t: fix.t,
             lat: fix.lat,
@@ -596,6 +639,7 @@ impl Sample {
             twa_corrected: None,
             tack_corrected: None,
             hs_m: None,
+            wave_period_s: None,
             wave_from: None,
             wave_angle: None,
             current_speed: None,
@@ -652,6 +696,7 @@ impl Sample {
         self.twd_from = self.twd_from.map(env_degrees);
         self.hs_m = self.hs_m.map(env_metres);
         self.wave_from = self.wave_from.map(env_degrees);
+        self.wave_period_s = self.wave_period_s.map(env_metres);
         self.current_speed = self.current_speed.map(env_knots);
         self.current_toward = self.current_toward.map(env_degrees);
     }
@@ -665,6 +710,7 @@ impl Sample {
         self.twd_from = None;
         self.hs_m = None;
         self.wave_from = None;
+        self.wave_period_s = None;
         self.current_speed = None;
         self.current_toward = None;
         self.wind_dataset = None;
@@ -672,6 +718,50 @@ impl Sample {
         self.current_dataset = None;
         self.env_fetched = false;
         self.relate();
+    }
+
+    /// Effective wind speed. Supplied wind requires both speed and direction;
+    /// incomplete pairs fall back together, never mixing two observations.
+    pub fn wind_speed(&self) -> Option<f64> {
+        if !self.downloaded_wind_only
+            && let Some((speed, _)) = self.supplied_wind
+        {
+            Some(speed)
+        } else {
+            self.tws
+        }
+    }
+
+    /// Effective meteorological wind direction over ground.
+    pub fn wind_direction(&self) -> Option<f64> {
+        if !self.downloaded_wind_only
+            && let Some((_, direction)) = self.supplied_wind
+        {
+            Some(direction)
+        } else {
+            self.twd_from
+        }
+    }
+
+    /// Signed apparent wind bearing clockwise from the bow, in [0, 360).
+    /// Air relative to the boat is true air velocity minus boat velocity;
+    /// subtracting the same current from both cancels exactly.
+    pub fn apparent_wind_angle(&self, use_corrected: bool) -> Option<f64> {
+        let (heading, speed) = self.heading.zip(self.speed)?;
+        let (wind, from) = self.wind_speed().zip(self.wind_direction())?;
+        // Work in the boat's ground-heading frame. The apparent "from"
+        // vector is true wind "from" plus boat velocity; this needs only
+        // one rotation instead of rotating both global vectors.
+        let angle = (from - heading).to_radians();
+        let (east, north) = (wind * angle.sin(), wind * angle.cos() + speed);
+        let bow = if use_corrected {
+            self.heading_corrected.unwrap_or(heading)
+        } else {
+            heading
+        };
+        (east.hypot(north) > 1e-9).then(|| {
+            canonical::degrees((east.atan2(north).to_degrees() + heading - bow).rem_euclid(360.0))
+        })
     }
 
     /// Recomputes everything that relates the boat's motion to the stored
@@ -697,11 +787,11 @@ impl Sample {
     pub fn relate(&mut self) {
         self.twa = self
             .heading
-            .zip(self.twd_from)
+            .zip(self.wind_direction())
             .map(|(h, w)| angle_off(h, w));
         self.tack = self
             .heading
-            .zip(self.twd_from)
+            .zip(self.wind_direction())
             .and_then(|(h, w)| tack_of(h, w));
         self.bsp_corrected = None;
         self.heading_corrected = None;
@@ -719,7 +809,7 @@ impl Sample {
                 // A boat stopped in the water has no heading through it.
                 self.heading_corrected = (bsp > 1e-9).then(|| compass(we, wn));
             }
-            if let (Some(tws), Some(from)) = (self.tws, self.twd_from) {
+            if let (Some(tws), Some(from)) = (self.wind_speed(), self.wind_direction()) {
                 let (ae, an) = toward(tws, from + 180.0);
                 let (re, rn) = (ae - ce, an - cn);
                 let speed = re.hypot(rn);
@@ -813,6 +903,8 @@ pub struct DerivationSettings {
     pub max_gap_s: i64,
     /// Given or derived values first.
     pub prefer: PreferValues,
+    /// Ignore supplied wind and use downloaded weather only when selected.
+    pub downloaded_wind_only: bool,
 }
 
 /// The longest maximum gap offered, seconds: a central difference across
@@ -838,6 +930,7 @@ impl Default for DerivationSettings {
         Self {
             max_gap_s: 3 * 3600,
             prefer: PreferValues::Given,
+            downloaded_wind_only: false,
         }
     }
 }
@@ -918,6 +1011,8 @@ mod tests {
 
     fn sample() -> Sample {
         let fix = Fix {
+            tws: None,
+            twd_from: None,
             t: 0,
             lat: 50.0,
             lon: -5.0,

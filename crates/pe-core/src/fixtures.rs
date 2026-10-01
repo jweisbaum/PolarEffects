@@ -70,6 +70,8 @@ pub fn track(project: &mut Project) -> Track {
     );
     track.fixes = vec![
         Fix {
+            tws: None,
+            twd_from: None,
             t: 1_753_000_000,
             lat: 50.1,
             lon: -1.3,
@@ -77,6 +79,8 @@ pub fn track(project: &mut Project) -> Track {
             sog: None,
         },
         Fix {
+            tws: None,
+            twd_from: None,
             t: 1_753_000_600,
             lat: 50.12,
             lon: -1.25,
@@ -84,6 +88,8 @@ pub fn track(project: &mut Project) -> Track {
             sog: Some(7.2),
         },
         Fix {
+            tws: None,
+            twd_from: None,
             t: 1_753_001_200,
             lat: 50.14,
             lon: -1.2,
@@ -123,6 +129,7 @@ pub fn project() -> Project {
         Boat {
             name: "Boat".to_owned(),
             notes: "Notes".to_owned(),
+            ..Boat::default()
         },
         1_760_000_000,
     );
@@ -286,6 +293,8 @@ fn raw_fix() -> impl Strategy<Value = Fix> {
         opt_f(0.0..40.0),
     )
         .prop_map(|(t, lat, lon, cog, sog)| Fix {
+            tws: None,
+            twd_from: None,
             t: i64::from(t),
             lat,
             lon,
@@ -354,6 +363,7 @@ pub fn arb_project() -> impl Strategy<Value = Project> {
                 Boat {
                     name: boat,
                     notes: String::new(),
+                    ..Boat::default()
                 },
                 1_700_000_000,
             );

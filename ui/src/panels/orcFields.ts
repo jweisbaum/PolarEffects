@@ -52,6 +52,7 @@ function query(text: string): string {
 /** What `orc_search` receives for these boxes. */
 export function toFilters(fields: FieldQueries): OrcFilters {
   return {
+    size_min: [], size_max: [],
     year_min: year(fields.year_from),
     year_max: year(fields.year_to),
     country: fields.country === "" ? null : fields.country,

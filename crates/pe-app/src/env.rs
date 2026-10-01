@@ -69,6 +69,9 @@ fn batch_span_s(interval: Interval) -> i64 {
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]
 #[ts(export_to = "EnvJobTrack.ts")]
 pub struct EnvJobTrack {
+    /// Boat owning this source; absent only in older UI fixtures.
+    #[ts(optional)]
+    pub boat_id: Option<u64>,
     /// The track source.
     pub source_id: u64,
     /// Its label.
@@ -141,6 +144,7 @@ impl EnvJobs {
         let mut tracks = Vec::new();
         if let Some((task, fraction)) = &queue.running {
             tracks.push(EnvJobTrack {
+                boat_id: Some(task.project),
                 source_id: task.source,
                 label: task.label.clone(),
                 state: "fetching".to_owned(),
@@ -148,6 +152,7 @@ impl EnvJobs {
             });
         }
         tracks.extend(queue.waiting.iter().map(|task| EnvJobTrack {
+            boat_id: Some(task.project),
             source_id: task.source,
             label: task.label.clone(),
             state: "queued".to_owned(),
@@ -170,7 +175,9 @@ impl EnvJobs {
         let mut queue = self.lock();
         for task in tasks {
             // Asking again for a track already waiting replaces its request.
-            queue.waiting.retain(|t| t.source != task.source);
+            queue
+                .waiting
+                .retain(|t| t.project != task.project || t.source != task.source);
             queue.waiting.push_back(task);
         }
         queue.failure = None;
@@ -183,11 +190,19 @@ impl EnvJobs {
     /// ones are dropped, the running one stops at its next chunk and keeps
     /// what it finished.
     pub fn cancel(&self, sources: Option<&[u64]>) {
+        self.cancel_boat(None, sources);
+    }
+
+    /// Cancel only a named boat's jobs; source ids are local to each boat.
+    pub fn cancel_boat(&self, boat: Option<u64>, sources: Option<&[u64]>) {
         let mut queue = self.lock();
-        let named = |id: u64| sources.is_none_or(|s| s.contains(&id));
-        queue.waiting.retain(|t| !named(t.source));
+        let named = |task: &Task| {
+            boat.is_none_or(|id| id == task.project)
+                && sources.is_none_or(|s| s.contains(&task.source))
+        };
+        queue.waiting.retain(|t| !named(t));
         if let Some((task, _)) = &queue.running
-            && named(task.source)
+            && named(task)
         {
             queue.cancel.store(true, Ordering::SeqCst);
         }
@@ -273,11 +288,13 @@ fn ingest(sample: &mut Sample, meta: &mut EnvMeta, env: &EnvPoint, now: i64) {
     match env.waves {
         Some(w) => {
             sample.hs_m = w.hs;
+            sample.wave_period_s = w.period_s;
             sample.wave_from = w.from;
             sample.wave_dataset = record(meta, w.dataset, now);
         }
         None => {
             sample.hs_m = None;
+            sample.wave_period_s = None;
             sample.wave_from = None;
             sample.wave_dataset = None;
         }
@@ -334,27 +351,34 @@ fn with_track<T>(
     target: Target,
     f: impl FnOnce(&mut pe_core::track::Track) -> T,
 ) -> Result<Option<T>> {
-    state.with_session(|session| {
-        let Some(open) = session.open.as_mut() else {
-            return Ok(None);
-        };
-        if open.project.id.raw() != target.project {
-            return Ok(None);
-        }
-        let Some(track) = open
-            .project
-            .source_mut(SourceId(target.source))
-            .and_then(|s| s.track_mut())
-        else {
-            return Ok(None);
-        };
-        if track.id.raw() != target.track || track.samples.len() != target.samples {
-            return Ok(None);
-        }
-        let out = f(track);
-        open.touch_samples(target.source);
-        Ok(Some(out))
-    })
+    let scoped = state.scoped(Some(target.project));
+    let state = &scoped;
+    state
+        .with_session(|session| {
+            let Some(open) = session.open.as_mut() else {
+                return Ok(None);
+            };
+            if open.project.id.raw() != target.project {
+                return Ok(None);
+            }
+            let Some(track) = open
+                .project
+                .source_mut(SourceId(target.source))
+                .and_then(|s| s.track_mut())
+            else {
+                return Ok(None);
+            };
+            if track.id.raw() != target.track || track.samples.len() != target.samples {
+                return Ok(None);
+            }
+            let out = f(track);
+            open.touch_samples(target.source);
+            Ok(Some(out))
+        })
+        .or_else(|error| match error {
+            AppError::NoProjectOpen => Ok(None),
+            other => Err(other),
+        })
 }
 
 /// How one task ended.
@@ -380,69 +404,76 @@ fn run(
     cancel: &Arc<AtomicBool>,
     now: i64,
 ) -> Result<Outcome> {
+    let scoped = state.scoped(Some(task.project));
+    let state = &scoped;
     // Gather what is still to fetch, starting over when asked or when the
     // interval or the Stokes choice changed: a track is never a mix.
-    let gathered = state.with_session(|session| {
-        let Some(open) = session.open.as_mut() else {
-            return Ok(None);
-        };
-        if open.project.id.raw() != task.project {
-            return Ok(None);
-        }
-        let stokes = open.project.blend.include_stokes_drift;
-        let Some(track) = open
-            .project
-            .source_mut(SourceId(task.source))
-            .and_then(|s| s.track_mut())
-        else {
-            return Ok(None);
-        };
-        let seconds = task.interval.seconds();
-        let meta = &track.env_meta;
-        let restart = task.restart
-            || meta.interval_s.is_some_and(|s| s != seconds)
-            || meta.stokes_drift.is_some_and(|s| s != stokes);
-        let changed =
-            restart || meta.interval_s != Some(seconds) || meta.stokes_drift != Some(stokes);
-        if restart {
-            // Nothing of the earlier fetch survives: not a value, not a
-            // dataset record (with its fetch time), so a cancel part way
-            // through leaves a track that is partly fetched, never mixed.
-            for sample in &mut track.samples {
-                sample.clear_env();
+    let gathered = state
+        .with_session(|session| {
+            let Some(open) = session.open.as_mut() else {
+                return Ok(None);
+            };
+            if open.project.id.raw() != task.project {
+                return Ok(None);
             }
-            track.env_meta.datasets.clear();
-            track.env_meta.status = EnvStatus::NotFetched;
-        }
-        track.env_meta.interval_s = Some(seconds);
-        track.env_meta.stokes_drift = Some(stokes);
-        let todo: Vec<(usize, Point)> = track
-            .samples
-            .iter()
-            .enumerate()
-            .filter(|(_, s)| !s.env_fetched)
-            .map(|(k, s)| {
-                (
-                    k,
-                    Point {
-                        t: s.t,
-                        lat: s.lat,
-                        lon: s.lon,
-                    },
-                )
-            })
-            .collect();
-        let target = Target {
-            project: task.project,
-            source: task.source,
-            track: track.id.raw(),
-            samples: track.samples.len(),
-        };
-        if changed {
-            open.touch_samples(task.source);
-        }
-        Ok(Some((target, todo, stokes)))
-    })?;
+            let stokes = open.project.blend.include_stokes_drift;
+            let Some(track) = open
+                .project
+                .source_mut(SourceId(task.source))
+                .and_then(|s| s.track_mut())
+            else {
+                return Ok(None);
+            };
+            let seconds = task.interval.seconds();
+            let meta = &track.env_meta;
+            let restart = task.restart
+                || meta.interval_s.is_some_and(|s| s != seconds)
+                || meta.stokes_drift.is_some_and(|s| s != stokes);
+            let changed =
+                restart || meta.interval_s != Some(seconds) || meta.stokes_drift != Some(stokes);
+            if restart {
+                // Nothing of the earlier fetch survives: not a value, not a
+                // dataset record (with its fetch time), so a cancel part way
+                // through leaves a track that is partly fetched, never mixed.
+                for sample in &mut track.samples {
+                    sample.clear_env();
+                }
+                track.env_meta.datasets.clear();
+                track.env_meta.status = EnvStatus::NotFetched;
+            }
+            track.env_meta.interval_s = Some(seconds);
+            track.env_meta.stokes_drift = Some(stokes);
+            let todo: Vec<(usize, Point)> = track
+                .samples
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| !s.env_fetched)
+                .map(|(k, s)| {
+                    (
+                        k,
+                        Point {
+                            t: s.t,
+                            lat: s.lat,
+                            lon: s.lon,
+                        },
+                    )
+                })
+                .collect();
+            let target = Target {
+                project: task.project,
+                source: task.source,
+                track: track.id.raw(),
+                samples: track.samples.len(),
+            };
+            if changed {
+                open.touch_samples(task.source);
+            }
+            Ok(Some((target, todo, stokes)))
+        })
+        .or_else(|error| match error {
+            AppError::NoProjectOpen => Ok(None),
+            other => Err(other),
+        })?;
     let Some((target, todo, stokes)) = gathered else {
         return Ok(Outcome::Gone);
     };
@@ -772,9 +803,11 @@ pub fn estimate_for(
 #[tauri::command(async)]
 pub fn env_estimate(
     state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
     source_ids: Vec<u64>,
     restart: bool,
 ) -> Result<EnvEstimate> {
+    let state = state.scoped(boat_context);
     let provider = provider(&state)?;
     estimate_for(&state, &source_ids, restart, Some(provider.memory()))
 }
@@ -812,10 +845,12 @@ pub fn queue_fetch(
 pub fn start_env_fetch(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
     source_ids: Vec<u64>,
     interval: String,
     restart: bool,
 ) -> Result<EnvJobsStatus> {
+    let state = state.scoped(boat_context);
     let status = queue_fetch(&state, &source_ids, &interval, restart)?;
     use tauri::Emitter;
     let _ = app.emit(PROGRESS_EVENT, &status);
@@ -827,9 +862,13 @@ pub fn start_env_fetch(
 pub fn cancel_env_fetch(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
     source_ids: Option<Vec<u64>>,
 ) -> Result<EnvJobsStatus> {
-    state.env_jobs.cancel(source_ids.as_deref());
+    let state = state.scoped(boat_context);
+    state
+        .env_jobs
+        .cancel_boat(boat_context, source_ids.as_deref());
     let status = state.env_jobs.status();
     use tauri::Emitter;
     let _ = app.emit(PROGRESS_EVENT, &status);
@@ -838,13 +877,22 @@ pub fn cancel_env_fetch(
 
 /// The job queue now (for a frontend that just loaded).
 #[tauri::command]
-pub fn env_jobs(state: tauri::State<'_, AppState>) -> Result<EnvJobsStatus> {
+pub fn env_jobs(
+    state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
+) -> Result<EnvJobsStatus> {
+    let state = state.scoped(boat_context);
     Ok(state.env_jobs.status())
 }
 
 /// Chooses whether the polar uses current-corrected values (undoable).
 #[tauri::command]
-pub fn set_use_corrected(state: tauri::State<'_, AppState>, on: bool) -> Result<ProjectSummary> {
+pub fn set_use_corrected(
+    state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
+    on: bool,
+) -> Result<ProjectSummary> {
+    let state = state.scoped(boat_context);
     use_corrected_set(&state, on)
 }
 
@@ -859,7 +907,12 @@ pub fn use_corrected_set(state: &AppState, on: bool) -> Result<ProjectSummary> {
 /// Chooses whether the global merged current includes Stokes drift
 /// (undoable; applies to the next fetch).
 #[tauri::command]
-pub fn set_stokes_drift(state: tauri::State<'_, AppState>, on: bool) -> Result<ProjectSummary> {
+pub fn set_stokes_drift(
+    state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
+    on: bool,
+) -> Result<ProjectSummary> {
+    let state = state.scoped(boat_context);
     stokes_drift_set(&state, on)
 }
 
@@ -904,6 +957,8 @@ mod tests {
     #[test]
     fn ingest_converts_units_and_senses() {
         let fix = pe_core::track::Fix {
+            tws: None,
+            twd_from: None,
             t: 0,
             lat: 0.0,
             lon: 0.0,

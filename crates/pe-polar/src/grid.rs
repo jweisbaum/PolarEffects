@@ -33,6 +33,72 @@ pub fn fold_twa(twa: f64) -> Option<f64> {
     }
 }
 
+/// A full-circle grid keeps the side; a half-circle source reads symmetrically.
+pub fn angle_on_axis(axis: &[f64], angle: f64) -> Option<f64> {
+    if !(0.0..=360.0).contains(&angle) {
+        return None;
+    }
+    if axis.last().is_some_and(|last| *last > 180.0) {
+        Some(angle)
+    } else {
+        fold_twa(angle)
+    }
+}
+
+/// Convert a source for the project's display mode without rewriting its data.
+/// Half-circle sources seed both sides; full-circle sources average paired
+/// cells only when the project explicitly selects symmetric mode.
+pub fn directional(grid: &PolarGrid, asymmetric: bool) -> PolarGrid {
+    let full = grid.twa.last().is_some_and(|a| *a > 180.0);
+    if full == asymmetric {
+        return grid.clone();
+    }
+    let mut axis = grid.twa.clone();
+    if asymmetric {
+        axis.extend(grid.twa.iter().map(|a| 360.0 - a));
+    } else {
+        axis.iter_mut()
+            .for_each(|a| *a = fold_twa(*a).unwrap_or(*a));
+    }
+    axis.sort_by(f64::total_cmp);
+    axis.dedup();
+    let bsp = axis
+        .iter()
+        .map(|angle| {
+            grid.tws
+                .iter()
+                .enumerate()
+                .map(|(j, _)| {
+                    // Only original nodes participate. Reading interpolated
+                    // values here would silently fill ragged source holes.
+                    let mut sum = 0.0;
+                    let mut count = 0;
+                    for (i, original) in grid.twa.iter().enumerate() {
+                        let mapped = if asymmetric {
+                            fold_twa(*angle)
+                        } else {
+                            fold_twa(*original)
+                        };
+                        let target = if asymmetric { *original } else { *angle };
+                        if mapped.is_some_and(|a| (a - target).abs() <= ON_AXIS)
+                            && let Some(value) = grid.get(i, j)
+                        {
+                            sum += value;
+                            count += 1;
+                        }
+                    }
+                    (count > 0).then(|| sum / f64::from(count))
+                })
+                .collect()
+        })
+        .collect();
+    PolarGrid {
+        twa: axis,
+        tws: grid.tws.clone(),
+        bsp,
+    }
+}
+
 /// The number of cells holding a value.
 pub fn cell_count(grid: &PolarGrid) -> usize {
     grid.bsp
@@ -93,7 +159,7 @@ pub type Corners = [(usize, usize); 4];
 /// The boat speed at (`twa`, `tws`) and the nodes it was read from, or
 /// `None` where the polar says nothing. What [`interpolate`] reads.
 pub fn interpolate_from(grid: &PolarGrid, twa: f64, tws: f64) -> Option<(f64, Corners)> {
-    let twa = fold_twa(twa)?;
+    let twa = angle_on_axis(&grid.twa, twa)?;
     let (j0, j1, t) = bracket(&grid.tws, tws)?;
     // Outside the TWA axis there is nothing either, whatever the column.
     bracket(&grid.twa, twa)?;
@@ -161,6 +227,29 @@ mod tests {
         assert_eq!(fold_twa(-1.0), None);
         assert_eq!(fold_twa(361.0), None);
         assert_eq!(fold_twa(f64::NAN), None);
+    }
+
+    #[test]
+    fn directional_conversion_preserves_ragged_nodes_and_independent_sides() {
+        let full = PolarGrid {
+            twa: vec![45.0, 90.0, 270.0, 315.0],
+            tws: vec![6.0, 12.0],
+            bsp: vec![
+                vec![Some(4.0), None],
+                vec![Some(6.0), Some(8.0)],
+                vec![Some(10.0), None],
+                vec![None, Some(9.0)],
+            ],
+        };
+        let half = directional(&full, false);
+        assert_eq!(half.twa, vec![45.0, 90.0]);
+        assert_eq!(
+            half.bsp,
+            vec![vec![Some(4.0), Some(9.0)], vec![Some(8.0), Some(8.0)]]
+        );
+        let mirrored = directional(&square(), true);
+        assert_eq!(mirrored.get(4, 0), Some(6.0)); // 270°, same original 90° row.
+        assert_eq!(directional(&full, true), full);
     }
 
     #[test]

@@ -32,6 +32,8 @@ pub struct EventRef {
 /// One boat of an event, with its full track.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TrackerBoat {
+    /// All supplied boat fields, including vendor-specific identifiers.
+    pub details: std::collections::BTreeMap<String, String>,
     /// The tracker's own id for the boat.
     pub id: String,
     /// Boat name.
@@ -50,6 +52,48 @@ pub struct TrackerBoat {
     pub finish: Option<i64>,
     /// Positions, oldest first, longitude in [-180, 180).
     pub fixes: Vec<Fix>,
+}
+
+/// Keep leaf fields with their original paths, including nested vendor data.
+pub fn boat_details(value: &serde_json::Value) -> std::collections::BTreeMap<String, String> {
+    fn collect(
+        value: &serde_json::Value,
+        path: &str,
+        out: &mut std::collections::BTreeMap<String, String>,
+    ) {
+        match value {
+            serde_json::Value::Object(fields) => {
+                for (key, value) in fields {
+                    collect(
+                        value,
+                        &if path.is_empty() {
+                            key.clone()
+                        } else {
+                            format!("{path}.{key}")
+                        },
+                        out,
+                    );
+                }
+            }
+            serde_json::Value::Array(values) => {
+                for (index, value) in values.iter().enumerate() {
+                    collect(value, &format!("{path}.{index}"), out);
+                }
+            }
+            serde_json::Value::Null => {}
+            serde_json::Value::String(text) => {
+                if !text.trim().is_empty() {
+                    out.insert(path.to_owned(), text.clone());
+                }
+            }
+            other => {
+                out.insert(path.to_owned(), other.to_string());
+            }
+        }
+    }
+    let mut out = std::collections::BTreeMap::new();
+    collect(value, "", &mut out);
+    out
 }
 
 /// Where an event's positions were read from.
@@ -142,6 +186,19 @@ pub trait TrackerClient: Send + Sync {
     /// [`crate::TrackerError::NotAnEvent`] for an address this tracker does
     /// not serve.
     fn resolve(&self, input: &str) -> Result<EventRef>;
+
+    /// Finished races only, for manual and scheduled library scraping. Clients
+    /// must check provider completion evidence before requesting separate track
+    /// resources. Unsupported clients fail closed instead of using `fetch`.
+    fn fetch_for_scrape(
+        &self,
+        _event: &EventRef,
+        _fetcher: &Fetcher,
+        _progress: &mut dyn FnMut(Progress),
+        _now: i64,
+    ) -> Result<crate::library::completion::ScrapeFetch> {
+        Ok(crate::library::completion::ScrapeFetch::Skipped { legs: None })
+    }
 
     /// Downloads the event: its title, dates and every boat's full track.
     ///

@@ -58,6 +58,8 @@ fn track_source(id: u64) -> Source {
     };
     for k in 0..13u64 {
         let fix = Fix {
+            tws: None,
+            twd_from: None,
             t: 1_753_531_200 + k as i64 * 60,
             lat: 50.0,
             lon: -5.0,
@@ -384,7 +386,7 @@ fn only_the_flags_travel_when_no_sample_moved() {
     let (s, n, m) = (word(&fresh, 2) as usize, word(&fresh, 3) as usize, 13);
     let nodes_end = 12 + s * 4 + n * 6;
     assert_eq!(fresh[48..nodes_end * 4], delta[48..nodes_end * 4]);
-    let flags_at = nodes_end + m * 9;
+    let flags_at = nodes_end + m * 12;
     assert_eq!(
         fresh[flags_at * 4..(flags_at + m) * 4],
         delta[nodes_end * 4..(nodes_end + m) * 4]

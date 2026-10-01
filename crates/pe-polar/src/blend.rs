@@ -105,7 +105,7 @@ pub struct Blend {
 
 /// Whether an angle is the 0° row: 0 kn by definition, no evidence.
 fn is_zero_row(twa: f64) -> bool {
-    twa.abs() <= ON_AXIS
+    twa.abs() <= ON_AXIS || (twa - 360.0).abs() <= ON_AXIS
 }
 
 /// Whether `polar` holds a value anywhere off the 0° row: a blend that does
@@ -122,21 +122,74 @@ pub fn has_value_off_zero_row(polar: &Polar) -> bool {
 /// bilinear, never extrapolated, and — as in the fill (D23) — the 0° row is
 /// no anchor: it is left out of the reading, and an output 0° row is 0 kn.
 pub fn resample_blend(blend: &Polar, twa: &[f64], tws: &[f64]) -> Polar {
-    let keep: Vec<usize> = (0..blend.twa.len())
-        .filter(|&i| !is_zero_row(blend.twa[i]))
-        .collect();
-    let without_zero = Polar {
-        twa: keep.iter().map(|&i| blend.twa[i]).collect(),
-        tws: blend.tws.clone(),
-        bsp: keep.iter().map(|&i| blend.bsp[i].clone()).collect(),
+    resample_blend_mode(blend, twa, tws, pe_core::project::Interpolation::Linear)
+}
+
+/// Resample with the project's interpolation rule, retaining the zero-row rule.
+pub fn resample_blend_mode(
+    blend: &Polar,
+    twa: &[f64],
+    tws: &[f64],
+    mode: pe_core::project::Interpolation,
+) -> Polar {
+    // Retain the axis (including 360°) so a sparse asymmetric grid cannot
+    // accidentally become a half-circle source and mirror its other side.
+    let mut without_zero = blend.clone();
+    for (angle, row) in without_zero.twa.iter().zip(&mut without_zero.bsp) {
+        if is_zero_row(*angle) {
+            row.fill(None);
+        }
+    }
+    let reader = crate::spline::Interpolator::new(&without_zero, mode);
+    let mut out = Polar {
+        twa: twa.to_vec(),
+        tws: tws.to_vec(),
+        bsp: twa
+            .iter()
+            .map(|a| tws.iter().map(|s| reader.at(*a, *s)).collect())
+            .collect(),
     };
-    let mut out = crate::grid::resample(&without_zero, twa, tws);
     for (angle, row) in out.twa.iter().zip(out.bsp.iter_mut()) {
         if is_zero_row(*angle) {
             row.iter_mut().for_each(|cell| *cell = Some(0.0));
         }
     }
     out
+}
+
+#[cfg(test)]
+mod directional_regressions {
+    use super::*;
+    #[test]
+    fn a_sparse_full_circle_never_mirrors_or_anchors_on_headwind() {
+        let polar = Polar {
+            twa: vec![0.0, 45.0, 90.0, 360.0],
+            tws: vec![10.0],
+            bsp: vec![
+                vec![Some(0.0)],
+                vec![Some(4.0)],
+                vec![Some(6.0)],
+                vec![Some(0.0)],
+            ],
+        };
+        for mode in [
+            pe_core::project::Interpolation::Linear,
+            pe_core::project::Interpolation::MonotoneSpline,
+        ] {
+            let sampled =
+                resample_blend_mode(&polar, &[0.0, 20.0, 67.5, 270.0, 360.0], &[10.0], mode);
+            assert_eq!(
+                sampled.bsp,
+                vec![
+                    vec![Some(0.0)],
+                    vec![None],
+                    vec![Some(5.0)],
+                    vec![None],
+                    vec![Some(0.0)]
+                ]
+            );
+        }
+    }
 }
 
 impl Blend {
@@ -165,6 +218,25 @@ impl Blend {
 /// excluded node from its neighbours instead would put back, in part, the
 /// very value the person took out.
 pub fn on_grid(edited: &Polar, overlay: &Overlay, twa: &[f64], tws: &[f64]) -> Polar {
+    on_grid_mode(
+        edited,
+        overlay,
+        twa,
+        tws,
+        pe_core::project::Interpolation::Linear,
+    )
+}
+
+/// Preserve excluded-node coverage while using only included nodes for spline slopes.
+pub fn on_grid_mode(
+    edited: &Polar,
+    overlay: &Overlay,
+    twa: &[f64],
+    tws: &[f64],
+    mode: pe_core::project::Interpolation,
+) -> Polar {
+    let clean = crate::with_overlay(edited.clone(), overlay, true);
+    let reader = crate::spline::Interpolator::new(&clean, mode);
     let excluded = |(i, j): (usize, usize)| match (edited.twa.get(i), edited.tws.get(j)) {
         (Some(a), Some(s)) => overlay.is_cell_excluded(*a, *s),
         _ => false,
@@ -175,7 +247,13 @@ pub fn on_grid(edited: &Polar, overlay: &Overlay, twa: &[f64], tws: &[f64]) -> P
             tws.iter()
                 .map(|speed| {
                     let (value, corners) = interpolate_from(edited, *angle, *speed)?;
-                    (!corners.iter().any(|node| excluded(*node))).then_some(value)
+                    if corners.iter().any(|node| excluded(*node)) {
+                        None
+                    } else if mode == pe_core::project::Interpolation::Linear {
+                        Some(value)
+                    } else {
+                        reader.at(*angle, *speed)
+                    }
                 })
                 .collect()
         })
@@ -220,6 +298,23 @@ pub fn blend(
     sources: &[BlendSource<'_>],
     options: &BlendOptions,
 ) -> Blend {
+    blend_mode(
+        twa,
+        tws,
+        sources,
+        options,
+        pe_core::project::Interpolation::Linear,
+    )
+}
+
+/// Blend with the selected interpolation for the two ordered filling passes.
+pub fn blend_mode(
+    twa: &[f64],
+    tws: &[f64],
+    sources: &[BlendSource<'_>],
+    options: &BlendOptions,
+    mode: pe_core::project::Interpolation,
+) -> Blend {
     let (ni, nj) = (twa.len(), tws.len());
     let mut ordered: Vec<&BlendSource<'_>> = sources
         .iter()
@@ -257,14 +352,17 @@ pub fn blend(
     let direct = value.clone();
     for j in 0..nj {
         let known: Vec<usize> = (0..ni).filter(|&i| direct[i][j].is_some()).collect();
+        let curve = crate::spline::Curve::new(
+            known
+                .iter()
+                .filter_map(|i| Some((twa[*i], direct[*i][j]?)))
+                .collect(),
+            mode,
+        );
         for pair in known.windows(2) {
             let (lo, hi) = (pair[0], pair[1]);
-            let (Some(a), Some(b)) = (direct[lo][j], direct[hi][j]) else {
-                continue;
-            };
             for i in lo + 1..hi {
-                let t = (twa[i] - twa[lo]) / (twa[hi] - twa[lo]);
-                value[i][j] = Some(a + (b - a) * t);
+                value[i][j] = curve.at(twa[i]);
                 origin[i][j] = CellOrigin::Filled;
             }
         }
@@ -273,14 +371,17 @@ pub fn blend(
     for i in (0..ni).filter(|&i| !zero_row[i]) {
         let row = value[i].clone();
         let known: Vec<usize> = (0..nj).filter(|&j| row[j].is_some()).collect();
+        let curve = crate::spline::Curve::new(
+            known
+                .iter()
+                .filter_map(|j| Some((tws[*j], row[*j]?)))
+                .collect(),
+            mode,
+        );
         for pair in known.windows(2) {
             let (lo, hi) = (pair[0], pair[1]);
-            let (Some(a), Some(b)) = (row[lo], row[hi]) else {
-                continue;
-            };
             for j in lo + 1..hi {
-                let t = (tws[j] - tws[lo]) / (tws[hi] - tws[lo]);
-                value[i][j] = Some(a + (b - a) * t);
+                value[i][j] = curve.at(tws[j]);
                 origin[i][j] = CellOrigin::Filled;
             }
         }

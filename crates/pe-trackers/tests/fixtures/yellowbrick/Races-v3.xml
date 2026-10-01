@@ -1,0 +1,23 @@
+<?xml version='1.0' encoding='utf-8'?>
+<r>
+  <races>
+    <race race-id="4205" date="2026-09-25" purchased="false" ios-productid="YBE02116" android-productid="YBE02116" price-type="free">
+      <title>2026 Round Aeolian Race</title>
+      <blurb />
+      <url-logo>https://ti.yb.tl/AppLogos/db74b023-3a31-4ec7-84cd-7cd01588a603.png</url-logo>
+      <url-map />
+    </race>
+    <race race-id="617" date="2016-03-12" purchased="false" ios-productid="YBE00193" android-productid="ybe00193" price-type="free">
+      <title>The MINT 400 2016</title>
+      <blurb />
+      <url-logo />
+      <url-map>http://cdn.yb.tl/mobile_app/default_map.jpg</url-map>
+    </race>
+    <race race-id="121" date="2012-11-15" purchased="false" ios-productid="YBE01448" android-productid="YBE01448" price-type="free">
+      <title>Atlantic Rally for Cruisers 2012</title>
+      <blurb>This annual transatlantic rally starting each November in Las Palmas de Gran Canaria, has now become the most popular way to cross the Atlantic. The largest transocean sailing event in the world, every year the ARC brings together over 200 yachts from all over the world. The Caribbean destination is Rodney Bay in Saint Lucia, one of the most beautiful islands in the Lesser Antilles. The 2700 nautical mile passage on the NE tradewind route takes on average between 14 and 21 days.</blurb>
+      <url-logo />
+      <url-map>http://cdn.yb.tl/mobile_app/arc_map.jpg</url-map>
+    </race>
+  </races>
+</r>

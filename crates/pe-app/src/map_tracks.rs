@@ -81,8 +81,7 @@ pub fn unwrap_longitudes(lons: impl IntoIterator<Item = f64>) -> Vec<f64> {
     out
 }
 
-fn track_of(source: &Source, track: &Track, use_corrected: bool) -> MapTrack {
-    let filtered = pe_tracks::filtered_out(track, &source.overlay.filters, use_corrected);
+fn track_of(source: &Source, track: &Track, filtered: &[bool]) -> MapTrack {
     let excluded = &source.overlay.excluded_samples;
     let lons = unwrap_longitudes(track.samples.iter().map(|s| s.lon));
     MapTrack {
@@ -99,7 +98,7 @@ fn track_of(source: &Source, track: &Track, use_corrected: bool) -> MapTrack {
         flags: track
             .samples
             .iter()
-            .zip(&filtered)
+            .zip(filtered)
             .map(|(s, out)| {
                 let mut flags = 0;
                 if excluded.binary_search(&s.id).is_ok() {
@@ -116,13 +115,22 @@ fn track_of(source: &Source, track: &Track, use_corrected: bool) -> MapTrack {
 
 /// Every visible track of a project, as the map draws them.
 pub fn tracks_of(project: &Project) -> Vec<MapTrack> {
+    let flags = crate::priority::filter_flags(project);
     project
         .sources
         .iter()
         .filter(|s| s.visible)
         .filter_map(|s| {
-            s.track()
-                .map(|t| track_of(s, t, project.blend.use_corrected))
+            s.track().map(|t| {
+                track_of(
+                    s,
+                    t,
+                    flags
+                        .get(&s.id.raw())
+                        .map(Vec::as_slice)
+                        .unwrap_or_default(),
+                )
+            })
         })
         .collect()
 }
@@ -168,7 +176,11 @@ pub fn pack(tracks: &[MapTrack]) -> Vec<u8> {
 /// The open project's tracks for the map, packed (layout in the module
 /// documentation).
 #[tauri::command]
-pub fn map_tracks(state: tauri::State<'_, AppState>) -> Result<tauri::ipc::Response> {
+pub fn map_tracks(
+    state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
+) -> Result<tauri::ipc::Response> {
+    let state = state.scoped(boat_context);
     tracks_bytes(&state).map(tauri::ipc::Response::new)
 }
 

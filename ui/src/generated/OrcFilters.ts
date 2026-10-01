@@ -41,4 +41,13 @@ designer: string,
 /**
  * The start of the certificate year.
  */
-certificate_year: string, };
+certificate_year: string,
+/**
+ * Minimum LOA, beam, draft, displacement, main, genoa, spinnaker,
+ * asymmetric spinnaker and crew weight, in metres, kg and m².
+ */
+size_min: Array<number | null>,
+/**
+ * Upper measurement bounds in the same order.
+ */
+size_max: Array<number | null>, };

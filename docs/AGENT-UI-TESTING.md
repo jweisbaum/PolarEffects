@@ -47,7 +47,7 @@ node tools/webdriver/cli.mjs shot start            # start, capture, stop; print
 node tools/webdriver/cli.mjs serve > /tmp/pe.port & # start and hold; prints the port
 export PE_DRIVER_PORT=$(cat /tmp/pe.port)
 node tools/webdriver/cli.mjs click '[data-feature="new:create"]'
-node tools/webdriver/cli.mjs wait '[data-feature="stage:map"]'
+node tools/webdriver/cli.mjs wait '[data-feature="stage:3d"]'
 node tools/webdriver/cli.mjs dialog "$PWD/polar_examples/polars/Farr 40.txt"
 node tools/webdriver/cli.mjs click '[data-feature="polar-files:import"]'
 node tools/webdriver/cli.mjs type '[data-feature="shell:search"]' 'Fit the world'
@@ -88,7 +88,7 @@ export default {
   async setup() { return { env: {}, teardown: async () => {} }; },
   async run(t) {
     const d = t.driver;                       // the client's Driver
-    await newProject(d, "My test");           // start screen -> Map stage
+    await newProject(d, "My test");           // start screen -> 3D stage
     await d.click('[data-feature="stage:3d"]');
     await d.waitFor("canvas.view3d-canvas", { visible: true });
     assert.ok(await d.exists(".view3d-labels"));
@@ -117,16 +117,37 @@ Rules:
 - **No live network.** Serve recorded responses from a local server, as
   `04-tracker-dialog.test.mjs` does for YellowBrick.
 
+The offline `09-polar-analysis` test opens `fixtures/analysis.wpsproj`. Rebuild
+that fixture with `CARGO_INCREMENTAL=0 cargo run -p pe-app --example analysis_fixture`.
+It covers catalogue pagination/imports, asymmetric plots, blend corrections,
+individual/global filters, timestamp units and priority groups without fetching.
+`11-wave-display-ranges` uses the same fixture to check bottom-centred dual-handle
+sliders, pointer reachability when handles meet, centring as panels toggle, live redraws,
+dragging the selected middle section with native blend updates before release,
+combined height/angle/period bounds, missing measurements, updated native sample
+counts and reset alongside other analysis filters. `12-live-analysis` imports an
+offline instrument CSV, switches supplied/downloaded wind, checks every change
+filter without blurring inputs, and hovers a rendered dot to inspect its details. `10-database-library` imports two local search results
+consecutively and checks that the query remains visible while each successfully
+imported result is removed and the remaining count decreases.
+It also selects both imported tracks with Select all and opens their shared
+weather estimate, cancelling before any download starts.
+`13-boat-tabs` opens a four-boat fixture, checks linked camera gestures and
+hover, renaming, adding a boat, export-all, and returning to an independent
+single view. `14-tracker-project` serves a recorded YellowBrick event and
+checks that identical boat names cannot import another boat's polars without
+matching model evidence.
+
 ## The seams, and why each exists
 
 | Seam | Where | Only in | Why |
 |---|---|---|---|
 | `PE_AUTOMATION_ROOT` | `pe-app/src/paths.rs` | `webdriver` feature | A run must not write the person's settings or recovery files |
 | `PE_DRIVER_YELLOWBRICK=http://127.0.0.1:<port>` | `pe-app/src/trackers.rs` | `webdriver` feature, loopback only | The tracker dialog end to end without the network |
-| `PE_DRIVER_REANALYSIS=http://127.0.0.1:<port>` | `pe-app/src/grib.rs` | `webdriver` feature, loopback only, GRIB export only | The reanalysis GRIB export end to end without the network: each dataset at `<origin>/<dataset id>` (`09-grib-export.test.mjs`) |
 | `window.__peDialogAnswers` | `ui/src/automation.ts`, `project/dialogs.ts` | dev builds | A native file picker is outside the webview |
 | `window.__peOpen(path)` | `ui/src/App.tsx` | dev builds | Opening through the app's own path, not a bare `open_project` |
 | `canvas.__peRedraw()` | `automation.ts`, `MapView`, `PolarView`, `CompareView` | dev builds | A WebGL canvas reads back empty after its frame is shown |
+| `canvas.__peInspectPolar()` | `automation.ts`, `PolarView` | dev builds | Read-only camera and projected-point observations for linked-view tests |
 
 Adding one: gate Rust on `#[cfg(feature = "webdriver")]`, TypeScript on
 `import.meta.env.DEV`, add no user-visible text, and add it to this table.
@@ -162,15 +183,14 @@ Adding one: gate Rust on `#[cfg(feature = "webdriver")]`, TypeScript on
   write `target/debug/pe-app`; cargo keeps both sets of artifacts, so
   switching costs one link, not a rebuild (the first `--features webdriver`
   build recompiles Tauri once, about 4 minutes).
-- **`CARGO_INCREMENTAL=0` is the driver's default** (`client.mjs` for the
-  app it starts, `ux/run.mjs` for its prebuild), kept on purpose and
-  overridable by setting the variable yourself. This machine's disk is
-  tight and incremental caches grow fast (the repository's constraint: every
-  cargo command runs with it). The catch is the person's own `tauri dev`: if
-  theirs runs *with* incremental compilation, cargo sees a different setting
-  and may recompile the workspace's own crates each time the two alternate
-  (only those: dependencies are never built incrementally). Run
-  `CARGO_INCREMENTAL=1 npm run ux` to match a `tauri dev` that uses it.
+- **Incremental compilation is disabled for development and tests** in the
+  workspace `Cargo.toml`. Rust 1.97.1 on Intel macOS can otherwise fail to link
+  optimised workspace crates with undefined internal `.llvm.*` symbols. The
+  driver also sets `CARGO_INCREMENTAL=0` (`client.mjs` for the app it starts,
+  `ux/run.mjs` for its prebuild); keep that setting on cargo commands. Ordinary
+  `npm run dev` now uses the same setting without an environment variable.
+  Do not override it with `CARGO_INCREMENTAL=1`: that reintroduces the linker
+  failure and large incremental caches on this machine's tight disk.
 - **A window that is not composited throttles `requestAnimationFrame` and
   timers.** The app's draws are scheduled on frames; the screenshot redraws
   synchronously, and a gesture must be dispatched synchronously too.

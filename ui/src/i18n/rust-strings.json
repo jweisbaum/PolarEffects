@@ -35,5 +35,9 @@
   "Show blend",
   "Hide blend",
   "Change blend colour",
-  "Blend"
+  "Blend",
+  "Change global point filters",
+  "Correct the blend",
+  "Add ORR polar",
+  "Rename boat"
 ]

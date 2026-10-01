@@ -22,6 +22,7 @@ proptest! {
         if let Ok(table) = parse_table(&text) {
             let width = table.header.len();
             let mapping = CsvMapping {
+                tws: None, twd: None, wind_speed_unit: SpeedUnit::Knots,
                 time: 0,
                 lat: 1 % width,
                 lon: 2 % width,

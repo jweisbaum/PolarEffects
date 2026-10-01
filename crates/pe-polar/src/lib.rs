@@ -21,6 +21,7 @@ pub mod grid;
 pub mod orc;
 pub mod segment;
 pub mod source;
+pub mod spline;
 
 mod build;
 mod expedition;

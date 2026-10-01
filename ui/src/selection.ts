@@ -8,7 +8,8 @@
  * exactly. Selection is not project data and is never recorded in the
  * history (spec.md 4.6).
  */
-import { useSyncExternalStore } from "react";
+import { useMemo, useSyncExternalStore } from "react";
+import { useBoatId } from "./boats/context";
 
 /** Which view made the selection, so that view does not re-apply its own. */
 export type SelectionOrigin = "map" | "3d" | "plot" | "tracks";
@@ -23,67 +24,44 @@ export interface SampleSelection {
 /** A request to bring something into view on the map. */
 export type MapFocus = { kind: "selection" } | { kind: "track"; sourceId: number };
 
+function createSelection() {
 let state: SampleSelection = { ids: new Set(), origin: null, version: 0 };
 const listeners = new Set<() => void>();
 const focusListeners = new Set<(focus: MapFocus) => void>();
 let pendingFocus: MapFocus | null = null;
-
-function emit() {
-  for (const listener of listeners) listener();
-}
-
-/** Replaces the selection. */
-export function selectSamples(ids: Iterable<number>, origin: SelectionOrigin): void {
+const selectSamples = (ids: Iterable<number>, origin: SelectionOrigin) => {
   state = { ids: new Set(ids), origin, version: state.version + 1 };
-  emit();
+  for (const listener of listeners) listener();
+};
+return {
+  selectSamples,
+  clearSamples: (origin: SelectionOrigin) => { if (state.ids.size) selectSamples([], origin); },
+  getSampleSelection: () => state,
+  subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+  focusMap: (focus: MapFocus) => { pendingFocus = focus; for (const listener of focusListeners) listener(focus); },
+  onFocusMap: (listener: (focus: MapFocus) => void) => { focusListeners.add(listener); return () => { focusListeners.delete(listener); }; },
+  takePendingFocus: () => { const focus = pendingFocus; pendingFocus = null; return focus; },
+  reset: () => { state = { ids: new Set(), origin: null, version: 0 }; pendingFocus = null; for (const listener of listeners) listener(); },
+};
 }
-
-/** Selects nothing. */
-export function clearSamples(origin: SelectionOrigin): void {
-  if (state.ids.size === 0) return;
-  selectSamples([], origin);
+const stores = new Map<number | undefined, ReturnType<typeof createSelection>>();
+function selection(id?: number) {
+  let held = stores.get(id);
+  if (!held) { held = createSelection(); stores.set(id, held); }
+  return held;
 }
-
-export function getSampleSelection(): SampleSelection {
-  return state;
+export const selectSamples = (ids: Iterable<number>, origin: SelectionOrigin) => selection().selectSamples(ids, origin);
+export const clearSamples = (origin: SelectionOrigin) => selection().clearSamples(origin);
+export const getSampleSelection = () => selection().getSampleSelection();
+export const focusMap = (focus: MapFocus) => selection().focusMap(focus);
+export const onFocusMap = (listener: (focus: MapFocus) => void) => selection().onFocusMap(listener);
+export const takePendingFocus = () => selection().takePendingFocus();
+export function useBoatSelection() {
+  const id = useBoatId();
+  return useMemo(() => selection(id), [id]);
 }
-
-function subscribe(listener: () => void): () => void {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
-}
-
-/** The selection, re-rendering on every change. */
 export function useSampleSelection(): SampleSelection {
-  return useSyncExternalStore(subscribe, getSampleSelection);
+  const held = useBoatSelection();
+  return useSyncExternalStore(held.subscribe, held.getSampleSelection);
 }
-
-/**
- * Asks for the map to show something: the shell switches to the Map stage,
- * and the map (once mounted) frames it. A request made before the map is
- * there waits for it.
- */
-export function focusMap(focus: MapFocus): void {
-  pendingFocus = focus;
-  for (const listener of focusListeners) listener(focus);
-}
-
-/** Listens for focus requests; returns the unsubscribe. */
-export function onFocusMap(listener: (focus: MapFocus) => void): () => void {
-  focusListeners.add(listener);
-  return () => focusListeners.delete(listener);
-}
-
-/** The request the map has not framed yet, taken (so it is framed once). */
-export function takePendingFocus(): MapFocus | null {
-  const focus = pendingFocus;
-  pendingFocus = null;
-  return focus;
-}
-
-/** For tests: back to nothing selected. */
-export function resetSelection(): void {
-  state = { ids: new Set(), origin: null, version: 0 };
-  pendingFocus = null;
-  emit();
-}
+export function resetSelection(): void { for (const held of stores.values()) held.reset(); }

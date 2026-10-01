@@ -130,6 +130,8 @@ pub struct Vector {
 pub struct Waves {
     /// Significant wave height, metres.
     pub hs: Option<f64>,
+    /// Mean wave period, seconds.
+    pub period_s: Option<f64>,
     /// Mean wave direction, "from", degrees in [0, 360).
     pub from: Option<f64>,
     /// Where they came from.
@@ -260,7 +262,7 @@ type Placed = (Vec<Option<Stamp>>, BTreeMap<Cell, f32>);
 type Era5Plan = (
     Vec<(Arc<OpenVariable>, Vec<usize>)>,
     Vec<(Vec<usize>, Dataset)>,
-    bool,
+    [Option<usize>; 3],
 );
 
 /// A vector at each position, `None` where any part is missing.
@@ -568,18 +570,18 @@ impl Reanalysis {
             self.wind_wants(points, every, &mut wants, &mut winds)?;
         }
         let all: Vec<usize> = (0..points.len()).collect();
-        let waves = if parts.waves {
-            match (self.var(vars::ARCO_SWH)?, self.var(vars::ARCO_MWD)?) {
-                (Some(swh), Some(mwd)) => {
-                    wants.push((swh, all.clone()));
-                    wants.push((mwd, all));
-                    true
+        let mut waves = [None; 3];
+        if parts.waves {
+            for (index, spec) in [vars::ARCO_SWH, vars::ARCO_MWD, vars::ARCO_MWP]
+                .into_iter()
+                .enumerate()
+            {
+                if let Some(var) = self.var(spec)? {
+                    waves[index] = Some(wants.len());
+                    wants.push((var, all.clone()));
                 }
-                _ => false,
             }
-        } else {
-            false
-        };
+        }
         Ok((wants, winds, waves))
     }
 
@@ -646,15 +648,28 @@ impl Reanalysis {
                 });
             }
         }
-        if waves {
-            let n = read.len();
-            let hs = scalar_of(&read[n - 2]);
-            let from = direction_of(&read[n - 1]);
-            for ((slot, hs), from) in out.iter_mut().zip(hs).zip(from) {
-                if hs.is_some() || from.is_some() {
+        if waves.iter().any(Option::is_some) {
+            let values = |index: Option<usize>, direction: bool| {
+                index.map_or_else(
+                    || vec![None; points.len()],
+                    |i| {
+                        if direction {
+                            direction_of(&read[i])
+                        } else {
+                            scalar_of(&read[i])
+                        }
+                    },
+                )
+            };
+            let hs = values(waves[0], false);
+            let from = values(waves[1], true);
+            let period = values(waves[2], false);
+            for (((slot, hs), from), period_s) in out.iter_mut().zip(hs).zip(from).zip(period) {
+                if hs.is_some() || from.is_some() || period_s.is_some() {
                     slot.waves = Some(Waves {
                         hs,
                         from,
+                        period_s,
                         dataset: Dataset::ArcoEra5,
                     });
                 }
@@ -904,6 +919,7 @@ const SWH_BLOCKS: [u64; 8] = [
 const MWD_BLOCKS: [u64; 8] = [
     74_127, 165_715, 240_127, 295_265, 296_882, 312_942, 260_184, 3_406,
 ];
+const MWP_BLOCKS: [u64; 8] = [70267, 168068, 238720, 296583, 295453, 319912, 261216, 3480];
 /// Values per ERA5 block (524,288 bytes of float32), and the grid.
 const ERA5_BLOCK_VALUES: usize = 131_072;
 const ERA5_ROWS: usize = 721;
@@ -1066,6 +1082,12 @@ pub fn estimate(points: &[Point], memory: Option<&BlockCache>) -> Estimate {
                     vars::ARCO_MWD.array,
                     arco_index,
                     &MWD_BLOCKS,
+                ),
+                (
+                    Dataset::ArcoEra5,
+                    vars::ARCO_MWP.array,
+                    arco_index,
+                    &MWP_BLOCKS,
                 ),
             ]
         };
@@ -1448,9 +1470,9 @@ mod tests {
     /// Hand-counted: a 24-hour track at 50.1N 4.9W sampled every 10
     /// minutes needs 25 hours hourly (00Z to 24Z) and 9 three-hourly. Its
     /// stencil is rows 159–160, columns 1420–1421: values 230,380 to
-    /// 231,821, all in block 1 (131,072 to 262,143). Each hour is four
+    /// 231,821, all in block 1 (131,072 to 262,143). Each hour is five
     /// 64-byte heads and block 1 of u, v (432,731 each), wave height
-    /// (173,816) and direction (165,715): 1,205,249 bytes. The current is
+    /// (173,816), direction (165,715) and period (168,068): 1,373,381 bytes. The current is
     /// one NW Shelf box and block of hours: 2 × (150,000 + 64).
     #[test]
     fn the_estimate_counts_heads_blocks_and_current_boxes() {
@@ -1464,8 +1486,8 @@ mod tests {
             .collect();
         assert_eq!(era5_blocks(50.1, -4.9), vec![1]);
         let e = estimate(&points, None);
-        let hour = 4 * 64 + 2 * 432_731 + 173_816 + 165_715;
-        assert_eq!(hour, 1_205_249);
+        let hour = 5 * 64 + 2 * 432_731 + 173_816 + 165_715 + 168_068;
+        assert_eq!(hour, 1_373_381);
         let current = 2 * (150_000 + 64);
         assert_eq!(e.hourly_bytes, 25 * hour + current);
         assert_eq!(e.three_hourly_bytes, 9 * hour + current);
@@ -1578,7 +1600,7 @@ mod tests {
         assert_eq!(e.hourly_cached_bytes, 64 + 432_731);
         assert_eq!(
             e.hourly_bytes,
-            3 * 64 + 432_731 + 173_816 + 165_715 + 2 * (150_000 + 64)
+            4 * 64 + 432_731 + 173_816 + 165_715 + 168_068 + 2 * (150_000 + 64)
         );
     }
 }

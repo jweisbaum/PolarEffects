@@ -72,7 +72,7 @@ struct FieldQuery {
 }
 
 /// What the result list is narrowed to, besides the query.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Filters {
     /// Earliest year built, inclusive.
     pub year_min: Option<i32>,
@@ -82,16 +82,37 @@ pub struct Filters {
     pub country: Option<String>,
     /// Queries on single fields.
     pub fields: Fields,
+    /// Inclusive numeric minima in OrcSize order; SI units (metres, kg, m²).
+    pub size_min: [Option<f64>; 9],
+    /// Inclusive maxima in the same order; missing measured values never pass.
+    pub size_max: [Option<f64>; 9],
 }
 
 impl Filters {
     /// Whether nothing narrows the list, ignoring the field queries (which
     /// the search prepares, and counts only when they hold a word).
     fn is_empty(&self) -> bool {
-        self.year_min.is_none() && self.year_max.is_none() && self.country.is_none()
+        self.year_min.is_none()
+            && self.year_max.is_none()
+            && self.country.is_none()
+            && self
+                .size_min
+                .iter()
+                .chain(&self.size_max)
+                .all(Option::is_none)
     }
 
     fn admits(&self, entry: &Entry) -> bool {
+        for (k, value) in entry.size.iter().enumerate() {
+            let (min, max) = (self.size_min[k], self.size_max[k]);
+            if (min.is_some() || max.is_some())
+                && value.is_none_or(|v| {
+                    !v.is_finite() || min.is_some_and(|m| v < m) || max.is_some_and(|m| v > m)
+                })
+            {
+                return false;
+            }
+        }
         if let Some(country) = &self.country
             && !entry.country.eq_ignore_ascii_case(country)
         {
@@ -376,6 +397,25 @@ mod tests {
 
     fn ids(index: &Index, entries: &[Entry], query: &str, filters: &Filters) -> Vec<u32> {
         index.search(entries, query, filters, 50).ids
+    }
+
+    #[test]
+    fn measurement_only_queries_are_inclusive_and_missing_values_do_not_pass() {
+        let mut entries = fleet();
+        entries[0].size[0] = Some(12.0);
+        entries[1].size[0] = Some(12.0);
+        entries[2].size[0] = Some(11.9);
+        entries[0].size[3] = Some(7000.0);
+        entries[1].size[3] = Some(8000.0);
+        let index = Index::new(&entries);
+        let mut filters = Filters::default();
+        filters.size_min[0] = Some(12.0);
+        filters.size_max[0] = Some(12.0);
+        let found = ids(&index, &entries, "", &filters);
+        assert_eq!(found.len(), 2);
+        assert!(found.contains(&0) && found.contains(&1));
+        filters.size_max[3] = Some(7000.0);
+        assert_eq!(ids(&index, &entries, "", &filters), vec![0]);
     }
 
     #[test]

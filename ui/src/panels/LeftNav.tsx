@@ -23,7 +23,7 @@ export default function LeftNav({ project, onProject, panels, onToggle, units }:
   const t = useT();
   return (
     <nav className="left-nav" aria-label={t("Sources to add")}>
-      <Section feature="nav:orc" title={t("ORC polars")} tooltip={t("Search the ORC catalogue and add certificates")}
+      <Section feature="nav:orc" title={t("ORC / ORR polars")} tooltip={t("Search polar catalogues and add certificates")}
         open={panels.orc} onToggle={() => onToggle("orc")}>
         <OrcPolars project={project} onProject={onProject} />
       </Section>

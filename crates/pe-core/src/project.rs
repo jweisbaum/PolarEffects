@@ -15,7 +15,7 @@ use crate::track::SegmentStatistic;
 ///
 /// Opening a newer version is refused; older versions migrate forward on open
 /// (`io::MIGRATIONS`).
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 6;
 
 /// The boat the polar is for. Free text.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,12 +25,14 @@ pub struct Boat {
     pub name: String,
     /// Notes.
     pub notes: String,
+    /// Original tracker fields and identifiers, retained for model matching.
+    pub details: std::collections::BTreeMap<String, String>,
 }
 
 /// The output grid every source is resampled onto (spec.md 12.2).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OutputGrid {
-    /// True wind angles, degrees in [0, 180], strictly increasing.
+    /// True wind angles, degrees in [0, 180] or [0, 360], strictly increasing.
     #[serde(with = "canonical::degrees_list")]
     pub twa: Vec<f64>,
     /// True wind speeds, knots, strictly increasing.
@@ -92,7 +94,7 @@ pub fn validate_grid_axis(axis: &[f64], name: &str, max: f64) -> Result<()> {
 impl OutputGrid {
     /// Checks both axes (see [`validate_grid_axis`]).
     pub fn validate(&self) -> Result<()> {
-        validate_grid_axis(&self.twa, "TWA", 180.0)?;
+        validate_grid_axis(&self.twa, "TWA", 360.0)?;
         validate_grid_axis(&self.tws, "TWS", MAX_GRID_TWS_KN)
     }
 }
@@ -107,6 +109,17 @@ impl Default for OutputGrid {
             tws: vec![4.0, 6.0, 8.0, 10.0, 12.0, 14.0, 16.0, 20.0, 25.0, 30.0],
         }
     }
+}
+
+/// How values between polar nodes are read. Linear preserves the old result.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Interpolation {
+    /// Straight lines between known values.
+    #[default]
+    Linear,
+    /// Shape-preserving piecewise cubic Hermite interpolation (PCHIP).
+    MonotoneSpline,
 }
 
 /// How the blend is computed and shown (spec.md 7.5, 8, 12).
@@ -135,6 +148,21 @@ pub struct BlendSettings {
     /// The per-cell statistic a newly imported track starts with (spec.md
     /// 12.1); each track keeps its own after that.
     pub default_statistic: SegmentStatistic,
+    /// Additional track filters, edited in the global 3D view. Never a time window.
+    pub global_filters: Option<crate::source::SampleFilters>,
+    /// Additional wave ranges from the main view, also applied to the blend.
+    pub wave_ranges: crate::source::WaveRanges,
+    /// Preserve independent port and starboard values, using a 0–360° grid.
+    pub asymmetric: bool,
+    /// Interpolation for resampling sources, filling holes and exporting.
+    pub interpolation: Interpolation,
+    /// Manual corrections applied after the derived blend, never a saved blend.
+    pub corrections: Vec<crate::source::CellOverride>,
+    /// Highest priority first; an empty list disables per-cell fallback.
+    pub priority_groups: Vec<crate::source::SampleFilters>,
+    /// Minimum pooled samples needed to choose a group for one TWA/TWS cell.
+    #[serde(deserialize_with = "clamped_samples")]
+    pub priority_min_samples: u32,
 }
 
 /// The most samples a cell may be asked to need, or to reach full
@@ -160,8 +188,35 @@ impl BlendSettings {
     /// Checks the sample counts: at least one, at most
     /// [`MAX_SAMPLE_SETTING`].
     pub fn validate(&self) -> Result<()> {
+        self.wave_ranges.validate()?;
+        if let Some(filters) = &self.global_filters {
+            filters.validate()?;
+            if filters.time_window.is_some() {
+                return Err(CoreError::Invalid(
+                    "global filters cannot set start or end times".to_owned(),
+                ));
+            }
+        }
+        crate::source::validate_overrides(&self.corrections, "blend")?;
+        if self.priority_groups.len() > 16 {
+            return Err(CoreError::Invalid(
+                "at most 16 priority groups are supported".to_owned(),
+            ));
+        }
+        for filters in &self.priority_groups {
+            filters.validate()?;
+            if filters.time_window.is_some() {
+                return Err(CoreError::Invalid(
+                    "priority groups cannot set start or end times".to_owned(),
+                ));
+            }
+        }
         for (name, value) in [
             ("minimum samples per cell", self.min_samples),
+            (
+                "minimum samples per priority group",
+                self.priority_min_samples,
+            ),
             ("samples for full confidence", self.n_full),
         ] {
             if value == 0 || value > MAX_SAMPLE_SETTING {
@@ -185,6 +240,13 @@ impl Default for BlendSettings {
             colour: Colour::trusted(DEFAULT_BLEND_COLOUR),
             visible: true,
             default_statistic: SegmentStatistic::default(),
+            global_filters: None,
+            wave_ranges: crate::source::WaveRanges::default(),
+            asymmetric: false,
+            interpolation: Interpolation::Linear,
+            corrections: Vec::new(),
+            priority_groups: Vec::new(),
+            priority_min_samples: 5,
         }
     }
 }
@@ -214,6 +276,10 @@ pub struct Project {
     pub sources: Vec<Source>,
     /// The next id to allocate. Ids are never reused.
     pub next_id: u64,
+    /// Additional independent boats, in tab order. Only the root document
+    /// has tabs; each child uses its own ids, grid and source overlays.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub boat_tabs: Vec<Project>,
 }
 
 impl Project {
@@ -229,6 +295,7 @@ impl Project {
             blend: BlendSettings::default(),
             sources: Vec::new(),
             next_id: 1,
+            boat_tabs: Vec::new(),
         }
     }
 
@@ -325,10 +392,29 @@ impl Project {
     }
 
     fn check(&self, bulk: bool) -> Result<()> {
+        let mut boats = BTreeSet::from([self.id]);
+        for tab in &self.boat_tabs {
+            if !tab.boat_tabs.is_empty() || !boats.insert(tab.id) {
+                return Err(CoreError::Invalid(
+                    "boat tabs must be flat and have unique identities".to_owned(),
+                ));
+            }
+            if tab.schema_version != SCHEMA_VERSION {
+                return Err(CoreError::Invalid(
+                    "a boat tab has an unsupported schema version".to_owned(),
+                ));
+            }
+            tab.check(bulk)?;
+        }
         if self.name.trim().is_empty() {
             return Err(CoreError::Invalid("the project has no name".to_owned()));
         }
-        validate_axis(&self.grid.twa, "output TWA", 0.0, 180.0)?;
+        validate_axis(
+            &self.grid.twa,
+            "output TWA",
+            0.0,
+            if self.blend.asymmetric { 360.0 } else { 180.0 },
+        )?;
         validate_axis(&self.grid.tws, "output TWS", 0.0, f64::MAX)?;
         self.blend.validate()?;
 

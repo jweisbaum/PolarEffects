@@ -12,13 +12,13 @@ export default {
   async run(t) {
     const d = t.driver;
     await newProject(d, "Settings");
-    assert.equal(await d.text('[data-feature="stage:map"]'), "Map");
+    assert.equal(await d.text('[data-feature="stage:compare"]'), "Compare");
     await setLanguageInSettings(d, "fr");
     await d.waitFor(".modal.settings h2", { text: "Réglages" });
     await t.shot("settings-french");
     await d.click('[data-feature="settings:close"]');
     await d.waitGone(".modal.settings");
-    assert.equal(await d.text('[data-feature="stage:map"]'), "Carte");
+    assert.equal(await d.text('[data-feature="stage:compare"]'), "Comparer");
     assert.ok((await d.text('[data-feature="nav:polar-files"]')).includes("Fichiers de polaires"),
       "the left navigation's section heading is French");
     const saved = JSON.parse(await readFile(join(d.automationRoot, "config", "settings.json"), "utf8"));

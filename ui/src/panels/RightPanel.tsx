@@ -15,7 +15,7 @@ export default function RightPanel({ project, onProject, panels, onToggle, onFul
   onProject: (project: ProjectSummary) => void;
   panels: PanelState;
   onToggle: (panel: keyof PanelState) => void;
-  /** Opens the polar plot full size, as a Map stage overlay (spec.md 9.2). */
+  /** Opens the polar plot full size, as a centre stage overlay (spec.md 9.2). */
   onFullSizePlot: () => void;
   /** The display speed unit (Settings), for the polar plot's text. */
   speedUnit?: SpeedUnit;
@@ -25,7 +25,7 @@ export default function RightPanel({ project, onProject, panels, onToggle, onFul
     <div className="right-panel">
       <Section feature="panel:sources" title={t("Sources")} tooltip={t("Every source, with its colour, visibility and weight")}
         open={panels.sources} onToggle={() => onToggle("sources")}>
-        <SourceList project={project} onProject={onProject} />
+        <SourceList unit={speedUnit} project={project} onProject={onProject} />
       </Section>
       <Section feature="panel:plot" title={t("Polar plot")} tooltip={t("Boat speed against wind angle for one wind speed")}
         open={panels.plot} onToggle={() => onToggle("plot")}>

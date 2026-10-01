@@ -14,8 +14,11 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 # Geovoile's viewer HTML carries the hwx seeds in base64 script segments.
 base64 = "0.22"
+percent-encoding = "2"
 # Geovoile's config resource is XML; quick-xml is already in the tree.
-quick-xml = "0.42"
+quick-xml = { version = "0.42", features = ["serialize", "overlapped-lists"] }
+# Browser-grade HTML parsing for the user-requested public ORR catalogue.
+dom_query = "0.28"
 # Tracker answers are asked for gzipped and inflated here (M14b); pure Rust.
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 

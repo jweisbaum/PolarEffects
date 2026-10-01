@@ -32,13 +32,13 @@ export type AxisResult = { values: number[]; error?: undefined } | { values?: un
 const EPSILON = 1e-9;
 
 /** Reads a list typed with spaces, commas or semicolons between values; the decimal point is ".". */
-export function parseAxis(text: string, kind: AxisKind): AxisResult {
+export function parseAxis(text: string, kind: AxisKind, asymmetric = false): AxisResult {
   const words = text.split(/[\s,;]+/).filter((word) => word.length > 0);
   if (words.length === 0) return { error: { key: msg("Enter at least one value."), params: {} } };
   if (words.length > MAX_AXIS_VALUES) {
     return { error: { key: msg("At most {max} values."), params: { max: MAX_AXIS_VALUES } } };
   }
-  const max = AXIS_MAX[kind];
+  const max = kind === "twa" && asymmetric ? 360 : AXIS_MAX[kind];
   const values: number[] = [];
   for (const word of words) {
     const value = Number(word);

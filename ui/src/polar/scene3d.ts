@@ -276,13 +276,19 @@ export class PolarScene {
    * right drag pans, the wheel zooms. `onChange` runs after every move, so
    * the owner renders on demand rather than every frame.
    */
-  enableControls(element: HTMLElement, onChange: () => void) {
+  private applyingView = false;
+
+  enableControls(element: HTMLElement, onChange: () => void, onInteraction?: () => void) {
     this.controls?.dispose();
     this.controls = new OrbitControls(this.camera, element);
     this.controls.enableDamping = false;
+    let interacting = false;
+    this.controls.addEventListener("start", () => { interacting = true; });
+    this.controls.addEventListener("end", () => { interacting = false; });
     this.controls.addEventListener("change", () => {
       this.screenFresh = false;
       onChange();
+      if (interacting && !this.applyingView) onInteraction?.();
     });
   }
 
@@ -292,13 +298,20 @@ export class PolarScene {
   }
 
   /** Places the camera. */
+  getView(): View {
+    return { position: this.camera.position.toArray(), target: this.controls?.target.toArray() ?? [0, 0, 14] };
+  }
+
+  /** Places the camera. */
   setView(view: View) {
+    this.applyingView = true;
     this.camera.position.set(...view.position);
     const target = new THREE.Vector3(...view.target);
     this.controls?.target.copy(target);
     this.camera.lookAt(target);
     this.camera.updateMatrixWorld();
     this.controls?.update();
+    this.applyingView = false;
     this.screenFresh = false;
   }
 
@@ -333,7 +346,7 @@ export class PolarScene {
   }
 
   /** Every dot's screen position for the current camera, cached until it moves. */
-  private projected(): Float32Array {
+  projected(): Float32Array {
     if (!this.screenFresh) {
       this.camera.updateMatrixWorld();
       this.mvp.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);

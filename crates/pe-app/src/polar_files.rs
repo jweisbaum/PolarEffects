@@ -111,8 +111,10 @@ fn parse(
 #[tauri::command]
 pub fn import_polar_files(
     state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
     paths: Vec<String>,
 ) -> Result<PolarImportResult> {
+    let state = state.scoped(boat_context);
     import(&state, &paths)
 }
 

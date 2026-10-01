@@ -187,3 +187,19 @@ describe("rings in the display speed unit (M17b)", () => {
     expect(rings[1]!.x).toBeCloseTo(layout.centerX + (10 / 1.852) * layout.scale + 3, 6);
   });
 });
+
+it("fits independent port and starboard speeds within a full-circle plot", () => {
+  const layout = fitLayout(400, 300, 10, 28, true);
+  const starboard = project(90, 6, layout);
+  const port = project(270, 9, layout);
+  expect(layout.centerX).toBe(200);
+  expect(starboard.x).toBeGreaterThan(200);
+  expect(port.x).toBeLessThan(200);
+  expect((200 - port.x) / (starboard.x - 200)).toBeCloseTo(1.5);
+  expect(port.x).toBeGreaterThanOrEqual(28);
+  expect(starboard.x).toBeLessThanOrEqual(372);
+  const angles = axisLabels(layout, 10, text => text.length * 6, 10, 1, true).filter(label => label.text.endsWith("°"));
+  expect(angles.map(label => label.text)).toEqual(["0°", "30°", "60°", "90°", "120°", "150°", "180°", "150°", "120°", "90°", "60°", "30°"]);
+  expect(angles.find(label => label.text === "90°" && label.x < layout.centerX)).toBeDefined();
+  expect(angles.find(label => label.text === "90°" && label.x > layout.centerX)).toBeDefined();
+});

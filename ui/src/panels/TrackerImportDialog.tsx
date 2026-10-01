@@ -1,3 +1,4 @@
+import { useBoatApi } from "../boats/context";
 import { listen } from "@tauri-apps/api/event";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 
@@ -8,7 +9,7 @@ import type { TrackerListed } from "../generated/TrackerListed";
 import type { TrackerProgress } from "../generated/TrackerProgress";
 import type { TrackImportResult } from "../generated/TrackImportResult";
 import { t, useLanguage, useT, type Language } from "../i18n";
-import { api, TRACKER_LISTED, TRACKER_PROGRESS } from "../ipc";
+import { TRACKER_LISTED, TRACKER_PROGRESS } from "../ipc";
 import { loadBasemap } from "../map/basemap";
 import type { Basemap } from "../map/format";
 import { mapColour } from "../settings/themes";
@@ -45,6 +46,7 @@ export default function TrackerImportDialog({ tracker, onDone, onCancel }: {
   onDone: (result: TrackImportResult) => void;
   onCancel: () => void;
 }) {
+  const api = useBoatApi();
   const t = useT();
   const [url, setUrl] = useState("");
   const [phase, setPhase] = useState<Phase>({ kind: "address" });

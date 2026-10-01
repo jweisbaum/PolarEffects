@@ -28,7 +28,11 @@ pub fn apply(
 
 /// Reverses the most recent change.
 #[tauri::command]
-pub fn undo(state: tauri::State<'_, AppState>) -> Result<ProjectSummary> {
+pub fn undo(
+    state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
+) -> Result<ProjectSummary> {
+    let state = state.scoped(boat_context);
     undo_last(&state)
 }
 
@@ -43,7 +47,11 @@ pub fn undo_last(state: &AppState) -> Result<ProjectSummary> {
 
 /// Reapplies the most recently undone change.
 #[tauri::command]
-pub fn redo(state: tauri::State<'_, AppState>) -> Result<ProjectSummary> {
+pub fn redo(
+    state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
+) -> Result<ProjectSummary> {
+    let state = state.scoped(boat_context);
     redo_next(&state)
 }
 
@@ -90,9 +98,11 @@ fn source_of(project: &pe_core::Project, id: u64) -> Result<&pe_core::Source> {
 #[tauri::command]
 pub fn set_source_colour(
     state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
     id: u64,
     colour: String,
 ) -> Result<ProjectSummary> {
+    let state = state.scoped(boat_context);
     source_colour_set(&state, id, &colour)
 }
 
@@ -114,9 +124,11 @@ pub fn source_colour_set(state: &AppState, id: u64, colour: &str) -> Result<Proj
 #[tauri::command]
 pub fn set_source_visible(
     state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
     id: u64,
     visible: bool,
 ) -> Result<ProjectSummary> {
+    let state = state.scoped(boat_context);
     source_visible_set(&state, id, visible)
 }
 
@@ -137,10 +149,12 @@ pub fn source_visible_set(state: &AppState, id: u64, visible: bool) -> Result<Pr
 #[tauri::command]
 pub fn set_source_weight(
     state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
     id: u64,
     weight: f64,
     gesture: Option<String>,
 ) -> Result<ProjectSummary> {
+    let state = state.scoped(boat_context);
     source_weight_set(&state, id, weight, gesture.as_deref())
 }
 
@@ -174,9 +188,11 @@ pub fn source_weight_set(
 #[tauri::command]
 pub fn set_source_label(
     state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
     id: u64,
     label: String,
 ) -> Result<ProjectSummary> {
+    let state = state.scoped(boat_context);
     source_label_set(&state, id, label)
 }
 
@@ -203,9 +219,11 @@ pub fn source_label_set(state: &AppState, id: u64, label: String) -> Result<Proj
 #[tauri::command]
 pub fn move_source(
     state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
     id: u64,
     to: usize,
 ) -> Result<ProjectSummary> {
+    let state = state.scoped(boat_context);
     source_move(&state, id, to)
 }
 
@@ -228,7 +246,12 @@ pub fn source_move(state: &AppState, id: u64, to: usize) -> Result<ProjectSummar
 
 /// Removes a source (undoable: undo puts it back, overlays and all).
 #[tauri::command]
-pub fn remove_source(state: tauri::State<'_, AppState>, id: u64) -> Result<ProjectSummary> {
+pub fn remove_source(
+    state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
+    id: u64,
+) -> Result<ProjectSummary> {
+    let state = state.scoped(boat_context);
     source_remove(&state, id)
 }
 

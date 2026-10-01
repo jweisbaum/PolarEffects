@@ -107,6 +107,8 @@ pub fn build_track(
         .map(|(i, (fix, motion))| {
             let mut sample = Sample::at(next_sample(), u32::try_from(i).unwrap_or(u32::MAX), fix);
             sample.set_motion(*motion);
+            sample.downloaded_wind_only = track.derivation.downloaded_wind_only;
+            sample.relate();
             sample
         })
         .collect();
@@ -122,6 +124,18 @@ pub fn build_track(
         speed_derived: count(&|m| m.speed_origin == Some(ValueOrigin::Derived)),
     };
     (track, report)
+}
+
+/// Supplied wind uses the same knot convention as weather and polars.
+pub(crate) fn check_wind_speed(
+    value: Option<f64>,
+) -> std::result::Result<Option<f64>, error::Reason> {
+    if let Some(value) = value
+        && (!value.is_finite() || !(0.0..=200.0).contains(&value))
+    {
+        return Err(error::Reason::OutOfRange(value));
+    }
+    Ok(value.map(pe_core::canonical::knots))
 }
 
 /// Every sample's motion under new derivation settings (spec.md 7.4:
@@ -142,6 +156,8 @@ mod tests {
 
     fn fix(t: i64, lon: f64) -> Fix {
         Fix {
+            tws: None,
+            twd_from: None,
             t,
             lat: 0.0,
             lon,
@@ -202,3 +218,6 @@ mod tests {
         assert!(check_speed(Some(150.0)).is_err());
     }
 }
+
+/// Native SYRF race archive reader.
+pub mod syrf;

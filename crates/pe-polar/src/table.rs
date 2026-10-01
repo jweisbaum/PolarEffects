@@ -14,7 +14,6 @@ use crate::format::{
     Field, PolarError, Reason, Result, angle, axis_text, bsp_text, fields, is_table_header,
     meaningful, speed, table_separator, tws_speed,
 };
-use crate::grid::fold_twa;
 
 /// The top-left cell the writer uses.
 const CORNER: &str = "TWA\\TWS";
@@ -80,9 +79,9 @@ pub(crate) fn read(text: &str) -> Result<PolarGrid> {
                 Reason::DuplicateTwa(raw),
             ));
         }
-        // `angle` has checked 0..=360, so this always folds.
+        // Retain both sides so an asymmetric export reads back losslessly.
         let twa = builder
-            .twa(fold_twa(raw).unwrap_or(raw))
+            .twa(raw)
             .map_err(|reason| PolarError::at(line, first.column, reason))?;
         for (index, cell) in cells.iter().enumerate() {
             let Some(tws) = columns.get(index) else {
@@ -149,10 +148,10 @@ mod tests {
     }
 
     #[test]
-    fn port_rows_fold_onto_starboard() {
+    fn port_rows_keep_independent_values() {
         let polar = read("TWA\t6\n40\t5\n320\t6\n").unwrap();
-        assert_eq!(polar.twa, [40.0]);
-        assert_eq!(polar.bsp, [vec![Some(5.5)]]);
+        assert_eq!(polar.twa, [40.0, 320.0]);
+        assert_eq!(polar.bsp, [vec![Some(5.0)], vec![Some(6.0)]]);
     }
 
     #[test]

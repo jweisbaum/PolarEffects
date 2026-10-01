@@ -1,3 +1,4 @@
+import { useBoatApi } from "../boats/context";
 import { useEffect, useRef, useState } from "react";
 
 import { reportFailure } from "../errors";
@@ -6,7 +7,7 @@ import type { TrackFileInspection } from "../generated/TrackFileInspection";
 import type { TrackFileRequest } from "../generated/TrackFileRequest";
 import type { TrackImportResult } from "../generated/TrackImportResult";
 import { useT } from "../i18n";
-import { api } from "../ipc";
+
 import {
   assign, CSV_ROLE_NAMES, CSV_ROLES, dateRange, describeTrackFailure, REQUIRED_ROLES, roleOf, SPEED_UNITS,
   TIME_FORMATS, type CsvRole,
@@ -56,6 +57,7 @@ export default function TrackImportDialog({ inspections, onDone, onCancel }: {
   onDone: (result: TrackImportResult) => void;
   onCancel: () => void;
 }) {
+  const api = useBoatApi();
   const t = useT();
   const [entries, setEntries] = useState<Entry[]>(() => inspections.map((i) => entryOf(i)));
   const [busy, setBusy] = useState(false);
@@ -189,6 +191,13 @@ function FileCard({ entry, onMapping, onBoats }: {
               <select data-feature="track-import:speed-unit" value={csv.mapping.speed_unit}
                 title={t("The unit of the speed column; stored in knots")}
                 onChange={(e) => onMapping({ ...csv.mapping, speed_unit: e.target.value })}>
+                {SPEED_UNITS.map((u) => <option key={u.id} value={u.id}>{t(u.label)}</option>)}
+              </select>
+            </label>
+            <label>
+              {t("Wind speed unit")}
+              <select data-feature="track-import:wind-speed-unit" value={csv.mapping.wind_speed_unit}
+                onChange={(e) => onMapping({ ...csv.mapping, wind_speed_unit: e.target.value })}>
                 {SPEED_UNITS.map((u) => <option key={u.id} value={u.id}>{t(u.label)}</option>)}
               </select>
             </label>

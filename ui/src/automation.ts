@@ -56,3 +56,11 @@ export function registerRedraw(canvas: HTMLCanvasElement, redraw: () => void): (
     if (target.__peRedraw === redraw) delete target.__peRedraw;
   };
 }
+
+/** Read-only scene observations for the isolated desktop comparison test. */
+export function registerPolarInspection(canvas: HTMLCanvasElement, read: () => unknown): () => void {
+  if (!import.meta.env.DEV) return () => undefined;
+  const target = canvas as HTMLCanvasElement & { __peInspectPolar?: () => unknown };
+  target.__peInspectPolar = read;
+  return () => { delete target.__peInspectPolar; };
+}

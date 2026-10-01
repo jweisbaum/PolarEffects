@@ -43,13 +43,41 @@ pub type Migration = fn(&mut Value) -> Result<()>;
 
 /// The migration chain, keyed by the version each step upgrades *from*
 /// (spec.md 4.3).
-pub const MIGRATIONS: &[(u32, Migration)] = &[(1, samples_by_column)];
+pub const MIGRATIONS: &[(u32, Migration)] = &[
+    (1, samples_by_column),
+    (2, analysis_overlays),
+    (3, orr_certificate_details),
+    (4, supplied_wind_and_changes),
+    (5, boat_tabs),
+];
+
+/// 5 → 6: an existing project is the first boat tab; extra tabs default empty.
+fn boat_tabs(_value: &mut Value) -> Result<()> {
+    Ok(())
+}
 
 /// 1 → 2 (M14e, D27): track samples are stored by column, without what is
 /// derived, and their environment at its stored precision. That lives in
 /// the `tracks/` entries, which [`from_bytes`] reads by the file's version;
 /// `project.json` itself is unchanged.
 fn samples_by_column(_value: &mut Value) -> Result<()> {
+    Ok(())
+}
+
+/// 2 → 3: optional analysis overlays default to disabled so older projects
+/// retain their result. Bulk data gains only optional columns.
+fn analysis_overlays(_value: &mut Value) -> Result<()> {
+    Ok(())
+}
+
+/// 3 → 4: complete ORR metadata is optional. Existing imported records stay
+/// immutable; absent details mean the older import did not capture them.
+fn orr_certificate_details(_value: &mut Value) -> Result<()> {
+    Ok(())
+}
+
+/// 4 → 5: optional supplied wind and change thresholds preserve old results.
+fn supplied_wind_and_changes(_value: &mut Value) -> Result<()> {
     Ok(())
 }
 
@@ -178,12 +206,19 @@ pub fn to_bytes(project: &Project) -> Result<Vec<u8>> {
     zip.write_all(json.as_bytes())?;
 
     // In source order: the document's order, not a hash map's.
-    for source in &project.sources {
-        if let Some(track) = source.track() {
-            zip.start_file(track_entry(track.id), options)
-                .map_err(zip_err)?;
-            let bulk = serde_json::to_vec(&track.bulk()?)?;
-            zip.write_all(&bulk)?;
+    for (boat, prefix) in std::iter::once((project, String::new())).chain(
+        project
+            .boat_tabs
+            .iter()
+            .map(|boat| (boat, format!("boats/{}/", boat.id.raw()))),
+    ) {
+        for source in &boat.sources {
+            if let Some(track) = source.track() {
+                zip.start_file(format!("{prefix}{}", track_entry(track.id)), options)
+                    .map_err(zip_err)?;
+                let bulk = serde_json::to_vec(&track.bulk()?)?;
+                zip.write_all(&bulk)?;
+            }
         }
     }
     Ok(zip.finish().map_err(zip_err)?.into_inner())
@@ -215,25 +250,40 @@ pub fn from_bytes(bytes: &[u8]) -> Result<Project> {
         .into_iter()
         .map(str::to_owned)
         .collect();
-    for source in &mut project.sources {
-        let Some(track) = source.track_mut() else {
-            continue;
-        };
-        let name = track_entry(track.id);
-        let text = read_entry(&mut archive, &name)?;
-        let in_entry = |err: CoreError| CoreError::Archive(format!("{name}: {err}"));
-        let (fixes, samples) = if version < 2 {
-            serde_json::from_str::<TrackBulkV1>(&text)?
-                .into_parts()
-                .map_err(in_entry)?
-        } else {
-            let bulk: TrackBulk = serde_json::from_str(&text)?;
-            let samples = bulk.samples.into_samples(&bulk.fixes).map_err(in_entry)?;
-            (bulk.fixes, samples)
-        };
-        track.fixes = fixes;
-        track.samples = samples;
-        expected.insert(name);
+    let mut read_tracks = |boat: &mut Project, prefix: &str| -> Result<()> {
+        for source in &mut boat.sources {
+            let Some(track) = source.track_mut() else {
+                continue;
+            };
+            let name = format!("{prefix}{}", track_entry(track.id));
+            let text = read_entry(&mut archive, &name)?;
+            let in_entry = |err: CoreError| CoreError::Archive(format!("{name}: {err}"));
+            let (fixes, samples) = if version < 2 {
+                serde_json::from_str::<TrackBulkV1>(&text)?
+                    .into_parts()
+                    .map_err(in_entry)?
+            } else {
+                let bulk: TrackBulk = serde_json::from_str(&text)?;
+                let samples = bulk.samples.into_samples(&bulk.fixes).map_err(in_entry)?;
+                (bulk.fixes, samples)
+            };
+            track.fixes = fixes;
+            track.samples = samples;
+            for sample in &mut track.samples {
+                sample.supplied_wind = track
+                    .fixes
+                    .get(sample.fix as usize)
+                    .and_then(|f| f.supplied_wind());
+                sample.downloaded_wind_only = track.derivation.downloaded_wind_only;
+                sample.relate();
+            }
+            expected.insert(name);
+        }
+        Ok(())
+    };
+    read_tracks(&mut project, "")?;
+    for boat in &mut project.boat_tabs {
+        read_tracks(boat, &format!("boats/{}/", boat.id.raw()))?;
     }
     if let Some(unexpected) = archive
         .file_names()
@@ -645,6 +695,7 @@ mod tests {
             crate::project::Boat {
                 name: "B".to_owned(),
                 notes: String::new(),
+                ..crate::project::Boat::default()
             },
             1_700_000_000,
         );
@@ -671,6 +722,8 @@ mod tests {
             lat += 0.01 * next();
             lon += 0.01 * next();
             let fix = Fix {
+                tws: None,
+                twd_from: None,
                 t: 1_753_000_000 + 600 * i as i64,
                 lat: crate::canonical::degrees(lat),
                 lon: crate::canonical::degrees(lon),

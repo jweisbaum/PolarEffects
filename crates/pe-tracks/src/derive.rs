@@ -46,6 +46,11 @@ pub fn normalise(mut fixes: Vec<Fix>) -> (Vec<Fix>, NormaliseReport) {
                 duplicates += 1;
                 kept.cog = kept.cog.or(fix.cog);
                 kept.sog = kept.sog.or(fix.sog);
+                // Wind is one observation: do not combine incomplete pairs.
+                if kept.tws.zip(kept.twd_from).is_none() && fix.tws.zip(fix.twd_from).is_some() {
+                    kept.tws = fix.tws;
+                    kept.twd_from = fix.twd_from;
+                }
             }
             _ => merged.push(fix),
         }
@@ -127,6 +132,8 @@ mod tests {
 
     fn fix(t: i64, lat: f64, lon: f64) -> Fix {
         Fix {
+            tws: None,
+            twd_from: None,
             t,
             lat,
             lon,

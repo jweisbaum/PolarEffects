@@ -1,9 +1,10 @@
+import { useBoatApi } from "../boats/context";
 import { useEffect, useState } from "react";
 
 import { describeError } from "../errors";
 import type { ProjectSummary } from "../generated/ProjectSummary";
 import { useT } from "../i18n";
-import { api } from "../ipc";
+
 import { STATISTICS } from "../polar/EditPanel";
 import { formatAxis, parseAxis, type AxisResult } from "./axes";
 
@@ -38,6 +39,7 @@ export default function BlendSettingsDialog({ project, onProject, onClose }: {
   onProject: (project: ProjectSummary) => void;
   onClose: () => void;
 }) {
+  const api = useBoatApi();
   const t = useT();
   const blend = project.blend;
   const [twaText, setTwaText] = useState(formatAxis(blend.twa));
@@ -46,6 +48,8 @@ export default function BlendSettingsDialog({ project, onProject, onClose }: {
   const [minText, setMinText] = useState(String(blend.min_samples));
   const [fullText, setFullText] = useState(String(blend.n_full));
   const [smoothing, setSmoothing] = useState(blend.smoothing);
+  const asymmetric = blend.asymmetric;
+  const [interpolation, setInterpolation] = useState(blend.interpolation);
   const [useCorrected, setUseCorrected] = useState(project.use_corrected);
   const [stokes, setStokes] = useState(project.stokes_drift);
   const [error, setError] = useState<unknown>(null);
@@ -59,7 +63,7 @@ export default function BlendSettingsDialog({ project, onProject, onClose }: {
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const twa = parseAxis(twaText, "twa");
+  const twa = parseAxis(twaText, "twa", asymmetric);
   const tws = parseAxis(twsText, "tws");
   const minSamples = parseSamples(minText);
   const nFull = parseSamples(fullText);
@@ -72,7 +76,7 @@ export default function BlendSettingsDialog({ project, onProject, onClose }: {
     try {
       onProject(await api.setBlendSettings({
         twa: twa.values, tws: tws.values, min_samples: minSamples, n_full: nFull, smoothing,
-        default_statistic: statistic, use_corrected: useCorrected, stokes_drift: stokes,
+        default_statistic: statistic, use_corrected: useCorrected, stokes_drift: stokes, asymmetric, interpolation,
       }));
       onClose();
     } catch (failure) {
@@ -95,11 +99,39 @@ export default function BlendSettingsDialog({ project, onProject, onClose }: {
 
         <section>
           <h3>{t("Output grid")}</h3>
+          <label className="settings-field">
+            {t("Interpolation")}
+            <select data-feature="blend-settings:interpolation" value={interpolation} onChange={(event) => setInterpolation(event.target.value)}>
+              <option value="linear">{t("Linear")}</option>
+              <option value="monotone_spline">{t("Monotone spline")}</option>
+            </select>
+          </label>
+          <div className="settings-buttons">
+            <label>{t("TWA step")}
+              <select data-feature="blend-settings:twa-step" value="" onChange={(event) => {
+                const step = Number(event.target.value);
+                setTwaText(formatAxis(Array.from({ length: (asymmetric ? 360 : 180) / step + 1 }, (_, i) => i * step)));
+              }}>
+                <option value="" disabled>{t("Choose spacing")}</option>
+                {[1, 2, 5, 10].map((step) => <option key={step} value={step}>{step}°</option>)}
+              </select>
+            </label>
+            <label>{t("TWS step")}
+              <select data-feature="blend-settings:tws-step" value="" onChange={(event) => {
+                const step = Number(event.target.value);
+                const maximum = parseAxis(twsText, "tws").values?.at(-1) ?? 30;
+                setTwsText(formatAxis(Array.from({ length: Math.max(1, Math.ceil(maximum / step)) }, (_, i) => Math.min(70, (i + 1) * step))));
+              }}>
+                <option value="" disabled>{t("Choose spacing")}</option>
+                {[1, 2, 5, 10].map((step) => <option key={step} value={step}>{t("{tws} kn", { tws: step })}</option>)}
+              </select>
+            </label>
+          </div>
           <p className="muted">{t("Every source is read onto this grid and the blend is made on it. Values in order, separated by commas or spaces, with at most two decimals after a decimal point.")}</p>
           <label className="settings-field axis-field">
             {t("TWA, degrees")}
             <textarea data-feature="blend-settings:twa" rows={2} value={twaText}
-              title={t("True wind angles, 0 to 180")} onChange={(event) => setTwaText(event.target.value)} />
+              title={t("True wind angles, 0 to {max}", { max: asymmetric ? 360 : 180 })} onChange={(event) => setTwaText(event.target.value)} />
           </label>
           {axisError(twa)}
           <label className="settings-field axis-field">
@@ -111,7 +143,7 @@ export default function BlendSettingsDialog({ project, onProject, onClose }: {
           <div className="settings-buttons">
             <button data-feature="blend-settings:default-grid"
               title={t("Put back the output grid a new project starts with")}
-              onClick={() => { setTwaText(formatAxis(DEFAULT_GRID.twa)); setTwsText(formatAxis(DEFAULT_GRID.tws)); }}>
+              onClick={() => { setTwaText(formatAxis(asymmetric ? [...DEFAULT_GRID.twa, ...DEFAULT_GRID.twa.slice(0, -1).reverse().map((a) => 360 - a)] : DEFAULT_GRID.twa)); setTwsText(formatAxis(DEFAULT_GRID.tws)); }}>
               {t("Default grid")}
             </button>
           </div>

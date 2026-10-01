@@ -72,6 +72,13 @@ pub enum EditAction {
 /// A reversible change to a project.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Command {
+    /// Renames one boat without changing the project name.
+    RenameBoat {
+        /// Previous name.
+        before: String,
+        /// New name.
+        after: String,
+    },
     /// Renames the project.
     RenameProject {
         /// Previous name.
@@ -296,6 +303,17 @@ impl Command {
 
     fn run(&mut self, project: &mut Project, forward: bool) -> Result<()> {
         match self {
+            Self::RenameBoat { before, after } => {
+                let (from, to) = if forward {
+                    (&*before, &*after)
+                } else {
+                    (&*after, &*before)
+                };
+                if forward && to.trim().is_empty() {
+                    return Err(CoreError::Invalid("a boat needs a name".to_owned()));
+                }
+                swap(&mut project.boat.name, from, to, "boat name")
+            }
             Self::RenameProject { before, after } => {
                 let (from, to) = if forward {
                     (&*before, &*after)
@@ -622,6 +640,7 @@ impl Command {
     /// (spec.md 3.5).
     pub fn label(&self) -> String {
         match self {
+            Self::RenameBoat { .. } => "Rename boat",
             Self::RenameProject { .. } => "Rename project",
             Self::AddSource { .. } => "Add source",
             Self::RemoveSource { .. } => "Remove source",
@@ -676,6 +695,14 @@ fn blend_label(before: &BlendSettings, after: &BlendSettings) -> &'static str {
         }
     } else if before.colour != after.colour && only(|b, a| b.colour = a.colour.clone()) {
         "Change blend colour"
+    } else if before.corrections != after.corrections
+        && only(|b, a| b.corrections = a.corrections.clone())
+    {
+        "Correct the blend"
+    } else if before.global_filters != after.global_filters
+        && only(|b, a| b.global_filters = a.global_filters.clone())
+    {
+        "Change global point filters"
     } else {
         BLEND_SETTINGS_LABEL
     }
@@ -841,6 +868,7 @@ fn set_derivation(
     // fetched again (M8 carry).
     for (sample, motion) in track.samples.iter_mut().zip(motion_to) {
         sample.set_motion(*motion);
+        sample.downloaded_wind_only = to.downloaded_wind_only;
         sample.relate();
     }
     Ok(())
@@ -952,6 +980,7 @@ mod tests {
     /// `every_command_has_an_undo_inverse` fails until it has an example.
     fn variant(command: &Command) -> &'static str {
         match command {
+            Command::RenameBoat { .. } => "RenameBoat",
             Command::RenameProject { .. } => "RenameProject",
             Command::AddSource { .. } => "AddSource",
             Command::RemoveSource { .. } => "RemoveSource",
@@ -975,7 +1004,7 @@ mod tests {
             Command::Batch { .. } => "Batch",
         }
     }
-    const VARIANTS: usize = 21;
+    const VARIANTS: usize = 22;
 
     fn edit(twa: f64, tws: f64, before: Option<f64>, after: Option<f64>) -> CellEdit {
         CellEdit {
@@ -1039,6 +1068,10 @@ mod tests {
         let added = new_polar(project);
         let also = new_polar(project);
         vec![
+            Command::RenameBoat {
+                before: project.boat.name.clone(),
+                after: "New boat name".to_owned(),
+            },
             Command::RenameProject {
                 before: "Fixture".to_owned(),
                 after: "Fastnet 2025".to_owned(),
@@ -1101,6 +1134,7 @@ mod tests {
                 source: track_id,
                 before: DerivationSettings::default(),
                 after: DerivationSettings {
+                    downloaded_wind_only: false,
                     max_gap_s: 600,
                     prefer: crate::track::PreferValues::Derived,
                 },
@@ -1440,7 +1474,7 @@ mod tests {
         for cells in [
             vec![],
             vec![cell(52.0, 12.0), cell(52.0, 12.0)],
-            vec![cell(181.0, 12.0)],
+            vec![cell(361.0, 12.0)],
             vec![cell(f64::NAN, 12.0)],
             vec![cell(52.0, -1.0)],
         ] {
@@ -1711,7 +1745,7 @@ mod tests {
                 edit(90.0, 6.0, None, Some(1.0)),
                 edit(90.0, 6.0, None, Some(2.0)),
             ],
-            vec![edit(200.0, 6.0, None, Some(1.0))],
+            vec![edit(361.0, 6.0, None, Some(1.0))],
             vec![],
         ] {
             let mut bad = Command::EditCells {

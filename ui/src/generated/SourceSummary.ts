@@ -50,6 +50,10 @@ polar_file: PolarFileSummary | null,
  */
 orc: OrcSourceSummary | null,
 /**
+ * For an ORR polar, the certificate metadata.
+ */
+orr: OrcSourceSummary | null,
+/**
  * For a track, what the Tracks section lists (spec.md 7.1).
  */
 track: TrackSummary | null,

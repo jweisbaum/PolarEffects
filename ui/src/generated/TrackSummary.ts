@@ -71,6 +71,14 @@ max_gap_s: number,
  */
 prefer: string,
 /**
+ * Use downloaded weather even when the track supplies wind.
+ */
+downloaded_wind_only: boolean,
+/**
+ * Fixes containing both supplied true wind speed and direction.
+ */
+supplied_wind: number,
+/**
  * The editable filters.
  */
 filters: TrackFilters,

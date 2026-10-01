@@ -9,7 +9,7 @@ describe("Search by field (spec.md 5.2)", () => {
   it("sends trimmed field queries and whole years", () => {
     expect(toFilters({ ...NO_FIELDS, name: "  Fröken ", year_from: "1990", year_to: "abc", country: "GBR" }))
       .toEqual({
-        year_min: 1990, year_max: null, country: "GBR",
+        size_min: [], size_max: [], year_min: 1990, year_max: null, country: "GBR",
         name: "Fröken", sail_no: "", model: "", builder: "", designer: "", certificate_year: "",
       });
   });

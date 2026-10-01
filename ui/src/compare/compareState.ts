@@ -81,7 +81,7 @@ export function swapOperands(project: ProjectSummary): void {
   setCompareChoice(project, { a: current.b, b: current.a });
 }
 
-const openListeners = new Set<() => void>();
+const openListeners = new Set<(id: number) => void>();
 
 /**
  * A source row's Compare (spec.md 8): the source as A, the blend as B, and
@@ -91,11 +91,11 @@ export function compareSource(project: ProjectSummary, sourceId: number): void {
   const source = project.sources.find((s) => s.id === sourceId);
   if (!source) return;
   setCompareChoice(project, { a: operandOf(source), b: BLEND });
-  for (const listener of openListeners) listener();
+  for (const listener of openListeners) listener(project.id);
 }
 
 /** Runs `listener` whenever a source asks to be compared; returns the unsubscribe. */
-export function onCompareSource(listener: () => void): () => void {
+export function onCompareSource(listener: (id: number) => void): () => void {
   openListeners.add(listener);
   return () => openListeners.delete(listener);
 }

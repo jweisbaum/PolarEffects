@@ -46,7 +46,7 @@ const catalogue: Record<string, string> = {
   "Unsaved work kept when PolarEffects did not close cleanly.": "Travail non enregistré conservé lorsque PolarEffects ne s’est pas fermé correctement.",
   "autosave": "enregistrement automatique",
   "restore": "restaurer",
-  "Build a sailing polar for one boat from ORC certificates, polar files and race tracks.": "Construire la polaire d’un bateau à partir de certificats ORC, de fichiers de polaires et de traces de course.",
+  "Build sailing polars from ORC certificates, polar files and race tracks.": "Construire des polaires à partir de certificats ORC, de fichiers de polaires et de traces de course.",
   "PolarEffects did not close cleanly. These are snapshots of unsaved work; recovering one opens it as the project it came from, unsaved.": "PolarEffects ne s’est pas fermé correctement. Voici des instantanés du travail non enregistré ; en récupérer un l’ouvre comme le projet d’origine, non enregistré.",
   "never saved": "jamais enregistré",
   "Delete this snapshot": "Supprimer cet instantané",

@@ -27,7 +27,9 @@ export default function StartScreen({
   onOpened,
   onSettings,
   onPreferences,
+  onOpenTracker,
 }: {
+  onOpenTracker?: () => void;
   onOpened: (project: ProjectSummary) => void;
   onSettings: () => void;
   /** The settings after the language picker saved them. */
@@ -109,7 +111,7 @@ export default function StartScreen({
           </div>
           <h1>PolarEffects</h1>
           <p className="muted">
-            {t("Build a sailing polar for one boat from ORC certificates, polar files and race tracks.")}
+            {t("Build sailing polars from ORC certificates, polar files and race tracks.")}
           </p>
         </header>
 
@@ -157,6 +159,8 @@ export default function StartScreen({
             title={t("Open a saved .wpsproj project")}>
             {t("Open…")}
           </button>
+
+          <button data-feature="start:tracker" onClick={onOpenTracker} disabled={busy}>{t("Open project from tracker…")}</button>
 
           {recent.length > 0 && (
             <>

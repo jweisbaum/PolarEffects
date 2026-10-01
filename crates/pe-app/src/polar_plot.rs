@@ -135,23 +135,48 @@ pub const BLEND_LABEL: &str = "Blend";
 
 /// The points of `grid` at `tws`, read at every one of the grid's own TWA
 /// angles (no extrapolation, gaps stay gaps).
-fn points_at(grid: &Polar, tws: f64) -> Vec<PolarCurvePoint> {
-    grid.twa
+fn points_at(
+    grid: &Polar,
+    tws: f64,
+    mode: pe_core::project::Interpolation,
+    blend: bool,
+) -> Vec<PolarCurvePoint> {
+    let reader = pe_polar::spline::Interpolator::new(grid, mode);
+    let mut angles = grid.twa.clone();
+    if mode == pe_core::project::Interpolation::MonotoneSpline
+        && let (Some(lo), Some(hi)) = (grid.twa.first(), grid.twa.last())
+    {
+        angles.extend((lo.ceil() as u32..=hi.floor() as u32).map(f64::from));
+        angles.sort_by(f64::total_cmp);
+        angles.dedup();
+    }
+    let sampled = blend.then(|| pe_polar::blend::resample_blend_mode(grid, &angles, &[tws], mode));
+    angles
         .iter()
-        .filter_map(|&twa| {
-            pe_polar::interpolate(grid, twa, tws).map(|bsp| PolarCurvePoint { twa, bsp })
+        .enumerate()
+        .filter_map(|(i, &twa)| {
+            let value = match &sampled {
+                Some(grid) => grid.get(i, 0),
+                None => reader.at(twa, tws),
+            };
+            value.map(|bsp| PolarCurvePoint { twa, bsp })
         })
         .collect()
 }
 
 /// One curve of a source's `grid` at `tws`.
-fn curve_at(source: &Source, grid: &Polar, tws: f64) -> PolarCurve {
+fn curve_at(
+    source: &Source,
+    grid: &Polar,
+    tws: f64,
+    mode: pe_core::project::Interpolation,
+) -> PolarCurve {
     PolarCurve {
         source_id: Some(source.id.raw()),
         label: source.label.clone(),
         colour: source.colour.to_string(),
         tws,
-        points: points_at(grid, tws),
+        points: points_at(grid, tws, mode, false),
     }
 }
 
@@ -167,7 +192,7 @@ fn blend_speeds(blend: &Polar) -> Vec<f64> {
                 .twa
                 .iter()
                 .enumerate()
-                .any(|(i, twa)| *twa > 0.0 && blend.get(i, *j).is_some())
+                .any(|(i, twa)| *twa > 0.0 && *twa < 360.0 && blend.get(i, *j).is_some())
         })
         .map(|(_, tws)| *tws)
         .collect()
@@ -181,7 +206,7 @@ fn blend_curves(project: &pe_core::Project, blend: &Polar, tws: Option<f64>) -> 
         label: BLEND_LABEL.to_owned(),
         colour: project.blend.colour.to_string(),
         tws,
-        points: points_at(blend, tws),
+        points: points_at(blend, tws, project.blend.interpolation, true),
     };
     match tws {
         Some(value) => vec![curve(value)],
@@ -282,7 +307,12 @@ pub fn pack_dots(dots: &[PolarSampleDot]) -> Vec<u8> {
 /// visible polar source for every wind speed that source's own grid has,
 /// rather than one slice shared by every source.
 #[tauri::command]
-pub fn polar_plot(state: tauri::State<'_, AppState>, tws: Option<f64>) -> Result<PolarPlotResult> {
+pub fn polar_plot(
+    state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
+    tws: Option<f64>,
+) -> Result<PolarPlotResult> {
+    let state = state.scoped(boat_context);
     plot(&state, tws)
 }
 
@@ -292,9 +322,11 @@ pub fn polar_plot(state: tauri::State<'_, AppState>, tws: Option<f64>) -> Result
 #[tauri::command]
 pub fn polar_plot_dots(
     state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
     tws: Option<f64>,
     show_filtered: Option<bool>,
 ) -> Result<tauri::ipc::Response> {
+    let state = state.scoped(boat_context);
     dots_bytes(&state, tws, show_filtered.unwrap_or(false)).map(tauri::ipc::Response::new)
 }
 
@@ -376,14 +408,14 @@ pub fn plot_of(
     let curves = match tws {
         Some(value) => grids
             .iter()
-            .map(|(source, grid)| curve_at(source, grid, value))
+            .map(|(source, grid)| curve_at(source, grid, value, project.blend.interpolation))
             .collect(),
         None => grids
             .iter()
             .flat_map(|(source, grid)| {
                 grid.tws
                     .iter()
-                    .map(move |&value| curve_at(source, grid, value))
+                    .map(move |&value| curve_at(source, grid, value, project.blend.interpolation))
             })
             .collect(),
     };

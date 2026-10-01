@@ -46,6 +46,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cfg = Config::new()
         .with_out_dir(&out_dir)
         .with_large_int("number");
+    pe_app::database::DatabaseSettings::export_all(&cfg)?;
+    pe_app::database::DatabaseProgress::export_all(&cfg)?;
+    pe_app::database::BoatTrackSearch::export_all(&cfg)?;
     AppInfo::export_all(&cfg)?;
     AppErrorPayload::export_all(&cfg)?;
     ProjectSummary::export_all(&cfg)?;
@@ -60,6 +63,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     EditOp::export_all(&cfg)?;
     PolarPlotResult::export_all(&cfg)?;
     BlendSummary::export_all(&cfg)?;
+    pe_app::orr::OrrCatalogueInfo::export_all(&cfg)?;
+    pe_app::orr::OrrSearchResult::export_all(&cfg)?;
+    pe_app::orr::OrrProgress::export_all(&cfg)?;
     BlendSettingsInput::export_all(&cfg)?;
     ExportAxes::export_all(&cfg)?;
     ExportPreview::export_all(&cfg)?;
@@ -98,6 +104,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     RecoveredProject::export_all(&cfg)?;
     AutosaveMode::export_all(&cfg)?;
     Settings::export_all(&cfg)?;
+    pe_app::boats::BoatTab::export_all(&cfg)?;
+    pe_app::boats::BoatTabs::export_all(&cfg)?;
+    pe_app::boats::BoatExportResult::export_all(&cfg)?;
+    pe_app::boats::tracker_project::BoatImportProgress::export_all(&cfg)?;
+    pe_app::boats::tracker_project::BoatMatchMode::export_all(&cfg)?;
+    pe_app::boats::tracker_project::TrackerProjectResult::export_all(&cfg)?;
     LegacyCacheNotice::export_all(&cfg)?;
 
     // Keep generated files deterministic and free of ts-rs's trailing spaces.

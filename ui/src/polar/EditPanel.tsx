@@ -1,3 +1,4 @@
+import { useBoatApi } from "../boats/context";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 
 import { reportFailure } from "../errors";
@@ -8,7 +9,7 @@ import type { PolarCell } from "../generated/PolarCell";
 import type { ProjectSummary } from "../generated/ProjectSummary";
 import type { SpeedUnit } from "../generated/SpeedUnit";
 import { msg, useT } from "../i18n";
-import { api } from "../ipc";
+
 import { SPEED_FACTOR, SPEED_SYMBOL } from "./view3d";
 
 /** A cell as the 3D view keys it: TWA index | TWS index << 16. */
@@ -79,12 +80,13 @@ export default function EditPanel({ project, sourceId, unit = "kn", selected, hi
   onProject: (summary: ProjectSummary) => void;
   onDone: () => void;
 }) {
+  const api = useBoatApi();
   const t = useT();
   const [surface, setSurface] = useState<EditSurface | null>(null);
   const [drafts, setDrafts] = useState<Record<number, string>>({});
   const [percent, setPercent] = useState("5");
   const request = useRef(0);
-  const source = project.sources.find((s) => s.id === sourceId) ?? null;
+  const source = sourceId === 0 ? { label: t("Blend"), colour: project.blend.colour } : project.sources.find((s) => s.id === sourceId) ?? null;
 
   useEffect(() => {
     const id = ++request.current;
@@ -174,11 +176,11 @@ export default function EditPanel({ project, sourceId, unit = "kn", selected, hi
         </button>
       </header>
       <div className="view3d-edit-row">
-        <label title={t("Hide the other sources instead of fading them")}>
+        {sourceId !== 0 && <label title={t("Hide the other sources instead of fading them")}>
           <input type="checkbox" data-feature="edit:hide-others" checked={hideOthers}
             onChange={(event) => onHideOthers(event.target.checked)} />
           {t("Hide other sources")}
-        </label>
+        </label>}
         {isTrack && (
           <label className="view3d-edit-statistic">
             {t("Statistic")}

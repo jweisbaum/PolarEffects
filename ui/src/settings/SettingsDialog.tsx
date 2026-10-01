@@ -16,6 +16,8 @@ import LanguagePicker from "../i18n/LanguagePicker";
 import { describeError } from "../errors";
 import { api } from "../ipc";
 import ThemePicker from "./ThemePicker";
+import DatabaseSettings from "./DatabaseSettings";
+import OrrScraper from "./OrrScraper";
 
 /**
  * A whole number typed in and committed on Enter or on leaving the field,
@@ -84,6 +86,8 @@ export default function SettingsDialog({ settings, onSettings, onClose }: {
       onReveal("settings:autosave", show),
       onReveal("settings:weather", show),
       onReveal("settings:network", show),
+      onReveal("settings:orr", show),
+      onReveal("settings:database", show),
     ];
     return () => { for (const off of offs) off(); };
   }, []);
@@ -194,6 +198,8 @@ export default function SettingsDialog({ settings, onSettings, onClose }: {
           </label>
         </section>
 
+        <DatabaseSettings settings={settings} onSettings={onSettings} />
+        <OrrScraper />
         <div className="modal-actions">
           <button data-feature="settings:close" onClick={onClose} title={t("Close the settings (Esc)")}>{t("Close")}</button>
         </div>

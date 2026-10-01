@@ -48,7 +48,7 @@ pub struct OrcCatalogueInfo {
 
 /// The search's filters and its per-field queries (spec.md 5.2). A field
 /// query left empty is no condition.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, TS)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, TS)]
 #[serde(default)]
 #[ts(export_to = "OrcFilters.ts")]
 pub struct OrcFilters {
@@ -71,6 +71,11 @@ pub struct OrcFilters {
     pub designer: String,
     /// The start of the certificate year.
     pub certificate_year: String,
+    /// Minimum LOA, beam, draft, displacement, main, genoa, spinnaker,
+    /// asymmetric spinnaker and crew weight, in metres, kg and m².
+    pub size_min: Vec<Option<f64>>,
+    /// Upper measurement bounds in the same order.
+    pub size_max: Vec<Option<f64>>,
 }
 
 /// One wind speed's curve in a result's thumbnail: the points the polar has
@@ -152,6 +157,11 @@ pub fn info() -> Result<OrcCatalogueInfo> {
 /// The thumbnail curves of a record.
 fn thumbnail(record: &pe_core::orc::OrcRecord) -> Vec<OrcThumbCurve> {
     let polar = pe_polar::vpp_to_polar(&record.vpp);
+    thumbnail_grid(&polar)
+}
+
+/// Thumbnails use the same three representative winds for ORC and ORR grids.
+pub(crate) fn thumbnail_grid(polar: &pe_polar::Polar) -> Vec<OrcThumbCurve> {
     let mut columns: Vec<usize> = THUMB_TWS
         .iter()
         .filter_map(|want| {
@@ -185,11 +195,14 @@ fn thumbnail(record: &pe_core::orc::OrcRecord) -> Vec<OrcThumbCurve> {
 #[tauri::command(async)]
 pub fn orc_search(
     state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
     query: String,
     filters: OrcFilters,
     limit: u32,
+    offset: Option<u32>,
 ) -> Result<OrcSearchResult> {
-    search(&state, &query, filters, limit)
+    let state = state.scoped(boat_context);
+    search_page(&state, &query, filters, limit, offset.unwrap_or(0))
 }
 
 /// [`orc_search`] without a Tauri handle.
@@ -199,8 +212,37 @@ pub fn search(
     filters: OrcFilters,
     limit: u32,
 ) -> Result<OrcSearchResult> {
-    let catalogue = catalogue()?;
-    let filters = pe_orc::Filters {
+    search_page(state, query, filters, limit, 0)
+}
+
+/// Validate the shared measurement filters for both certificate catalogues.
+pub(crate) fn validated_filters(filters: OrcFilters) -> Result<pe_orc::Filters> {
+    let mut minima = [None; 9];
+    let mut maxima = [None; 9];
+    if filters.size_min.len() > 9 || filters.size_max.len() > 9 {
+        return Err(AppError::BadOption {
+            field: "Measurements",
+            value: "too many bounds".to_owned(),
+        });
+    }
+    for k in 0..9 {
+        minima[k] = filters.size_min.get(k).copied().flatten();
+        maxima[k] = filters.size_max.get(k).copied().flatten();
+        if minima[k]
+            .into_iter()
+            .chain(maxima[k])
+            .any(|v| !v.is_finite() || v < 0.0)
+            || minima[k].zip(maxima[k]).is_some_and(|(min, max)| min > max)
+        {
+            return Err(AppError::BadOption {
+                field: "Measurements",
+                value: "bounds must be nonnegative and increasing".to_owned(),
+            });
+        }
+    }
+    Ok(pe_orc::Filters {
+        size_min: minima,
+        size_max: maxima,
         year_min: filters.year_min,
         year_max: filters.year_max,
         country: filters.country.filter(|c| !c.trim().is_empty()),
@@ -212,11 +254,28 @@ pub fn search(
             designer: filters.designer,
             certificate_year: filters.certificate_year,
         },
-    };
-    let hits = catalogue.search(query, &filters, limit.clamp(1, MAX_LIMIT) as usize);
+    })
+}
+
+/// Stable pages over the full ranked result set; only this page's thumbnails
+/// are built, so paging does not transfer the whole catalogue to the UI.
+pub fn search_page(
+    state: &AppState,
+    query: &str,
+    filters: OrcFilters,
+    limit: u32,
+    offset: u32,
+) -> Result<OrcSearchResult> {
+    let catalogue = catalogue()?;
+    let filters = validated_filters(filters)?;
+    let limit = limit.clamp(1, MAX_LIMIT) as usize;
+    let offset = (offset as usize).min(catalogue.len());
+    let hits = catalogue.search(query, &filters, offset.saturating_add(limit));
     let records: Vec<(u32, pe_core::orc::OrcRecord)> = hits
         .ids
         .iter()
+        .skip(offset)
+        .take(limit)
         .filter_map(|id| catalogue.entry(*id).map(|e| (*id, e.to_record())))
         .collect();
     // Which are already in the project; no project open means none are.
@@ -280,9 +339,11 @@ fn label(record: &pe_core::orc::OrcRecord) -> String {
 #[tauri::command(async)]
 pub fn orc_add(
     state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
     id: u32,
     allow_duplicate: bool,
 ) -> Result<ProjectSummary> {
+    let state = state.scoped(boat_context);
     add(&state, id, allow_duplicate)
 }
 

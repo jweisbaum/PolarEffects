@@ -74,12 +74,18 @@ pub struct CsvMapping {
     pub heading: Option<usize>,
     /// SOG or boat speed; optional.
     pub speed: Option<usize>,
+    /// Supplied true wind speed column.
+    pub tws: Option<usize>,
+    /// Supplied true wind direction column, meteorological degrees from north.
+    pub twd: Option<usize>,
     /// Boat name, for a file with several boats; optional.
     pub boat: Option<usize>,
     /// How the time column is written.
     pub time_format: TimeFormat,
     /// Unit of the speed column.
     pub speed_unit: SpeedUnit,
+    /// Independent unit for the supplied wind speed column.
+    pub wind_speed_unit: SpeedUnit,
 }
 
 /// What [`guess`] proposes: each column it could place, and the time format
@@ -96,12 +102,18 @@ pub struct CsvGuess {
     pub heading: Option<usize>,
     /// Speed column.
     pub speed: Option<usize>,
+    /// Supplied true wind speed column.
+    pub tws: Option<usize>,
+    /// Supplied true wind direction column, meteorological degrees from north.
+    pub twd: Option<usize>,
     /// Boat column.
     pub boat: Option<usize>,
     /// Time format, when the first values agree on one.
     pub time_format: Option<TimeFormat>,
     /// Speed unit, when the header names one.
     pub speed_unit: SpeedUnit,
+    /// Independent unit for the supplied wind speed column.
+    pub wind_speed_unit: SpeedUnit,
 }
 
 /// Splits one record starting at `start` (a byte offset), returning the
@@ -302,6 +314,18 @@ pub fn guess(table: &CsvTable) -> CsvGuess {
         &["lon", "lng"],
         &[g.time, g.lat],
     );
+    g.tws = find(
+        &names,
+        &["tws", "truewindspeed", "windspeed"],
+        &["tws", "truewindspeed", "windspeed"],
+        &[],
+    );
+    g.twd = find(
+        &names,
+        &["twd", "twdfrom", "truewinddirection", "winddirection"],
+        &["twd", "truewinddirection", "winddirection"],
+        &[],
+    );
     g.heading = find(
         &names,
         &["cog", "heading", "hdg", "course", "cogt", "hdgt"],
@@ -312,7 +336,7 @@ pub fn guess(table: &CsvTable) -> CsvGuess {
         &names,
         &["sog", "speed", "bsp", "stw"],
         &["sog", "speed", "bsp", "stw"],
-        &[g.time, g.lat, g.lon, g.heading],
+        &[g.time, g.lat, g.lon, g.heading, g.tws, g.twd],
     );
     g.boat = find(
         &names,
@@ -332,6 +356,18 @@ pub fn guess(table: &CsvTable) -> CsvGuess {
     if let Some(speed) = g.speed {
         let raw = table.header[speed].to_ascii_lowercase();
         g.speed_unit = if raw.contains("km/h") || raw.contains("kmh") || raw.contains("kph") {
+            SpeedUnit::KilometresPerHour
+        } else if raw.contains("m/s") || raw.contains("mps") {
+            SpeedUnit::MetresPerSecond
+        } else if raw.contains("mph") {
+            SpeedUnit::MilesPerHour
+        } else {
+            SpeedUnit::Knots
+        };
+    }
+    if let Some(speed) = g.tws {
+        let raw = table.header[speed].to_ascii_lowercase();
+        g.wind_speed_unit = if raw.contains("km/h") || raw.contains("kmh") || raw.contains("kph") {
             SpeedUnit::KilometresPerHour
         } else if raw.contains("m/s") || raw.contains("mps") {
             SpeedUnit::MetresPerSecond
@@ -366,6 +402,8 @@ pub fn read_csv(table: &CsvTable, mapping: &CsvMapping) -> Result<Vec<RawTrack>>
         Some(mapping.lon),
         mapping.heading,
         mapping.speed,
+        mapping.tws,
+        mapping.twd,
         mapping.boat,
     ]
     .into_iter()
@@ -429,6 +467,12 @@ pub fn read_csv(table: &CsvTable, mapping: &CsvMapping) -> Result<Vec<RawTrack>>
             .map(|b| b.trim().to_owned())
             .filter(|b| !b.is_empty());
         let fix = Fix {
+            tws: crate::check_wind_speed(
+                optional(mapping.tws)?.map(|v| v * mapping.wind_speed_unit.to_knots()),
+            )
+            .map_err(|r| TrackFileError::at(row.line, at(mapping.tws), r))?,
+            twd_from: check_heading(optional(mapping.twd)?)
+                .map_err(|r| TrackFileError::at(row.line, at(mapping.twd), r))?,
             t,
             lat,
             lon,
@@ -455,6 +499,33 @@ mod tests {
 
     const NOON: i64 = 1_753_531_200;
 
+    #[test]
+    fn wind_columns_have_independent_units_and_report_invalid_values() {
+        let text = "time,lat,lon,SOG (kn),TWS (m/s),TWD\n0,1,2,6,5,360\n60,1,2,6,,90\n";
+        let table = parse_table(text).unwrap();
+        let g = guess(&table);
+        assert_eq!((g.speed, g.tws, g.twd), (Some(3), Some(4), Some(5)));
+        assert_eq!(g.wind_speed_unit, SpeedUnit::MetresPerSecond);
+        assert_eq!(g.speed_unit, SpeedUnit::Knots);
+        let m = CsvMapping {
+            tws: g.tws,
+            twd: g.twd,
+            speed: g.speed,
+            wind_speed_unit: g.wind_speed_unit,
+            ..mapping(TimeFormat::Auto)
+        };
+        let raw = read_csv(&table, &m).unwrap();
+        let f = &raw[0].fixes[0];
+        assert_eq!(f.sog, Some(6.0));
+        assert!((f.tws.unwrap() - 5.0 * 3600.0 / 1852.0).abs() < 1e-6);
+        assert_eq!(f.twd_from, Some(0.0));
+        assert_eq!(raw[0].fixes[1].tws, None);
+        let bad = parse_table(&text.replace(",5,360", ",-5,360")).unwrap();
+        let error = read_csv(&bad, &m).unwrap_err();
+        assert_eq!(error.line, Some(2));
+        assert_eq!(error.reason.code(), "out-of-range");
+    }
+
     fn mapping(time_format: TimeFormat) -> CsvMapping {
         CsvMapping {
             time: 0,
@@ -465,6 +536,9 @@ mod tests {
             boat: None,
             time_format,
             speed_unit: SpeedUnit::Knots,
+            tws: None,
+            twd: None,
+            wind_speed_unit: SpeedUnit::Knots,
         }
     }
 
@@ -491,6 +565,9 @@ mod tests {
             boat: Some(0),
             time_format: TimeFormat::Auto,
             speed_unit: g.speed_unit,
+            tws: None,
+            twd: None,
+            wind_speed_unit: SpeedUnit::Knots,
         };
         let tracks = read_csv(&table, &m).unwrap();
         let fix = &tracks[0].fixes[0];

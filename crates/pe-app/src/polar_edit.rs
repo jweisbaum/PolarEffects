@@ -113,19 +113,104 @@ pub fn parse_statistic(name: &str) -> Option<SegmentStatistic> {
     }
 }
 
-fn source_of(open: &OpenProject, id: u64) -> Result<Source> {
+fn source_of(open: &mut OpenProject, id: u64) -> Result<Source> {
+    if id == 0 {
+        let data = open.derived.visible(&open.project);
+        let polar = crate::blend::assemble_base(&open.project, &data).polar;
+        let mut source = Source::new(
+            SourceId(0),
+            "Blend",
+            open.project.blend.colour.clone(),
+            pe_core::source::SourceKind::PolarFile {
+                format: pe_core::polar::PolarFileFormat::Expedition,
+                file_name: String::new(),
+                polar,
+            },
+        );
+        source.overlay.cell_overrides = open.project.blend.corrections.clone();
+        return Ok(source);
+    }
     open.project
         .source(SourceId(id))
         .cloned()
         .ok_or(AppError::Core(pe_core::CoreError::MissingSource(id)))
 }
 
-/// The editable surface of source `source_id` in the open project.
+fn editable_data(
+    open: &mut OpenProject,
+    source: &Source,
+) -> std::sync::Arc<crate::derived::Derived> {
+    if source.id.raw() != 0 {
+        return open.derived.get(&open.project, source);
+    }
+    let base = pe_polar::source_polar(source).unwrap_or_default();
+    let edited = pe_polar::with_overlay(base.clone(), &source.overlay, false);
+    std::sync::Arc::new(crate::derived::Derived {
+        base,
+        blend: edited.clone(),
+        edited,
+        track: None,
+    })
+}
+
+/// Reuse the cell-edit tools for the blend, storing only the correction overlay.
+fn edit_command(
+    open: &OpenProject,
+    source_id: u64,
+    action: EditAction,
+    cells: Vec<CellEdit>,
+) -> Result<Command> {
+    if source_id != 0 {
+        return Ok(Command::EditCells {
+            source: SourceId(source_id),
+            action,
+            cells,
+        });
+    }
+    let before = open.project.blend.clone();
+    let mut after = before.clone();
+    for edit in cells {
+        if (edit.twa == 0.0 || edit.twa == 360.0) && edit.after.is_some_and(|v| v != 0.0) {
+            return Err(bad("Boat speed", "head-to-wind cells must remain zero"));
+        }
+        let probe = pe_core::source::CellRef {
+            twa: edit.twa,
+            tws: edit.tws,
+        };
+        let index = after
+            .corrections
+            .binary_search_by(|c| c.cell().order(&probe));
+        match (index, edit.after) {
+            (Ok(i), None) => {
+                after.corrections.remove(i);
+            }
+            (Ok(i), Some(bsp)) => after.corrections[i].bsp = bsp,
+            (Err(i), Some(bsp)) => after.corrections.insert(
+                i,
+                pe_core::source::CellOverride {
+                    twa: edit.twa,
+                    tws: edit.tws,
+                    bsp,
+                },
+            ),
+            (Err(_), None) => {}
+        }
+    }
+    after.validate()?;
+    Ok(Command::SetBlendSettings {
+        before: Box::new(before),
+        after: Box::new(after),
+    })
+}
+
+/// The editable surface of source `source_id` in the open project; 0 is the blend.
 #[tauri::command]
 pub fn polar_edit_surface(
     state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
     source_id: u64,
 ) -> Result<EditSurface> {
+    let state = state.scoped(boat_context);
     edit_surface(&state, source_id)
 }
 
@@ -134,7 +219,7 @@ pub fn edit_surface(state: &AppState, source_id: u64) -> Result<EditSurface> {
     state.with_session(|session| {
         let open = session.require_open()?;
         let source = source_of(open, source_id)?;
-        let derived = open.derived.get(&open.project, &source);
+        let derived = editable_data(open, &source);
         let grid = &derived.edited;
         let flags = |f: &dyn Fn(f64, f64) -> bool| -> Vec<Vec<bool>> {
             grid.twa
@@ -167,11 +252,13 @@ pub fn edit_surface(state: &AppState, source_id: u64) -> Result<EditSurface> {
 #[tauri::command]
 pub fn edit_polar(
     state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
     source_id: u64,
     op: EditOp,
     cells: Vec<PolarCell>,
     gesture: Option<String>,
 ) -> Result<ProjectSummary> {
+    let state = state.scoped(boat_context);
     polar_edit(&state, source_id, &op, &cells, gesture.as_deref())
 }
 
@@ -205,7 +292,7 @@ pub fn polar_edit(
     state.with_session(|session| {
         let open = session.require_open()?;
         let source = source_of(open, source_id)?;
-        let derived = open.derived.get(&open.project, &source);
+        let derived = editable_data(open, &source);
         let grid = &derived.edited;
         let overlay = &source.overlay;
         // The chosen cells, checked against the surface, each once.
@@ -270,11 +357,7 @@ pub fn polar_edit(
                     })
                     .collect();
                 if !edits.is_empty() {
-                    let command = Command::EditCells {
-                        source: SourceId(source_id),
-                        action: EditAction::ResetAll,
-                        cells: edits,
-                    };
+                    let command = edit_command(open, source_id, EditAction::ResetAll, edits)?;
                     open.apply(command)?;
                 }
                 return Ok(ProjectSummary::of(open));
@@ -296,11 +379,7 @@ pub fn polar_edit(
         if edits.is_empty() {
             return Ok(ProjectSummary::of(open));
         }
-        let command = Command::EditCells {
-            source: SourceId(source_id),
-            action,
-            cells: edits,
-        };
+        let command = edit_command(open, source_id, action, edits)?;
         match (action, gesture) {
             (EditAction::Drag, Some(key)) => {
                 open.apply_coalesced(command, &format!("edit:{source_id}:{key}"))?;
@@ -316,9 +395,11 @@ pub fn polar_edit(
 #[tauri::command]
 pub fn set_segment_statistic(
     state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
     source_id: u64,
     statistic: String,
 ) -> Result<ProjectSummary> {
+    let state = state.scoped(boat_context);
     segment_statistic_set(&state, source_id, &statistic)
 }
 

@@ -1,3 +1,4 @@
+import { useBoatApi } from "../boats/context";
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import { registerRedraw } from "../automation";
@@ -7,7 +8,7 @@ import type { CompareOperand } from "../generated/CompareOperand";
 import type { ProjectSummary } from "../generated/ProjectSummary";
 import { later, setHint } from "../hint";
 import { msg, useT } from "../i18n";
-import { api } from "../ipc";
+
 import type { Layout } from "../polar/geometry3d";
 import { PolarScene, SHAPE_CROSS } from "../polar/scene3d";
 import { buildGuides, presetView, SPEED_FACTOR, SPEED_SYMBOL, type CameraPreset, type GuideLabel } from "../polar/view3d";
@@ -47,6 +48,7 @@ export default function CompareView({ project, settings }: {
   project: ProjectSummary;
   settings: AppSettings | null;
 }) {
+  const api = useBoatApi();
   const t = useT();
   const canvas = useRef<HTMLCanvasElement>(null);
   const labelsHost = useRef<HTMLDivElement>(null);

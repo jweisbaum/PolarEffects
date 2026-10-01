@@ -82,13 +82,13 @@ export function dateRange(start: number | null, end: number | null): string {
 
 /** Epoch seconds as a `datetime-local` value in UTC, or "" for none. */
 export function toLocalInput(seconds: number | null): string {
-  return seconds === null ? "" : new Date(seconds * 1000).toISOString().slice(0, 16);
+  return seconds === null ? "" : new Date(seconds * 1000).toISOString().slice(0, seconds % 60 === 0 ? 16 : 19);
 }
 
 /** A `datetime-local` value read as UTC, or null when empty or unreadable. */
 export function fromLocalInput(value: string): number | null {
   if (value.trim() === "") return null;
-  const ms = Date.parse(`${value}:00Z`);
+  const ms = Date.parse(`${value.length === 16 ? `${value}:00` : value}Z`);
   return Number.isFinite(ms) ? Math.round(ms / 1000) : null;
 }
 
@@ -117,7 +117,7 @@ export function formatBytes(bytes: number): string {
 }
 
 /** The column roles of the CSV mapping step, in the order they are shown. */
-export const CSV_ROLES = ["time", "lat", "lon", "heading", "speed", "boat"] as const;
+export const CSV_ROLES = ["time", "lat", "lon", "heading", "speed", "tws", "twd", "boat"] as const;
 export type CsvRole = (typeof CSV_ROLES)[number];
 
 export const CSV_ROLE_NAMES: Record<CsvRole, string> = {
@@ -126,6 +126,8 @@ export const CSV_ROLE_NAMES: Record<CsvRole, string> = {
   lon: msg("Longitude"),
   heading: msg("Heading or COG"),
   speed: msg("Speed"),
+  tws: msg("True wind speed"),
+  twd: msg("True wind direction"),
   boat: msg("Boat"),
 };
 

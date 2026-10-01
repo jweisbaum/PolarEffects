@@ -190,6 +190,10 @@ fn every_history_label_is_listed_for_translation() {
     let id = pe_core::SourceId(1);
     let black = Colour::parse("#000000").unwrap();
     let mut commands = vec![
+        Command::RenameBoat {
+            before: String::new(),
+            after: String::new(),
+        },
         Command::RenameProject {
             before: String::new(),
             after: String::new(),
@@ -287,6 +291,18 @@ fn every_history_label_is_listed_for_translation() {
             ..blend.clone()
         },
         pe_core::project::BlendSettings {
+            global_filters: Some(Default::default()),
+            ..blend.clone()
+        },
+        pe_core::project::BlendSettings {
+            corrections: vec![pe_core::source::CellOverride {
+                twa: 90.0,
+                tws: 10.0,
+                bsp: 7.0,
+            }],
+            ..blend.clone()
+        },
+        pe_core::project::BlendSettings {
             n_full: 3,
             ..blend.clone()
         },
@@ -326,6 +342,7 @@ fn every_history_label_is_listed_for_translation() {
             pe_app::polar_files::IMPORT_ONE,
             pe_app::polar_files::IMPORT_MANY,
             pe_app::orc::ADD_ORC,
+            "Add ORR polar",
             pe_app::tracks::IMPORT_ONE,
             pe_app::tracks::IMPORT_MANY,
             pe_core::command::EXCLUDE_DOTS_LABEL,

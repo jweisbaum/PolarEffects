@@ -95,6 +95,8 @@ fn track() -> Track {
     );
     for k in 0..600u32 {
         let fix = Fix {
+            tws: None,
+            twd_from: None,
             t: 1_750_000_000 + i64::from(k) * 60,
             lat: 50.0,
             lon: -1.0,
@@ -366,6 +368,8 @@ fn a_colliding_project_grid_is_refused_at_export_with_its_values_named() {
 
 fn input(summary: &pe_app::blend::BlendSummary) -> BlendSettingsInput {
     BlendSettingsInput {
+        asymmetric: summary.asymmetric,
+        interpolation: summary.interpolation.clone(),
         twa: summary.twa.clone(),
         tws: summary.tws.clone(),
         min_samples: summary.min_samples,
@@ -375,6 +379,107 @@ fn input(summary: &pe_app::blend::BlendSummary) -> BlendSettingsInput {
         use_corrected: true,
         stokes_drift: false,
     }
+}
+
+#[test]
+fn asymmetric_blend_corrections_are_independent_undoable_and_saved_as_overlays() {
+    use pe_app::polar_edit::PolarCell;
+    use pe_app::polar_edit::{self, EditOp};
+    let root = TempRoot::new("asymmetric-corrections");
+    let app = open_fixed(&root);
+    let before = projects::summary(&app).unwrap().unwrap();
+    let original_sources = app
+        .with_session(|s| Ok(s.require_open()?.project.sources.clone()))
+        .unwrap();
+    let mut settings = input(&before.blend);
+    settings.asymmetric = true;
+    settings.interpolation = "monotone_spline".into();
+    settings.twa = vec![0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0, 360.0];
+    settings.tws = vec![6.0, 12.0];
+    let changed = blend::blend_settings_set(&app, settings).unwrap();
+    assert!(changed.blend.asymmetric);
+    assert_eq!(changed.blend.interpolation, "monotone_spline");
+    let unedited = polar_edit::edit_surface(&app, 0).unwrap();
+    let port = PolarCell {
+        twa_index: 6,
+        tws_index: 1,
+    };
+    let corrected =
+        polar_edit::polar_edit(&app, 0, &EditOp::Type { bsp: Some(12.34) }, &[port], None).unwrap();
+    assert_eq!(corrected.undo_label.as_deref(), Some("Correct the blend"));
+    assert_eq!(corrected.blend.correction_count, 1);
+    let surface = polar_edit::edit_surface(&app, 0).unwrap();
+    assert_eq!(surface.bsp[6][1], Some(12.34));
+    assert_eq!(
+        surface.bsp[2][1], unedited.bsp[2][1],
+        "starboard is independent"
+    );
+    assert_eq!(
+        surface.source, unedited.source,
+        "the baseline is always recomputed without corrections"
+    );
+    edit::undo_last(&app).unwrap();
+    assert_eq!(polar_edit::edit_surface(&app, 0).unwrap().bsp, unedited.bsp);
+    edit::redo_next(&app).unwrap();
+    let preview = blend::preview(&app, "adrena", None).unwrap();
+    let imported = pe_polar::read(preview.text.as_bytes()).unwrap().polar;
+    assert_eq!(imported.twa, changed.blend.twa);
+    assert_eq!(imported.bsp[6][1], Some(12.34));
+    assert_eq!(imported.bsp[0], [Some(0.0), Some(0.0)]);
+    assert_eq!(imported.bsp[8], [Some(0.0), Some(0.0)]);
+    app.with_session(|s| {
+        let project = &s.require_open()?.project;
+        assert_eq!(project.sources, original_sources);
+        let bytes = pe_core::io::to_bytes(project)?;
+        let loaded = pe_core::io::from_bytes(&bytes)?;
+        assert_eq!(loaded.blend.corrections.len(), 1);
+        assert_eq!(pe_core::io::to_bytes(&loaded)?, bytes);
+        assert_eq!(blend::fresh(&loaded), blend::fresh(project));
+        Ok(())
+    })
+    .unwrap();
+    polar_edit::polar_edit(&app, 0, &EditOp::ResetAll, &[], None).unwrap();
+    assert_eq!(polar_edit::edit_surface(&app, 0).unwrap().bsp, unedited.bsp);
+}
+
+#[test]
+fn priority_groups_round_trip_and_undo_without_changing_track_filters() {
+    use pe_core::source::{Range, SampleFilters};
+    let root = TempRoot::new("priority-save");
+    let app = open_fixed(&root);
+    let before = app
+        .with_session(|s| Ok(s.require_open()?.project.clone()))
+        .unwrap();
+    let group = SampleFilters {
+        wave_height_m: Some(Range {
+            min: None,
+            max: Some(1.5),
+        }),
+        ..SampleFilters::default()
+    };
+    let groups = vec![
+        pe_app::tracks::TrackFilters::of(&group),
+        pe_app::tracks::TrackFilters::of(&SampleFilters::default()),
+    ];
+    let changed = blend::priority_filters_set(&app, groups, 3).unwrap();
+    assert_eq!(changed.blend.priority_groups.len(), 2);
+    app.with_session(|s| {
+        let project = &s.require_open()?.project;
+        assert_eq!(project.sources, before.sources);
+        let bytes = pe_core::io::to_bytes(project)?;
+        assert_eq!(
+            pe_core::io::to_bytes(&pe_core::io::from_bytes(&bytes)?)?,
+            bytes
+        );
+        Ok(())
+    })
+    .unwrap();
+    edit::undo_last(&app).unwrap();
+    app.with_session(|s| {
+        assert_eq!(s.require_open()?.project, before);
+        Ok(())
+    })
+    .unwrap();
 }
 
 /// The dialog applies as one undo entry; the Blend entry's switch and

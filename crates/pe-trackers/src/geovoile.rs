@@ -710,6 +710,8 @@ pub fn parse_tracks(json: &str) -> Result<Vec<Track>> {
 fn fix(t: i64, lat: i64, lon: i64) -> Fix {
     let lon = lon as f64 / 1e5;
     Fix {
+        tws: None,
+        twd_from: None,
         t,
         lat: lat as f64 / 1e5,
         lon: crate::wrap_lon(lon),
@@ -1112,12 +1114,17 @@ pub fn event_of(
                 .and_then(|r| r.start.as_deref())
                 .and_then(iso);
             TrackerBoat {
+                details: Default::default(),
                 id: boat.id.to_string(),
                 name: boat.name.clone(),
                 sail: boat.sail.clone(),
                 model: None,
                 division: class.map(|c| c.name.clone()).filter(|n| !n.is_empty()),
-                status: lines.last().and_then(|l| l.status.as_deref()).map(status),
+                status: if reports.is_some_and(|r| r.arrivals.contains_key(&boat.id)) {
+                    Some("FINISHED".into())
+                } else {
+                    lines.last().and_then(|l| l.status.as_deref()).map(status)
+                },
                 start: run_start.or(config_start),
                 finish: reports.and_then(|r| {
                     r.arrivals
@@ -1138,7 +1145,8 @@ pub fn event_of(
         .iter()
         .filter_map(|b| b.fixes.last())
         .map(|f| f.t)
-        .max();
+        .max()
+        .or_else(|| reports.and_then(|r| r.lines.last().map(|line| line.t)));
     for boat in &mut boats {
         boat.finish = boat.finish.or(stop);
     }
@@ -1168,6 +1176,19 @@ impl TrackerClient for Geovoile {
         Tracker::Geovoile
     }
 
+    fn fetch_for_scrape(
+        &self,
+        event: &EventRef,
+        fetcher: &Fetcher,
+        progress: &mut dyn FnMut(Progress),
+        now: i64,
+    ) -> Result<crate::library::completion::ScrapeFetch> {
+        let metadata = self.fetch_inner(event, fetcher, &mut |_| {}, &mut |_| {}, true)?;
+        crate::library::completion::after_check(metadata, now, || {
+            self.fetch(event, fetcher, progress)
+        })
+    }
+
     fn resolve(&self, input: &str) -> Result<EventRef> {
         let site = site(input)?;
         Ok(EventRef {
@@ -1190,6 +1211,19 @@ impl TrackerClient for Geovoile {
         fetcher: &Fetcher,
         progress: &mut dyn FnMut(Progress),
         listed: &mut dyn FnMut(TrackerEvent),
+    ) -> Result<TrackerEvent> {
+        self.fetch_inner(event, fetcher, progress, listed, false)
+    }
+}
+
+impl Geovoile {
+    fn fetch_inner(
+        &self,
+        event: &EventRef,
+        fetcher: &Fetcher,
+        progress: &mut dyn FnMut(Progress),
+        listed: &mut dyn FnMut(TrackerEvent),
+        metadata_only: bool,
     ) -> Result<TrackerEvent> {
         // The key goes into requests, so it is parsed again, never trusted.
         let mut site = site(&format!("{HTTPS}{}", event.key))?;
@@ -1257,9 +1291,13 @@ impl TrackerClient for Geovoile {
         // The tracks and reports start at once and decode on their own
         // threads while the config is read here.
         let seeds = viewer.seeds;
-        let tracks = fetcher.spawn(address("tracks")?, None, move |bytes| {
-            parse_tracks(&decode_text(&bytes, seeds, false)?)
-        })?;
+        let tracks = if metadata_only {
+            None
+        } else {
+            Some(fetcher.spawn(address("tracks")?, None, move |bytes| {
+                parse_tracks(&decode_text(&bytes, seeds, false)?)
+            })?)
+        };
         let reports = fetcher.spawn(address("reports")?, None, move |bytes| {
             Ok(decode_text(&bytes, seeds, false)
                 .and_then(|text| parse_reports(&text))
@@ -1283,7 +1321,10 @@ impl TrackerClient for Geovoile {
             None,
         ));
         let at = step(3);
-        let tracks = tracks.wait(&mut |b, t| progress(at(b, t)))?;
+        let tracks = match tracks {
+            Some(tracks) => tracks.wait(&mut |b, t| progress(at(b, t)))?,
+            None => Vec::new(),
+        };
         let at = step(4);
         let reports = match reports.wait(&mut |b, t| progress(at(b, t))) {
             Ok(reports) => reports,

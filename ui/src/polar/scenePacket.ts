@@ -1,11 +1,11 @@
 /**
  * The 3D scene as Rust sends it: one binary buffer, not JSON (plan.md M7).
  *
- * # Wire layout, version 2
+ * # Wire layout, version 3
  *
  * The frontend's copy of the layout; the Rust side's is the module
  * documentation of `crates/pe-app/src/polar3d.rs`. Both are held to the same
- * bytes by `fixtures/scene-v2.bin` and `fixtures/scene-v2-flags.bin`
+ * bytes by `fixtures/scene-v3.bin` and `fixtures/scene-v3-flags.bin`
  * (written by a Rust test, read by `scenePacket.test.ts`). Every value is
  * little-endian and 4 bytes wide except the time origin and the samples
  * key, and every section starts on a 4-byte boundary, so each array below
@@ -14,7 +14,7 @@
  * ```text
  * header, 12 × u32 (48 bytes)
  *   0  magic       0x44334550 (the bytes "PE3D")
- *   1  version     2
+ *   1  version     3
  *   2  S           sources
  *   3  N           polar nodes
  *   4  M           samples
@@ -24,7 +24,7 @@
  *   10 samples_mode 0 full, 1 flags only
  *   11 reserved, 0
  * sources, S × 4 u32
- *   id_lo, id_hi, colour 0x00RRGGBB, kind (0 ORC, 1 polar file, 2 track)
+ *   id_lo, id_hi, colour 0x00RRGGBB, kind (0 ORC, 1 polar file, 2 track, 3 ORR)
  * nodes (structure of arrays)
  *   f32 [N × 3]  TWA °, TWS kn, BSP kn
  *   u32 [N]      source, an index into the sources section
@@ -37,6 +37,9 @@
  *   f32 [M]      Hs, metres (NaN: none)
  *   f32 [M]      current speed, knots (NaN: none)
  *   f32 [M]      time, seconds since time_origin
+ *   f32 [M]      wave period, seconds (NaN: none)
+ *   f32 [M]      wave/bow angle, degrees (NaN: none)
+ *   f32 [M]      wave/wind angle, degrees (NaN: none)
  *   u32 [M]      flags
  * samples, flags only
  *   u32 [M]      flags
@@ -55,7 +58,7 @@
  */
 
 export const SCENE_MAGIC = 0x44334550;
-export const SCENE_VERSION = 2;
+export const SCENE_VERSION = 3;
 export const HEADER_BYTES = 48;
 export const BLEND_SOURCE = 0xffffffff;
 export const FLAG_EXCLUDED = 1;
@@ -64,8 +67,8 @@ export const FLAG_EDITED = 4;
 export const SAMPLES_FULL = 0;
 export const SAMPLES_FLAGS_ONLY = 1;
 
-export type SourceKindCode = "orc" | "polar_file" | "track";
-const KINDS: readonly SourceKindCode[] = ["orc", "polar_file", "track"];
+export type SourceKindCode = "orc" | "polar_file" | "track" | "orr";
+const KINDS: readonly SourceKindCode[] = ["orc", "polar_file", "track", "orr"];
 
 export interface PacketSource {
   id: number;
@@ -106,6 +109,9 @@ export interface ScenePacket {
     hs: Float32Array;
     current: Float32Array;
     time: Float32Array;
+    wavePeriod: Float32Array;
+    waveAngle: Float32Array;
+    waveWindAngle: Float32Array;
     flags: Uint32Array;
   };
   surfaces: PacketSurface[];
@@ -179,7 +185,7 @@ export function unpackScene(buffer: ArrayBuffer, held?: ScenePacket): ScenePacke
   } else {
     samples = {
       count: m, points: f32(m * 3), source: u32(m), ids: u32(m * 2),
-      hs: f32(m), current: f32(m), time: f32(m), flags: u32(m),
+      hs: f32(m), current: f32(m), time: f32(m), wavePeriod: f32(m), waveAngle: f32(m), waveWindAngle: f32(m), flags: u32(m),
     };
   }
   for (const [what, indices] of [["node", nodes.source], ["sample", samples.source]] as const) {
