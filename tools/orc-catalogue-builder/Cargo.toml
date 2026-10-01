@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Builds PolarEffects' embedded ORC catalogue from a jieter/orc-data checkout."
+description = "Builds PolarExplorer' embedded ORC catalogue from a jieter/orc-data checkout."
 publish = false
 
 [dependencies]

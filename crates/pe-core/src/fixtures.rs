@@ -349,7 +349,7 @@ pub fn arb_project() -> impl Strategy<Value = Project> {
                 text(),
                 colour(),
                 any::<bool>(),
-                any_f(0.0..2.0),
+                any_f(0.0..1.0),
                 kind(),
                 filters(),
             ),

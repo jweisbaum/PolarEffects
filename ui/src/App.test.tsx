@@ -99,7 +99,7 @@ function backend() {
     switch (command) {
       case "app_settings": return settings;
       case "database_job_status": return { running: false, operation: "", failures: [], done: 0, total: 0, tracks: 0, skipped: 0, failed: 0, current: "", cancelled: false, error: null };
-      case "app_info": return { name: "PolarEffects", version: "0.1.0" };
+      case "app_info": return { name: "PolarExplorer", version: "0.1.0" };
       case "project_summary": return project;
       case "recent_projects": return [
         { path: "/boats/Fastnet.wpsproj", name: "Fastnet", exists: true },
@@ -133,7 +133,7 @@ function backend() {
         // An empty scene: the header alone (layout in polar/scenePacket.ts).
         const header = new ArrayBuffer(48);
         new DataView(header).setUint32(0, 0x44334550, true);
-        new DataView(header).setUint32(4, 3, true);
+        new DataView(header).setUint32(4, 4, true);
         return header;
       }
       case "compare_polars": {
@@ -147,7 +147,7 @@ function backend() {
         // No dots: the header alone (layout in panels/dotPacket.ts).
         const header = new ArrayBuffer(16);
         new DataView(header).setUint32(0, 0x44324550, true);
-        new DataView(header).setUint32(4, 1, true);
+        new DataView(header).setUint32(4, 2, true);
         return header;
       }
       case "polar_edit_surface": {
@@ -269,7 +269,7 @@ afterEach(async () => {
 describe("the start screen", () => {
   it("offers new, open, recent (missing ones greyed) and recovered work", async () => {
     await mount();
-    expect(q("h1")?.textContent).toBe("PolarEffects");
+    expect(q("h1")?.textContent).toBe("PolarExplorer");
     expect(feature("start:new")).not.toBeNull();
     expect(feature("start:browse")).not.toBeNull();
     expect(feature("start:language")).not.toBeNull();
@@ -336,11 +336,11 @@ describe("errors", () => {
     });
     await click(q(".recent-item:not(.missing)"));
     const alert = q("[role=alert]");
-    expect(alert?.textContent).toBe("Ce projet a été enregistré par une version plus récente de PolarEffects. Mettez PolarEffects à jour pour l’ouvrir.");
+    expect(alert?.textContent).toBe("Ce projet a été enregistré par une version plus récente de PolarExplorer. Mettez PolarExplorer à jour pour l’ouvrir.");
     expect(alert?.getAttribute("title")).toContain("file schema version 9");
     // Switching language relabels the error too.
     await act(async () => setLanguage("de"));
-    expect(q("[role=alert]")?.textContent).toContain("neueren Version von PolarEffects");
+    expect(q("[role=alert]")?.textContent).toContain("neueren Version von PolarExplorer");
   });
 });
 
@@ -565,7 +565,7 @@ function visibleStrings(): string[] {
 describe("switching language (plan.md M2 acceptance)", () => {
   // Data, not interface: the project's name and path, the version, the
   // languages' own names, and symbols.
-  const data = new Set(["Fastnet", "/boats/Fastnet.wpsproj", "v0.1.0", "PolarEffects", "English", "Français",
+  const data = new Set(["Fastnet", "/boats/Fastnet.wpsproj", "v0.1.0", "PolarExplorer", "English", "Français",
     "Deutsch", "/cache/chunks", "…", "Old", "/gone/Old.wpsproj", "Lost", "?",
     // Country codes and the catalogue's commit, from the ORC polars section.
     "ORC", "ORR", "GBR", "NED", "c2ca870c6b22cc02c25afd5bac0f2d8297bf95de"]);
@@ -630,7 +630,7 @@ describe("switching language (plan.md M2 acceptance)", () => {
       const catalogue = CATALOGUES[target];
       // Data, not interface: the project's name and path, the version, the
       // languages' own names, and symbols.
-      const data = new Set(["Fastnet", "/boats/Fastnet.wpsproj", "v0.1.0", "PolarEffects", "English", "Français",
+      const data = new Set(["Fastnet", "/boats/Fastnet.wpsproj", "v0.1.0", "PolarExplorer", "English", "Français",
         "Deutsch", "/cache/chunks", "…",
         // Country codes and the catalogue's commit, from the ORC polars section.
         "ORC", "ORR", "GBR", "NED", "c2ca870c6b22cc02c25afd5bac0f2d8297bf95de"]);
@@ -952,7 +952,7 @@ describe("polar files and the source list (plan.md M4)", () => {
     const slider = feature("sources:weight") as HTMLInputElement;
     await act(async () => {
       slider.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
-      for (const value of ["1.2", "1.4"]) {
+      for (const value of ["0.6", "0.4"]) {
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(slider, value);
         slider.dispatchEvent(new Event("input", { bubbles: true }));
       }
@@ -960,7 +960,10 @@ describe("polar files and the source list (plan.md M4)", () => {
     });
     await settle();
     const weights = commands("set_source_weight") as { id: number; weight: number; gesture: string | null }[];
-    expect(weights.map((w) => w.weight)).toEqual([1.2, 1.4]);
+    expect(weights.map((w) => w.weight)).toEqual([0.6, 0.4]);
+    // Weights run from 0 to 1 (spec.md 8).
+    expect(slider.min).toBe("0");
+    expect(slider.max).toBe("1");
     expect(weights[0]!.gesture).not.toBeNull();
     expect(weights[1]!.gesture).toBe(weights[0]!.gesture);
   });

@@ -144,7 +144,7 @@ pub fn source_visible_set(state: &AppState, id: u64, visible: bool) -> Result<Pr
     })
 }
 
-/// Changes a source's blend weight, 0–2. `gesture` names a slider drag: every
+/// Changes a source's blend weight, 0–1. `gesture` names a slider drag: every
 /// call carrying the same name, one after another, is one undo entry.
 #[tauri::command]
 pub fn set_source_weight(

@@ -36,7 +36,7 @@ function race() {
 /** What each language must show where a word is checked. */
 const WORDS = {
   fr: { map: "Carte", compare: "Comparer", orc: "Polaires ORC", filters: "Filtres de points", settings: "Réglages" },
-  de: { map: "Karte", compare: "Vergleich", orc: "ORC-Polaren", filters: "Punktfilter", settings: "Einstellungen" },
+  de: { map: "Karte", compare: "Vergleich", orc: "ORC-/ORR-Polaren", filters: "Punktfilter", settings: "Einstellungen" },
 };
 
 let dir = null;

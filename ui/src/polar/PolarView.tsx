@@ -1,6 +1,7 @@
 import { useBoatApi } from "../boats/context";
 import { useFleetSync, correspondingDot } from "../boats/synchronization";
 import WaveRangeControls from "./WaveRangeControls";
+import BlendCellTooltip from "./BlendCellTooltip";
 import PolarDotTooltip from "./PolarDotTooltip";
 import { useLiveEdit } from "../panels/useLiveEdit";
 import PriorityFilters from "../panels/PriorityFilters";
@@ -13,8 +14,10 @@ import { registerPolarInspection, registerRedraw } from "../automation";
 import { needsOutline } from "../colourContrast";
 import { reportFailure } from "../errors";
 import type { AppSettings } from "../generated/AppSettings";
+import type { BlendCell } from "../generated/BlendCell";
 import type { ProjectSummary } from "../generated/ProjectSummary";
 import { later, setHint } from "../hint";
+import DayBandLegend from "../DayBandLegend";
 import { msg, useT } from "../i18n";
 
 import { useSampleSelection, useBoatSelection } from "../selection";
@@ -22,11 +25,11 @@ import { onThemeChange } from "../settings/themes";
 import EditPanel, { cellCode } from "./EditPanel";
 import { useEditFocus, useBoatEditing } from "./editFocus";
 import { place, type Layout } from "./geometry3d";
-import { PolarScene } from "./scene3d";
+import { PolarScene, type SurfaceHit } from "./scene3d";
 import { emptyScene, ScenePacketError, type ScenePacket } from "./scenePacket";
 import {
   availableModes, buildGuides, buildSurfaces, combine, DEFAULT_TOGGLES, drawnOnly, editCells, emptyKeys,
-  exclusionTargets, modeValues, focusIndex, hasFiltered, keysOf, mergeDots, nodeDots, nodesAtCells, sampleDots, presetView, range, resolveKeys, sampleIdsOf, sceneBounds,
+  exclusionTargets, modeValues, focusIndex, hasFiltered, keysOf, mergeDots, nearestIndex, nodeDots, nodesAtCells, sampleDots, presetView, range, resolveKeys, sampleIdsOf, sceneBounds,
   SPEED_FACTOR, SPEED_SYMBOL, summarise, type CameraPreset, type ColourMode, type Focus, type GuideLabel, type SelectionKeys,
   type Toggles,
 } from "./view3d";
@@ -60,7 +63,7 @@ const LAYOUT_NAMES: Record<Layout, string> = { tower: msg("Polar tower"), cartes
 const MODE_NAMES: Record<ColourMode, string> = {
   source: msg("By source"), hs: msg("By wave height"),
   wavePeriod: msg("By wave period"), waveAngle: msg("By wave angle"), waveWindAngle: msg("By wave angle to wind"),
-  current: msg("By current speed"), time: msg("By time"),
+  current: msg("By current speed"), time: msg("By time"), timeOfDay: msg("By time of day"),
 };
 const CAMERAS: readonly { id: CameraPreset; label: string; tip: string }[] = [
   { id: "top", label: msg("Top"), tip: msg("Look down the wind-speed axis: the classic polar diagram") },
@@ -131,13 +134,23 @@ export default function PolarView({ project, settings, onProject, compact = fals
   const [selection, setSelection] = useState<number[]>([]);
   const [path, setPath] = useState<number[] | null>(null);
   const [hover, setHover] = useState<{ index: number; x: number; y: number } | null>(null);
+  // The blend cell under the pointer (spec.md 10.1). `blendAsked` names the
+  // cell last asked of Rust and holds its answer, so moving within one cell
+  // asks nothing more, and an answer for a cell since left is dropped.
+  const [blendHover, setBlendHover] = useState<{ cell: BlendCell; x: number; y: number } | null>(null);
+  const blendAsked = useRef<{ key: string; cell: BlendCell | null }>({ key: "", cell: null });
+  const clearBlendHover = useCallback(() => {
+    blendAsked.current = { key: "", cell: null };
+    setBlendHover(null);
+  }, []);
   const clearHover = useCallback(() => {
     if (hoverFrame.current !== null) clearTimeout(hoverFrame.current);
     hoverFrame.current = null;
     hoverPoint.current = null;
     setHover(null);
     setNoHoverMatch(false);
-  }, []);
+    clearBlendHover();
+  }, [clearBlendHover]);
   const [hideOthers, setHideOthers] = useState(false);
   const [dragValue, setDragValue] = useState<{ x: number; y: number; bsp: number } | null>(null);
   const held = useRef<ScenePacket | null>(null);
@@ -292,6 +305,36 @@ export default function PolarView({ project, settings, onProject, compact = fals
     () => (focus === null ? null : { index: focused, hideOthers }),
     [focus, focused, hideOthers],
   );
+  const surfaces = useMemo(
+    () => (toggles.surfaces ? buildSurfaces(packet, blendColour, focusStyle, blendLine) : []),
+    [packet, blendColour, focusStyle, blendLine, toggles.surfaces],
+  );
+  /**
+   * Shows the blend cell under a surface hit: the output-grid cell nearest
+   * the hit node (the drawn surface is finer than the grid in spline mode),
+   * asked of Rust once per cell and per revision.
+   */
+  const hoverBlend = (hit: SurfaceHit, x: number, y: number) => {
+    const grid = surfaces[hit.surface]?.grid;
+    const i = grid ? nearestIndex(project.blend.twa, grid.twa[hit.twaIndex]!) : -1;
+    const j = grid ? nearestIndex(project.blend.tws, grid.tws[hit.twsIndex]!) : -1;
+    if (i < 0 || j < 0) { clearBlendHover(); return; }
+    const key = `${project.id}:${project.revision}:${i}:${j}`;
+    if (blendAsked.current.key === key) {
+      const cell = blendAsked.current.cell;
+      if (cell) setBlendHover({ cell, x, y });
+      return;
+    }
+    blendAsked.current = { key, cell: null };
+    void api.blendCell(i, j)
+      .then((cell) => {
+        if (blendAsked.current.key !== key) return;
+        blendAsked.current = { key, cell };
+        setBlendHover({ cell, x, y });
+      })
+      // A cell that cannot be read (the grid changed under the pointer) shows nothing.
+      .catch(() => { if (blendAsked.current.key === key) clearBlendHover(); });
+  };
   // The samples' dots are rebuilt only when they, their colours or how they
   // are shown change: an edit of a polar node rebuilds the nodes alone
   // (spec.md 13, plan.md M13).
@@ -333,10 +376,7 @@ export default function PolarView({ project, settings, onProject, compact = fals
   useEffect(() => {
     const current = scene.current;
     if (!current) return;
-    current.setData({
-      samples: dots.points, colors: dots.colors, shapes: dots.shapes, layout,
-      surfaces: toggles.surfaces ? buildSurfaces(packet, blendColour, focusStyle, blendLine) : [],
-    });
+    current.setData({ samples: dots.points, colors: dots.colors, shapes: dots.shapes, layout, surfaces });
     const guides = buildGuides(bounds, layout, unit, project.blend.asymmetric);
     current.setGuides(guides.segments, cssColour("--muted", "#b3c9de"));
     labels.current = guides.labels;
@@ -353,7 +393,7 @@ export default function PolarView({ project, settings, onProject, compact = fals
       fitted.current = true;
     }
     draw();
-  }, [dots, packet, layout, toggles.surfaces, bounds, unit, draw, focusStyle, blendColour, blendLine, project.blend.asymmetric]);
+  }, [dots, packet, layout, surfaces, bounds, unit, draw, project.blend.asymmetric]);
 
   // Selection is by global index; the scene highlights by drawn index.
   useEffect(() => {
@@ -459,8 +499,13 @@ export default function PolarView({ project, settings, onProject, compact = fals
         const at = hoverPoint.current;
         if (!at) return;
         const hit = scene.current?.pick(at.x, at.y, PICK_RADIUS_PX) ?? -1;
+        const tipX = Math.max(8, Math.min(at.x + 12, at.width - 280)), tipY = Math.max(8, Math.min(at.y + 12, at.height - 260));
         setNoHoverMatch(false);
-        setHover(hit < 0 ? null : { index: dots.refs[hit]!, x: Math.max(8, Math.min(at.x + 12, at.width - 280)), y: Math.max(8, Math.min(at.y + 12, at.height - 260)) });
+        setHover(hit < 0 ? null : { index: dots.refs[hit]!, x: tipX, y: tipY });
+        // A dot wins; otherwise the blend's surface, if it is under the pointer.
+        const surface = hit < 0 ? scene.current?.pickSurface(at.x, at.y) ?? null : null;
+        if (surface) hoverBlend(surface, tipX, tipY);
+        else clearBlendHover();
         sync?.publish({ kind: "hover", boat: project.id, point: hit < 0 ? null : { twa: dots.points[hit * 3]!, tws: dots.points[hit * 3 + 1]! } });
       }, 16);
       return;
@@ -525,8 +570,9 @@ export default function PolarView({ project, settings, onProject, compact = fals
   const factor = SPEED_FACTOR[unit];
   const symbol = SPEED_SYMBOL[unit];
   const speed = (knots: number) => `${(knots * factor).toFixed(1)} ${symbol}`;
-  const legendRange = shownMode === "source" ? null
-    : range(modeValues(packet, shownMode)!);
+  // "By source" and "by time of day" have no ramp: the second has its bands.
+  const legendValues = modeValues(packet, shownMode);
+  const legendRange = legendValues ? range(legendValues) : null;
   const legendValue = (value: number) => shownMode === "time"
     ? `${new Date((packet.timeOrigin + value) * 1000).toISOString().replace("T", " ").slice(0, 19)} UTC`
     : `${value.toFixed(1)}${shownMode === "wavePeriod" ? " s" : shownMode === "waveAngle" || shownMode === "waveWindAngle" ? "°" : ""}`;
@@ -545,6 +591,8 @@ export default function PolarView({ project, settings, onProject, compact = fals
       <div className="view3d-labels" ref={labelsHost} aria-hidden="true" />
       {hover && <PolarDotTooltip packet={packet} index={hover.index} sources={project.sources}
         units={settings?.units ?? DEFAULT_UNITS} x={hover.x} y={hover.y} />}
+      {!hover && blendHover && <BlendCellTooltip cell={blendHover.cell} sources={project.sources} colour={blendColour}
+        unit={unit} smoothing={project.blend.smoothing} x={blendHover.x} y={blendHover.y} />}
       {noHoverMatch && <div className="view3d-tooltip" role="tooltip" style={{ left: 12, top: 58 }}>{t("No point at matching wind conditions")}</div>}
       {path && path.length >= 4 && (
         <svg className="view3d-gesture" aria-hidden="true">
@@ -647,6 +695,7 @@ export default function PolarView({ project, settings, onProject, compact = fals
               <span>{legendValue(legendRange[0])}</span><span className="view3d-ramp-bar" /><span>{legendValue(legendRange[1])}</span>
             </div>
           )}
+          {shownMode === "timeOfDay" && <DayBandLegend className="view3d-bands" />}
         </fieldset>
 
         <div className="view3d-legend" aria-label={t("Axes")}>

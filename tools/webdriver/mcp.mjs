@@ -2,7 +2,7 @@
  * An MCP server over the application's automation endpoint (D25). Copied
  * from VectorEffects' `tools/webdriver/mcp.mjs` and extended.
  *
- * Exposes the real running PolarEffects — the development build with the
+ * Exposes the real running PolarExplorer — the development build with the
  * WebDriver feature, its own Vite port and its own data root — as tools:
  * click, type, read, wait, answer a file dialog, run a script, open a
  * project, and take a picture of the whole window with its canvases (see
@@ -46,7 +46,7 @@ server.registerTool(
   {
     title: "Screenshot the application",
     description:
-      "A PNG of the whole PolarEffects window, the map, polar plot and 3D canvases included, " +
+      "A PNG of the whole PolarExplorer window, the map, polar plot and 3D canvases included, " +
       "saved under target/ux-shots/mcp/. Starts the app (dev build, isolated data) if it is not running.",
     inputSchema: { name: z.string().optional().describe("basename for the file") },
   },

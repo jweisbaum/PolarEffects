@@ -9,7 +9,8 @@ use std::path::PathBuf;
 
 use pe_app::autosave::RecoveredProject;
 use pe_app::blend::{
-    BlendSettingsInput, BlendSummary, ExportAxes, ExportPreview, ExportProblemView, ExportResult,
+    BlendCell, BlendSettingsInput, BlendSummary, ExportAxes, ExportPreview, ExportProblemView,
+    ExportResult,
 };
 use pe_app::commands::AppInfo;
 use pe_app::compare::CompareOperand;
@@ -63,6 +64,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     EditOp::export_all(&cfg)?;
     PolarPlotResult::export_all(&cfg)?;
     BlendSummary::export_all(&cfg)?;
+    BlendCell::export_all(&cfg)?;
     pe_app::orr::OrrCatalogueInfo::export_all(&cfg)?;
     pe_app::orr::OrrSearchResult::export_all(&cfg)?;
     pe_app::orr::OrrProgress::export_all(&cfg)?;

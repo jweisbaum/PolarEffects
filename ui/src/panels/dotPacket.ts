@@ -3,29 +3,30 @@
  * not JSON (plan.md M13). In "All" every sample with wind is a dot, and
  * 50 tracks of 10,000 fixes as JSON objects would be tens of megabytes.
  *
- * # Wire layout, version 1
+ * # Wire layout, version 2
  *
  * The frontend's copy; the Rust side's is the module documentation of
  * `crates/pe-app/src/polar_plot.rs`. Both are held to the same bytes by
- * `fixtures/dots-v1.bin`. Little-endian, every value 4 bytes wide, so each
+ * `fixtures/dots-v2.bin`. Little-endian, every value 4 bytes wide, so each
  * array is a view into the buffer.
  *
  * ```text
  * header, 4 × u32 (16 bytes)
  *   0  magic    0x44324550 (the bytes "PE2D")
- *   1  version  1
+ *   1  version  2
  *   2  S        sources
  *   3  M        dots
  * sources, S × 2 u32   id lo, id hi
  * f32 [M × 3]  TWA °, TWS kn, BSP kn
  * u32 [M]      source index
  * u32 [M × 2]  sample id, lo then hi
- * u32 [M]      flags: bit 0 excluded, bit 1 filtered out
+ * u32 [M]      flags: bit 0 excluded, bit 1 filtered out; bits 8–9 the
+ *              band of the local solar day (`../dayBand.ts`; spec.md 9.2)
  * ```
  */
 
 export const DOTS_MAGIC = 0x44324550;
-export const DOTS_VERSION = 1;
+export const DOTS_VERSION = 2;
 export const DOT_EXCLUDED = 1;
 export const DOT_FILTERED = 2;
 

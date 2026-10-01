@@ -9,6 +9,7 @@
 //! crate and never the other way round.
 
 pub mod csv;
+pub mod daytime;
 pub mod derive;
 pub mod error;
 pub mod filter;

@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "PolarEffects track model, file import and sample derivation."
+description = "PolarExplorer track model, file import and sample derivation."
 
 [dependencies]
 pe-core = { workspace = true }

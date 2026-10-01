@@ -9,6 +9,7 @@
  * on, so `DotBuild.refs` maps each drawn dot back to its global index.
  */
 import { NO_WAVE_RANGES, waveRangePredicate, type WaveRanges } from "./waveRanges";
+import { dayBand, dayBandRgb } from "../dayBand";
 import type { PolarCell } from "../generated/PolarCell";
 import type { PolarNodeRef } from "../generated/PolarNodeRef";
 import type { SpeedUnit } from "../generated/SpeedUnit";
@@ -16,7 +17,7 @@ import { CARTESIAN_TWA_SCALE, place, type Layout, type PolarGrid } from "./geome
 import { BLEND_SOURCE, FLAG_EDITED, FLAG_EXCLUDED, FLAG_FILTERED, sampleId, type ScenePacket } from "./scenePacket";
 import { SHAPE_CROSS, SHAPE_DISC, SHAPE_RING, SHAPE_SQUARE, type SurfaceInput, type View } from "./scene3d";
 
-export type ColourMode = "source" | "hs" | "current" | "time" | "wavePeriod" | "waveAngle" | "waveWindAngle";
+export type ColourMode = "source" | "hs" | "current" | "time" | "timeOfDay" | "wavePeriod" | "waveAngle" | "waveWindAngle";
 
 /** The show toggles (spec.md 10.2). */
 export interface Toggles {
@@ -78,7 +79,11 @@ export function ramp(t: number): [number, number, number] {
   return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
 }
 
-/** The sample values a colour mode reads, or null for "by source". */
+/**
+ * The sample values a colour mode reads along the ramp, or null for the
+ * modes that have none: "by source", and "by time of day", whose four
+ * bands are categories read from the samples' flags.
+ */
 export function modeValues(packet: ScenePacket, mode: ColourMode): Float32Array | null {
   if (mode === "hs") return packet.samples.hs;
   if (mode === "current") return packet.samples.current;
@@ -108,6 +113,7 @@ export function availableModes(packet: ScenePacket): Record<ColourMode, boolean>
     hs: range(packet.samples.hs) !== null,
     current: range(packet.samples.current) !== null,
     time: packet.samples.count > 0,
+    timeOfDay: packet.samples.count > 0,
     wavePeriod: range(packet.samples.wavePeriod) !== null,
     waveAngle: range(packet.samples.waveAngle) !== null,
     waveWindAngle: range(packet.samples.waveWindAngle) !== null,
@@ -173,6 +179,7 @@ function dotsOf(packet: ScenePacket, toggles: Toggles, mode: ColourMode, focus: 
   const { nodes, samples } = packet;
   const sourceColours = packet.sources.map((s) => rgb(s.colour));
   const values = which === "samples" ? modeValues(packet, mode) : null;
+  const byBand = which === "samples" && mode === "timeOfDay";
   const span = values ? range(values) : null;
   // Two passes over flat arrays, no per-dot allocation: this runs on every
   // edit at up to 200,000 dots (spec.md 13).
@@ -206,7 +213,9 @@ function dotsOf(packet: ScenePacket, toggles: Toggles, mode: ColourMode, focus: 
     points[d * 3 + 2] = set.points[k * 3 + 2]!;
     const flags = set.flags[k]!;
     let colour: readonly [number, number, number];
-    if (!isNode && values) {
+    if (!isNode && byBand) {
+      colour = dayBandRgb(dayBand(flags));
+    } else if (!isNode && values) {
       const v = values[k]!;
       colour = span && Number.isFinite(v) ? ramp(width > 0 ? (v - lo) / width : 0.5) : MISSING;
     } else {
@@ -255,10 +264,27 @@ export function buildSurfaces(packet: ScenePacket, blendColour: string, focus: F
       grid: surfaceGrid(surface.twa, surface.tws, surface.bsp),
       color: blend ? blendColour : packet.sources[surface.source]?.colour ?? "#888888",
       opaque: blend || mine,
+      // Hovering the blend names the sources behind a cell (spec.md 10.1).
+      ...(blend ? { pickable: true } : {}),
       ...(blend && blendLine !== undefined ? { lineColor: blendLine } : {}),
       ...(focused && !mine ? { opacity: FADED_OPACITY } : {}),
     }];
   });
+}
+
+/**
+ * The index of the value on `axis` nearest `value` (the lower on a tie), or
+ * -1 for an empty axis: the output-grid cell a point on the blend belongs
+ * to, where the drawn surface is finer than the grid (spline mode).
+ */
+export function nearestIndex(axis: ArrayLike<number>, value: number): number {
+  let best = -1;
+  let distance = Infinity;
+  for (let k = 0; k < axis.length; k++) {
+    const d = Math.abs(axis[k]! - value);
+    if (d < distance) { distance = d; best = k; }
+  }
+  return best;
 }
 
 /** Whether a node belongs to a track: a polar segment's, shown only in edit mode, and never excluded. */

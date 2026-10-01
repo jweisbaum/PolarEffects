@@ -6,11 +6,11 @@
 //! would be tens of megabytes of text to parse, where packed `f32` is copied
 //! straight into the GPU buffers (plan.md M7).
 //!
-//! # Wire layout, version 3
+//! # Wire layout, version 4
 //!
 //! The one place the layout is defined on the Rust side; the frontend's
 //! mirror is `ui/src/polar/scenePacket.ts`, and both are held to the same
-//! bytes by `ui/src/polar/fixtures/scene-v3.bin`. Every value is
+//! bytes by `ui/src/polar/fixtures/scene-v4.bin`. Every value is
 //! little-endian and 4 bytes wide except the time origin and the samples
 //! key, and every section starts on a 4-byte boundary, so the frontend views
 //! each array in place.
@@ -18,7 +18,7 @@
 //! ```text
 //! header, 12 × u32 (48 bytes)
 //!   0  magic       0x44334550 (the bytes "PE3D")
-//!   1  version     3
+//!   1  version     4
 //!   2  S           sources
 //!   3  N           polar nodes
 //!   4  M           samples
@@ -54,7 +54,10 @@
 //! ```
 //!
 //! Flags: bit 0 excluded (spec.md 10.3), bit 1 filtered out (spec.md 7.6),
-//! bit 2 edited (a node whose cell holds an override, spec.md 10.4).
+//! bit 2 edited (a node whose cell holds an override, spec.md 10.4). Bits
+//! 8–9 of a sample's flags are its band of the local solar day (spec.md
+//! 10.2; `pe_tracks::daytime`): 0 night, 1 morning, 2 afternoon, 3 evening.
+//! It rides in the flags so the flags-only scene carries it at no cost.
 //!
 //! **Flags-only scenes** keep an edit fast at 200,000 samples (spec.md 13,
 //! plan.md M13): equal samples keys mean the same visible sources in the
@@ -82,6 +85,7 @@ use pe_core::command::{
 };
 use pe_core::source::{CellRef, Source, SourceKind};
 use pe_core::{Command, Project, SampleId, SourceId};
+use pe_tracks::daytime::DayBand;
 use serde::Deserialize;
 use ts_rs::TS;
 
@@ -94,7 +98,7 @@ use crate::projects::ProjectSummary;
 /// "PE3D" read as a little-endian u32.
 pub const SCENE_MAGIC: u32 = u32::from_le_bytes(*b"PE3D");
 /// The wire layout's version.
-pub const SCENE_VERSION: u32 = 3;
+pub const SCENE_VERSION: u32 = 4;
 /// Header length in bytes.
 pub const HEADER_BYTES: usize = 48;
 /// The source index a blend surface carries.
@@ -105,6 +109,8 @@ pub const FLAG_EXCLUDED: u32 = 1;
 pub const FLAG_FILTERED: u32 = 2;
 /// Flag: a node whose cell holds an edit.
 pub const FLAG_EDITED: u32 = 4;
+/// Where a sample's flags hold its day band's two-bit code.
+pub const FLAG_BAND_SHIFT: u32 = 8;
 /// Samples mode: the whole samples section.
 pub const SAMPLES_FULL: u32 = 0;
 /// Samples mode: only the samples' flags.
@@ -180,6 +186,8 @@ pub struct SceneSample {
     pub excluded: bool,
     /// Removed by the sample filters.
     pub filtered: bool,
+    /// The band of the local solar day it was sailed in.
+    pub band: DayBand,
 }
 
 /// One surface: a polar source's grid over its own axes.
@@ -277,6 +285,7 @@ pub fn scene_with(
                     continue;
                 };
                 let excluded = excluded.binary_search(&sample.id).is_ok();
+                let band = pe_tracks::daytime::day_band(sample.t, sample.lon);
                 scene.samples.push(if flags_only {
                     SceneSample {
                         twa: 0.0,
@@ -292,6 +301,7 @@ pub fn scene_with(
                         time: 0.0,
                         excluded,
                         filtered: *filtered,
+                        band,
                     }
                 } else {
                     SceneSample {
@@ -327,6 +337,7 @@ pub fn scene_with(
                         time: 0.0,
                         excluded,
                         filtered: *filtered,
+                        band,
                     }
                 });
                 times.push(sample.t);
@@ -450,6 +461,10 @@ fn flags(excluded: bool, filtered: bool, edited: bool) -> u32 {
         | (if edited { FLAG_EDITED } else { 0 })
 }
 
+fn sample_flags(sample: &SceneSample) -> u32 {
+    flags(sample.excluded, sample.filtered, false) | (sample.band.code() << FLAG_BAND_SHIFT)
+}
+
 /// Packs a scene into the wire layout in the module documentation.
 pub fn pack(scene: &Scene) -> Vec<u8> {
     let (n, m) = (scene.nodes.len(), scene.samples.len());
@@ -509,7 +524,7 @@ pub fn pack(scene: &Scene) -> Vec<u8> {
 
     if scene.flags_only {
         for sample in &scene.samples {
-            u(&mut out, flags(sample.excluded, sample.filtered, false));
+            u(&mut out, sample_flags(sample));
         }
     } else {
         pack_samples(&mut out, scene);
@@ -561,7 +576,7 @@ fn pack_samples(out: &mut Vec<u8>, scene: &Scene) {
         u(sample.wave_wind_angle.to_bits());
     }
     for sample in samples {
-        u(flags(sample.excluded, sample.filtered, false));
+        u(sample_flags(sample));
     }
 }
 
@@ -855,6 +870,7 @@ mod tests {
                 time: 600.0,
                 excluded: true,
                 filtered: true,
+                band: DayBand::Afternoon,
             }],
             surfaces: vec![
                 SceneSurface {
@@ -891,7 +907,7 @@ mod tests {
         assert_eq!(&bytes[0..4], b"PE3D");
         assert_eq!(
             (1..6).map(|i| word(&bytes, i)).collect::<Vec<_>>(),
-            [3, 2, 2, 1, 2]
+            [4, 2, 2, 1, 2]
         );
         assert_eq!(
             i64::from_le_bytes(bytes[24..32].try_into().unwrap()),
@@ -916,7 +932,8 @@ mod tests {
             [0, 0, 1, 2 | (1 << 16), FLAG_EDITED, FLAG_EXCLUDED]
         );
         // Sample: position 32–34, source 35, id 36–37, hs 38, current 39,
-        // time 40, wave period/angle/wind angle 41–43, flags 44.
+        // time 40, wave period/angle/wind angle 41–43, flags 44 (the band,
+        // afternoon = 2, in bits 8–9).
         assert_eq!(
             (32..35).map(|i| float(&bytes, i)).collect::<Vec<_>>(),
             [135.0, 14.25, 9.5]
@@ -928,7 +945,7 @@ mod tests {
         assert_eq!(float(&bytes, 38), 1.5);
         assert!(float(&bytes, 39).is_nan());
         assert_eq!(float(&bytes, 40), 600.0);
-        assert_eq!(word(&bytes, 44), FLAG_EXCLUDED | FLAG_FILTERED);
+        assert_eq!(word(&bytes, 44), FLAG_EXCLUDED | FLAG_FILTERED | (2 << 8));
         assert_eq!(float(&bytes, 41), 8.5);
         assert_eq!(float(&bytes, 42), 30.0);
         assert_eq!(float(&bytes, 43), 15.0);
@@ -964,7 +981,7 @@ mod tests {
         let bytes = pack(&scene);
         assert_eq!(bytes.len(), (59 - 9) * 4);
         assert_eq!(word(&bytes, 10), SAMPLES_FLAGS_ONLY);
-        assert_eq!(word(&bytes, 32), FLAG_EXCLUDED | FLAG_FILTERED);
+        assert_eq!(word(&bytes, 32), FLAG_EXCLUDED | FLAG_FILTERED | (2 << 8));
         assert_eq!(word(&bytes, 33), 0, "the first surface's source");
     }
 
@@ -979,7 +996,7 @@ mod tests {
             flags_only: true,
             ..fixture_scene()
         });
-        for (name, bytes) in [("scene-v3.bin", full), ("scene-v3-flags.bin", flags)] {
+        for (name, bytes) in [("scene-v4.bin", full), ("scene-v4-flags.bin", flags)] {
             let path = dir.join(name);
             if std::env::var_os("PE_BLESS").is_some() {
                 std::fs::create_dir_all(&dir).unwrap();

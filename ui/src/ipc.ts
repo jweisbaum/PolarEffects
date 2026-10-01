@@ -192,7 +192,7 @@ export function boatApi(boatContext?: number) {
   setSourceVisible: (id: number, visible: boolean) =>
     call<ProjectSummary>("set_source_visible", { id, visible }),
   /**
-   * Sets a source's blend weight (0–2). Calls sharing a `gesture` name, one
+   * Sets a source's blend weight (0–1). Calls sharing a `gesture` name, one
    * after another, are one undo entry: a slider drag.
    */
   setSourceWeight: (id: number, weight: number, gesture: string | null = null) =>
@@ -218,6 +218,12 @@ export function boatApi(boatContext?: number) {
    * What an export would write (`expedition`, `adrena` or `csv`), on the
    * project's grid or `axes`: the grid, the text, or why it is refused.
    */
+  /**
+   * One cell of the blend, by its indices on the output grid, with each
+   * source behind its value: what hovering the blend shows. Read-only.
+   */
+  blendCell: (twaIndex: number, twsIndex: number) =>
+    call<import("./generated/BlendCell").BlendCell>("blend_cell", { twaIndex, twsIndex }),
   exportPreview: (format: string, axes: ExportAxes | null = null) =>
     call<ExportPreview>("export_preview", { format, axes }),
   /** Writes the blend to `path`, recomputed from the sources. */

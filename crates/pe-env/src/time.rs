@@ -1,5 +1,5 @@
 //! Time axes. Every archive keeps time as a number of units since an epoch
-//! written in a CF `units` attribute; everything else in PolarEffects uses
+//! written in a CF `units` attribute; everything else in PolarExplorer uses
 //! UTC epoch seconds (CLAUDE.md conventions), so axes are converted once, on
 //! open.
 

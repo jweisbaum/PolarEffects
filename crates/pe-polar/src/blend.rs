@@ -57,7 +57,7 @@ pub struct BlendSource<'a> {
     pub id: u64,
     /// Its polar on the output grid's axes, overrides in and exclusions out.
     pub grid: &'a Polar,
-    /// Its weight, 0–2 (spec.md 8).
+    /// Its weight, 0–1 (spec.md 8).
     pub weight: f64,
     /// How sure it is of each cell.
     pub confidence: Confidence<'a>,
@@ -289,6 +289,72 @@ fn weight_at(source: &BlendSource<'_>, i: usize, j: usize, n_full: u32) -> f64 {
     source.weight * confidence
 }
 
+/// One source's part in a cell's direct value: a term of the weighted mean.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Contribution {
+    /// The source.
+    pub id: u64,
+    /// Its boat speed in the cell, knots.
+    pub bsp: f64,
+    /// The weight the rule gave it there: its weight times its confidence.
+    pub weight: f64,
+}
+
+/// The sources the rule sums, in the order it sums them: those on the
+/// output grid's axes, by id.
+fn summed<'a, 'b>(
+    sources: &'b [BlendSource<'a>],
+    ni: usize,
+    nj: usize,
+) -> Vec<&'b BlendSource<'a>> {
+    let mut ordered: Vec<&BlendSource<'_>> = sources
+        .iter()
+        .filter(|s| s.grid.twa.len() == ni && s.grid.tws.len() == nj)
+        .collect();
+    ordered.sort_by_key(|s| s.id);
+    ordered
+}
+
+/// The terms of cell (`i`, `j`)'s weighted mean: every source with a value
+/// there and a positive weight, in summing order. The one place the rule
+/// decides who takes part, shared by [`blend_mode`] and [`contributions`].
+fn terms<'b>(
+    ordered: &'b [&'b BlendSource<'_>],
+    i: usize,
+    j: usize,
+    n_full: u32,
+) -> impl Iterator<Item = Contribution> + 'b {
+    ordered.iter().filter_map(move |source| {
+        let bsp = source.grid.get(i, j)?;
+        let weight = weight_at(source, i, j, n_full);
+        (weight > 0.0).then_some(Contribution {
+            id: source.id,
+            bsp,
+            weight,
+        })
+    })
+}
+
+/// What stands behind cell (`i`, `j`)'s direct value (spec.md 12.3): each
+/// source the rule counted there, with its speed and the weight it had.
+/// Empty for a cell with no direct evidence (filled, or nothing at all) and
+/// for a cell off the grid. Their weighted mean is the cell's value before
+/// smoothing and before any manual correction.
+pub fn contributions(
+    twa: &[f64],
+    tws: &[f64],
+    sources: &[BlendSource<'_>],
+    options: &BlendOptions,
+    i: usize,
+    j: usize,
+) -> Vec<Contribution> {
+    if i >= twa.len() || j >= tws.len() {
+        return Vec::new();
+    }
+    let ordered = summed(sources, twa.len(), tws.len());
+    terms(&ordered, i, j, options.n_full).collect()
+}
+
 /// **The blending rule** (spec.md 12.3; see the module documentation), on
 /// the output grid `twa` × `tws`. A source whose grid is not on those axes
 /// takes no part.
@@ -316,11 +382,7 @@ pub fn blend_mode(
     mode: pe_core::project::Interpolation,
 ) -> Blend {
     let (ni, nj) = (twa.len(), tws.len());
-    let mut ordered: Vec<&BlendSource<'_>> = sources
-        .iter()
-        .filter(|s| s.grid.twa.len() == ni && s.grid.tws.len() == nj)
-        .collect();
-    ordered.sort_by_key(|s| s.id);
+    let ordered = summed(sources, ni, nj);
     let zero_row: Vec<bool> = twa.iter().map(|a| is_zero_row(*a)).collect();
 
     // Direct evidence: the weighted mean of every source with a value.
@@ -329,15 +391,9 @@ pub fn blend_mode(
     for i in 0..ni {
         for j in 0..nj {
             let (mut sum, mut weights) = (0.0, 0.0);
-            for source in &ordered {
-                let Some(bsp) = source.grid.get(i, j) else {
-                    continue;
-                };
-                let w = weight_at(source, i, j, options.n_full);
-                if w > 0.0 {
-                    sum += w * bsp;
-                    weights += w;
-                }
+            for term in terms(&ordered, i, j, options.n_full) {
+                sum += term.weight * term.bsp;
+                weights += term.weight;
             }
             if weights > 0.0 {
                 origin[i][j] = CellOrigin::Direct;
@@ -605,6 +661,85 @@ mod tests {
             Some(6.0),
             "not overridden: no samples, no weight"
         );
+    }
+
+    /// What the blend tooltip shows (spec.md 10.1): each source with a
+    /// value and a positive weight in the cell, in id order, with the
+    /// weight the rule gave it. A polar at weight 0.5 and 6 kn, a track at
+    /// weight 1 with 15 of 30 samples (so 0.5) and 9 kn: equal shares, and
+    /// the blend is their mean, 7.5 kn.
+    #[test]
+    fn a_cells_contributions_are_the_terms_of_its_weighted_mean() {
+        let p = grid(&[(2, 1, 6.0)]);
+        let t = grid(&[(2, 1, 9.0)]);
+        let silent = grid(&[(3, 1, 5.0)]);
+        let muted = grid(&[(2, 1, 4.0)]);
+        let mut count = vec![vec![0u32; 3]; 5];
+        count[2][1] = 15;
+        let none = vec![vec![false; 3]; 5];
+        let track = BlendSource {
+            id: 2,
+            grid: &t,
+            weight: 1.0,
+            confidence: Confidence::Samples {
+                count: &count,
+                overridden: &none,
+            },
+        };
+        // Given out of id order, with a source that has no value in the
+        // cell (5) and one at weight 0 (9): neither takes part.
+        let sources = [
+            polar(9, &muted, 0.0),
+            track,
+            polar(5, &silent, 1.0),
+            polar(1, &p, 0.5),
+        ];
+        let terms = contributions(&TWA, &TWS, &sources, &options(), 2, 1);
+        assert_eq!(
+            terms,
+            vec![
+                Contribution {
+                    id: 1,
+                    bsp: 6.0,
+                    weight: 0.5
+                },
+                Contribution {
+                    id: 2,
+                    bsp: 9.0,
+                    weight: 0.5
+                },
+            ]
+        );
+        assert_eq!(
+            blend(&TWA, &TWS, &sources, &options()).polar.bsp[2][1],
+            Some(7.5)
+        );
+
+        // An overridden track cell counts with its whole weight (D23).
+        let mut vouched = none.clone();
+        vouched[2][1] = true;
+        let sources = [
+            polar(1, &p, 0.5),
+            BlendSource {
+                confidence: Confidence::Samples {
+                    count: &count,
+                    overridden: &vouched,
+                },
+                ..track
+            },
+        ];
+        let terms = contributions(&TWA, &TWS, &sources, &options(), 2, 1);
+        assert_eq!(
+            terms.iter().map(|c| c.weight).collect::<Vec<_>>(),
+            [0.5, 1.0]
+        );
+
+        // A cell no source reaches, a cell off the grid, and a source on
+        // other axes: nothing.
+        assert!(contributions(&TWA, &TWS, &sources, &options(), 1, 0).is_empty());
+        assert!(contributions(&TWA, &TWS, &sources, &options(), 9, 9).is_empty());
+        let other = Polar::empty(vec![0.0, 90.0], vec![10.0]);
+        assert!(contributions(&TWA, &TWS, &[polar(1, &other, 1.0)], &options(), 1, 0).is_empty());
     }
 
     /// Nothing off the 0° row is nothing: the 0° zeros are definition.

@@ -1,6 +1,6 @@
 # Data sources and acknowledgements
 
-PolarEffects embeds the ORC catalogue and Natural Earth map. Weather and
+PolarExplorer embeds the ORC catalogue and Natural Earth map. Weather and
 tracker data are requested by the user. Sampled environmental values retain
 their dataset identifier and version in the project. These notices describe
 the sources used by this release; they do not change the providers' terms.
@@ -31,7 +31,7 @@ See `assets/orr/README.md` for the snapshot’s provenance and rebuild command.
 ## Wind and waves: ERA5
 
 Contains modified Copernicus Climate Change Service information. ERA5 is
-produced by ECMWF for the Copernicus Climate Change Service (C3S). PolarEffects
+produced by ECMWF for the Copernicus Climate Change Service (C3S). PolarExplorer
 interpolates archive values to track positions and converts units; these
 derived samples are not an official ECMWF product.
 
@@ -45,13 +45,13 @@ derived samples are not an official ECMWF product.
   Both archives are hosted on Google Cloud. The archive software's licence
   does not replace the underlying ERA5 data terms.
 
-Neither the European Commission nor ECMWF is responsible for PolarEffects'
+Neither the European Commission nor ECMWF is responsible for PolarExplorer'
 use of Copernicus information or for its derived results.
 
 ## Currents: Copernicus Marine
 
 Generated using E.U. Copernicus Marine Service Information. Product identifiers
-and DOI links for the current sources supported by PolarEffects are:
+and DOI links for the current sources supported by PolarExplorer are:
 
 | Product | Use | DOI |
 | --- | --- | --- |
@@ -71,7 +71,7 @@ whose map data are in the public domain. No map tiles are downloaded.
 
 YellowBrick, Geovoile and Blue Water Tracks provide user-selected race tracks.
 Their event data and any files you import remain subject to the rights and
-terms of their respective providers. PolarEffects' application licence does
+terms of their respective providers. PolarExplorer' application licence does
 not grant rights to third-party event data.
 
 The optional SYRF library uses the user's PostgreSQL database and local

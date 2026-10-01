@@ -4,7 +4,7 @@
 //! says, so the whole menu is built here from one table and rebuilt when the
 //! language changes. Two items are ours rather than the platform's: Quit,
 //! which has to go through the unsaved-changes guard (spec.md 3.3), and
-//! PolarEffects Help, which opens the help window.
+//! PolarExplorer Help, which opens the help window.
 
 use tauri::menu::{
     AboutMetadata, HELP_SUBMENU_ID, Menu, MenuItem, PredefinedMenuItem, Submenu, WINDOW_SUBMENU_ID,
@@ -18,17 +18,17 @@ pub const HELP_ID: &str = "pe-help";
 /// Every label the menu shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Label {
-    /// "About PolarEffects".
+    /// "About PolarExplorer".
     About,
     /// The macOS Services submenu.
     Services,
-    /// "Hide PolarEffects".
+    /// "Hide PolarExplorer".
     Hide,
     /// "Hide Others".
     HideOthers,
     /// "Show All".
     ShowAll,
-    /// "Quit PolarEffects".
+    /// "Quit PolarExplorer".
     Quit,
     /// The File menu (Windows and Linux, where it holds Quit).
     File,
@@ -58,7 +58,7 @@ pub enum Label {
     Maximize,
     /// The Help menu.
     Help,
-    /// "PolarEffects Help".
+    /// "PolarExplorer Help".
     AppHelp,
     /// The ORC catalogue's provenance in About (spec.md 5.1), a template
     /// filled by [`about_orc`].
@@ -100,12 +100,12 @@ pub const ALL: &[Label] = &[
 pub fn text(language: &str, label: Label) -> &'static str {
     use Label as L;
     match (language, label) {
-        ("fr", L::About) => "À propos de PolarEffects",
+        ("fr", L::About) => "À propos de PolarExplorer",
         ("fr", L::Services) => "Services",
-        ("fr", L::Hide) => "Masquer PolarEffects",
+        ("fr", L::Hide) => "Masquer PolarExplorer",
         ("fr", L::HideOthers) => "Masquer les autres",
         ("fr", L::ShowAll) => "Tout afficher",
-        ("fr", L::Quit) => "Quitter PolarEffects",
+        ("fr", L::Quit) => "Quitter PolarExplorer",
         ("fr", L::File) => "Fichier",
         ("fr", L::Edit) => "Édition",
         ("fr", L::Undo) => "Annuler",
@@ -120,7 +120,7 @@ pub fn text(language: &str, label: Label) -> &'static str {
         ("fr", L::Minimize) => "Réduire",
         ("fr", L::Maximize) => "Agrandir",
         ("fr", L::Help) => "Aide",
-        ("fr", L::AppHelp) => "Aide de PolarEffects",
+        ("fr", L::AppHelp) => "Aide de PolarExplorer",
         ("fr", L::OrcCatalogue) => {
             "Catalogue ORC : {records} certificats de jieter/orc-data, commit {commit} du {date}, construit le {built}."
         }
@@ -128,12 +128,12 @@ pub fn text(language: &str, label: Label) -> &'static str {
             "Données : jieter/orc-data (MIT) ; ERA5 d’ECMWF / Copernicus Climate Change Service, via WeatherBench2 et ARCO-ERA5 ; E.U. Copernicus Marine Service Information ; fond de carte Natural Earth (domaine public).\n\nLe guide et les mentions des sources sont fournis dans le dossier documentation de l’application."
         }
 
-        ("de", L::About) => "Über PolarEffects",
+        ("de", L::About) => "Über PolarExplorer",
         ("de", L::Services) => "Dienste",
-        ("de", L::Hide) => "PolarEffects ausblenden",
+        ("de", L::Hide) => "PolarExplorer ausblenden",
         ("de", L::HideOthers) => "Andere ausblenden",
         ("de", L::ShowAll) => "Alle einblenden",
-        ("de", L::Quit) => "PolarEffects beenden",
+        ("de", L::Quit) => "PolarExplorer beenden",
         ("de", L::File) => "Datei",
         ("de", L::Edit) => "Bearbeiten",
         ("de", L::Undo) => "Widerrufen",
@@ -148,7 +148,7 @@ pub fn text(language: &str, label: Label) -> &'static str {
         ("de", L::Minimize) => "Minimieren",
         ("de", L::Maximize) => "Zoomen",
         ("de", L::Help) => "Hilfe",
-        ("de", L::AppHelp) => "PolarEffects-Hilfe",
+        ("de", L::AppHelp) => "PolarExplorer-Hilfe",
         ("de", L::OrcCatalogue) => {
             "ORC-Katalog: {records} Messbriefe aus jieter/orc-data, Commit {commit} vom {date}, erstellt am {built}."
         }
@@ -156,12 +156,12 @@ pub fn text(language: &str, label: Label) -> &'static str {
             "Daten: jieter/orc-data (MIT); ERA5 von ECMWF / Copernicus Climate Change Service, über WeatherBench2 und ARCO-ERA5; E.U. Copernicus Marine Service Information; Kartengrundlage von Natural Earth (gemeinfrei).\n\nDas Handbuch und die Quellenangaben liegen im Ordner documentation der Anwendung."
         }
 
-        (_, L::About) => "About PolarEffects",
+        (_, L::About) => "About PolarExplorer",
         (_, L::Services) => "Services",
-        (_, L::Hide) => "Hide PolarEffects",
+        (_, L::Hide) => "Hide PolarExplorer",
         (_, L::HideOthers) => "Hide Others",
         (_, L::ShowAll) => "Show All",
-        (_, L::Quit) => "Quit PolarEffects",
+        (_, L::Quit) => "Quit PolarExplorer",
         (_, L::File) => "File",
         (_, L::Edit) => "Edit",
         (_, L::Undo) => "Undo",
@@ -176,7 +176,7 @@ pub fn text(language: &str, label: Label) -> &'static str {
         (_, L::Minimize) => "Minimize",
         (_, L::Maximize) => "Zoom",
         (_, L::Help) => "Help",
-        (_, L::AppHelp) => "PolarEffects Help",
+        (_, L::AppHelp) => "PolarExplorer Help",
         (_, L::OrcCatalogue) => {
             "ORC catalogue: {records} certificates from jieter/orc-data, commit {commit} of {date}, built {built}."
         }
@@ -352,8 +352,8 @@ mod tests {
                 let translated = text(language, label);
                 assert!(!translated.trim().is_empty(), "{language} {label:?}");
                 assert_eq!(
-                    english.contains("PolarEffects"),
-                    translated.contains("PolarEffects"),
+                    english.contains("PolarExplorer"),
+                    translated.contains("PolarExplorer"),
                     "{language} {label:?}"
                 );
             }
@@ -377,7 +377,7 @@ mod tests {
             };
             assert_eq!(same, allowed, "{language}");
         }
-        assert_eq!(text("tlh", Label::Quit), "Quit PolarEffects");
+        assert_eq!(text("tlh", Label::Quit), "Quit PolarExplorer");
     }
 
     /// About names the catalogue's source commit and dates (spec.md 5.1), in

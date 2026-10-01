@@ -10,10 +10,10 @@ assets = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(assets)
 
 NAMES = [
-    "PolarEffects_0.1.0_x64.dmg", "PolarEffects_0.1.0_aarch64.dmg",
-    "PolarEffects_0.1.0_x64_en-US.msi", "PolarEffects_0.1.0_x64-setup.exe",
-    "PolarEffects_0.1.0_arm64-setup.exe", "PolarEffects_0.1.0_amd64.AppImage",
-    "polareffects_0.1.0_amd64.deb", "PolarEffects-0.1.0-1.x86_64.rpm",
+    "PolarExplorer_0.1.0_x64.dmg", "PolarExplorer_0.1.0_aarch64.dmg",
+    "PolarExplorer_0.1.0_x64_en-US.msi", "PolarExplorer_0.1.0_x64-setup.exe",
+    "PolarExplorer_0.1.0_arm64-setup.exe", "PolarExplorer_0.1.0_amd64.AppImage",
+    "polarexplorer_0.1.0_amd64.deb", "PolarExplorer-0.1.0-1.x86_64.rpm",
 ]
 
 
@@ -26,12 +26,12 @@ class ReleaseAssets(unittest.TestCase):
             (self.directory / name).write_bytes(b"abc")
 
     def test_complete_release_hashes_payloads_in_name_order_and_is_repeatable(self):
-        (self.directory / "PolarEffects-documentation.zip").write_bytes(b"documentation")
+        (self.directory / "PolarExplorer-documentation.zip").write_bytes(b"documentation")
         assets.main(self.directory, "0.1.0")
         checksum = self.directory / "SHA256SUMS"
         original = checksum.read_bytes()
         lines = checksum.read_text().splitlines()
-        names = sorted(NAMES + ["PolarEffects-documentation.zip"])
+        names = sorted(NAMES + ["PolarExplorer-documentation.zip"])
         self.assertEqual([line.split("  ")[1] for line in lines], names)
         for line in lines:
             digest, name = line.split("  ")
@@ -56,7 +56,7 @@ class ReleaseAssets(unittest.TestCase):
     def test_rejects_stale_installers_in_an_otherwise_complete_draft(self):
         stale = NAMES[0].replace("0.1.0", "0.0.9")
         (self.directory / stale).write_bytes(b"abc")
-        with self.assertRaisesRegex(SystemExit, "does not match PolarEffects 0.1.0"):
+        with self.assertRaisesRegex(SystemExit, "does not match PolarExplorer 0.1.0"):
             assets.main(self.directory, "0.1.0")
 
 

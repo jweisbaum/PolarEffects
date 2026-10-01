@@ -10,25 +10,27 @@
 //! empty, so every edit shows here at once (spec.md 10.4). A track is not a
 //! polar source, so it contributes no curve; its samples are dots.
 //!
-//! # Dots: wire layout, version 1
+//! # Dots: wire layout, version 2
 //!
 //! Dots travel as one packed little-endian buffer, not JSON (plan.md M13):
 //! in "all" mode every sample with wind is a dot, and 50 tracks of 10,000
 //! fixes as JSON objects would be tens of megabytes of text. The frontend's
 //! mirror is `ui/src/panels/dotPacket.ts`, and both are held to the same
-//! bytes by `ui/src/panels/fixtures/dots-v1.bin`.
+//! bytes by `ui/src/panels/fixtures/dots-v2.bin`.
 //!
 //! ```text
 //! header, 4 × u32 (16 bytes)
 //!   0  magic    0x44324550 (the bytes "PE2D")
-//!   1  version  1
+//!   1  version  2
 //!   2  S        sources
 //!   3  M        dots
 //! sources, S × 2 u32   id lo, id hi
 //! f32 [M × 3]  TWA °, TWS kn, BSP kn
 //! u32 [M]      source index
 //! u32 [M × 2]  sample id, lo then hi
-//! u32 [M]      flags: bit 0 excluded, bit 1 filtered out
+//! u32 [M]      flags: bit 0 excluded, bit 1 filtered out; bits 8–9 the
+//!              band of the local solar day (0 night, 1 morning,
+//!              2 afternoon, 3 evening; spec.md 9.2, `pe_tracks::daytime`)
 //! ```
 //!
 //! A sample has a place only once it has wind (M9): until then it is left
@@ -43,6 +45,7 @@ use std::sync::Arc;
 
 use pe_core::source::Source;
 use pe_polar::Polar;
+use pe_tracks::daytime::DayBand;
 use serde::Serialize;
 use ts_rs::TS;
 
@@ -58,11 +61,13 @@ pub const DEFAULT_TWS_BAND_KN: f64 = 1.0;
 /// "PE2D" read as a little-endian u32.
 pub const DOTS_MAGIC: u32 = u32::from_le_bytes(*b"PE2D");
 /// The dots layout's version.
-pub const DOTS_VERSION: u32 = 1;
+pub const DOTS_VERSION: u32 = 2;
 /// Dot flag: excluded from the blend by hand.
 pub const DOT_EXCLUDED: u32 = 1;
 /// Dot flag: taken out by the track's filters.
 pub const DOT_FILTERED: u32 = 2;
+/// Where a dot's flags hold its day band's two-bit code.
+pub const DOT_BAND_SHIFT: u32 = 8;
 
 /// One point of a curve.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, TS)]
@@ -108,6 +113,8 @@ pub struct PolarSampleDot {
     pub filtered: bool,
     /// Excluded from the blend by hand.
     pub excluded: bool,
+    /// The band of the local solar day it was sailed in.
+    pub band: DayBand,
 }
 
 /// What the 2D polar plot draws besides its dots (spec.md 9.2).
@@ -255,6 +262,7 @@ pub fn dots_of(
                 bsp,
                 filtered: *filtered,
                 excluded: excluded.binary_search(&sample.id).is_ok(),
+                band: pe_tracks::daytime::day_band(sample.t, sample.lon),
             });
         }
     }
@@ -296,7 +304,8 @@ pub fn pack_dots(dots: &[PolarSampleDot]) -> Vec<u8> {
     }
     for dot in dots {
         u((if dot.excluded { DOT_EXCLUDED } else { 0 })
-            | (if dot.filtered { DOT_FILTERED } else { 0 }));
+            | (if dot.filtered { DOT_FILTERED } else { 0 })
+            | (dot.band.code() << DOT_BAND_SHIFT));
     }
     out
 }
@@ -745,6 +754,7 @@ mod tests {
                 bsp: 6.25,
                 filtered: false,
                 excluded: true,
+                band: DayBand::Morning,
             },
             PolarSampleDot {
                 source_id: 3,
@@ -754,6 +764,7 @@ mod tests {
                 bsp: 8.0,
                 filtered: true,
                 excluded: false,
+                band: DayBand::Evening,
             },
         ]
     }
@@ -766,17 +777,27 @@ mod tests {
         // 4 header + 2×2 sources + 2×3 points + 2 sources + 2×2 ids + 2 flags.
         assert_eq!(bytes.len(), 22 * 4);
         assert_eq!(&bytes[0..4], b"PE2D");
-        assert_eq!((1..8).map(word).collect::<Vec<_>>(), [1, 2, 2, 7, 2, 3, 0]);
+        assert_eq!((1..8).map(word).collect::<Vec<_>>(), [2, 2, 2, 7, 2, 3, 0]);
         assert_eq!(
             (8..14).map(|i| f32::from_bits(word(i))).collect::<Vec<_>>(),
             [45.0, 10.5, 6.25, 135.0, 9.5, 8.0]
         );
         assert_eq!(
             (14..22).map(word).collect::<Vec<_>>(),
-            [0, 1, 11, 0, 12, 1, DOT_EXCLUDED, DOT_FILTERED]
+            // Flags: the band in bits 8–9, morning = 1 and evening = 3.
+            [
+                0,
+                1,
+                11,
+                0,
+                12,
+                1,
+                DOT_EXCLUDED | (1 << 8),
+                DOT_FILTERED | (3 << 8)
+            ]
         );
         let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../ui/src/panels/fixtures/dots-v1.bin");
+            .join("../../ui/src/panels/fixtures/dots-v2.bin");
         if std::env::var_os("PE_BLESS").is_some() {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(&path, &bytes).unwrap();

@@ -73,5 +73,5 @@ it("filters its pages as you type, and follows the language", async () => {
   });
   expect([...document.querySelectorAll('[data-feature="help:topic"]')].map((b) => b.textContent)).toEqual(["The world map"]);
   await act(async () => setLanguage("fr"));
-  expect(document.querySelector(".help-dialog h2")?.textContent).toBe("Aide de PolarEffects");
+  expect(document.querySelector(".help-dialog h2")?.textContent).toBe("Aide de PolarExplorer");
 });

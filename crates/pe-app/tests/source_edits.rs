@@ -82,8 +82,8 @@ fn each_edit_changes_the_source_marks_dirty_and_undoes() {
     assert!(!s.sources[1].visible);
     assert_eq!(s.undo_label.as_deref(), Some("Hide source"));
 
-    let s = edit::source_weight_set(&app, id, 1.5, None).unwrap();
-    assert_eq!(s.sources[1].weight, 1.5);
+    let s = edit::source_weight_set(&app, id, 0.5, None).unwrap();
+    assert_eq!(s.sources[1].weight, 0.5);
 
     let s = edit::source_label_set(&app, id, "  Sister ship ".to_owned()).unwrap();
     assert_eq!(s.sources[1].label, "Sister ship");
@@ -125,7 +125,7 @@ fn a_weight_drag_is_one_undo_entry() {
     let root = TempRoot::new("source-drag");
     let app = project_with_sources(&root);
     let id = ids(&app)[0];
-    for weight in [1.1, 1.2, 1.3, 1.4] {
+    for weight in [0.9, 0.8, 0.7, 0.6] {
         edit::source_weight_set(&app, id, weight, Some("drag-1")).unwrap();
     }
     let s = edit::undo_last(&app).unwrap();
@@ -142,7 +142,8 @@ fn bad_arguments_are_refused_and_change_nothing() {
         edit::source_colour_set(&app, id, "red"),
         Err(AppError::Core(_))
     ));
-    assert!(edit::source_weight_set(&app, id, 2.5, None).is_err());
+    // 1 is the largest weight (spec.md 8); 1.5 was valid before schema 7.
+    assert!(edit::source_weight_set(&app, id, 1.5, None).is_err());
     assert!(edit::source_weight_set(&app, id, f64::NAN, None).is_err());
     assert!(matches!(
         edit::source_label_set(&app, id, "   ".to_owned()),

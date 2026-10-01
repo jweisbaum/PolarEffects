@@ -74,7 +74,7 @@ const catalogue: Record<string, string> = {
   "Downloaded weather": "Heruntergeladenes Wetter",
   "A fetch downloads only the parts of the archives that hold a track's positions, and the project keeps only the wind, waves and current at each position: kilobytes per track. Nothing downloaded is kept on disk.": "Ein Abruf lädt nur die Teile der Archive herunter, die die Positionen eines Tracks enthalten, und das Projekt behält nur Wind, Wellen und Strömung an jeder Position: Kilobytes pro Track. Nichts Heruntergeladenes wird auf der Festplatte gespeichert.",
   "Keep downloaded weather in memory for this session (MB)": "Heruntergeladenes Wetter für diese Sitzung im Arbeitsspeicher behalten (MB)",
-  "Other boats of the same race reuse it instead of downloading it again. It is forgotten when PolarEffects quits (16–4096 MB).": "Andere Boote derselben Regatta verwenden es erneut, statt es noch einmal herunterzuladen. Beim Beenden von PolarEffects wird es verworfen (16–4096 MB).",
+  "Other boats of the same race reuse it instead of downloading it again. It is forgotten when PolarExplorer quits (16–4096 MB).": "Andere Boote derselben Regatta verwenden es erneut, statt es noch einmal herunterzuladen. Beim Beenden von PolarExplorer wird es verworfen (16–4096 MB).",
   "Weather kept in memory": "Wetter im Arbeitsspeicher",
   "How much downloaded wind, wave and current data is kept in memory for this session, so other boats of the same race do not download it again.": "Wie viele heruntergeladene Wind-, Wellen- und Strömungsdaten für diese Sitzung im Arbeitsspeicher bleiben, damit andere Boote derselben Regatta sie nicht erneut herunterladen.",
   "memory": "Arbeitsspeicher",

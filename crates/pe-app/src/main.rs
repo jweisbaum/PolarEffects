@@ -3,7 +3,7 @@
 
 fn main() {
     if let Err(err) = pe_app::run() {
-        eprintln!("PolarEffects failed to start: {err:#}");
+        eprintln!("PolarExplorer failed to start: {err:#}");
         std::process::exit(1);
     }
 }

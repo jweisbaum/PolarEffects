@@ -1,6 +1,6 @@
 /**
  * The frontend half of the 2D dots transport: it reads the bytes the Rust
- * packing test pins (`fixtures/dots-v1.bin`), and refuses malformed ones.
+ * packing test pins (`fixtures/dots-v2.bin`), and refuses malformed ones.
  */
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { DOT_EXCLUDED, DOT_FILTERED, DotPacketError, dotSampleId, dotSourceId, unpackDots } from "./dotPacket";
 
 function fixture(): ArrayBuffer {
-  const bytes = readFileSync(new URL("./fixtures/dots-v1.bin", import.meta.url));
+  const bytes = readFileSync(new URL("./fixtures/dots-v2.bin", import.meta.url));
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
@@ -21,7 +21,8 @@ describe("unpackDots", () => {
     expect(dotSourceId(dots, 1)).toBe(3);
     expect(dotSampleId(dots, 0)).toBe(11);
     expect(dotSampleId(dots, 1)).toBe(2 ** 32 + 12);
-    expect([...dots.flags]).toEqual([DOT_EXCLUDED, DOT_FILTERED]);
+    // Bits 8–9 hold the day band: morning (1) and evening (3).
+    expect([...dots.flags]).toEqual([DOT_EXCLUDED | (1 << 8), DOT_FILTERED | (3 << 8)]);
   });
 
   it("refuses a buffer that is short, foreign, of another length or names no source", () => {

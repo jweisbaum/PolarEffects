@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import type { PolarCurve } from "../generated/PolarCurve";
 import type { DotPacket } from "./dotPacket";
+import { DAY_BANDS } from "../dayBand";
 import {
-  axisLabels, fitLayout, labelsOverlap, maxBoatSpeed, nearestPoint, niceTicks, project, speedTicks,
+  axisLabels, crossings, curveSpeedAt, dotFill, fitLayout, labelsOverlap, maxBoatSpeed, measureBetween, nearestCrossing, nearestPoint,
+  niceTicks, project, speedTicks, unproject,
 } from "./plotGeometry";
 
 /** One dot of one source, as the packet carries it. */
@@ -105,7 +107,7 @@ describe("nearestPoint", () => {
     const styles = new Map([[7, { label: "Track", colour: "#e15759" }]]);
     const { x, y } = project(40, 6, layout);
     const hit = nearestPoint([], dots, styles, x, y, layout, 5);
-    expect(hit).toEqual({ label: "Track", colour: "#e15759", twa: 40, tws: 10, bsp: 6, x, y });
+    expect(hit).toEqual({ label: "Track", colour: "#e15759", twa: 40, tws: 10, bsp: 6, blend: false, x, y });
   });
 
   it("ignores a dot whose source is not in the lookup", () => {
@@ -202,4 +204,102 @@ it("fits independent port and starboard speeds within a full-circle plot", () =>
   expect(angles.map(label => label.text)).toEqual(["0°", "30°", "60°", "90°", "120°", "150°", "180°", "150°", "120°", "90°", "60°", "30°"]);
   expect(angles.find(label => label.text === "90°" && label.x < layout.centerX)).toBeDefined();
   expect(angles.find(label => label.text === "90°" && label.x > layout.centerX)).toBeDefined();
+});
+
+describe("dotFill (spec.md 9.2)", () => {
+  const dots = {
+    count: 2, sources: [7, 9], points: Float32Array.from([45, 10, 6, 135, 10, 8]),
+    source: Uint32Array.from([0, 1]), ids: Uint32Array.from([1, 0, 2, 0]),
+    // Morning (1) and evening (3) in bits 8–9.
+    flags: Uint32Array.from([1 << 8, (3 << 8) | 2]),
+  };
+  const bySource = ["#111111", "#222222"];
+
+  it("is the dot's track colour by source", () => {
+    expect(dotFill(dots, 0, "source", bySource)).toBe("#111111");
+    expect(dotFill(dots, 1, "source", bySource)).toBe("#222222");
+  });
+
+  it("is the band's colour by time of day, whatever the track", () => {
+    expect(dotFill(dots, 0, "timeOfDay", bySource)).toBe(DAY_BANDS[1]!.colour);
+    expect(dotFill(dots, 1, "timeOfDay", bySource)).toBe(DAY_BANDS[3]!.colour);
+  });
+});
+
+describe("nearestPoint and the blend (spec.md 9.2)", () => {
+  const layout = fitLayout(300, 300, 7, 28);
+  const curves: PolarCurve[] = [
+    { source_id: 4, label: "A", colour: "#4e79a7", tws: 10, points: [{ twa: 60, bsp: 6 }] },
+    { source_id: null, label: "Blend", colour: "#e0457b", tws: 10, points: [{ twa: 90, bsp: 7 }] },
+  ];
+  it("says whether the hovered point is the blend's", () => {
+    const onBlend = project(90, 7, layout);
+    expect(nearestPoint(curves, null, new Map(), onBlend.x, onBlend.y, layout, 16)?.blend).toBe(true);
+    const onSource = project(60, 6, layout);
+    expect(nearestPoint(curves, null, new Map(), onSource.x, onSource.y, layout, 16)?.blend).toBe(false);
+  });
+});
+
+describe("measuring on the plot (spec.md 9.2)", () => {
+  const layout = fitLayout(300, 300, 8, 28);
+  const curve = (label: string, tws: number, points: [number, number][], source_id: number | null = 1): PolarCurve => ({
+    source_id, label, colour: "#4e79a7", tws, points: points.map(([twa, bsp]) => ({ twa, bsp })),
+  });
+
+  it("reads a canvas point back as the wind angle and boat speed it stands for", () => {
+    for (const [twa, bsp] of [[60, 5], [90, 8], [150, 2.5], [270, 3], [0, 4]] as const) {
+      const at = project(twa, bsp, layout);
+      const back = unproject(at.x, at.y, layout);
+      expect(back.twa).toBeCloseTo(twa, 9);
+      expect(back.bsp).toBeCloseTo(bsp, 9);
+    }
+    // The centre is no speed at all, at 0° by convention; angles stay in [0, 360).
+    expect(unproject(layout.centerX, layout.centerY, layout)).toEqual({ twa: 0, bsp: 0 });
+    expect(unproject(layout.centerX - 10, layout.centerY, layout).twa).toBe(270);
+  });
+
+  it("reads a curve's speed at an angle between its points, and nothing outside them", () => {
+    const c = curve("A", 10, [[40, 5], [60, 7], [90, 8]]);
+    expect(curveSpeedAt(c, 60)).toBe(7);
+    // Half way from 40° to 60°: half way from 5 to 7 kn.
+    expect(curveSpeedAt(c, 50)).toBe(6);
+    expect(curveSpeedAt(c, 75)).toBe(7.5);
+    expect(curveSpeedAt(c, 39.9)).toBeNull();
+    expect(curveSpeedAt(c, 90.1)).toBeNull();
+    expect(curveSpeedAt(curve("One", 10, [[90, 6]]), 90)).toBe(6);
+    expect(curveSpeedAt(curve("One", 10, [[90, 6]]), 91)).toBeNull();
+    expect(curveSpeedAt(curve("None", 10, []), 90)).toBeNull();
+  });
+
+  it("lists every curve with a value at an angle, fastest first", () => {
+    const curves = [
+      curve("A", 10, [[60, 6], [120, 6.5]]),
+      curve("B", 10, [[100, 5], [140, 6]]),
+      curve("Blend", 10, [[60, 6.6], [120, 7]], null),
+    ];
+    // At 90°: A half way 6 → 6.5, the blend half way 6.6 → 7, B not there.
+    expect(crossings(curves, 90).map((c) => [c.label, c.bsp, c.blend])).toEqual([["Blend", 6.8, true], ["A", 6.25, false]]);
+    expect(crossings(curves, 30)).toEqual([]);
+  });
+
+  it("takes the curve nearest the pointer's speed as the one compared against", () => {
+    const at = crossings([curve("A", 10, [[90, 6]]), curve("B", 12, [[90, 7.5]]), curve("C", 14, [[90, 9]])], 90);
+    expect(at.map((c) => c.label)).toEqual(["C", "B", "A"]);
+    expect(nearestCrossing(at, 7.2)).toBe(1);
+    expect(nearestCrossing(at, 20)).toBe(0);
+    expect(nearestCrossing(at, 0)).toBe(2);
+    expect(nearestCrossing([], 5)).toBe(-1);
+  });
+
+  it("measures from one point to another: the speed gained, its ratio and the angle between", () => {
+    // 6.5 kn at 60° to 7.8 kn at 92°: +1.3 kn, 7.8 / 6.5 = 1.2, 32° apart.
+    const m = measureBetween({ twa: 60, bsp: 6.5 }, { twa: 92, bsp: 7.8 });
+    expect(m.deltaBsp).toBeCloseTo(1.3, 12);
+    expect(m.ratio).toBeCloseTo(1.2, 12);
+    expect(m.deltaTwa).toBe(32);
+    // Across 0°: 350° to 10° is 20° apart, not 340°.
+    expect(measureBetween({ twa: 350, bsp: 5 }, { twa: 10, bsp: 4 }).deltaTwa).toBe(20);
+    // Nothing is a ratio of no speed.
+    expect(measureBetween({ twa: 0, bsp: 0 }, { twa: 90, bsp: 5 }).ratio).toBeNull();
+  });
 });

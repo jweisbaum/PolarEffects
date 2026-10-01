@@ -21,7 +21,7 @@ try {
     try { & "$PSScriptRoot/configure-windows-signing.ps1" } catch { $rejected = $true }
     if (-not $rejected) { throw 'Orphaned password was accepted' }
 
-    $certificate = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=PolarEffects CI fixture' -CertStoreLocation Cert:\CurrentUser\My
+    $certificate = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=PolarExplorer CI fixture' -CertStoreLocation Cert:\CurrentUser\My
     $password = ConvertTo-SecureString 'fixture-password' -AsPlainText -Force
     $pfx = Join-Path $directory 'fixture.pfx'
     Export-PfxCertificate -Cert $certificate -FilePath $pfx -Password $password | Out-Null
@@ -29,20 +29,20 @@ try {
     $env:WINDOWS_CERTIFICATE_PASSWORD = 'fixture-password'
     $env:WINDOWS_TIMESTAMP_URL = 'https://timestamp.example.invalid'
     & "$PSScriptRoot/configure-windows-signing.ps1"
-    $config = Get-Content (Join-Path $directory 'polareffects-signing.json') -Raw | ConvertFrom-Json
+    $config = Get-Content (Join-Path $directory 'polarexplorer-signing.json') -Raw | ConvertFrom-Json
     $windows = $config.bundle.windows
     if ($windows.certificateThumbprint -ne $certificate.Thumbprint -or
         $windows.digestAlgorithm -ne 'sha256' -or -not $windows.tsp -or
         $windows.timestampUrl -ne 'https://timestamp.example.invalid/') {
         throw 'Generated config does not describe the imported signing certificate and timestamp service'
     }
-    if (Test-Path (Join-Path $directory 'polareffects-signing.pfx')) { throw 'Imported PFX was left on disk' }
+    if (Test-Path (Join-Path $directory 'polarexplorer-signing.pfx')) { throw 'Imported PFX was left on disk' }
 
     $env:WINDOWS_CERTIFICATE_PASSWORD = 'wrong-password'
     $rejected = $false
     try { & "$PSScriptRoot/configure-windows-signing.ps1" } catch { $rejected = $true }
     if (-not $rejected) { throw 'Incorrect password was accepted' }
-    if (Test-Path (Join-Path $directory 'polareffects-signing.pfx')) { throw 'Failed import left a PFX on disk' }
+    if (Test-Path (Join-Path $directory 'polarexplorer-signing.pfx')) { throw 'Failed import left a PFX on disk' }
     Write-Output 'Windows signing setup: absent credentials, partial credentials, PFX import, configuration and failure cleanup passed.'
 } finally {
     if ($certificate) { Remove-Item "Cert:\CurrentUser\My\$($certificate.Thumbprint)" -DeleteKey -ErrorAction SilentlyContinue }

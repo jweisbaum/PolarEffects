@@ -83,6 +83,41 @@ describe("picking", () => {
   });
 });
 
+describe("picking a surface (spec.md 10.1)", () => {
+  // Cartesian: x = TWA / 10, y = TWS, z = BSP. A flat 5 kn sheet over
+  // TWA 40–80°, TWS 6–10 kn, seen from straight above, with a translucent
+  // source's sheet at 9 kn between it and the camera.
+  const sheet = (bsp: number) => ({ twa: [40, 60, 80], tws: [6, 10], bsp: new Float32Array(6).fill(bsp) });
+  function seenFromAbove() {
+    const { scene } = make();
+    scene.setData({
+      samples: three(0), colors: three(0), layout: "cartesian",
+      surfaces: [{ grid: sheet(9), color: "#4e79a7" }, { grid: sheet(5), color: "#e0457b", opaque: true, pickable: true }],
+    });
+    scene.setView({ position: [6, 7.999, 60], target: [6, 8, 5] });
+    return scene;
+  }
+
+  it("names the pickable surface under the pointer and the grid node nearest the hit", () => {
+    const scene = seenFromAbove();
+    // Just inside the corner at TWA 80°, TWS 10 kn: node (2, 1).
+    const corner = scene.toScreen(7.9, 9.8, 5)!;
+    expect(scene.pickSurface(corner[0], corner[1])).toEqual({ surface: 1, twaIndex: 2, twsIndex: 1 });
+    // Near TWA 40°, TWS 6 kn: node (0, 0).
+    const first = scene.toScreen(4.2, 6.3, 5)!;
+    expect(scene.pickSurface(first[0], first[1])).toEqual({ surface: 1, twaIndex: 0, twsIndex: 0 });
+  });
+
+  it("finds nothing off the surface, or when no surface is pickable", () => {
+    const scene = seenFromAbove();
+    const outside = scene.toScreen(9.5, 8, 5)!;
+    expect(scene.pickSurface(outside[0], outside[1])).toBeNull();
+    scene.setData({ samples: three(0), colors: three(0), layout: "cartesian", surfaces: [{ grid: sheet(5), color: "#4e79a7" }] });
+    const middle = scene.toScreen(6, 8, 5)!;
+    expect(scene.pickSurface(middle[0], middle[1])).toBeNull();
+  });
+});
+
 describe("dispose", () => {
   it("frees the geometries and the renderer", () => {
     const { scene, renderer } = make();

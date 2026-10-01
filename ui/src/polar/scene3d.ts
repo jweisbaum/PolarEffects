@@ -45,6 +45,11 @@ export interface SurfaceInput {
    * for the faces.
    */
   vertexColors?: Float32Array;
+  /**
+   * Whether `pickSurface` finds this surface under the pointer: the blend,
+   * whose cells have something to say (spec.md 10.1).
+   */
+  pickable?: boolean;
   /** Nodes (indexed `j * ni + i`, non-zero marked) whose quads are hatched, in `hatchColor`. */
   hatched?: Uint8Array;
   hatchColor?: string;
@@ -78,6 +83,16 @@ export interface RendererLike {
   setSize(width: number, height: number, updateStyle?: boolean): void;
   render(scene: THREE.Object3D, camera: THREE.Camera): void;
   dispose(): void;
+}
+
+/** A pickable surface under the pointer, and the grid node of it nearest the hit. */
+export interface SurfaceHit {
+  /** The surface's index in the `SceneInput.surfaces` it was given in. */
+  surface: number;
+  /** The node's index on the surface's own TWA axis. */
+  twaIndex: number;
+  /** The node's index on the surface's own TWS axis. */
+  twsIndex: number;
 }
 
 /** A camera placement. */
@@ -143,6 +158,9 @@ export class PolarScene {
   private screen = new Float32Array(0);
   private screenFresh = false;
   private readonly mvp = new THREE.Matrix4();
+  private readonly raycaster = new THREE.Raycaster();
+  /** The pickable surfaces' face meshes, with what `pickSurface` answers about each. */
+  private pickable: { mesh: THREE.Mesh; surface: number; ni: number }[] = [];
   private width = 1;
   private height = 1;
   private orbitAngle = Math.PI / 4;
@@ -203,7 +221,8 @@ export class PolarScene {
     const t1 = performance.now();
 
     disposeChildren(this.surfaces);
-    for (const surface of input.surfaces) {
+    this.pickable = [];
+    for (const [index, surface] of input.surfaces.entries()) {
       const mesh = surfaceMesh(surface.grid, input.layout);
       const shared = new THREE.BufferAttribute(mesh.positions, 3);
       const faces = new THREE.BufferGeometry();
@@ -219,10 +238,12 @@ export class PolarScene {
       const opacity = surface.opacity ?? 0.18;
       const painted = surface.vertexColors !== undefined && surface.vertexColors.length === mesh.positions.length;
       if (painted) faces.setAttribute("color", new THREE.BufferAttribute(surface.vertexColors!, 3));
-      this.surfaces.add(new THREE.Mesh(faces, new THREE.MeshBasicMaterial({
+      const drawn = new THREE.Mesh(faces, new THREE.MeshBasicMaterial({
         color: painted ? new THREE.Color(0xffffff) : color, vertexColors: painted,
         transparent: !opaque, opacity: opaque ? 1 : opacity, side: THREE.DoubleSide, depthWrite: opaque,
-      })));
+      }));
+      this.surfaces.add(drawn);
+      if (surface.pickable) this.pickable.push({ mesh: drawn, surface: index, ni: surface.grid.twa.length });
       if (surface.hatched) {
         const hatch = hatchLines(surface.grid, surface.hatched);
         if (hatch.length > 0) {
@@ -383,6 +404,33 @@ export class PolarScene {
     return best;
   }
 
+  /**
+   * The pickable surface under a screen point (CSS pixels from the canvas's
+   * top left) and the grid node of it nearest the hit, or null. Only the
+   * surfaces marked `pickable` are tested: the translucent sources in front
+   * of the blend are seen through, so they are picked through as well. The
+   * nearest of them to the camera wins.
+   */
+  pickSurface(x: number, y: number): SurfaceHit | null {
+    if (this.pickable.length === 0) return null;
+    this.camera.updateMatrixWorld();
+    this.raycaster.setFromCamera(new THREE.Vector2((x / this.width) * 2 - 1, 1 - (y / this.height) * 2), this.camera);
+    const hit = this.raycaster.intersectObjects(this.pickable.map((entry) => entry.mesh), false)[0];
+    const entry = hit && this.pickable.find((candidate) => candidate.mesh === hit.object);
+    if (!hit || !entry || !hit.face) return null;
+    // The hit triangle's corner nearest the hit: a vertex is a grid node,
+    // `j * ni + i` (`surfaceMesh`).
+    const position = entry.mesh.geometry.getAttribute("position");
+    const corner = new THREE.Vector3();
+    let vertex = hit.face.a;
+    let nearest = Infinity;
+    for (const candidate of [hit.face.a, hit.face.b, hit.face.c]) {
+      const distance = corner.fromBufferAttribute(position, candidate).distanceToSquared(hit.point);
+      if (distance < nearest) { nearest = distance; vertex = candidate; }
+    }
+    return { surface: entry.surface, twaIndex: vertex % entry.ni, twsIndex: Math.floor(vertex / entry.ni) };
+  }
+
   /** A model-space point's screen position, or null when it is behind the camera. */
   toScreen(x: number, y: number, z: number): [number, number] | null {
     this.camera.updateMatrixWorld();
@@ -402,6 +450,7 @@ export class PolarScene {
       this.dots = null;
     }
     disposeChildren(this.surfaces);
+    this.pickable = [];
     disposeChildren(this.guides);
     this.positions = new Float32Array(0);
     this.selected = new Float32Array(0);

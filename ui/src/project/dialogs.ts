@@ -25,7 +25,7 @@ function whileChoosing<T>(busy: string, dialog: () => Promise<T>): Promise<T> {
 export const EXTENSION = "wpsproj";
 
 /** A function, not a constant: the filter's name is read in the language on screen. */
-const filters = () => [{ name: t("PolarEffects project"), extensions: [EXTENSION] }];
+const filters = () => [{ name: t("PolarExplorer project"), extensions: [EXTENSION] }];
 
 /** Asks for a project to open. Returns null if the user cancelled. */
 export async function pickProjectToOpen(): Promise<string | null> {

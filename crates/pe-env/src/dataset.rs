@@ -1,4 +1,4 @@
-//! The datasets and variables PolarEffects reads (spec.md 7.5, 7.5.1), and
+//! The datasets and variables PolarExplorer reads (spec.md 7.5, 7.5.1), and
 //! reading a gridded variable at a place and time.
 //!
 //! Every variable here is a Zarr v2 array `(time, [level,] latitude,
@@ -176,7 +176,7 @@ pub enum Sense {
     Toward,
 }
 
-/// One variable PolarEffects samples.
+/// One variable PolarExplorer samples.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Variable {
     /// The dataset it is read from.

@@ -10,7 +10,7 @@ const OPENING: readonly string[] = [msg("Opening project"), msg("Recovering proj
  * (in the stylesheet), so a project that opens within a frame or two never
  * flashes a page at anyone.
  *
- * PolarEffects reads a project in one step, so there is no bar: the page
+ * PolarExplorer reads a project in one step, so there is no bar: the page
  * says what is happening until the command answers.
  */
 export default function LoadingScreen() {

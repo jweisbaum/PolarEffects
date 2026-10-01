@@ -272,3 +272,97 @@ fn a_track_has_no_polar_nodes_to_exclude() {
     // Two polar surfaces and the blend; the track has none of its own.
     assert_eq!(scene.surfaces.len(), 3);
 }
+
+/// One instant, 12:00 UTC on 2025-07-26 (1,753,531,200 s), at four
+/// longitudes: 02:00, 11:40, 12:40 and 18:00 local solar time (15° an
+/// hour). The 3D scene, its flags-only form and the 2D dots all carry the
+/// band (spec.md 9.2, 10.2).
+#[test]
+fn samples_carry_their_band_of_the_local_solar_day() {
+    use pe_core::track::{Fix, Sample, Track, TrackOrigin};
+    use pe_tracks::daytime::DayBand;
+
+    let root = TempRoot::new("day-band");
+    let app = two_polars(&root);
+    app.with_session(|session| {
+        let open = session.require_open()?;
+        let mut track = Track::new(
+            pe_core::TrackId(4),
+            TrackOrigin::File {
+                name: "race.csv".to_owned(),
+                boat_name: None,
+            },
+        );
+        for (k, lon) in [-150.0, -5.0, 10.0, 90.0].into_iter().enumerate() {
+            let fix = Fix {
+                tws: None,
+                twd_from: None,
+                t: 1_753_531_200,
+                lat: 50.0,
+                lon,
+                cog: None,
+                sog: None,
+            };
+            let mut sample = Sample::at(pe_core::SampleId(200 + k as u64), k as u32, &fix);
+            sample.twa = Some(90.0);
+            sample.tws = Some(12.0);
+            sample.speed = Some(6.0);
+            sample.heading = Some(0.0);
+            track.fixes.push(fix);
+            track.samples.push(sample);
+        }
+        let mut source = Source::new(
+            SourceId(3),
+            "Track",
+            Colour::parse("#e15759").unwrap(),
+            SourceKind::Track {
+                track: Box::new(track),
+            },
+        );
+        source.overlay.filters.min_bsp_kn = None;
+        source.overlay.filters.max_heading_change_deg = None;
+        open.apply(Command::AddSource {
+            index: 2,
+            source: Box::new(source),
+        })?;
+        Ok(())
+    })
+    .unwrap();
+
+    let expected = [
+        DayBand::Night,
+        DayBand::Morning,
+        DayBand::Afternoon,
+        DayBand::Evening,
+    ];
+    let full = scene(&app);
+    assert_eq!(
+        full.samples.iter().map(|s| s.band).collect::<Vec<_>>(),
+        expected
+    );
+
+    let flags_only = app
+        .with_session(|session| {
+            let open = session.require_open()?;
+            let derived = open.derived.visible(&open.project);
+            Ok(polar3d::scene_with(
+                &open.project,
+                &derived,
+                None,
+                None,
+                true,
+            ))
+        })
+        .unwrap();
+    assert_eq!(
+        flags_only
+            .samples
+            .iter()
+            .map(|s| s.band)
+            .collect::<Vec<_>>(),
+        expected
+    );
+
+    let dots = pe_app::polar_plot::dots(&app, None, false).unwrap();
+    assert_eq!(dots.iter().map(|d| d.band).collect::<Vec<_>>(), expected);
+}

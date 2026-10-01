@@ -130,7 +130,7 @@ pub(super) fn connect(settings: &DatabaseSettings) -> Result<Client> {
         .user(&settings.user)
         .password(&settings.password)
         .connect_timeout(Duration::from_secs(10))
-        .application_name("PolarEffects")
+        .application_name("PolarExplorer")
         .options("-c statement_timeout=120000 -c lock_timeout=10000");
     let result = if settings.tls {
         config.ssl_mode(SslMode::Require);

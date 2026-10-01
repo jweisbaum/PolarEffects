@@ -23,8 +23,8 @@ describe("api", () => {
   });
 
   it("calls the Rust command by its snake_case name", async () => {
-    invoke.mockResolvedValue({ name: "PolarEffects", version: "0.1.0" });
-    await expect(api.appInfo()).resolves.toEqual({ name: "PolarEffects", version: "0.1.0" });
+    invoke.mockResolvedValue({ name: "PolarExplorer", version: "0.1.0" });
+    await expect(api.appInfo()).resolves.toEqual({ name: "PolarExplorer", version: "0.1.0" });
     expect(invoke).toHaveBeenCalledWith("app_info", undefined);
   });
 
@@ -115,7 +115,7 @@ describe("api", () => {
     expect(invoke).toHaveBeenLastCalledWith("polar_plot", { tws: null });
     const empty = new Uint8Array(16);
     new DataView(empty.buffer).setUint32(0, 0x44324550, true);
-    new DataView(empty.buffer).setUint32(4, 1, true);
+    new DataView(empty.buffer).setUint32(4, 2, true);
     invoke.mockResolvedValue(empty.buffer);
     expect((await api.polarPlotDots(null, true)).count).toBe(0);
     expect(invoke).toHaveBeenLastCalledWith("polar_plot_dots", { tws: null, showFiltered: true });
@@ -137,7 +137,7 @@ describe("api", () => {
   it("unpacks the 3D scene from raw bytes and names the exclusion command's arguments", async () => {
     const header = new Uint8Array(48);
     new DataView(header.buffer).setUint32(0, 0x44334550, true);
-    new DataView(header.buffer).setUint32(4, 3, true);
+    new DataView(header.buffer).setUint32(4, 4, true);
     new DataView(header.buffer).setUint32(32, 77, true);
     invoke.mockResolvedValue(header.buffer);
     const held = await api.polarScene();

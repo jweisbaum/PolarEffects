@@ -77,7 +77,7 @@ impl BytesToBytesCodecTraits for BloscDecodeCodec {
         _options: &CodecOptions,
     ) -> Result<ArrayBytesRaw<'a>, CodecError> {
         Err(CodecError::Other(
-            "this blosc codec decodes only; PolarEffects never writes Zarr".into(),
+            "this blosc codec decodes only; PolarExplorer never writes Zarr".into(),
         ))
     }
 

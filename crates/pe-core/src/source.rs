@@ -19,7 +19,7 @@ use crate::track::Track;
 /// The weight a new source starts with.
 pub const DEFAULT_WEIGHT: f64 = 1.0;
 /// The largest weight a source may have (spec.md 8).
-pub const MAX_WEIGHT: f64 = 2.0;
+pub const MAX_WEIGHT: f64 = 1.0;
 /// The fastest boat speed an edit may give a cell, knots: the same bound an
 /// imported polar is held to (`pe_polar::MAX_SPEED_KN`, spec.md 6).
 pub const MAX_EDIT_BSP_KN: f64 = 60.0;
@@ -93,7 +93,7 @@ pub struct Source {
     pub colour: Colour,
     /// Hidden sources are excluded from the blend and from every plot (D15).
     pub visible: bool,
-    /// Blend weight in [0, 2].
+    /// Blend weight in [0, 1].
     #[serde(with = "canonical::ratio_field")]
     pub weight: f64,
     /// The imported data. Immutable.
@@ -759,10 +759,11 @@ mod tests {
     }
 
     #[test]
-    fn weights_outside_zero_to_two_are_refused() {
+    fn weights_outside_zero_to_one_are_refused() {
         validate_weight(0.0).unwrap();
-        validate_weight(2.0).unwrap();
-        assert!(validate_weight(2.01).is_err());
+        validate_weight(1.0).unwrap();
+        assert!(validate_weight(1.01).is_err());
+        assert!(validate_weight(2.0).is_err());
         assert!(validate_weight(-0.1).is_err());
         assert!(validate_weight(f64::NAN).is_err());
     }

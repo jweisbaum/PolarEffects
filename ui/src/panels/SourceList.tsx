@@ -208,8 +208,8 @@ export default function SourceList({ project, onProject, unit = "kn" }: {
               </span>
             </div>
             <div className="source-line">
-              <input type="range" min={0} max={2} step={0.05} value={weight} data-feature="sources:weight"
-                aria-label={t("Weight")} title={t("Blend weight, 0 to 2. 1 is the default.")}
+              <input type="range" min={0} max={1} step={0.05} value={weight} data-feature="sources:weight"
+                aria-label={t("Weight")} title={t("Blend weight, 0 to 1. 1 is the default.")}
                 onPointerDown={() => { gestures += 1; gesture.current = `drag-${gestures}`; }}
                 onPointerUp={() => endWeight(source)}
                 onBlur={() => endWeight(source)}

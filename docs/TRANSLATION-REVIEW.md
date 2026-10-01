@@ -1,6 +1,6 @@
 # Translation review checklist
 
-PolarEffects ships in English, French and German (spec.md 3.5). The French
+PolarExplorer ships in English, French and German (spec.md 3.5). The French
 and German were written by the implementer, not by native speakers, and no
 native-speaking sailor was available when M17 was built. This is the
 checklist for the people who review them. One reviewer per language; a
@@ -45,7 +45,7 @@ other string follows it.
   `nd`, it changes in the catalogues, the help and `SPEED_SYMBOL` in
   `ui/src/polar/view3d.ts` (a code change, raise it).
 - [ ] Decide "blend" (fusion / Mischung) and "polar segment" (segment de
-  polaire / Polarsegment): these name PolarEffects' own ideas and appear
+  polaire / Polarsegment): these name PolarExplorer' own ideas and appear
   everywhere.
 - [ ] Decide the tracker status words (Racing, Finished, Retired, Did not
   start, Did not finish) against your racing rules' translation.

@@ -15,7 +15,7 @@ function Parameters({ rows }: { rows: readonly Parameter[] | undefined }) {
 /**
  * The help reference (spec.md 3.5): a window of translated topics, one per
  * area, with its own search. Copied from VectorEffects. Opened by F1, the
- * native menu's PolarEffects Help, the "?" button and the feature search.
+ * native menu's PolarExplorer Help, the "?" button and the feature search.
  */
 export default function Help({ children }: { children: ReactNode }) {
   const t = useT();
@@ -62,7 +62,7 @@ export default function Help({ children }: { children: ReactNode }) {
     <div style={{ display: "contents" }} inert={open || undefined}>{children}</div>
     {open && <div className="modal-backdrop help-backdrop" onClick={close}>
       <section className="help-dialog" role="dialog" aria-modal="true" aria-labelledby="help-title" onClick={e => e.stopPropagation()}>
-        <header><h2 id="help-title">{t("PolarEffects Help")}</h2>
+        <header><h2 id="help-title">{t("PolarExplorer Help")}</h2>
           <button data-feature="help:close" onClick={close} aria-label={t("Close help")} title={t("Close help (Esc)")}>{t("Close")}</button></header>
         <div className="help-body"><nav aria-label={t("Help topics")}>
           <input autoFocus type="search" data-feature="help:search" aria-label={t("Search help")} title={t("Search the help pages")}

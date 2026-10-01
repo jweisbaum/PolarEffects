@@ -1,4 +1,4 @@
-# Building and releasing PolarEffects
+# Building and releasing PolarExplorer
 
 The release workflow builds five targets from one pinned commit. A manual
 run with **release_tag left blank** uploads workflow artifacts only. A `v*`
@@ -60,7 +60,7 @@ present in the draft before publishing.
 
 The user guide, data notices and ORC MIT notice are resources in every bundle.
 Artifact-only runs also upload them separately. Tagged releases include
-`PolarEffects-documentation.zip` and `SHA256SUMS` covering the installers, app
+`PolarExplorer-documentation.zip` and `SHA256SUMS` covering the installers, app
 archives and documentation archive. The installer check rejects missing, empty
 and mixed-version payloads.
 
@@ -92,8 +92,8 @@ To make a local ad-hoc Intel Mac package:
 
 ```sh
 CARGO_INCREMENTAL=0 APPLE_SIGNING_IDENTITY=- npm run build -- --bundles app,dmg -- --locked
-codesign --verify --deep --strict target/release/bundle/macos/PolarEffects.app
-hdiutil verify target/release/bundle/dmg/PolarEffects_0.1.0_x64.dmg
+codesign --verify --deep --strict target/release/bundle/macos/PolarExplorer.app
+hdiutil verify target/release/bundle/dmg/PolarExplorer_0.1.0_x64.dmg
 ```
 
 ## Optional Windows signing

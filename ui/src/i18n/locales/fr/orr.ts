@@ -24,6 +24,6 @@ export default {
   "Download cancelled. The previous catalogue is unchanged.": "Téléchargement annulé. Le catalogue précédent reste inchangé.",
   "Added {added}, updated {updated}, skipped {failed}.": "Ajoutés : {added}, actualisés : {updated}, ignorés : {failed}.",
   "Download details": "Détails du téléchargement",
-  "Colour the dots by source, wave height, period or angle, current speed or UTC time.": "Colorer les points par source, hauteur, période ou angle des vagues, vitesse du courant ou heure UTC.",
+  "Colour the dots by source, wave height, period or angle, current speed, UTC time or time of day.": "Colorer les points par source, hauteur, période ou angle des vagues, vitesse du courant, heure UTC ou moment de la journée.",
   "polars": "polaires"
 };

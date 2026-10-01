@@ -42,11 +42,11 @@ export default {
     await t.shot("orr-measurements-and-import");
 
     await d.click(f("shell:asymmetric"));
-    await d.waitFor('.titlebar [data-feature="shell:asymmetric"]:checked:not(:disabled)');
+    await d.waitFor('[data-feature="shell:asymmetric"]:checked:not(:disabled)');
     await d.run(`var toggle = document.querySelector('[data-feature="shell:asymmetric"]'); toggle.focus();
       toggle.dispatchEvent(new KeyboardEvent("keydown", { key: "z",
       metaKey: /Mac/.test(navigator.platform), ctrlKey: !/Mac/.test(navigator.platform), bubbles: true })); done(true);`);
-    await d.waitFor('.titlebar [data-feature="shell:asymmetric"]:not(:checked):not(:disabled)');
+    await d.waitFor('[data-feature="shell:asymmetric"]:not(:checked):not(:disabled)');
     await d.click(f("sources:blend-settings"));
     assert.ok((await d.text(f("blend-settings:twa"))).endsWith("180"), "undo restores the symmetric grid");
     await d.key("Escape");
@@ -54,7 +54,7 @@ export default {
     await d.run(`var toggle = document.querySelector('[data-feature="shell:asymmetric"]'); toggle.focus();
       toggle.dispatchEvent(new KeyboardEvent("keydown", { key: "z", shiftKey: true,
       metaKey: /Mac/.test(navigator.platform), ctrlKey: !/Mac/.test(navigator.platform), bubbles: true })); done(true);`);
-    await d.waitFor('.titlebar [data-feature="shell:asymmetric"]:checked:not(:disabled)');
+    await d.waitFor('[data-feature="shell:asymmetric"]:checked:not(:disabled)');
     await d.click(f("sources:blend-settings"));
     assert.equal(await d.exists('.blend-settings [data-feature="shell:asymmetric"]'), false);
     assert.ok((await d.text(f("blend-settings:twa"))).endsWith("360"), "redo restores the full-circle grid");

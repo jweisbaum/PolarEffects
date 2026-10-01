@@ -25,7 +25,7 @@ const features: Feature[] = [
     keywords: [msg("history"), msg("open recent")], topic: "projects" },
   { id: "start:clear-recent", label: msg("Clear"), description: msg("Forget the recent projects. The projects themselves are not deleted."),
     keywords: [msg("recent projects"), msg("forget")], topic: "projects" },
-  { id: "start:recover", label: msg("Recovered work"), description: msg("Unsaved work kept when PolarEffects did not close cleanly."),
+  { id: "start:recover", label: msg("Recovered work"), description: msg("Unsaved work kept when PolarExplorer did not close cleanly."),
     keywords: [msg("crash"), msg("autosave"), msg("restore")], topic: "projects" },
 ];
 

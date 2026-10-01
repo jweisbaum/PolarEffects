@@ -391,7 +391,7 @@ pub fn decompress(src: &[u8], expected: Expected) -> Result<Vec<u8>> {
 /// (byte shuffle, LZ4, one stream per byte of the element except in a
 /// short final block), with blocks of `blocksize` bytes.
 ///
-/// PolarEffects never writes Zarr; this exists so tests can build
+/// PolarExplorer never writes Zarr; this exists so tests can build
 /// multi-block chunks whose every byte they know, and is checked against
 /// the decoder, never used by the application.
 #[doc(hidden)]

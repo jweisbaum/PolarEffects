@@ -2,24 +2,32 @@ import { useBoatApi } from "../boats/context";
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 
 import { needsOutline } from "../colourContrast";
+import DayBandLegend from "../DayBandLegend";
 import { reportFailure } from "../errors";
+import type { BlendCell } from "../generated/BlendCell";
 import type { PolarCurve } from "../generated/PolarCurve";
 import type { PolarPlotResult } from "../generated/PolarPlotResult";
 import type { ProjectSummary } from "../generated/ProjectSummary";
 import type { SpeedUnit } from "../generated/SpeedUnit";
 import { useT } from "../i18n";
 
+import BlendCellTooltip from "../polar/BlendCellTooltip";
 import { SPEED_FACTOR, SPEED_SYMBOL } from "../polar/view3d";
 import { useSampleSelection } from "../selection";
 import { onThemeChange } from "../settings/themes";
 import { DOT_EXCLUDED, DOT_FILTERED, dotSampleId, emptyDots, type DotPacket } from "./dotPacket";
 import {
-  ANGLE_TICKS, FULL_ANGLE_TICKS, axisLabels, fitLayout, maxBoatSpeed, nearestPoint, project as projectPoint, speedTicks,
-  type Hover, type SourceStyle,
+  ANGLE_TICKS, FULL_ANGLE_TICKS, axisLabels, crossings, dotFill, fitLayout, maxBoatSpeed, measureBetween, nearestCrossing, nearestPoint,
+  project as projectPoint, speedTicks, unproject,
+  type Crossing, type DotColourMode, type Hover, type PolarPoint, type SourceStyle,
 } from "./plotGeometry";
 
 /** A point within this many pixels of the pointer counts as hovered. */
 const HOVER_DISTANCE_PX = 16;
+/** How close a hovered blend point must be to an output-grid value to be that cell's, degrees or knots. */
+const ON_GRID = 1e-6;
+/** A click this close to a curve on the measuring spoke pins the curve's own value, pixels. */
+const PIN_SNAP_PX = 8;
 /** Beyond this many dots each is a small square rather than a circle: far cheaper to fill. */
 const MANY_DOTS = 20_000;
 
@@ -61,14 +69,33 @@ export function displaySpeed(knots: number, unit: SpeedUnit, digits: number): st
   return String(Number((knots * SPEED_FACTOR[unit]).toFixed(digits)));
 }
 
+/** What the Measure tool has on the plot (spec.md 9.2): all in knots and degrees. */
+interface Measuring {
+  /** Where the pointer is. */
+  cursor: PolarPoint;
+  /** Every curve's value on the pointer's spoke, fastest first. */
+  crossings: Crossing[];
+  /** The pinned point A, if any. */
+  pin: PolarPoint | null;
+}
+
+/** A signed number for a difference: "+0.70", "−0.60" (a true minus sign), and a bare "0.00" for none. */
+export function signed(value: number, digits: number): string {
+  const text = Math.abs(value).toFixed(digits);
+  if (Number(text) === 0) return text;
+  return `${value > 0 ? "+" : "−"}${text}`;
+}
+
 /**
  * Draws the plot: radial BSP rings (round numbers in the display unit) and
  * angular TWA spokes, every curve in its source colour, the blend thicker,
- * sample dots in their track's colour (filtered ones dimmed, excluded ones
- * hollow, selected ones ringed), and the hovered point.
+ * sample dots in their track's colour or their band's of the local solar
+ * day (filtered ones dimmed, excluded ones hollow, selected ones ringed),
+ * and the hovered point.
  */
 function draw(canvas: HTMLCanvasElement, result: PolarPlotResult | null, dots: DotPacket, hover: Hover | null,
-  colours: ReadonlyMap<number, SourceStyle>, selected: ReadonlySet<number>, unit: SpeedUnit, asymmetric: boolean) {
+  colours: ReadonlyMap<number, SourceStyle>, selected: ReadonlySet<number>, unit: SpeedUnit, asymmetric: boolean,
+  dotColour: DotColourMode, measuring: Measuring | null) {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
   const dpr = window.devicePixelRatio || 1;
@@ -129,7 +156,7 @@ function draw(canvas: HTMLCanvasElement, result: PolarPlotResult | null, dots: D
   const dotColours = dots.sources.map((id) => colours.get(id)?.colour ?? line);
   for (let k = 0; k < dots.count; k++) {
     const { x, y } = projectPoint(dots.points[k * 3]!, dots.points[k * 3 + 2]!, layout);
-    const colour = dotColours[dots.source[k]!]!;
+    const colour = dotFill(dots, k, dotColour, dotColours);
     const flags = dots.flags[k]!;
     ctx.globalAlpha = flags & DOT_FILTERED ? 0.3 : 0.85;
     if (many) {
@@ -169,6 +196,56 @@ function draw(canvas: HTMLCanvasElement, result: PolarPlotResult | null, dots: D
     ctx.arc(hover.x, hover.y, 5, 0, Math.PI * 2);
     ctx.stroke();
   }
+
+  // The Measure tool: a spoke at the pointer's wind angle, a ring at its
+  // boat speed, a mark where the spoke crosses each curve, and the pinned
+  // point A with the line from it to the pointer.
+  if (measuring) {
+    const { cursor, pin } = measuring;
+    const outer = Math.max(maxBsp, cursor.bsp);
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 3]);
+    const edge = projectPoint(cursor.twa, outer, layout);
+    ctx.beginPath();
+    ctx.moveTo(layout.centerX, layout.centerY);
+    ctx.lineTo(edge.x, edge.y);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(layout.centerX, layout.centerY, cursor.bsp * layout.scale, -Math.PI / 2, asymmetric ? Math.PI * 1.5 : Math.PI / 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    for (const crossing of measuring.crossings) {
+      const at = projectPoint(cursor.twa, crossing.bsp, layout);
+      ctx.beginPath();
+      ctx.arc(at.x, at.y, 3.5, 0, Math.PI * 2);
+      ctx.fillStyle = crossing.colour;
+      ctx.fill();
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = text;
+      ctx.stroke();
+    }
+    if (pin) {
+      const a = projectPoint(pin.twa, pin.bsp, layout);
+      const b = projectPoint(cursor.twa, cursor.bsp, layout);
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(a.x - 5, a.y);
+      ctx.lineTo(a.x + 5, a.y);
+      ctx.moveTo(a.x, a.y - 5);
+      ctx.lineTo(a.x, a.y + 5);
+      ctx.stroke();
+      ctx.fillStyle = text;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "bottom";
+      ctx.fillText("A", a.x + 6, a.y - 3);
+    }
+  }
 }
 
 /**
@@ -201,7 +278,18 @@ export default function PolarPlot({ project, variant, unit = "kn", onFullSize, o
   const [dots, setDots] = useState<DotPacket>(emptyDots);
   const [tws, setTws] = useState<number | null>(null);
   const [hover, setHover] = useState<Hover | null>(null);
+  // The blend cell behind a hovered blend point (spec.md 9.2). `blendAsked`
+  // names the cell last asked of Rust, so moving within one point asks
+  // nothing more and an answer for a cell since left is dropped.
+  const [blendCell, setBlendCell] = useState<BlendCell | null>(null);
+  const blendAsked = useRef("");
   const [showFiltered, setShowFiltered] = useState(false);
+  const [dotColour, setDotColour] = useState<DotColourMode>("source");
+  // The Measure tool (spec.md 9.2): on or off, where the pointer is, and
+  // the pinned point A. View state only; nothing of it is saved.
+  const [measure, setMeasure] = useState(false);
+  const [cursor, setCursor] = useState<PolarPoint | null>(null);
+  const [pin, setPin] = useState<PolarPoint | null>(null);
   const request = useRef(0);
   const selection = useSampleSelection();
 
@@ -210,6 +298,8 @@ export default function PolarPlot({ project, variant, unit = "kn", onFullSize, o
     [project.sources],
   );
   const tracksShown = project.sources.some((source) => source.visible && source.kind === "track");
+  // Only a track's samples have a time of day; without one, by source.
+  const shownDotColour: DotColourMode = tracksShown ? dotColour : "source";
 
   // Refetches on `project.revision`, which every edit bumps — a source's
   // colour, visibility, weight or label, undo and redo, adding or removing a
@@ -233,9 +323,16 @@ export default function PolarPlot({ project, variant, unit = "kn", onFullSize, o
     return map;
   }, [project.sources]);
 
+  // Every curve drawn, the blend's with its label in the interface language.
+  const allCurves = useMemo(() => [...(result?.curves ?? []), ...blendCurves(result, t)], [result, t]);
+  const measuring: Measuring | null = useMemo(
+    () => (measure && cursor ? { cursor, crossings: crossings(allCurves, cursor.twa), pin } : null),
+    [measure, cursor, pin, allCurves],
+  );
+
   const redraw = useCallback(() => {
-    if (canvas.current) draw(canvas.current, result, dots, hover, sourcesById, selection.ids, unit, project.blend.asymmetric);
-  }, [result, dots, hover, sourcesById, selection, unit, project.blend.asymmetric]);
+    if (canvas.current) draw(canvas.current, result, dots, hover, sourcesById, selection.ids, unit, project.blend.asymmetric, shownDotColour, measuring);
+  }, [result, dots, hover, sourcesById, selection, unit, project.blend.asymmetric, shownDotColour, measuring]);
 
   useEffect(redraw, [redraw]);
 
@@ -249,16 +346,90 @@ export default function PolarPlot({ project, variant, unit = "kn", onFullSize, o
 
   useEffect(() => onThemeChange(redraw), [redraw]);
 
+  /** The pointer's place on the plot, or null where the fan is not (the port side of a symmetric plot). */
+  const pointed = useCallback((event: MouseEvent<HTMLCanvasElement>): { point: PolarPoint; scale: number } | null => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const layout = fitLayout(rect.width, rect.height, Math.max(plotMaxBsp(result, dots), 1), 28, project.blend.asymmetric);
+    const x = event.clientX - rect.left;
+    if (!project.blend.asymmetric && x < layout.centerX - 1) return null;
+    const point = unproject(x, event.clientY - rect.top, layout);
+    // A symmetric plot's angles stop at 180°: a hair to the left of the axis is the axis.
+    if (!project.blend.asymmetric && point.twa > 180) point.twa = point.twa > 270 ? 0 : 180;
+    return { point, scale: layout.scale };
+  }, [result, dots, project.blend.asymmetric]);
+
   const onMove = useCallback((event: MouseEvent<HTMLCanvasElement>) => {
     if (!result) return;
+    if (measure) {
+      // Measuring replaces the hover: the readout says more than a tooltip.
+      setCursor(pointed(event)?.point ?? null);
+      return;
+    }
     const rect = event.currentTarget.getBoundingClientRect();
     const layout = fitLayout(rect.width, rect.height, Math.max(plotMaxBsp(result, dots), 1), 28, project.blend.asymmetric);
     const hit = nearestPoint(
-      [...result.curves, ...blendCurves(result, t)], dots, sourcesById,
+      allCurves, dots, sourcesById,
       event.clientX - rect.left, event.clientY - rect.top, layout, HOVER_DISTANCE_PX,
     );
     setHover(hit);
-  }, [result, dots, sourcesById, t]);
+    // A blend point that is an output-grid cell names the sources behind
+    // it; one between cells (a slice off the grid's wind speeds, a spline's
+    // in-between angle) has no single cell to name and keeps the plain text.
+    const on = (axis: readonly number[], value: number) => axis.findIndex((v) => Math.abs(v - value) <= ON_GRID);
+    const i = hit?.blend ? on(project.blend.twa, hit.twa) : -1;
+    const j = hit?.blend ? on(project.blend.tws, hit.tws) : -1;
+    const key = i >= 0 && j >= 0 ? `${project.id}:${project.revision}:${i}:${j}` : "";
+    if (key === blendAsked.current) return;
+    blendAsked.current = key;
+    setBlendCell(null);
+    if (key === "") return;
+    void api.blendCell(i, j)
+      .then((cell) => { if (blendAsked.current === key) setBlendCell(cell); })
+      // A cell that cannot be read keeps the plain tooltip.
+      .catch(() => undefined);
+  }, [result, dots, sourcesById, allCurves, measure, pointed, project.id, project.revision, project.blend.twa, project.blend.tws, project.blend.asymmetric, api]);
+  const leave = useCallback(() => {
+    setHover(null);
+    setCursor(null);
+    blendAsked.current = "";
+    setBlendCell(null);
+  }, []);
+
+  /** Pins point A where the pointer is: on a curve's own value when the click is on its mark. */
+  const onClick = useCallback((event: MouseEvent<HTMLCanvasElement>) => {
+    if (!measure) return;
+    const at = pointed(event);
+    if (!at) return;
+    const here = crossings(allCurves, at.point.twa);
+    const near = here[nearestCrossing(here, at.point.bsp)];
+    const snapped = near !== undefined && Math.abs(near.bsp - at.point.bsp) * at.scale <= PIN_SNAP_PX;
+    setPin({ twa: at.point.twa, bsp: snapped ? near.bsp : at.point.bsp });
+    setCursor(at.point);
+  }, [measure, pointed, allCurves]);
+
+  /** Turns the Measure tool on or off; off forgets the pinned point. */
+  const toggleMeasure = useCallback(() => {
+    setMeasure((on) => !on);
+    setPin(null);
+    setCursor(null);
+    setHover(null);
+    blendAsked.current = "";
+    setBlendCell(null);
+  }, []);
+
+  // Escape lets the pinned point go, before anything else hears it (the
+  // full-size overlay closes on Escape): one press unpins, the next closes.
+  useEffect(() => {
+    if (!measure || !pin) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.stopImmediatePropagation();
+      event.preventDefault();
+      setPin(null);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [measure, pin]);
 
   const domainMin = result?.tws_min ?? null;
   const domainMax = result?.tws_max ?? null;
@@ -266,6 +437,12 @@ export default function PolarPlot({ project, variant, unit = "kn", onFullSize, o
   const sliderValue = tws ?? (hasDomain ? Math.round(((domainMin as number) + (domainMax as number)) / 2) : 0);
   const hasAnyPoint = [...(result?.curves ?? []), ...(result?.blend ?? [])].some((curve) => curve.points.length > 0)
     || dots.count > 0;
+  // The readout's numbers: every one arrives in knots and leaves in the display unit.
+  const symbol = SPEED_SYMBOL[unit];
+  const shownSpeed = (knots: number) => `${(knots * SPEED_FACTOR[unit]).toFixed(2)} ${symbol}`;
+  const shownAngle = (twa: number) => Math.min(twa, 360 - twa).toFixed(0);
+  const reference = measuring ? measuring.crossings[nearestCrossing(measuring.crossings, measuring.cursor.bsp)] : undefined;
+  const pinned = measuring?.pin ? measureBetween(measuring.pin, measuring.cursor) : null;
 
   return (
     <div className={`polar-plot polar-plot-${variant}`}>
@@ -292,6 +469,20 @@ export default function PolarPlot({ project, variant, unit = "kn", onFullSize, o
             onChange={(event) => setShowFiltered(event.target.checked)} />
           {t("Filtered")}
         </label>
+        <label className="polar-plot-colour">
+          {t("Colour")}
+          <select data-feature="plot:colour" value={shownDotColour} disabled={!tracksShown}
+            title={tracksShown ? t("What the dots' colour shows") : t("No visible track has samples to colour")}
+            onChange={(event) => setDotColour(event.target.value as DotColourMode)}>
+            <option value="source">{t("By source")}</option>
+            <option value="timeOfDay">{t("By time of day")}</option>
+          </select>
+        </label>
+        <button className="small" data-feature="plot:measure" aria-pressed={measure}
+          disabled={!hasAnyPoint && !measure} onClick={toggleMeasure}
+          title={t("Measure boat speeds on the plot: point to compare every curve at one wind angle, click to pin a point and measure from it")}>
+          {t("Measure")}
+        </button>
         {variant === "panel" && (
           <button className="small" data-feature="plot:full-size" onClick={onFullSize}
             title={t("Open the polar plot full size over the current view")}>
@@ -304,12 +495,60 @@ export default function PolarPlot({ project, variant, unit = "kn", onFullSize, o
           </button>
         )}
       </div>
+      {shownDotColour === "timeOfDay" && <DayBandLegend className="polar-plot-bands" />}
       {visibleCount === 0 ? (
         <div className="plot-placeholder muted">{t("The polar plot appears here once the project has a source.")}</div>
       ) : (
         <div className="polar-plot-canvas-wrap" ref={wrap}>
-          <canvas ref={canvas} onMouseMove={onMove} onMouseLeave={() => setHover(null)} />
-          {hover && (
+          <canvas ref={canvas} className={measure ? "measuring" : undefined} onMouseMove={onMove} onMouseLeave={leave} onClick={onClick} />
+          {measuring && (
+            <div className="polar-plot-measure" role="status">
+              <h4>{t("At TWA {twa}°", { twa: shownAngle(measuring.cursor.twa) })}</h4>
+              <div className="muted">{t("Pointer: {bsp}", { bsp: shownSpeed(measuring.cursor.bsp) })}</div>
+              {measuring.crossings.length === 0 ? (
+                <div className="muted">{t("No curve at this angle")}</div>
+              ) : (
+                <ul>
+                  {measuring.crossings.map((crossing, index) => (
+                    <li key={index} className={crossing === reference ? "reference" : undefined}>
+                      <span className="polar-plot-measure-name">
+                        <span className="day-band-swatch" style={{ background: crossing.colour }} />
+                        {crossing.label} · {displaySpeed(crossing.tws, unit, 1)} {symbol}
+                      </span>
+                      <span>{shownSpeed(crossing.bsp)}</span>
+                      {crossing === reference || !reference ? (
+                        <span className="muted polar-plot-measure-delta">{t("pointed at")}</span>
+                      ) : (
+                        <>
+                          <span>{signed((crossing.bsp - reference.bsp) * SPEED_FACTOR[unit], 2)} {symbol}</span>
+                          <span>{reference.bsp > 0 ? `${signed((crossing.bsp / reference.bsp - 1) * 100, 1)}%` : ""}</span>
+                        </>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {measuring.pin && pinned ? (
+                <div className="polar-plot-measure-pin">
+                  <div>{t("A: {bsp} at {twa}°", { bsp: shownSpeed(measuring.pin.bsp), twa: shownAngle(measuring.pin.twa) })}</div>
+                  <div>{pinned.ratio === null
+                    ? t("B − A: {delta}, {angle}° apart", {
+                      delta: `${signed(pinned.deltaBsp * SPEED_FACTOR[unit], 2)} ${symbol}`, angle: pinned.deltaTwa.toFixed(0),
+                    })
+                    : t("B − A: {delta} ({percent}%), {angle}° apart", {
+                      delta: `${signed(pinned.deltaBsp * SPEED_FACTOR[unit], 2)} ${symbol}`,
+                      percent: signed((pinned.ratio - 1) * 100, 1), angle: pinned.deltaTwa.toFixed(0),
+                    })}</div>
+                </div>
+              ) : null}
+              <div className="muted">{measuring.pin ? t("Click to move A; Esc lets it go") : t("Click to pin point A")}</div>
+            </div>
+          )}
+          {hover && blendCell && (
+            <BlendCellTooltip cell={blendCell} sources={project.sources} colour={project.blend.colour} unit={unit}
+              smoothing={project.blend.smoothing} x={hover.x + 10} y={hover.y + 10} />
+          )}
+          {hover && !blendCell && (
             <div role="tooltip" className="polar-plot-tooltip" style={{ left: hover.x + 10, top: hover.y + 10 }}>
               <strong style={{ color: hover.colour }}>{hover.label}</strong>
               <div>{t("TWA {twa}°, TWS {tws} {unit}, BSP {bsp} {unit}", {

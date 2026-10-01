@@ -1,4 +1,4 @@
-//! PolarEffects desktop application.
+//! PolarExplorer desktop application.
 //!
 //! Rust owns the entire domain; the webview is a view layer. Everything the
 //! frontend can reach goes through a Tauri command in [`commands`],
@@ -157,6 +157,7 @@ pub fn run() -> anyhow::Result<()> {
             blend::set_global_filters,
             blend::set_wave_ranges,
             blend::set_priority_filters,
+            blend::blend_cell,
             blend::export_preview,
             blend::export_polar,
             compare::compare_polars,

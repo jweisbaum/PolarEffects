@@ -1,8 +1,8 @@
-# PolarEffects — Plan
+# PolarExplorer — Plan
 
 **Status:** Draft v0.1 · **Date:** 2026-09-27
 
-How PolarEffects gets built, in order. `spec.md` says what it does;
+How PolarExplorer gets built, in order. `spec.md` says what it does;
 `CLAUDE.md` says how to work in the code. Update a milestone's status in the
 same commit that finishes it.
 
@@ -308,7 +308,7 @@ undoable, before any of it is visible.
 
 ### M2 — Shell: start screen, layout, settings, i18n, help search · **complete**
 
-**Goal:** the app looks and behaves like VectorEffects with the PolarEffects
+**Goal:** the app looks and behaves like VectorEffects with the PolarExplorer
 palette, in three languages, with a working feature search.
 
 **Deliverables**
@@ -1020,7 +1020,7 @@ Built as specified (spec.md §7.8, D14). `pe-grib`: `packing` ported as is
 micro-degrees, `Lo1`/`Lo2` in 0–360 so a prime-meridian box has `Lo2` <
 `Lo1`), wave height and direction (10/0/3, 10/0/14 — ERA5's `mwd` as ecCodes names it, corrected from 10/0/4 in review — at the surface) beside
 wind and current, a bitmap only where a value is missing, the local-use
-section "Created with PolarEffects"; `region` (bounding box + 2° on the
+section "Created with PolarExplorer"; `region` (bounding box + 2° on the
 0.25° grid, the shortest longitude arc, global when the margins close the
 circle, poles clamped) and `times`; `file::GribFile` (messages streamed to
 `<name>.tmp`, synced and renamed; dropped uncommitted, it removes the
@@ -1233,6 +1233,51 @@ It ticks every imported track, using the existing download estimate and job
 queue; running/queued tracks are omitted from the request. The control is
 translated and searchable in Help.
 
+### M20 — PolarExplorer, 0–1 weights, time of day, blend tooltip, measure · **complete** (2026-10-01)
+
+Requested by the user 2026-10-01; decisions in D30.
+
+- [x] Rename the application to PolarExplorer in everything a person reads
+  (window, menus, start screen, help, three languages, user agent, GRIB
+  provenance, documents, release asset names). Identifiers and data paths
+  keep the old name, so nothing on disk moves.
+- [x] Source weights run 0–1 (schema 7); a stored weight above 1 loads as 1,
+  in every boat tab.
+- [x] Compare reads a polar source by the project's interpolation rule, as
+  the blend does; the spec's stale "bilinear" wording corrected.
+- [x] Colour dots by the time of day (night, morning, afternoon, evening by
+  local mean solar time) in the 3D view and on the 2D plot, with a legend
+  and the band in a dot's tooltip. Packet layouts: 3D scene 4, 2D dots 2.
+- [x] Hovering the blend, in 3D and on the plot, names the cell and each
+  source behind it with its speed and share of the weight (`blend_cell`,
+  `pe_polar::blend::contributions`).
+- [x] A Measure tool on the 2D plot: every curve at the pointer's wind
+  angle against the one pointed at, and from a pinned point to the pointer.
+- [x] The linker failure reported with this request was a build made with
+  incremental compilation before the morning's `incremental = false`; every
+  configuration links on the current tree, and the dead 6.6 GB incremental
+  cache is removed.
+
+Validation: 701 native tests and 397 UI tests pass, with the five serial
+performance checks, formatting, workspace clippy, TypeScript and the offline
+check. The new desktop walkthrough `15-measure-daytime-blend` passes and its
+four screenshots were inspected (the time-of-day legend and green afternoon
+dots in 3D and on the plot, the blend cell's tooltip naming its source, the
+Measure readout with a pinned point). The whole desktop suite: 15 of 16 pass.
+Two stale expectations from earlier changes were corrected (`09`: the
+asymmetric switch is no longer in the title bar; `10`: the German heading is
+"ORC-/ORR-Polaren"). **Open, not from this milestone:** `01-new-project`
+fails at "undo restores Map without reopening it" — undoing the removal of
+the last track selects the Map stage again; the stage code is untouched here.
+The rename's search-and-replace also rewrote the name inside the binary GRIB
+golden file; it was regenerated from the writer and its pinned hash updated.
+
+### M21 — MCP service · **in progress**
+
+Design approved 2026-10-01 (D29,
+`docs/superpowers/specs/2026-10-01-mcp-service-design.md`); implementation
+plan in `docs/superpowers/plans/2026-10-01-mcp-service.md`.
+
 ## 3. Testing strategy
 
 - **Unit**: geodesy, derivation, interpolation, binning, blending, parsers,
@@ -1292,6 +1337,8 @@ translated and searchable in Help.
 | D26 | ORC search by field: under the all-fields box, a "Search by field" disclosure (folded by default, remembered per user in `localStorage`) with boat name, sail number, country, model / type, builder, designer, year built from–to (the former year and country filters, moved in) and certificate year. Every filled field and the main box must match; a field's words must start words of that field only (same folding and compact forms); the certificate year matches from its start. A field equal to its whole field ranks above every other tier. The field boxes are not saved; Clear empties them and keeps the main box | Settled with the user 2026-09-28: "in the orc section, add some ux to search each field independently." |
 | D27 | Weather downloads read only the blosc blocks of each archive chunk that hold a track's rows (HTTP Range: a 64-byte head, then the blocks), for ERA5 and the current geoChunks alike; nothing downloaded is kept on disk, only an in-memory LRU of blocks for the session (256 MB default, 16–4096 MB), and an earlier version's chunk cache is removed once with a status-line notice. A project stores per sample only its non-derived values by column, the environment rounded to 0.01 kn, 0.1° and 0.01 m (schema 2; derived angles recomputed on load). D19 re-evaluated: hourly stays the default (a 5-day race ≈ 150 MB); 3-hourly is preselected above 1 GB hourly instead of half the old cache limit | Settled with the user 2026-09-28: "The weather download should not be so many gigabytes. do not store the entire time step of data, simply store the wind speed and direction (and current, and wave height and direction) interpolated to each position in the track. It should be kilobytes per track." No anonymous point-chunked ERA5 exists; the blocks are the finest unit the archives allow (≈ 1/8 of an ERA5 field, 1/5–1/7 of a geoChunk) |
 | D28 | Compare (M15, controller rulings): computed in Rust from the derived cache, operands read on the output grid as the other views read them (a polar source as the blend reads it, excluded nodes empty; a segment with its overrides; the cached blend; hidden sources allowed), one binary packet; Δ rounded to 1e-6 kn, Δ % of B absent where B is 0 kn; the 0° row takes no part; a region is a per-TWS run of TWA cells beyond ±threshold (0.05 kn default, a Compare setting); the difference surface lies midway between A and B, one-only cells at that operand's speed, grey and hatched; the diverging scale is blue–orange in OKLab, symmetric about zero, with dark- and light-scheme stops and not the flash orange; A, B, % and threshold are view state keyed by project id, not undoable or saved; a source row's Compare opens A = source, B = blend. Review round 1: in % mode a cell where B is under 0.1 kn is not comparable in % (plain grey, out of the % statistics, counted; packet v2 carries the count); the heat map is a canvas; the 3D hatch covers only all-one-only quads and every one-only node gets a cross | Spec §11 named the operands, the surfaces, the overlap rule and the summary without saying how operands are read, where the difference surface lies, what a region is, or how choices persist |
+| D29 | MCP service (M21): an MCP server inside the application, following VectorEffects' (its `docs/superpowers/specs/2026-09-16-mcp-service-design.md`): `rmcp` over Streamable HTTP on `127.0.0.1` only (default port 47392, one above VectorEffects'), a bearer token issued when the Settings switch is turned on and cleared when it is turned off, `Host` and `Origin` held to loopback names, always compiled in but creating no socket, thread or task while off; curated tools plus an `invoke` escape hatch, every one calling the interface's own command, so an agent's edit is undoable and the views follow it; buttons for Claude Code, Codex and Claude Desktop. **No ChatGPT button**: ChatGPT reaches MCP servers only over public HTTPS or OpenAI's Secure MCP Tunnel, never loopback, and the application neither exposes itself nor runs a tunnel. Recorded as the one inbound exception to invariant 4, not a repeal: a second inbound socket would need the same four properties (off until switched on, bound to a token that switch issues, loopback names only, the domain through the interface's commands) and its own entry. The WebDriver rule (D25) is unchanged. Design in `docs/superpowers/specs/2026-10-01-mcp-service-design.md` | Requested by the user 2026-10-01 ("add mcp server support with on/off in settings … follow the design and decisions in vector effects"); the ChatGPT ruling settled with the user the same day |
+| D30 | M20 (settled with the user 2026-10-01): the application is **PolarExplorer**, renamed in everything a person reads only — the bundle identifier `com.polareffects.desktop`, the settings folder, the PostgreSQL id namespace `polareffects/syrf/…`, the repository, the `pe-` prefix and `.wpsproj` are unchanged, so nothing on disk moves. Source **weights run 0–1** (they ran to 2); a stored weight above 1 is **clamped to 1** on load (schema 7), not rescaled, so a blend that leaned on one changes. Dots can be coloured by the **time of day**, four bands of local mean solar time (UTC shifted by longitude, 15° an hour): night 21–05, morning 05–12, afternoon 12–17, evening 17–21 — clock bands, not the sun's elevation; decided in Rust and carried in bits 8–9 of each sample's flags (3D scene layout 4, 2D dots layout 2). The blend names what is behind a cell (`blend_cell`, from the same code that sums the weighted mean). Compare reads a polar source by the project's interpolation rule, as the blend does. The 2D plot has a Measure tool that reads the drawn curves and changes nothing. The GRIB provenance text follows the name, so `reanalysis.grib2` and its pinned hash changed | The user's request of 2026-10-01 and their answers to four questions (rename depth, band definition, ChatGPT, old weights) |
 | D22 | Polar edits and segments (M13): one `EditCells` command for every edit tool (overrides before/after per cell, the tool naming the undo entry, drags coalescing); segment bins are half-steps around each output-grid node with nothing beyond the outer half-steps, and nothing is binned into a 0° TWA node (samples nearest 0° are dropped, not moved: the 0° row is 0 kn, spec §12.3; controller ruling); spread is the sample standard deviation; smooth is the 3×3 binomial kernel over neighbours with a value as the blend reads them (excluded nodes take no part; controller ruling); the 3D samples key mixes a per-opening nonce, so two openings never share one; views show sources as edited, and the 2D curves also leave excluded nodes out | Spec §10.4 and §12.1 named the tools, the statistic and "count and spread" without the binning edges, the spread measure, the kernel or how undo groups them |
 
 ## 6. Settled before coding started

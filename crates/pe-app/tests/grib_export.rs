@@ -52,7 +52,7 @@ use pe_grib::reader::{Decoded, decode_all};
 use sha2::{Digest, Sha256};
 
 /// The pinned SHA-256 of the golden export.
-const GOLDEN_SHA256: &str = "1df29e8b8e26ccd94e8ad4290c24ac414b045b75d7a9cc00548ae1e8d8570b7b";
+const GOLDEN_SHA256: &str = "74936de2536ed1221c8e8e13f5a78992191e9b7ce9308eda8c28a7969912135c";
 
 /// 2020-07-27T11:00Z.
 const T11: i64 = 1_595_847_600;

@@ -107,7 +107,7 @@ jobs:
             jq -e --arg tag "$RELEASE_TAG" '.[][] | select(.tag_name == $tag) | .draft == true' "$RUNNER_TEMP/releases.json"
           else
             gh release create "$RELEASE_TAG" --verify-tag --draft --prerelease \
-              --title "PolarEffects $RELEASE_TAG (Beta)" \
+              --title "PolarExplorer $RELEASE_TAG (Beta)" \
               --generate-notes
             release_id=$(gh release view "$RELEASE_TAG" --json databaseId --jq .databaseId)
           fi
@@ -200,7 +200,7 @@ jobs:
       - name: Upload bundled documentation
         uses: actions/upload-artifact@v4
         with:
-          name: PolarEffects-documentation-${{ matrix.name }}
+          name: PolarExplorer-documentation-${{ matrix.name }}
           path: |
             docs/USER-GUIDE.md
             docs/DATA-SOURCES.md
@@ -233,7 +233,7 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          app="target/${{ matrix.targets }}/release/bundle/macos/PolarEffects.app"
+          app="target/${{ matrix.targets }}/release/bundle/macos/PolarExplorer.app"
           codesign --verify --deep --strict "$app"
           if [ -n "${APPLE_ID:-}" ]; then
             xcrun stapler validate "$app"
@@ -264,9 +264,9 @@ jobs:
           gh release download "$RELEASE_TAG" --dir release-assets --skip-existing \
             --pattern '*.dmg' --pattern '*.app.tar.gz' --pattern '*.msi' \
             --pattern '*.exe' --pattern '*.AppImage' --pattern '*.deb' --pattern '*.rpm'
-          (cd docs && zip -r ../release-assets/PolarEffects-documentation.zip USER-GUIDE.md DATA-SOURCES.md licenses)
+          (cd docs && zip -r ../release-assets/PolarExplorer-documentation.zip USER-GUIDE.md DATA-SOURCES.md licenses)
           python3 tools/check-release-assets.py release-assets
-          gh release upload "$RELEASE_TAG" release-assets/SHA256SUMS release-assets/PolarEffects-documentation.zip --clobber
+          gh release upload "$RELEASE_TAG" release-assets/SHA256SUMS release-assets/PolarExplorer-documentation.zip --clobber
       - name: Publish complete beta release
         run: |
           gh release edit "$RELEASE_TAG" --draft=false --prerelease --verify-tag

@@ -203,7 +203,7 @@ pub fn encode(provenance: &Provenance, entries: &[Entry]) -> Result<Vec<u8>, Orc
 fn split(bytes: &[u8]) -> Result<(Provenance, &[u8]), OrcError> {
     let rest = bytes
         .strip_prefix(MAGIC.as_slice())
-        .ok_or_else(|| OrcError::Corrupt("this is not a PolarEffects ORC catalogue".to_owned()))?;
+        .ok_or_else(|| OrcError::Corrupt("this is not a PolarExplorer ORC catalogue".to_owned()))?;
     let (version, rest) = rest
         .split_first_chunk::<2>()
         .ok_or_else(|| OrcError::Corrupt("the catalogue ends in its header".to_owned()))?;

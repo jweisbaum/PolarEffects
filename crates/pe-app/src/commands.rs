@@ -121,7 +121,7 @@ pub struct AppInfo {
 #[tauri::command]
 pub fn app_info() -> Result<AppInfo> {
     Ok(AppInfo {
-        name: "PolarEffects".to_owned(),
+        name: "PolarExplorer".to_owned(),
         version: env!("CARGO_PKG_VERSION").to_owned(),
     })
 }
@@ -146,7 +146,7 @@ mod tests {
         let json = serde_json::to_value(app_info().unwrap()).unwrap();
         assert_eq!(
             json,
-            serde_json::json!({ "name": "PolarEffects", "version": env!("CARGO_PKG_VERSION") })
+            serde_json::json!({ "name": "PolarExplorer", "version": env!("CARGO_PKG_VERSION") })
         );
     }
 }

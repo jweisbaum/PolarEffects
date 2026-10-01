@@ -11,7 +11,7 @@ use thiserror::Error;
 pub enum CoreError {
     /// A project file declared a schema version this build cannot read.
     #[error(
-        "this project was written by a newer version of PolarEffects (file schema version {found}; this build reads up to version {supported})"
+        "this project was written by a newer version of PolarExplorer (file schema version {found}; this build reads up to version {supported})"
     )]
     SchemaTooNew {
         /// The version in the file.

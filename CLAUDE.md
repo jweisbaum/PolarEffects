@@ -12,7 +12,7 @@ question below has no answer, look at how VectorEffects solved it first.
 
 ## What this is
 
-PolarEffects is a Tauri desktop app that builds sailing polars in independent boat tabs within a project.
+PolarExplorer is a Tauri desktop app that builds sailing polars in independent boat tabs within a project.
 It blends ORC polars, imported Expedition/Adrena polars, and polar segments
 derived from historical race tracks. Each track position is matched with
 reanalysis wind, waves and current, and the result is exported as an

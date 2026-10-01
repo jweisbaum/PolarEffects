@@ -49,7 +49,38 @@ pub const MIGRATIONS: &[(u32, Migration)] = &[
     (3, orr_certificate_details),
     (4, supplied_wind_and_changes),
     (5, boat_tabs),
+    (6, weights_to_one),
 ];
+
+/// 6 → 7: a source's weight runs from 0 to 1 (spec.md 8), where it ran to 2.
+/// A weight above 1 becomes 1, in the project and in each boat tab (settled
+/// with the user 2026-10-01: clamped, not rescaled, so a blend that leaned
+/// on a weight above 1 changes). Boat tabs carry their own version, which
+/// moves with the document's.
+fn weights_to_one(value: &mut Value) -> Result<()> {
+    fn clamp(document: &mut Value) {
+        let Some(sources) = document.get_mut("sources").and_then(Value::as_array_mut) else {
+            return;
+        };
+        for source in sources {
+            if source
+                .get("weight")
+                .and_then(Value::as_f64)
+                .is_some_and(|weight| weight > crate::source::MAX_WEIGHT)
+            {
+                source["weight"] = Value::from(crate::source::MAX_WEIGHT);
+            }
+        }
+    }
+    clamp(value);
+    if let Some(tabs) = value.get_mut("boat_tabs").and_then(Value::as_array_mut) {
+        for tab in tabs {
+            clamp(tab);
+            tab["schema_version"] = Value::from(7);
+        }
+    }
+    Ok(())
+}
 
 /// 5 → 6: an existing project is the first boat tab; extra tabs default empty.
 fn boat_tabs(_value: &mut Value) -> Result<()> {
@@ -640,6 +671,33 @@ mod tests {
                 "no migration from {from}"
             );
         }
+    }
+
+    /// 6 → 7: weights run from 0 to 1. A weight an older version allowed
+    /// above 1 loads as 1, in the project and in every boat tab; weights
+    /// already in range are untouched.
+    #[test]
+    fn weights_above_one_load_clamped_to_one() {
+        let mut tab = fixtures::project();
+        tab.id = crate::id::ProjectId(tab.id.0 + 1);
+        let mut project = fixtures::project();
+        project.boat_tabs = vec![tab];
+        let mut value = serde_json::to_value(&project).unwrap();
+        value["schema_version"] = Value::from(6);
+        value["sources"][0]["weight"] = Value::from(1.5);
+        value["sources"][1]["weight"] = Value::from(0.4);
+        value["boat_tabs"][0]["schema_version"] = Value::from(6);
+        value["boat_tabs"][0]["sources"][0]["weight"] = Value::from(2.0);
+        value["boat_tabs"][0]["sources"][1]["weight"] = Value::from(0.25);
+
+        let loaded = from_json(&value.to_string()).unwrap();
+        assert_eq!(loaded.schema_version, 7);
+        assert_eq!(loaded.sources[0].weight, 1.0);
+        assert_eq!(loaded.sources[1].weight, 0.4);
+        assert_eq!(loaded.boat_tabs[0].schema_version, 7);
+        assert_eq!(loaded.boat_tabs[0].sources[0].weight, 1.0);
+        assert_eq!(loaded.boat_tabs[0].sources[1].weight, 0.25);
+        loaded.validate_document().unwrap();
     }
 
     #[test]

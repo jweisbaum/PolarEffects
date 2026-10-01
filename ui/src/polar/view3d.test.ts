@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 
+import { dayBandRgb } from "../dayBand";
 import { place } from "./geometry3d";
 import { BLEND_SOURCE, FLAG_EDITED, FLAG_EXCLUDED, FLAG_FILTERED, type ScenePacket } from "./scenePacket";
 import { SHAPE_CROSS, SHAPE_DISC, SHAPE_RING, SHAPE_SQUARE } from "./scene3d";
 import {
   availableModes, buildDots, buildGuides, buildSurfaces, combine, DEFAULT_TOGGLES, drawnOnly, editCells, exclusionTargets,
-  FADED_OPACITY, focusIndex, hasFiltered, keysOf, nodesAtCells, presetView, ramp, resolveKeys, sampleIdsOf, sceneBounds, summarise,
+  FADED_OPACITY, focusIndex, hasFiltered, keysOf, nearestIndex, nodesAtCells, presetView, ramp, resolveKeys, sampleIdsOf, sceneBounds, summarise,
   sampleDots, surfaceGrid, ticks,
 } from "./view3d";
 
@@ -39,7 +40,9 @@ function packet(): ScenePacket {
       hs: Float32Array.from([Number.NaN, 2]),
       current: Float32Array.from([Number.NaN, Number.NaN]),
       time: Float32Array.from([0, 600]),
-      flags: Uint32Array.from([FLAG_EXCLUDED | FLAG_FILTERED, 0]),
+      // The first sample was sailed at night (band 0), the second in the
+      // afternoon (band 2, bits 8–9).
+      flags: Uint32Array.from([FLAG_EXCLUDED | FLAG_FILTERED, 2 << 8]),
     },
     surfaces: [
       { source: 0, twa: Float32Array.from([52, 90]), tws: Float32Array.from([6, 12]), bsp: Float32Array.from([6, 7, Number.NaN, 8]) },
@@ -81,13 +84,45 @@ describe("the dots drawn (spec.md 10.2, 10.3)", () => {
     expect([...dots.colors.subarray(0, 3)]).toEqual([1, 0, 0]);
   });
 
+  it("colours samples by their band of the local solar day, nodes by source (spec.md 10.2)", () => {
+    const dots = buildDots(packet(), { ...DEFAULT_TOGGLES, filtered: true }, "timeOfDay");
+    expect([...dots.refs]).toEqual([0, 1, 2, 3, 4]);
+    // Sample 1: afternoon, undimmed.
+    expect([...dots.colors.subarray(12, 15)]).toEqual([...Float32Array.from(dayBandRgb(2))]);
+    // Sample 0: night, dimmed once because it is filtered.
+    const night = dayBandRgb(0);
+    expect(dots.colors[9]).toBeCloseTo(0.35 * night[0] + 0.65 * 0.5, 5);
+    expect(dots.colors[11]).toBeCloseTo(0.35 * night[2] + 0.65 * 0.5, 5);
+    // Nodes have no time: their source's colour.
+    expect([...dots.colors.subarray(0, 3)]).toEqual([1, 0, 0]);
+  });
+
   it("offers a colour mode only when some sample has its value", () => {
-    expect(availableModes(packet())).toEqual({ source: true, hs: true, current: false, time: true, wavePeriod: false, waveAngle: false, waveWindAngle: false });
+    expect(availableModes(packet())).toEqual({ source: true, hs: true, current: false, time: true, timeOfDay: true, wavePeriod: false, waveAngle: false, waveWindAngle: false });
     const none = packet();
     none.samples = { ...none.samples, count: 0, hs: new Float32Array(0), time: new Float32Array(0), flags: new Uint32Array(0) };
-    expect(availableModes(none)).toEqual({ source: true, hs: false, current: false, time: false, wavePeriod: false, waveAngle: false, waveWindAngle: false });
+    expect(availableModes(none)).toEqual({ source: true, hs: false, current: false, time: false, timeOfDay: false, wavePeriod: false, waveAngle: false, waveWindAngle: false });
     expect(hasFiltered(packet())).toBe(true);
     expect(hasFiltered(none)).toBe(false);
+  });
+});
+
+describe("the blend under the pointer (spec.md 10.1)", () => {
+  it("lets only the blend's surface be picked", () => {
+    const withBlend = packet();
+    withBlend.surfaces = [...withBlend.surfaces,
+      { source: BLEND_SOURCE, twa: Float32Array.from([45]), tws: Float32Array.from([10]), bsp: Float32Array.from([6]) }];
+    expect(buildSurfaces(withBlend, "#e0457b").map((surface) => surface.pickable === true)).toEqual([false, true]);
+  });
+
+  it("finds the axis value nearest a value, the lower one on a tie", () => {
+    const axis = [0, 30, 45, 52, 60];
+    expect(nearestIndex(axis, 45)).toBe(2);
+    expect(nearestIndex(axis, 50)).toBe(3);
+    expect(nearestIndex(axis, 37.5)).toBe(1);
+    expect(nearestIndex(axis, -20)).toBe(0);
+    expect(nearestIndex(axis, 400)).toBe(4);
+    expect(nearestIndex([], 10)).toBe(-1);
   });
 });
 

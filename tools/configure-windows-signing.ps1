@@ -13,7 +13,7 @@ if (-not [Uri]::TryCreate($env:WINDOWS_TIMESTAMP_URL, [UriKind]::Absolute, [ref]
     $timestamp.Scheme -notin @('http', 'https') -or $timestamp.UserInfo) {
     throw 'WINDOWS_TIMESTAMP_URL must be the certificate issuer''s HTTP(S) RFC 3161 timestamp endpoint'
 }
-$pfx = Join-Path $env:RUNNER_TEMP 'polareffects-signing.pfx'
+$pfx = Join-Path $env:RUNNER_TEMP 'polarexplorer-signing.pfx'
 try {
     [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
     # An empty PFX password is valid.
@@ -30,7 +30,7 @@ try {
     if ($certificate.NotAfter -le (Get-Date) -or $certificate.NotBefore -gt (Get-Date)) {
         throw 'The Windows signing certificate is not currently valid'
     }
-    $config = Join-Path $env:RUNNER_TEMP 'polareffects-signing.json'
+    $config = Join-Path $env:RUNNER_TEMP 'polarexplorer-signing.json'
     @{ bundle = @{ windows = @{
         certificateThumbprint = $certificate.Thumbprint
         digestAlgorithm = 'sha256'

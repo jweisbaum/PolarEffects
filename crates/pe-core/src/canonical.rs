@@ -1,7 +1,7 @@
 //! Canonical numeric precision for the document.
 //!
 //! Copied from VectorEffects' `ve-core::canonical`, with the quantities
-//! PolarEffects stores.
+//! PolarExplorer stores.
 //!
 //! # Why this exists
 //!

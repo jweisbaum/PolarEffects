@@ -37,7 +37,7 @@ const features: Feature[] = [
     description: msg("Click a source's name to rename it in place."),
     keywords: [msg("rename"), msg("label")], topic: "sources", reveal: list },
   { id: "sources:weight", label: msg("Source weight"),
-    description: msg("How much a source counts in the blend, from 0 to 2."),
+    description: msg("How much a source counts in the blend, from 0 to 1."),
     keywords: [msg("weight"), msg("blend"), msg("slider")], topic: "sources", reveal: list },
   { id: "sources:edit", label: msg("Edit source"),
     description: msg("Open one source in the 3D view to edit its polar, with its table."),

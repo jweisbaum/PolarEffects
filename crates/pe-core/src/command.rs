@@ -1097,7 +1097,7 @@ mod tests {
             Command::SetSourceWeight {
                 source: first,
                 before: 1.0,
-                after: 1.75,
+                after: 0.75,
             },
             Command::SetSourceLabel {
                 source: first,
@@ -1330,7 +1330,7 @@ mod tests {
         let mut heavy = Command::SetSourceWeight {
             source: first,
             before: 1.0,
-            after: 2.5,
+            after: 1.5,
         };
         assert!(heavy.apply(&mut project).is_err());
         let mut blank = Command::RenameProject {
@@ -1378,19 +1378,19 @@ mod tests {
         let mut first = Command::SetSourceWeight {
             source: a,
             before: 1.0,
-            after: 1.2,
+            after: 0.8,
         };
         assert!(first.merge(&Command::SetSourceWeight {
             source: a,
-            before: 1.2,
-            after: 1.4,
+            before: 0.8,
+            after: 0.6,
         }));
         assert_eq!(
             first,
             Command::SetSourceWeight {
                 source: a,
                 before: 1.0,
-                after: 1.4
+                after: 0.6
             }
         );
         assert!(!first.merge(&Command::SetSourceWeight {

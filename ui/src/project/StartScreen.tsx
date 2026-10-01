@@ -109,7 +109,7 @@ export default function StartScreen({
               {t("Settings")}
             </button>
           </div>
-          <h1>PolarEffects</h1>
+          <h1>PolarExplorer</h1>
           <p className="muted">
             {t("Build sailing polars from ORC certificates, polar files and race tracks.")}
           </p>
@@ -124,7 +124,7 @@ export default function StartScreen({
           <section className="start-recover" data-feature="start:recover">
             <h2>{t("Recovered work")}</h2>
             <p className="muted">
-              {t("PolarEffects did not close cleanly. These are snapshots of unsaved work; recovering one opens it as the project it came from, unsaved.")}
+              {t("PolarExplorer did not close cleanly. These are snapshots of unsaved work; recovering one opens it as the project it came from, unsaved.")}
             </p>
             <ul className="recent">
               {recovered.map((entry) => (

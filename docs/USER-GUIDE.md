@@ -1,6 +1,6 @@
-# PolarEffects user guide
+# PolarExplorer user guide
 
-PolarEffects builds sailing polars in independent boat tabs from ORC and ORR certificates,
+PolarExplorer builds sailing polars in independent boat tabs from ORC and ORR certificates,
 polar files and race tracks. A polar describes boat speed at different true
 wind speeds and angles. The resulting blend can be exported for routing software.
 
@@ -62,22 +62,22 @@ Choose the package for your computer:
 | Windows ARM64 | `_arm64-setup.exe` |
 | Linux x64 | `.AppImage`, `.deb` or `.rpm` |
 
-On macOS, open the disk image and drag PolarEffects to Applications. On
+On macOS, open the disk image and drag PolarExplorer to Applications. On
 Windows, run one installer. On Linux, use your distribution's package installer,
 or make the AppImage executable and launch it. Windows installers can download
 WebView2 if it is missing. Builds made without signing credentials may be
 blocked or identified as unverified by the operating system; the release notes
 should state their signing status.
 
-Press **F1**, use **?**, or choose **PolarEffects Help** for the offline reference.
+Press **F1**, use **?**, or choose **PolarExplorer Help** for the offline reference.
 Settings changes the interface and help language. The title-bar search finds
 controls by name and highlights them when selected. This guide uses English labels;
 the built-in reference provides the corresponding French and German instructions.
 
 This guide and the data notices are also installed in `documentation`: on
-macOS inside `PolarEffects.app/Contents/Resources`, on Windows beside the
+macOS inside `PolarExplorer.app/Contents/Resources`, on Windows beside the
 application, and on Linux in the application's resource directory. Release
-downloads include the same files in `PolarEffects-documentation.zip`.
+downloads include the same files in `PolarExplorer-documentation.zip`.
 
 ## Create and save a project
 
@@ -202,7 +202,7 @@ track at once; then use the weather button to download their weather together.
 Choose wind, waves and current as needed, review the estimate
 and start the download. Jobs report progress and can be cancelled.
 
-PolarEffects samples the archives in space and time at each position. It saves
+PolarExplorer samples the archives in space and time at each position. It saves
 those sampled values and their dataset provenance in the project. Downloaded
 blocks stay in memory only; other tracks from the same race can reuse them
 during that session. **Weather kept in memory** in Settings limits that reuse.
@@ -284,10 +284,19 @@ polars and polar export formats use knots.
 
 ## Blend, compare and export
 
+Hover the blend in the 3D view or on the polar plot to see, for the cell under
+the pointer, each source behind its value with that source's own speed and its
+share of the weight. On the polar plot, **Measure** lists every curve's boat
+speed at the pointer's wind angle with the differences between them; click to
+pin a point and measure from it. **Colour** can show the time of day each track
+position was sailed at (night, morning, afternoon, evening by local solar time)
+instead of its track, in both views.
+
 Use the source list to control visibility, colour and weight. Visible sources
 with positive weight contribute to the blend on the project's output grid.
-**Blend settings…** edits that grid. Weights are relative: doubling all weights
-does not change the result. The blend uses each source with its edits and
+**Blend settings…** edits that grid. Weights run from 0 to 1 and are relative: halving
+every weight does not change the result. A project saved with a weight above
+1 by an earlier version opens with that weight at 1. The blend uses each source with its edits and
 exclusions; it does not extrapolate beyond a source's coverage.
 
 In the top bar, **Asymmetric polar** keeps independent starboard

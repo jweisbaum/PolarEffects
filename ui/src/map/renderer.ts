@@ -1,7 +1,7 @@
 /**
  * The world map's WebGL2 renderer (spec.md 9.1): VectorEffects' basemap —
  * Natural Earth land and coastlines, embedded, no tiles — in the two
- * projections PolarEffects offers.
+ * projections PolarExplorer offers.
  *
  * Draw order, bottom to top: sea, land, graticule, coastlines, tracks (in
  * their source colours, filtered fixes dimmed), the selected fixes and the

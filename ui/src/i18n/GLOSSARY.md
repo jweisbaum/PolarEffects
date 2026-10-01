@@ -1,6 +1,6 @@
 # Translation glossary
 
-The words the interface and the help reference use for PolarEffects' own
+The words the interface and the help reference use for PolarExplorer' own
 concepts, fixed so every area — and every later feature — says the same
 thing. The audience is navigators, routers and performance analysts: prefer
 the word a French or German sailor, a class rule or a routing program would
@@ -22,7 +22,7 @@ nouns in German ("Speichern", "Einstellungen").
 where the English has it (it means "opens a dialog"). Keep every
 `{placeholder}` exactly as written.
 
-**Never translated:** PolarEffects, ORC, TWA, TWS, BSP, VMG, Expedition,
+**Never translated:** PolarExplorer, ORC, TWA, TWS, BSP, VMG, Expedition,
 Adrena, YellowBrick, Geovoile, Blue Water Tracks, GeoJSON, CSV, GRIB, ERA5,
 WebGL2, file extensions (.wpsproj), unit symbols (kn, m/s, km/h, m, ft, nm,
 km, GB, s, °).

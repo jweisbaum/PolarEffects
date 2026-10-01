@@ -1,11 +1,16 @@
-# PolarEffects — Specification
+# PolarExplorer — Specification
 
 **Status:** Draft v0.1 · **Date:** 2026-09-27
 
-This document says what PolarEffects does and the rules it keeps. `plan.md`
+This document says what PolarExplorer does and the rules it keeps. `plan.md`
 says in what order it gets built. `CLAUDE.md` is the operational guide for
 working in the code. Decisions are cited as D## and milestones as M## (both
 defined in `plan.md`).
+
+The application was named PolarEffects until 2026-10-01 (D30). The rename is
+of the name a person reads: the bundle identifier, the settings folder
+(§3.4), the `.wpsproj` extension and the crates' `pe-` prefix are unchanged,
+so nothing a person had moved.
 
 ---
 
@@ -13,7 +18,7 @@ defined in `plan.md`).
 
 ### 1.1 Purpose
 
-PolarEffects builds sailing polars in independent boat tabs within a project. The user gathers
+PolarExplorer builds sailing polars in independent boat tabs within a project. The user gathers
 evidence about how the boat sails:
 
 - ORC velocity predictions for the boat and its sister ships,
@@ -494,7 +499,7 @@ Project
   sources: [Source]                             // ordered as the user sees them
   next_id                                       // ids never exceed 2^53 − 1
 Source
-  id, kind, label, colour "#rrggbb", visible, weight (0..=2, default 1)
+  id, kind, label, colour "#rrggbb", visible, weight (0..=1, default 1)
   kind = Orc { record: OrcRecord }                     // copied from the catalogue
        | Orr { record: OrrRecord }                     // immutable certificate variant
        | PolarFile { format, file_name, polar: Polar } // parsed at import
@@ -540,6 +545,9 @@ Same container rules as VectorEffects' `.veproj` (D11):
     `project.json` stores additional boat documents under `boat_tabs`; tabs
     cannot be nested. Each boat owns its own sources, grid, IDs and overlays.
     Schemas 1–5 open as one boat without changing imported data.
+  - Schema 7 holds source weights in 0–1 (§8). A file of schema 6 or
+    earlier with a weight above 1 opens with that weight at 1, in every
+    boat; nothing else in it changes.
 - Every entry has a fixed timestamp, so saving an unchanged project twice
   gives identical bytes.
 - No rendered images and no blend results (invariant 2). A test fails on any
@@ -1378,7 +1386,8 @@ The right panel lists every source (ORC, file, track) in one list:
   sources take the next unused palette colour.
 - Visibility toggle: **hidden sources are excluded from the blend and from
   every plot** (D15). This is the one "include/exclude" switch.
-- Weight slider (0–2, default 1).
+- Weight slider (0–1, default 1). A weight above 1 saved by an earlier
+  version loads as 1 (schema 7).
 - Label (rename in place), kind icon, and a count (cells for polars,
   samples/used samples for tracks).
 - Actions: Edit (opens the 3D stage focused on this source, §10.4; a ✎
@@ -1436,8 +1445,9 @@ overlay on demand):
   per visible polar source (tracks are not polar sources) and the blend, all
   at that TWS; "all" draws one curve per visible source per wind speed that
   source's own grid has, rather than a shared slice — the classic diagram of
-  several TWS curves at once. A curve is read at bilinear interpolation
-  (`pe-polar`, no extrapolation) across the source's own TWA axis, through
+  several TWS curves at once. A curve is read by the project's
+  interpolation rule (§7.6; `pe-polar`, no extrapolation) across the
+  source's own TWA axis, through
   the source's overlay as the blend reads it: its edits written in and its
   excluded nodes empty (§10.3, §10.4, §12.3); dots are
   for every sample whose TWS is within ±1 kn (configurable in Settings,
@@ -1449,12 +1459,35 @@ overlay on demand):
   shared fixture), not JSON: "all" draws every sample with wind, and 50
   tracks of 10,000 fixes as JSON objects are tens of megabytes. Beyond
   20,000 dots each is drawn as a small square rather than a circle.
-- Everything uses source colours. The blend is drawn thicker, in the Blend
+- **Colour** chooses what the dots' colour shows: their track (the
+  default) or the **time of day** they were sailed at, with a legend of the
+  four bands (§10.2). It is offered while a track is shown, and is view
+  state, not saved.
+- Curves use source colours. The blend is drawn thicker, in the Blend
   entry's colour, read from the blend grid (§12.3) the same way: at the
   slice, or in "all" one curve per output-grid wind speed that has a value
   off the 0° row. Those wind speeds join the slider's range. Hovering it
   shows "Blend". A hidden blend is not drawn.
-- Hover shows the source, TWA, TWS and BSP.
+- Hover shows the source, TWA, TWS and BSP. Hovering a point of the blend
+  that is an output-grid cell (its angle and wind speed both on the grid)
+  shows the cell as the 3D view does (§10.1): its value, where the value
+  came from, and each source behind it with its speed and its share of the
+  weight. A blend point between cells keeps the plain text.
+- **Measure** turns the pointer into a ruler. While it is on, a dashed
+  spoke at the pointer's wind angle and a dashed ring at its boat speed are
+  drawn, each curve is marked where the spoke crosses it, and a readout in
+  the plot's corner lists every curve's boat speed at that angle, fastest
+  first, each with its difference in the display unit and in percent
+  against the curve nearest the pointer. A curve is read between its own
+  points as a straight line in speed over angle, and has no value outside
+  the angles it covers. A click pins point **A** (on a curve's own value
+  when the click is on its mark); the readout then adds the pointer's
+  speed less A's, their ratio in percent and the angle between them, and a
+  line joins them. Another click moves A; Escape lets it go (before the
+  full-size overlay hears it); turning Measure off forgets it. The
+  ordinary hover is off while measuring. On a symmetric plot the port side
+  has no fan and measures nothing. Measuring reads the curves the plot was
+  given and changes nothing.
 - Ring values (BSP) sit just under the 90° spoke and angle labels just
   outside the outermost ring; no two labels overlap, and a ring value that
   would touch another label is left out.
@@ -1496,6 +1529,17 @@ overlay on demand):
 - Every surface is the source's own grid over its own axes, as edited
   (its cell overrides written in, §10.4): nothing is
   resampled or extrapolated, and an empty cell is a hole.
+- Hovering the blend's surface, where no dot is under the pointer, shows
+  the output-grid cell nearest the point hit (the surface is drawn finer
+  than the grid in spline mode): TWA, TWS and the blend's BSP there; whether
+  the value is direct evidence, filled in between neighbouring cells, the
+  0° row's 0 kn, empty, or a manual correction; and each source the rule
+  counted in the cell, in id order, with its own boat speed and its share
+  of the cell's total weight (§12.3). A smoothed blend says so, since its
+  value is then not exactly the sources' mean. The translucent sources in
+  front are picked through, as they are seen through. Rust answers one cell
+  per request (`blend_cell`), asked once per cell and revision; it is
+  derived and never stored (invariant 2).
 - Must hold 60 fps with 200,000 dots and 20 surfaces on the reference
   machines (§13), using instanced points.
 - Rust assembles the scene and sends it as one packed little-endian binary
@@ -1513,9 +1557,21 @@ overlay on demand):
 "All dots" means every known (TWA, TWS, BSP) triple: every sample from every
 visible track, and the grid nodes of every visible polar source. Toggles: show
 samples, show polar nodes, show surfaces, show filtered samples (dimmed),
-colour dots by source / by Hs / by current speed / by time.
+colour dots by source / by Hs / by current speed / by time / by time of day.
 Polar nodes have no environment, so they keep their source colour in every
-colour mode. A mode, or "show filtered", with nothing to show (no sample has
+colour mode.
+
+**Time of day** is the band of the local solar day a sample was sailed in,
+by local mean solar time: UTC shifted by the sample's longitude at 15° an
+hour, with no time-zone table and no ephemeris, so the same on every
+machine. Four bands (settled with the user 2026-10-01, D30): **night**
+21:00 up to 05:00, **morning** 05:00 up to 12:00, **afternoon** 12:00 up to
+17:00, **evening** 17:00 up to 21:00. Rust decides the band
+(`pe_tracks::daytime`) and sends its two-bit code in bits 8–9 of each
+sample's flags, in the 3D scene (layout version 4) and the 2D dots (version
+2); the interface names and colours it (four colours of the Okabe–Ito set)
+and shows the bands and their hours as a legend. A dot's tooltip names its
+band. It is a display grouping and never enters the blend. A mode, or "show filtered", with nothing to show (no sample has
 that value, no sample is filtered) is offered disabled with a tooltip saying
 why.
 
@@ -1623,8 +1679,9 @@ Every source can be edited on its own (D17):
   and the blend as B.
 - Both are read onto the project output grid as the other views read them,
   and never extrapolated: a polar source with its edits written in, read
-  bilinearly (§12.2) with every cell read from an excluded node empty, as
-  the blend reads it (§12.3); a track through its segment with its
+  by the project's interpolation rule (§7.6, §12.2) with every cell read
+  from an excluded node empty, as the blend reads it (§12.3) — so a source
+  compared with a blend of itself alone differs nowhere, in either rule; a track through its segment with its
   overrides; the blend as the views draw it. Rust computes everything — A,
   B, Δ, the classes, the statistics and the regions — and sends it as one
   packed binary buffer (layout in `pe-app/src/compare.rs` and
@@ -1706,8 +1763,10 @@ Project setting, editable in Blend settings:
 - TWS default: 4, 6, 8, 10, 12, 14, 16, 20, 25, 30 kn.
 - TWA default: 0, 30, 35, 40, 45, 52, 60, 70, 75, 80, 90, 100, 110, 120,
   135, 150, 160, 170, 180.
-- Polar sources are resampled onto this grid (bilinear in TWA × TWS, never
-  extrapolated beyond the source's axes). The two linear steps run along TWA
+- Polar sources are resampled onto this grid by the project's
+  interpolation rule (§7.6): bilinear in TWA × TWS by default, or
+  shape-preserving cubic (PCHIP) in the same two steps; never extrapolated
+  beyond the source's axes. The two steps run along TWA
   within each bracketing TWS column first, using that column's own known
   angles, then along TWS; so a ragged Expedition polar reads each wind speed
   between its own points, and a query below a column's first or above its
@@ -1734,13 +1793,15 @@ that have a value in that cell:
 
     blend = Σ wᵢ · bspᵢ / Σ wᵢ
 
-- `wᵢ = source weight × confidence`. Confidence is 1 for polar sources and
+- `wᵢ = source weight × confidence`, the source weight in 0–1 (§8).
+  Confidence is 1 for polar sources and
   `min(1, n / n_full)` for track segments, with n the cell's sample count and
   `n_full` default 30. **An overridden cell counts with confidence 1**: a
   track cell the person edited (§10.4) is vouched for, whatever its sample
   count, 0 included (D23).
 - Cell overrides apply before blending; exclusions remove the cell.
-- A polar source is read onto the output grid bilinearly (§12.2), its edits
+- A polar source is read onto the output grid by the project's
+  interpolation rule (§12.2), its edits
   written in; **every output cell read from an excluded node is empty** for
   that source — reading across the node from its neighbours would put back
   part of what was taken out. A track is read through its segment (§12.1),
@@ -1762,6 +1823,10 @@ that have a value in that cell:
   every value is rounded to the canonical knot precision (1e-6 kn), so the
   same project gives the same bits on every platform (invariant 5). A cell
   whose weights sum to zero has no direct value.
+- The terms of a cell's weighted mean — each source with a value there and
+  a positive weight, with that weight — can be read back
+  (`pe_polar::blend::contributions`), from the same code that sums them, for
+  the tooltips of §9.2 and §10.1.
 - The blending rule is isolated in `pe-polar::blend` behind one function so it
   can be changed later without touching views (asked before changing, see
   `CLAUDE.md`).
@@ -1771,7 +1836,7 @@ that have a value in that cell:
 - **Export…** on the Blend entry opens a dialog: the format (Expedition
   `.txt`, Adrena `.pol` or CSV `.csv`, §6), the grid (the project's output
   grid, or custom axes typed as in §12.2 — the blend read onto them
-  bilinearly, never extrapolated, and with the 0° row no anchor, as in the
+  by the project's interpolation rule, never extrapolated, and with the 0° row no anchor, as in the
   fill: an output 0° row is 0 kn, and an angle between 0° and the blend's
   first other angle is empty; tracks are binned on the project grid, so
   that is where the blend is made), and a preview of the grid as it would be
@@ -1854,5 +1919,6 @@ See the decisions log in `plan.md` §5.
 
 
 3D dots show source, TWA, TWS and BSP on hover. Track dots additionally show UTC
-time, wave height, angle and period, current speed, and excluded/filtered status.
+time, the time of day (§10.2), wave height, angle and period, current speed, and
+excluded/filtered status.
 Hover follows visible dot picking and clears during navigation or selection.

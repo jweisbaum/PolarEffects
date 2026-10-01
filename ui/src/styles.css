@@ -437,7 +437,12 @@ button.source-label:hover { border-color: var(--border); background: var(--raise
 /* The 2D polar plot (spec.md 9.2) */
 .polar-plot { display: flex; flex-direction: column; gap: 6px; min-height: 0; }
 .polar-plot-controls { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.polar-plot-all, .polar-plot-filtered { display: flex; align-items: center; gap: 3px; font-size: 11px; white-space: nowrap; }
+.polar-plot-all, .polar-plot-filtered, .polar-plot-colour { display: flex; align-items: center; gap: 3px; font-size: 11px; white-space: nowrap; }
+/* The four bands of the local solar day, each beside its colour (spec.md 9.2, 10.2). */
+.day-bands { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: 11px; color: var(--muted); }
+.day-bands li { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+.day-band-swatch { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.view3d-bands { flex-direction: column; }
 .polar-plot-controls input[type="range"] { flex: 1; min-width: 60px; }
 .polar-plot-tws-value { font-size: 11px; width: 48px; text-align: right; font-variant-numeric: tabular-nums; }
 .polar-plot-canvas-wrap { position: relative; flex: 1; min-height: 0; aspect-ratio: 1; }
@@ -456,6 +461,19 @@ button.source-label:hover { border-color: var(--border); background: var(--raise
   white-space: nowrap;
 }
 .polar-plot-tooltip strong { display: block; }
+/* The Measure tool's readout (spec.md 9.2): pinned to the plot's corner, out of the pointer's way. */
+.polar-plot-canvas-wrap canvas.measuring { cursor: crosshair; }
+.polar-plot-controls button[aria-pressed="true"] { background: var(--selected-bg); color: var(--selected-ink); border-color: var(--accent); }
+.polar-plot-measure { position: absolute; right: 6px; bottom: 6px; z-index: 2; pointer-events: none; max-width: min(460px, calc(100% - 12px)); padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); box-shadow: 0 3px 12px #0005; font-size: 11px; font-variant-numeric: tabular-nums; }
+.polar-plot-measure h4 { margin: 0; font-size: 12px; }
+.polar-plot-measure ul { list-style: none; margin: 4px 0; padding: 0; max-height: 180px; overflow: hidden; }
+.polar-plot-measure li { display: grid; grid-template-columns: minmax(0, 1fr) auto 5.5em 4em; gap: 8px; align-items: center; }
+.polar-plot-measure li > span { text-align: right; white-space: nowrap; }
+.polar-plot-measure li.reference { font-weight: 600; }
+.polar-plot-measure-name { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left !important; }
+.polar-plot-measure-name .day-band-swatch { display: inline-block; margin-right: 5px; }
+.polar-plot-measure-delta { grid-column: span 2; }
+.polar-plot-measure-pin { margin: 4px 0; padding-top: 4px; border-top: 1px solid var(--border); }
 .polar-plot-empty {
   position: absolute;
   inset: 0;
@@ -1169,6 +1187,12 @@ button.source-label:hover { border-color: var(--border); background: var(--raise
 .view3d-tooltip dl { margin: 5px 0 0; }
 .view3d-tooltip dl > div { display: flex; justify-content: space-between; gap: 12px; }
 .view3d-tooltip dd { margin: 0; font-variant-numeric: tabular-nums; }
+/* The blend's cell and the sources behind it (spec.md 9.2, 10.1). */
+.blend-cell-note { margin-top: 5px; }
+.blend-cell-sources { list-style: none; margin: 6px 0 0; padding: 5px 0 0; border-top: 1px solid var(--border); }
+.blend-cell-sources li { display: grid; grid-template-columns: minmax(0, 1fr) auto 3.2em; gap: 10px; align-items: center; font-variant-numeric: tabular-nums; }
+.blend-cell-sources li > span:last-child { text-align: right; }
+.blend-cell-source { display: flex; align-items: center; gap: 5px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tracker-project { max-width: 760px; }
 .tracker-project.has-report { width: min(1000px, calc(100vw - 48px)); max-width: 1000px; }
 .tracker-project > label { display: flex; gap: 12px; align-items: center; margin: 14px 0; }

@@ -28,7 +28,7 @@ colour: string,
  */
 visible: boolean,
 /**
- * Blend weight, 0–2.
+ * Blend weight, 0–1.
  */
 weight: number,
 /**

@@ -2,7 +2,7 @@
 const catalogue: Record<string, string> = {
   "Control or option": "Bedienelement oder Option",
   "What it does": "Was es bewirkt",
-  "PolarEffects Help": "PolarEffects-Hilfe",
+  "PolarExplorer Help": "PolarExplorer-Hilfe",
   "Close help": "Hilfe schließen",
   "Close help (Esc)": "Hilfe schließen (Esc)",
   "Help topics": "Hilfethemen",

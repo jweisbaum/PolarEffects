@@ -14,7 +14,7 @@
 //! span is 120/65535 = 0.00183, and the binary scale factor is a power of two
 //! so it rounds up to 2^-9. That is about 0.004 knots, and a wave height or
 //! direction field is finer still: the packing is never what limits the
-//! output. Ported from VectorEffects' `ve-grib::packing`; PolarEffects
+//! output. Ported from VectorEffects' `ve-grib::packing`; PolarExplorer
 //! always writes 16 bits (spec.md 7.8).
 
 use crate::error::{GribError, Result};

@@ -266,17 +266,17 @@ mod tests {
         let mut h = History::default();
         let start = weight(&p);
         let mut last = start;
-        for v in [1.1, 1.2, 1.3, 1.4] {
+        for v in [0.9, 0.8, 0.7, 0.6] {
             h.push_coalesced(&mut p, set_weight(s, last, v), "weight-drag")
                 .unwrap();
             last = v;
         }
         assert_eq!(h.entries().len(), 1);
-        assert_eq!(weight(&p), 1.4);
+        assert_eq!(weight(&p), 0.6);
         h.undo(&mut p).unwrap();
         assert_eq!(weight(&p), start, "one undo must span the whole drag");
         h.redo(&mut p).unwrap();
-        assert_eq!(weight(&p), 1.4);
+        assert_eq!(weight(&p), 0.6);
     }
 
     #[test]
@@ -284,14 +284,14 @@ mod tests {
         let mut p = fixtures::project();
         let s = p.sources[0].id;
         let mut h = History::default();
-        h.push_coalesced(&mut p, set_weight(s, 1.0, 1.5), "drag")
+        h.push_coalesced(&mut p, set_weight(s, 1.0, 0.5), "drag")
             .unwrap();
         h.break_coalescing();
-        h.push_coalesced(&mut p, set_weight(s, 1.5, 1.7), "drag")
+        h.push_coalesced(&mut p, set_weight(s, 0.5, 0.3), "drag")
             .unwrap();
         assert_eq!(h.entries().len(), 2);
         h.undo(&mut p).unwrap();
-        assert_eq!(weight(&p), 1.5);
+        assert_eq!(weight(&p), 0.5);
     }
 
     #[test]
@@ -299,9 +299,9 @@ mod tests {
         let mut p = fixtures::project();
         let s = p.sources[0].id;
         let mut h = History::default();
-        h.push_coalesced(&mut p, set_weight(s, 1.0, 1.1), "a")
+        h.push_coalesced(&mut p, set_weight(s, 1.0, 0.9), "a")
             .unwrap();
-        h.push_coalesced(&mut p, set_weight(s, 1.1, 1.2), "b")
+        h.push_coalesced(&mut p, set_weight(s, 0.9, 0.8), "b")
             .unwrap();
         assert_eq!(h.entries().len(), 2);
     }
@@ -313,7 +313,7 @@ mod tests {
         let mut p = fixtures::project();
         let s = p.sources[0].id;
         let mut h = History::default();
-        h.push_coalesced(&mut p, set_weight(s, 1.0, 1.5), "drag")
+        h.push_coalesced(&mut p, set_weight(s, 1.0, 0.75), "drag")
             .unwrap();
         h.undo(&mut p).unwrap();
         h.push_coalesced(&mut p, set_weight(s, 1.0, 0.5), "drag")

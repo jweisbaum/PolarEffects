@@ -17,7 +17,7 @@ use rustls_platform_verifier::BuilderVerifierExt;
 use crate::error::{Result, TrackerError};
 
 /// Sent with every request so tracker operators can see who is reading.
-pub const USER_AGENT: &str = concat!("PolarEffects/", env!("CARGO_PKG_VERSION"));
+pub const USER_AGENT: &str = concat!("PolarExplorer/", env!("CARGO_PKG_VERSION"));
 
 /// The per-request timeout when the caller has no setting to pass
 /// (spec.md 3.4 default).

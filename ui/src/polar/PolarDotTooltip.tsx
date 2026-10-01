@@ -1,3 +1,4 @@
+import { DAY_BANDS, dayBand } from "../dayBand";
 import type { Units } from "../generated/Units";
 import type { SourceSummary } from "../generated/SourceSummary";
 import { useT } from "../i18n";
@@ -29,6 +30,7 @@ export default function PolarDotTooltip({ packet, index, sources, units, x, y }:
   ];
   if (!node) rows.push(
     [t("Time"), utc(packet.timeOrigin + packet.samples.time[k]!)],
+    [t("Time of day"), t(DAY_BANDS[dayBand(flags)]!.label)],
     [t("Wave height"), number(packet.samples.hs[k]!, wave.symbol, wave.factor)],
     [t("Wave angle off the bow"), number(packet.samples.waveAngle[k]!, "°", 1, 0)],
     [t("Wave period"), number(packet.samples.wavePeriod[k]!, "s")],

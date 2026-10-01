@@ -1,4 +1,4 @@
-# Driving PolarEffects from an agent
+# Driving PolarExplorer from an agent
 
 Any Claude session or subagent working in this repository can start the real
 application — the Tauri shell, the Rust back end and the system WebKit

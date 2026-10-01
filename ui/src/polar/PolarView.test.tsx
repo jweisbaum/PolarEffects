@@ -10,10 +10,13 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import type { ProjectSummary } from "../generated/ProjectSummary";
-import { FLAG_EXCLUDED, FLAG_FILTERED, type ScenePacket } from "./scenePacket";
+import { BLEND_SOURCE, FLAG_EXCLUDED, FLAG_FILTERED, type ScenePacket } from "./scenePacket";
 import { TEST_BLEND } from "../testBlend";
 
-const scenes = vi.hoisted(() => ({ made: [] as FakeScene[], fail: false, pick: -1 }));
+const scenes = vi.hoisted(() => ({
+  made: [] as FakeScene[], fail: false, pick: -1,
+  surface: null as { surface: number; twaIndex: number; twsIndex: number } | null,
+}));
 
 interface FakeScene {
   setView: ReturnType<typeof vi.fn>;
@@ -42,6 +45,7 @@ vi.mock("./scene3d", async (original) => {
     render() {}
     toScreen() { return [0, 0]; }
     pick() { return scenes.pick; }
+    pickSurface() { return scenes.surface; }
     lasso() { return new Uint32Array(0); }
     box() { return new Uint32Array(0); }
   }
@@ -49,7 +53,7 @@ vi.mock("./scene3d", async (original) => {
 });
 
 const api = vi.hoisted(() => ({
-  setWaveRanges: vi.fn(), polarScene: vi.fn(), setExcluded: vi.fn(), editPolar: vi.fn(), polarEditSurface: vi.fn(), setSegmentStatistic: vi.fn(),
+  setWaveRanges: vi.fn(), blendCell: vi.fn(), polarScene: vi.fn(), setExcluded: vi.fn(), editPolar: vi.fn(), polarEditSurface: vi.fn(), setSegmentStatistic: vi.fn(),
 }));
 vi.mock("../ipc", () => ({ api }));
 
@@ -114,6 +118,54 @@ it("shows details for the picked visible dot and clears hover when dragging or l
   expect(q('[role="tooltip"]')).toBeNull();
 });
 
+it("names the sources behind the blend cell under the pointer, and prefers a dot to the surface (spec.md 10.1)", async () => {
+  // The blend is the scene's second surface, drawn (spline mode) on finer
+  // axes than the output grid: its node at 89° in 12 kn belongs to the
+  // output cell at 90° (index 10) and 12 kn (index 4).
+  const base = packet();
+  api.polarScene.mockResolvedValue({
+    ...base,
+    surfaces: [...base.surfaces,
+      { source: BLEND_SOURCE, twa: Float32Array.from([88, 89]), tws: Float32Array.from([11, 12]), bsp: Float32Array.from([7, 7.4, 7.2, 7.5]) }],
+  });
+  api.blendCell.mockResolvedValue({
+    twa: 90, tws: 12, bsp: 7.524, origin: "direct", corrected: false,
+    contributors: [{ source_id: 10, bsp: 8, weight: 0.5, share: 1 }],
+  });
+  await render();
+  const canvas = q("canvas")!;
+  const move = async () => {
+    await act(async () => {
+      canvas.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 60, clientY: 70, buttons: 0 }));
+      await new Promise((r) => setTimeout(r, 30));
+    });
+  };
+  scenes.surface = { surface: 1, twaIndex: 1, twsIndex: 1 };
+  await move();
+  expect(api.blendCell).toHaveBeenCalledWith(10, 4);
+  const tip = q(".blend-cell-tooltip")!;
+  expect(tip.textContent).toContain("Blend");
+  expect(tip.textContent).toContain("7.52 kn");
+  expect(tip.textContent).toContain("Farr 40");
+  expect(tip.textContent).toContain("100%");
+
+  // Staying on the same cell asks Rust nothing more.
+  await move();
+  expect(api.blendCell).toHaveBeenCalledTimes(1);
+
+  // A dot under the pointer wins over the surface behind it.
+  scenes.pick = 0;
+  await move();
+  expect(q(".blend-cell-tooltip")).toBeNull();
+  expect(q('[role="tooltip"]')?.textContent).toContain("Farr 40");
+
+  // Off both, nothing is shown.
+  scenes.pick = -1;
+  scenes.surface = null;
+  await move();
+  expect(q('[role="tooltip"]')).toBeNull();
+});
+
 async function render(revision = 1, id = 1) {
   await act(async () => root.render(<PolarView project={{ ...project(revision), id }} settings={null} onProject={onProject} />));
   await act(async () => { await Promise.resolve(); });
@@ -159,6 +211,8 @@ beforeEach(() => {
   scenes.made = [];
   scenes.fail = false;
   scenes.pick = -1;
+  scenes.surface = null;
+  api.blendCell.mockReset();
   api.polarScene.mockReset().mockResolvedValue(packet());
   api.setExcluded.mockReset().mockResolvedValue(project(2));
   onProject.mockReset();
@@ -237,7 +291,7 @@ it("adds with Shift, clears on an empty click and on Escape", async () => {
 it("offers colour modes only when samples have the data", async () => {
   await render();
   const options = [...(feature("view3d:colour") as HTMLSelectElement).options];
-  expect(options.map((o) => [o.value, o.disabled])).toEqual([["source", false], ["hs", true], ["wavePeriod", true], ["waveAngle", true], ["waveWindAngle", true], ["current", true], ["time", true]]);
+  expect(options.map((o) => [o.value, o.disabled])).toEqual([["source", false], ["hs", true], ["wavePeriod", true], ["waveAngle", true], ["waveWindAngle", true], ["current", true], ["time", true], ["timeOfDay", true]]);
   expect((feature("view3d:show-filtered") as unknown as HTMLInputElement).disabled).toBe(true);
 });
 
@@ -357,6 +411,13 @@ it("shows UTC endpoints for time and enables the three wave colour dimensions", 
   }
   await act(async () => { select.value = "time"; select.dispatchEvent(new Event("change", { bubbles: true })); });
   expect(q(".view3d-ramp")?.textContent).toBe("2026-09-30 12:00:00 UTC2026-09-30 12:10:00 UTC");
+
+  // By time of day there is no ramp: the four bands and their hours instead.
+  await act(async () => { select.value = "timeOfDay"; select.dispatchEvent(new Event("change", { bubbles: true })); });
+  expect(q(".view3d-ramp")).toBeNull();
+  expect([...host.querySelectorAll(".view3d-bands li")].map((item) => item.textContent)).toEqual([
+    "Night 21:00–05:00", "Morning 05:00–12:00", "Afternoon 12:00–17:00", "Evening 17:00–21:00",
+  ]);
 });
 
 

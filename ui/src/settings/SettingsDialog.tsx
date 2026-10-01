@@ -174,7 +174,7 @@ export default function SettingsDialog({ settings, onSettings, onClose }: {
           <label className="settings-field">
             {t("Keep downloaded weather in memory for this session (MB)")}
             <IntegerField data-feature="settings:weather-memory" aria-label={t("Keep downloaded weather in memory for this session (MB)")}
-              title={t("Other boats of the same race reuse it instead of downloading it again. It is forgotten when PolarEffects quits (16–4096 MB).")}
+              title={t("Other boats of the same race reuse it instead of downloading it again. It is forgotten when PolarExplorer quits (16–4096 MB).")}
               value={settings.weather_memory_mb} min={16} max={4096}
               onCommit={(value) => save(api.setWeatherMemory(value))} />
           </label>

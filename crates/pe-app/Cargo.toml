@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "PolarEffects desktop application."
+description = "PolarExplorer desktop application."
 # Development utilities live in examples/ so Tauri bundles only the app.
 default-run = "pe-app"
 

@@ -1,11 +1,11 @@
 /**
  * The 3D scene as Rust sends it: one binary buffer, not JSON (plan.md M7).
  *
- * # Wire layout, version 3
+ * # Wire layout, version 4
  *
  * The frontend's copy of the layout; the Rust side's is the module
  * documentation of `crates/pe-app/src/polar3d.rs`. Both are held to the same
- * bytes by `fixtures/scene-v3.bin` and `fixtures/scene-v3-flags.bin`
+ * bytes by `fixtures/scene-v4.bin` and `fixtures/scene-v4-flags.bin`
  * (written by a Rust test, read by `scenePacket.test.ts`). Every value is
  * little-endian and 4 bytes wide except the time origin and the samples
  * key, and every section starts on a 4-byte boundary, so each array below
@@ -14,7 +14,7 @@
  * ```text
  * header, 12 × u32 (48 bytes)
  *   0  magic       0x44334550 (the bytes "PE3D")
- *   1  version     3
+ *   1  version     4
  *   2  S           sources
  *   3  N           polar nodes
  *   4  M           samples
@@ -50,7 +50,9 @@
  * ```
  *
  * Flags: bit 0 excluded (spec.md 10.3), bit 1 filtered out (spec.md 7.6),
- * bit 2 edited (a node whose cell holds an override, spec.md 10.4).
+ * bit 2 edited (a node whose cell holds an override, spec.md 10.4). Bits
+ * 8–9 of a sample's flags are its band of the local solar day
+ * (`../dayBand.ts`; spec.md 10.2).
  *
  * A flags-only scene answers a request that named the samples key the view
  * already holds: no sample moved, so only their flags travel, and
@@ -58,7 +60,7 @@
  */
 
 export const SCENE_MAGIC = 0x44334550;
-export const SCENE_VERSION = 3;
+export const SCENE_VERSION = 4;
 export const HEADER_BYTES = 48;
 export const BLEND_SOURCE = 0xffffffff;
 export const FLAG_EXCLUDED = 1;

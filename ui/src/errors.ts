@@ -25,20 +25,20 @@ function lineFor(kind: string): string | null {
   switch (kind) {
     case "io": return t("A file could not be read or written.");
     case "core": return t("The project refused this change: it is not valid.");
-    case "schema-too-new": return t("This project was saved by a newer version of PolarEffects. Update PolarEffects to open it.");
+    case "schema-too-new": return t("This project was saved by a newer version of PolarExplorer. Update PolarExplorer to open it.");
     case "no-project": return t("No project is open.");
     case "never-saved": return t("This project has not been saved yet.");
     case "unsaved-changes": return t("The project has unsaved changes.");
     case "bad-option": return t("That value is not accepted.");
     case "orc-duplicate": return t("The project already holds this certificate.");
     case "doing": return t("The operation could not be completed.");
-    case "internal": return t("Something went wrong inside PolarEffects.");
+    case "internal": return t("Something went wrong inside PolarExplorer.");
     case "tracker-address": return t("This is not an event address this tracker serves.");
     case "tracker-unavailable": return t("The tracker is not answering right now. Try again in a moment.");
     case "tracker-no-event": return t("The tracker has no public event at this address.");
     case "tracker-decode": return t("The tracker's data could not be read.");
-    case "tracker-unsupported": return t("The tracker's data is in a version PolarEffects does not read. The tracker may have changed its format.");
-    case "tracker-legacy": return t("This is an older tracker (Flash, or Geovoile before about 2016), which PolarEffects does not read.");
+    case "tracker-unsupported": return t("The tracker's data is in a version PolarExplorer does not read. The tracker may have changed its format.");
+    case "tracker-legacy": return t("This is an older tracker (Flash, or Geovoile before about 2016), which PolarExplorer does not read.");
     case "tracker-network": return t("The tracker could not be reached or refused the request.");
     case "cancelled": return t("Cancelled.");
     case "export-refused": return t("The polar cannot be exported as it is: its grid would not read back, or it holds nothing. The export dialog says which.");

@@ -23,10 +23,10 @@ def main(directory, version):
     missing = [platform for platform, matches in required.items() if not any(matches(path.name) for path in assets)]
     if missing:
         raise SystemExit("Missing release installers: " + ", ".join(missing))
-    prefix = re.compile(rf"^polareffects[_-]{re.escape(version)}[_-]", re.IGNORECASE)
+    prefix = re.compile(rf"^polarexplorer[_-]{re.escape(version)}[_-]", re.IGNORECASE)
     for path in assets:
         if path.suffix in {".dmg", ".msi", ".exe", ".AppImage", ".deb", ".rpm"} and not prefix.match(path.name):
-            raise SystemExit(f"Installer does not match PolarEffects {version}: {path.name}")
+            raise SystemExit(f"Installer does not match PolarExplorer {version}: {path.name}")
     lines = []
     for path in assets:
         if path.stat().st_size == 0:

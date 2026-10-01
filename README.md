@@ -1,4 +1,4 @@
-# PolarEffects
+# PolarExplorer
 
 A desktop sailing polar editor for macOS (Intel and Apple Silicon), Windows
 (x64 and ARM64) and Linux (x64). Combine ORC certificates, imported polars and

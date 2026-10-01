@@ -302,7 +302,7 @@ pub fn start(app: tauri::AppHandle) {
                 std::thread::sleep(TICK);
                 let state = app.state::<AppState>();
                 if let Err(err) = snapshot(&state, false) {
-                    eprintln!("PolarEffects: crash-recovery snapshot failed: {err}");
+                    eprintln!("PolarExplorer: crash-recovery snapshot failed: {err}");
                 }
             }
         });

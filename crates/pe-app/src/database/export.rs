@@ -56,8 +56,8 @@ pub(super) fn run(settings: &DatabaseSettings, path: &Path, cancel: &AtomicBool)
     let parent = path
         .parent()
         .ok_or_else(|| AppError::Internal("Invalid export path".into()))?;
-    let temp = parent.join(format!(".polareffects-{}.sql", uuid::Uuid::new_v4()));
-    let errors = parent.join(format!(".polareffects-{}.log", uuid::Uuid::new_v4()));
+    let temp = parent.join(format!(".polarexplorer-{}.sql", uuid::Uuid::new_v4()));
+    let errors = parent.join(format!(".polarexplorer-{}.log", uuid::Uuid::new_v4()));
     let result = (|| {
         let output = std::fs::OpenOptions::new()
             .write(true)

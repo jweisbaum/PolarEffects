@@ -122,6 +122,26 @@ pub fn assemble(project: &Project, derived: &BTreeMap<u64, Arc<Derived>>) -> Ble
 
 /// The uncorrrected blend used as the manual editor's immutable baseline.
 pub fn assemble_base(project: &Project, derived: &BTreeMap<u64, Arc<Derived>>) -> Blend {
+    with_blend_sources(project, derived, |sources, options| {
+        pe_polar::blend::blend_mode(
+            &project.grid.twa,
+            &project.grid.tws,
+            sources,
+            options,
+            project.blend.interpolation,
+        )
+    })
+}
+
+/// Reads every visible source onto the output grid as the rule takes it
+/// (spec.md 12.3) and hands the rule's inputs to `then`: the one assembly
+/// behind the blend and behind what a cell's tooltip says stood for it, so
+/// the two cannot disagree about who took part.
+fn with_blend_sources<T>(
+    project: &Project,
+    derived: &BTreeMap<u64, Arc<Derived>>,
+    then: impl FnOnce(&[BlendSource<'_>], &BlendOptions) -> T,
+) -> T {
     let grid = &project.grid;
     // A track cell the person overrode counts fully (D23 ruling).
     type Read<'a> = (u64, f64, Polar, Option<(&'a Derived, Vec<Vec<bool>>)>);
@@ -176,16 +196,128 @@ pub fn assemble_base(project: &Project, derived: &BTreeMap<u64, Arc<Derived>>) -
             },
         })
         .collect();
-    pe_polar::blend::blend_mode(
-        &grid.twa,
-        &grid.tws,
+    then(
         &sources,
         &BlendOptions {
             n_full: project.blend.n_full,
             smoothing: project.blend.smoothing,
         },
-        project.blend.interpolation,
     )
+}
+
+/// Where a blend cell's value came from (spec.md 12.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "BlendCellOrigin.ts")]
+pub enum BlendCellOrigin {
+    /// At least one source had a value there, or a correction holds it.
+    Direct,
+    /// Interpolated between other cells, or the 0° row's 0 kn.
+    Filled,
+    /// Nothing reaches it.
+    Empty,
+}
+
+/// One source behind a blend cell's value.
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[ts(export_to = "BlendContributor.ts")]
+pub struct BlendContributor {
+    /// The source.
+    pub source_id: u64,
+    /// Its boat speed in the cell, knots.
+    pub bsp: f64,
+    /// The weight the rule gave it: its weight times its confidence.
+    pub weight: f64,
+    /// Its part of the cell's total weight, 0–1.
+    pub share: f64,
+}
+
+/// One cell of the blend with what stands behind it: what hovering the
+/// blend shows (spec.md 9.2, 10.1). Derived, never stored (invariant 2).
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[ts(export_to = "BlendCell.ts")]
+pub struct BlendCell {
+    /// The cell's true wind angle, degrees.
+    pub twa: f64,
+    /// The cell's true wind speed, knots.
+    pub tws: f64,
+    /// The blend's boat speed there, knots; null for an empty cell.
+    pub bsp: Option<f64>,
+    /// Where the value came from.
+    pub origin: BlendCellOrigin,
+    /// A manual correction holds the cell (spec.md 12.3): `bsp` is the
+    /// correction, not the contributors' mean.
+    pub corrected: bool,
+    /// Each source the rule counted in the cell, in id order. Their
+    /// weighted mean is the cell's value before smoothing and correction;
+    /// empty for a filled or empty cell.
+    pub contributors: Vec<BlendContributor>,
+}
+
+/// One blend cell and its contributors, by its indices on the output grid.
+#[tauri::command]
+pub fn blend_cell(
+    state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
+    twa_index: u32,
+    tws_index: u32,
+) -> Result<BlendCell> {
+    let state = state.scoped(boat_context);
+    blend_cell_of(&state, twa_index, tws_index)
+}
+
+/// [`blend_cell`] without a Tauri handle.
+pub fn blend_cell_of(state: &AppState, twa_index: u32, tws_index: u32) -> Result<BlendCell> {
+    state.with_session(|session| {
+        let open = session.require_open()?;
+        let project = &open.project;
+        let (i, j) = (twa_index as usize, tws_index as usize);
+        let (Some(twa), Some(tws)) = (project.grid.twa.get(i), project.grid.tws.get(j)) else {
+            return Err(AppError::BadOption {
+                field: "Blend cell",
+                value: format!("({twa_index}, {tws_index})"),
+            });
+        };
+        let (twa, tws) = (*twa, *tws);
+        let derived = open.derived.visible(project);
+        let blend = open.derived.blend(project);
+        let terms = with_blend_sources(project, &derived, |sources, options| {
+            pe_polar::blend::contributions(
+                &project.grid.twa,
+                &project.grid.tws,
+                sources,
+                options,
+                i,
+                j,
+            )
+        });
+        let total: f64 = terms.iter().map(|term| term.weight).sum();
+        Ok(BlendCell {
+            twa,
+            tws,
+            bsp: blend.polar.get(i, j),
+            origin: match blend.origin.get(i).and_then(|row| row.get(j)) {
+                Some(CellOrigin::Direct) => BlendCellOrigin::Direct,
+                Some(CellOrigin::Filled) => BlendCellOrigin::Filled,
+                Some(CellOrigin::Empty) | None => BlendCellOrigin::Empty,
+            },
+            corrected: project
+                .blend
+                .corrections
+                .iter()
+                .any(|c| c.twa == twa && c.tws == tws),
+            contributors: terms
+                .into_iter()
+                .map(|term| BlendContributor {
+                    source_id: term.id,
+                    bsp: term.bsp,
+                    weight: term.weight,
+                    // `total` is positive: every term's weight is.
+                    share: term.weight / total,
+                })
+                .collect(),
+        })
+    })
 }
 
 /// The blend derived from scratch: what export writes (invariant 2).

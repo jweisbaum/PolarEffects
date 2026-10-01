@@ -31,7 +31,7 @@ pub struct SourceSummary {
     pub colour: String,
     /// Whether it is shown and blended.
     pub visible: bool,
-    /// Blend weight, 0–2.
+    /// Blend weight, 0–1.
     pub weight: f64,
     /// What the source holds (spec.md 8): cells with a value for a polar,
     /// samples for a track.
@@ -333,7 +333,7 @@ pub fn open_project(
 }
 
 /// Reads a project file, keeping a newer-schema refusal as its own kind so
-/// the frontend can say "update PolarEffects" rather than "damaged file".
+/// the frontend can say "update PolarExplorer" rather than "damaged file".
 pub(crate) fn read_project(path: &std::path::Path, doing: &'static str) -> Result<Project> {
     match io::load(path) {
         Ok(project) => Ok(project),

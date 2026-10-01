@@ -169,7 +169,7 @@ fn fixed_project() -> Project {
         },
     );
     hidden.visible = false;
-    hidden.weight = 2.0;
+    hidden.weight = 1.0;
     project.sources = vec![
         Source::new(
             pe_core::SourceId(1),

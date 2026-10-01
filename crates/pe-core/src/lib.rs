@@ -1,4 +1,4 @@
-//! The PolarEffects document model.
+//! The PolarExplorer document model.
 //!
 //! Everything a project *is* lives here: the `Project`, its sources and the
 //! overlays that record every user change beside the immutable source data,

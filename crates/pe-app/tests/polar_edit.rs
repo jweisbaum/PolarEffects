@@ -391,7 +391,12 @@ fn only_the_flags_travel_when_no_sample_moved() {
         fresh[flags_at * 4..(flags_at + m) * 4],
         delta[nodes_end * 4..(nodes_end + m) * 4]
     );
-    assert_eq!(word(&delta, nodes_end + 1), polar3d::FLAG_EXCLUDED);
+    // Sample 201 is excluded. It was sailed at 12:01 UTC at 5°W, 11:41
+    // local solar time: morning, band 1, which rides in the same flags.
+    assert_eq!(
+        word(&delta, nodes_end + 1),
+        polar3d::FLAG_EXCLUDED | (1 << polar3d::FLAG_BAND_SHIFT)
+    );
 
     // Corrected or ground values move every sample.
     pe_app::env::use_corrected_set(&app, false).unwrap();

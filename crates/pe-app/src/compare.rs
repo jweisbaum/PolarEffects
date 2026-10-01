@@ -54,7 +54,7 @@
 
 use pe_core::source::SourceKind;
 use pe_core::{Project, SourceId};
-use pe_polar::blend::on_grid;
+use pe_polar::blend::on_grid_mode;
 use pe_polar::{CellClass, Comparison, Faster, Polar};
 use serde::Deserialize;
 use ts_rs::TS;
@@ -128,7 +128,15 @@ pub fn operand_grid(
     Ok(if is_track {
         data.blend.clone()
     } else {
-        on_grid(&data.edited, &source.overlay, &grid.twa, &grid.tws)
+        // With the project's interpolation rule, as the blend reads the same
+        // source: a source against a blend of itself must differ nowhere.
+        on_grid_mode(
+            &data.edited,
+            &source.overlay,
+            &grid.twa,
+            &grid.tws,
+            project.blend.interpolation,
+        )
     })
 }
 

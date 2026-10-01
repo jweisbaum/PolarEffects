@@ -363,7 +363,7 @@ fn section1(spec: &MessageSpec) -> Vec<u8> {
 }
 
 /// Human-readable provenance stored in every message's local-use section.
-pub const PROVENANCE: &str = "Created with PolarEffects";
+pub const PROVENANCE: &str = "Created with PolarExplorer";
 
 /// GRIB2 Section 2: four-byte length, section number, then local-use octets.
 fn section2() -> Vec<u8> {
@@ -613,7 +613,7 @@ mod tests {
 
     /// Every message carries the provenance once, whatever it holds.
     #[test]
-    fn every_message_says_it_was_created_with_polareffects() {
+    fn every_message_says_it_was_created_with_polarexplorer() {
         let values = vec![0.0; grid().point_count() as usize];
         let bytes = message(&spec(), &values).expect("encode");
         let memos: Vec<_> = sections(&bytes)
@@ -621,7 +621,7 @@ mod tests {
             .filter(|(n, _)| *n == 2)
             .collect();
         assert_eq!(memos.len(), 1);
-        assert_eq!(&memos[0].1[5..], b"Created with PolarEffects");
+        assert_eq!(&memos[0].1[5..], b"Created with PolarExplorer");
     }
 
     /// A field with a hole gets a bitmap, one without gets none: section 6

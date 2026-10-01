@@ -10,6 +10,7 @@
  */
 
 import type { PolarCurve } from "../generated/PolarCurve";
+import { DAY_BANDS, dayBand } from "../dayBand";
 import { dotSourceId, type DotPacket } from "./dotPacket";
 
 const RAD = Math.PI / 180;
@@ -150,6 +151,18 @@ export function axisLabels(
   return placed;
 }
 
+/** What the dots' colour shows (spec.md 9.2). */
+export type DotColourMode = "source" | "timeOfDay";
+
+/**
+ * The colour dot `k` is drawn in: its track's (`bySource`, by the packet's
+ * source index), or its band's of the local solar day.
+ */
+export function dotFill(dots: DotPacket, k: number, mode: DotColourMode, bySource: readonly string[]): string {
+  if (mode === "timeOfDay") return DAY_BANDS[dayBand(dots.flags[k]!)]!.colour;
+  return bySource[dots.source[k]!]!;
+}
+
 /** What hovering one point on the plot shows (spec.md 9.2). */
 export interface Hover {
   label: string;
@@ -157,6 +170,8 @@ export interface Hover {
   twa: number;
   tws: number;
   bsp: number;
+  /** Whether the point is on the blend's curve rather than a source's or a dot. */
+  blend: boolean;
   /** Canvas position, for the tooltip and the highlighted dot. */
   x: number;
   y: number;
@@ -183,16 +198,18 @@ export function nearestPoint(
 ): Hover | null {
   let best: Hover | null = null;
   let bestDistance = maxDistance;
-  const consider = (label: string, colour: string, twa: number, tws: number, bsp: number) => {
+  const consider = (label: string, colour: string, twa: number, tws: number, bsp: number, blend = false) => {
     const { x, y } = project(twa, bsp, layout);
     const distance = Math.hypot(x - px, y - py);
     if (distance <= bestDistance) {
       bestDistance = distance;
-      best = { label, colour, twa, tws, bsp, x, y };
+      best = { label, colour, twa, tws, bsp, blend, x, y };
     }
   };
   for (const curve of curves) {
-    for (const point of curve.points) consider(curve.label, curve.colour, point.twa, curve.tws, point.bsp);
+    // The blend's curves are the ones with no source (`PolarCurve.source_id`).
+    const blend = curve.source_id === null;
+    for (const point of curve.points) consider(curve.label, curve.colour, point.twa, curve.tws, point.bsp, blend);
   }
   if (dots) {
     for (let k = 0; k < dots.count; k++) {
@@ -201,4 +218,102 @@ export function nearestPoint(
     }
   }
   return best;
+}
+
+// ------------------------------------------------------------- measuring
+//
+// The Measure tool (spec.md 9.2) reads the plot back: where the pointer is
+// in wind angle and boat speed, what every curve says at that angle, and
+// the difference between two points. It reads the curves the plot was
+// given, in knots; nothing here changes the project.
+
+/** A point of the plot: a true wind angle (degrees) and a boat speed (knots). */
+export interface PolarPoint {
+  twa: number;
+  bsp: number;
+}
+
+/**
+ * The (TWA, BSP) a canvas position stands for: `project` inverted. The
+ * angle is in [0, 360), 0° up and clockwise; the centre is 0 kn at 0°.
+ */
+export function unproject(x: number, y: number, layout: PlotLayout): PolarPoint {
+  const dx = x - layout.centerX;
+  const dy = layout.centerY - y;
+  const r = Math.hypot(dx, dy);
+  if (r === 0 || !(layout.scale > 0)) return { twa: 0, bsp: 0 };
+  const twa = (Math.atan2(dx, dy) / RAD + 360) % 360;
+  // Rounded to 1e-9°: 270° must not come back as 270.00000000000006.
+  return { twa: (Math.round(twa * 1e9) / 1e9) % 360, bsp: r / layout.scale };
+}
+
+/**
+ * A curve's boat speed at `twa`: its own value at one of its points, a
+ * straight line in speed over angle between two (as `pe-polar` reads a
+ * polar between its angles), and null outside the angles it covers.
+ */
+export function curveSpeedAt(curve: PolarCurve, twa: number): number | null {
+  const points = curve.points;
+  for (let k = 0; k < points.length; k++) {
+    const point = points[k]!;
+    if (point.twa === twa) return point.bsp;
+    const next = points[k + 1];
+    if (next && point.twa < twa && twa < next.twa) {
+      return point.bsp + (next.bsp - point.bsp) * (twa - point.twa) / (next.twa - point.twa);
+    }
+  }
+  return null;
+}
+
+/** One curve's value where the measuring spoke crosses it. */
+export interface Crossing {
+  label: string;
+  colour: string;
+  /** The curve's true wind speed, knots. */
+  tws: number;
+  /** Its boat speed at the spoke's angle, knots. */
+  bsp: number;
+  /** Whether it is the blend's curve. */
+  blend: boolean;
+}
+
+/** Every curve with a value at `twa`, fastest first (ties in the order given). */
+export function crossings(curves: readonly PolarCurve[], twa: number): Crossing[] {
+  const out: Crossing[] = [];
+  for (const curve of curves) {
+    const bsp = curveSpeedAt(curve, twa);
+    if (bsp !== null) out.push({ label: curve.label, colour: curve.colour, tws: curve.tws, bsp, blend: curve.source_id === null });
+  }
+  return out.sort((a, b) => b.bsp - a.bsp);
+}
+
+/** The crossing whose speed is nearest `bsp` (the first on a tie), or -1 when there is none. */
+export function nearestCrossing(list: readonly Crossing[], bsp: number): number {
+  let best = -1;
+  let distance = Infinity;
+  list.forEach((crossing, index) => {
+    const d = Math.abs(crossing.bsp - bsp);
+    if (d < distance) { distance = d; best = index; }
+  });
+  return best;
+}
+
+/** From point `a` to point `b`. */
+export interface Measurement {
+  /** `b`'s speed less `a`'s, knots. */
+  deltaBsp: number;
+  /** `b`'s speed over `a`'s; null when `a` has no speed. */
+  ratio: number | null;
+  /** The angle between them, degrees, the short way round: 0–180. */
+  deltaTwa: number;
+}
+
+/** The difference between two points of the plot. */
+export function measureBetween(a: PolarPoint, b: PolarPoint): Measurement {
+  const turn = Math.abs(b.twa - a.twa) % 360;
+  return {
+    deltaBsp: b.bsp - a.bsp,
+    ratio: a.bsp > 0 ? b.bsp / a.bsp : null,
+    deltaTwa: turn > 180 ? 360 - turn : turn,
+  };
 }

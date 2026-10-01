@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Checks PolarEffects' GRIB output with ecCodes, an independent decoder
+# Checks PolarExplorer' GRIB output with ecCodes, an independent decoder
 # (spec.md 7.8, invariant 5). Run by CI; locally when ecCodes is installed
 # (`brew install eccodes`, `apt-get install libeccodes-tools`).
 #

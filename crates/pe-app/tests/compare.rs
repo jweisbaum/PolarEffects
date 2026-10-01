@@ -259,3 +259,45 @@ fn the_command_answers_a_packet() {
     assert_eq!((word(2), word(3)), (19, 10), "the default output grid");
     assert_eq!(word(5), 1);
 }
+
+/// Compare reads a polar source with the project's interpolation rule, as
+/// the blend does (spec.md 7.6, 11). With the track hidden the blend is the
+/// file alone, so the file against the blend differs nowhere, between the
+/// file's own nodes included. Read linearly, the file's 45°–90°–135° peak
+/// at 10 kn would sit below the spline the blend drew.
+#[test]
+fn a_polar_operand_follows_the_projects_interpolation() {
+    let root = TempRoot::new("compare-spline");
+    let app = app(&root);
+    edit::source_visible_set(&app, 2, false).unwrap();
+    app.with_session(|session| {
+        let open = session.require_open()?;
+        let before = open.project.blend.clone();
+        let mut after = before.clone();
+        after.interpolation = pe_core::project::Interpolation::MonotoneSpline;
+        open.apply(Command::SetBlendSettings {
+            before: Box::new(before),
+            after: Box::new(after),
+        })?;
+        Ok(())
+    })
+    .unwrap();
+
+    let c = run(&app, FILE, CompareOperand::Blend).unwrap();
+    // Between the file's nodes: 60° at 10 kn has a value on both sides.
+    let (i, j) = at(&c, 60.0, 10.0);
+    assert_eq!(c.class[i][j], CellClass::Both);
+    assert!(c.overlap > 8, "cells between the file's nodes are compared");
+    let mut differing = Vec::new();
+    for (i, row) in c.delta_kn.iter().enumerate() {
+        for (j, delta) in row.iter().enumerate() {
+            if let Some(delta) = delta.filter(|d| *d != 0.0) {
+                differing.push((c.twa[i], c.tws[j], delta));
+            }
+        }
+    }
+    assert!(
+        differing.is_empty(),
+        "the file read as the blend reads it, but (TWA, TWS, Δ) differ: {differing:?}"
+    );
+}
