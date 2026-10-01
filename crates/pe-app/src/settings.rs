@@ -149,6 +149,37 @@ pub enum MapProjection {
     Orthographic,
 }
 
+/// The MCP service's switch, port and token (spec.md 3.7, D29).
+///
+/// The token is a plain string in the file the person already owns, written
+/// owner-only: it grants a local process what sitting at the keyboard
+/// grants, nothing more. Empty means no token, and `mcp::token::matches`
+/// refuses everything then.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "McpSettings.ts")]
+pub struct McpSettings {
+    /// Whether the service listens. Off until the person turns it on.
+    pub enabled: bool,
+    /// The loopback port it listens on.
+    pub port: u16,
+    /// The bearer token a client must present; empty while off.
+    pub token: String,
+}
+
+/// The port a fresh install listens on when the service is first enabled:
+/// one above VectorEffects', so both applications can run at once.
+pub const DEFAULT_MCP_PORT: u16 = 47392;
+
+impl Default for McpSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: DEFAULT_MCP_PORT,
+            token: String::new(),
+        }
+    }
+}
+
 /// The settings file.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export_to = "AppSettings.ts", rename = "AppSettings")]
@@ -178,6 +209,8 @@ pub struct Settings {
     /// drawn, knots either side (spec.md 9.2). A display preference: it
     /// changes what is drawn, never the blend.
     pub plot_tws_band_kn: f64,
+    /// The MCP service (spec.md 3.7). Absent from older files: off.
+    pub mcp: McpSettings,
 }
 
 impl Default for Settings {
@@ -193,6 +226,7 @@ impl Default for Settings {
             network: NetworkSettings::default(),
             projection: MapProjection::default(),
             plot_tws_band_kn: crate::polar_plot::DEFAULT_TWS_BAND_KN,
+            mcp: McpSettings::default(),
         }
     }
 }
@@ -294,6 +328,11 @@ impl Settings {
             }
             read_field(&object, "projection", &mut settings.projection);
             read_field(&object, "plot_tws_band_kn", &mut settings.plot_tws_band_kn);
+            if let Some(serde_json::Value::Object(mcp)) = object.get("mcp") {
+                read_field(mcp, "enabled", &mut settings.mcp.enabled);
+                read_field(mcp, "port", &mut settings.mcp.port);
+                read_field(mcp, "token", &mut settings.mcp.token);
+            }
         }
         settings.normalised()
     }
@@ -328,6 +367,17 @@ impl Settings {
         }
         if !(PLOT_BAND_RANGE_KN.0..=PLOT_BAND_RANGE_KN.1).contains(&self.plot_tws_band_kn) {
             self.plot_tws_band_kn = defaults.plot_tws_band_kn;
+        }
+        // Port 0 is "any port": no client configuration could name it.
+        if self.mcp.port == 0 {
+            self.mcp.port = defaults.mcp.port;
+        }
+        // On with no token would be a listener nothing can talk to; a
+        // token while off is one nothing should hold. Either is a file
+        // edited by hand: the service is off until switched on again.
+        if self.mcp.enabled == self.mcp.token.is_empty() {
+            self.mcp.enabled = false;
+            self.mcp.token.clear();
         }
         self
     }
@@ -669,6 +719,102 @@ pub fn plot_band_set(state: &AppState, band_kn: f64) -> Result<Settings> {
     })
 }
 
+/// What the Settings dialog shows about the MCP service (spec.md 3.7).
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export_to = "McpStatus.ts")]
+pub struct McpStatus {
+    /// Whether the setting is on.
+    pub enabled: bool,
+    /// The port in the settings.
+    pub port: u16,
+    /// The token, so the dialog can build a client configuration.
+    pub token: String,
+    /// The port actually bound, or null while off or if binding failed.
+    pub bound_port: Option<u16>,
+    /// Why the listener is not up although the setting is on.
+    pub bind_error: Option<String>,
+    /// Open client sessions.
+    pub sessions: u32,
+    /// The last tool a client called, if any.
+    pub last_tool: Option<String>,
+    /// The clients the dialog can add the service to on this platform.
+    pub clients: Vec<crate::mcp::clients::McpClient>,
+}
+
+/// Reads the service's settings and live state.
+#[tauri::command]
+pub fn mcp_status(
+    state: tauri::State<'_, AppState>,
+    service: tauri::State<'_, crate::mcp::McpService>,
+) -> Result<McpStatus> {
+    let mcp = state.with_session(|session| Ok(session.settings.mcp.clone()))?;
+    Ok(service.status(&mcp))
+}
+
+/// Turns the service on or off and sets its port. Enabling issues a fresh
+/// token; disabling clears it and drops the listener.
+///
+/// Generic over the Tauri runtime so the integration tests can drive it
+/// through a mock application. `async`: `McpService::apply` calls
+/// `Running::stop`, which can block briefly waiting for the listener's
+/// accept loop to confirm its socket closed, so this must run on Tauri's
+/// thread pool and never the main (webview) thread.
+#[tauri::command(async)]
+pub fn mcp_set<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: tauri::State<'_, AppState>,
+    service: tauri::State<'_, crate::mcp::McpService>,
+    enabled: bool,
+    port: u16,
+) -> Result<McpStatus> {
+    // Port 0 is "any free port": a service whose port moves every launch is
+    // no use to a client configuration.
+    if port == 0 {
+        return Err(AppError::BadOption {
+            field: "Port",
+            value: port.to_string(),
+        });
+    }
+    let settings = update(&state, |settings| {
+        let turning_on = enabled && !settings.mcp.enabled;
+        settings.mcp.enabled = enabled;
+        settings.mcp.port = port;
+        if turning_on || (enabled && settings.mcp.token.is_empty()) {
+            settings.mcp.token = crate::mcp::token::fresh();
+        }
+        if !enabled {
+            settings.mcp.token.clear();
+        }
+        Ok(())
+    })?;
+    service.apply(&app, &settings.mcp);
+    Ok(service.status(&settings.mcp))
+}
+
+/// Issues a new token and restarts the listener with it. Refused while the
+/// service is off: there is nothing to rotate.
+///
+/// Generic and `async` for the same reasons as [`mcp_set`].
+#[tauri::command(async)]
+pub fn mcp_rotate_token<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: tauri::State<'_, AppState>,
+    service: tauri::State<'_, crate::mcp::McpService>,
+) -> Result<McpStatus> {
+    let settings = update(&state, |settings| {
+        if !settings.mcp.enabled {
+            return Err(AppError::BadOption {
+                field: "MCP service",
+                value: "off".to_owned(),
+            });
+        }
+        settings.mcp.token = crate::mcp::token::fresh();
+        Ok(())
+    })?;
+    service.apply(&app, &settings.mcp);
+    Ok(service.status(&settings.mcp))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -684,6 +830,57 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// A file written before the MCP service existed loads with it off,
+    /// on the default port, with no token (spec.md 3.7).
+    #[test]
+    fn a_settings_file_without_mcp_loads_with_it_off() {
+        let file = temp("no-mcp").join("settings.json");
+        std::fs::write(&file, r#"{"language":"fr","theme":"harbour"}"#).unwrap();
+        let settings = Settings::load(&file);
+        assert_eq!(settings.language, "fr");
+        assert_eq!(
+            settings.mcp,
+            McpSettings {
+                enabled: false,
+                port: 47392,
+                token: String::new()
+            }
+        );
+    }
+
+    /// The service's settings survive a save and a load, and a file that
+    /// says on without a token, or holds a token while off, is off with
+    /// none: no listener nothing can talk to, no token nothing should hold.
+    #[test]
+    fn mcp_settings_round_trip_and_a_contradictory_file_is_off() {
+        let file = temp("mcp").join("settings.json");
+        let on = Settings {
+            mcp: McpSettings {
+                enabled: true,
+                port: 50123,
+                token: "t".repeat(43),
+            },
+            ..Settings::default()
+        };
+        on.save(&file).unwrap();
+        assert_eq!(Settings::load(&file).mcp, on.mcp);
+
+        for (enabled, token) in [(true, ""), (false, "left-behind")] {
+            std::fs::write(
+                &file,
+                serde_json::json!({ "mcp": { "enabled": enabled, "port": 50123, "token": token } })
+                    .to_string(),
+            )
+            .unwrap();
+            let loaded = Settings::load(&file).mcp;
+            assert!(!loaded.enabled && loaded.token.is_empty(), "{loaded:?}");
+            assert_eq!(loaded.port, 50123, "the port is kept");
+        }
+        // Port 0 names no port a client could be given.
+        std::fs::write(&file, r#"{"mcp":{"enabled":false,"port":0,"token":""}}"#).unwrap();
+        assert_eq!(Settings::load(&file).mcp.port, DEFAULT_MCP_PORT);
     }
 
     #[test]

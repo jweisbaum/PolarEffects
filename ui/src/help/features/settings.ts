@@ -32,6 +32,24 @@ const features: Feature[] = [
     keywords: [msg("network"), msg("seconds"), msg("download")], topic: "settings", reveal: open("network") },
   { id: "settings:close", label: msg("Close the settings"), description: msg("Close the Settings dialog."),
     keywords: [msg("done")], topic: "settings", reveal: ["settings:"] },
+  // The MCP service (spec.md 3.7).
+  { id: "settings:mcp-enable", label: msg("MCP service"),
+    description: msg("Let an AI client on this computer drive PolarExplorer. Off until you turn it on; nothing can reach it while it is off."),
+    keywords: [msg("AI"), msg("agent"), "MCP", "Claude", "Codex", msg("assistant"), msg("automation")], topic: "settings", reveal: open("mcp") },
+  { id: "settings:mcp-port", label: msg("MCP service port"), description: msg("The port on this computer the MCP service listens on."),
+    keywords: ["MCP", msg("network"), msg("port")], topic: "settings", reveal: open("mcp") },
+  { id: "settings:mcp-token", label: msg("Rotate the MCP token"),
+    description: msg("Issue a new token for the MCP service. Clients added before must be added again."),
+    keywords: ["MCP", msg("password"), msg("security"), msg("token")], topic: "settings", reveal: open("mcp"), landing: "settings:mcp-enable" },
+  { id: "settings:mcp-add", label: msg("Add PolarExplorer to an AI client"),
+    description: msg("Add the MCP service to Claude Code or Codex, or open its extension in Claude Desktop."),
+    keywords: ["MCP", "Claude", "Claude Code", "Claude Desktop", "Codex", msg("plugin"), msg("extension"), msg("connect")], topic: "settings", reveal: open("mcp"), landing: "settings:mcp-enable" },
+  { id: "settings:mcp-snippets", label: msg("MCP configuration for other clients"),
+    description: msg("The address and token of the MCP service as text, for a client that has no button."),
+    keywords: ["MCP", msg("configuration"), "JSON", "ChatGPT"], topic: "settings", reveal: open("mcp"), landing: "settings:mcp-enable" },
+  { id: "settings:mcp-copy", label: msg("Copy an MCP client configuration"),
+    description: msg("Copy the Claude Code command, the HTTP client entry or the stdio bridge command."),
+    keywords: ["MCP", msg("copy"), msg("clipboard")], topic: "settings", reveal: open("mcp"), landing: "settings:mcp-enable" },
 ];
 
 export default features;

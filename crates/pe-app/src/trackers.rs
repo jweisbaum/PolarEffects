@@ -468,9 +468,12 @@ enum Message {
 /// Resolves a pasted event address and downloads every boat's track, or
 /// recalls the event from this session (spec.md 7.2). The boat list goes
 /// ahead as [`LISTED_EVENT`] when the tracker gives it first.
+///
+/// Generic over the Tauri runtime so the MCP service's tools, and their
+/// tests on a mock application, call this very command.
 #[tauri::command]
-pub async fn tracker_event(
-    app: tauri::AppHandle,
+pub async fn tracker_event<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     tracker: String,
     url: String,
     refresh: bool,

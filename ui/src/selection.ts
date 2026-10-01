@@ -51,6 +51,9 @@ function selection(id?: number) {
   return held;
 }
 export const selectSamples = (ids: Iterable<number>, origin: SelectionOrigin) => selection().selectSamples(ids, origin);
+/** Selects samples of one boat by its id (the MCP service's `view://selection`). */
+export const selectSamplesOf = (boat: number | undefined, ids: Iterable<number>, origin: SelectionOrigin) =>
+  selection(boat).selectSamples(ids, origin);
 export const clearSamples = (origin: SelectionOrigin) => selection().clearSamples(origin);
 export const getSampleSelection = () => selection().getSampleSelection();
 export const focusMap = (focus: MapFocus) => selection().focusMap(focus);

@@ -100,6 +100,8 @@ function backend() {
       case "app_settings": return settings;
       case "database_job_status": return { running: false, operation: "", failures: [], done: 0, total: 0, tracks: 0, skipped: 0, failed: 0, current: "", cancelled: false, error: null };
       case "app_info": return { name: "PolarExplorer", version: "0.1.0" };
+      // The MCP service, off: its section shows the switch and the port.
+      case "mcp_status": return { enabled: false, port: 47392, token: "", bound_port: null, bind_error: null, sessions: 0, last_tool: null, clients: ["claude_code", "codex", "claude_desktop"] };
       case "project_summary": return project;
       case "recent_projects": return [
         { path: "/boats/Fastnet.wpsproj", name: "Fastnet", exists: true },
@@ -252,6 +254,7 @@ beforeEach(() => {
     units: { speed: "kn", wave_height: "m", distance: "nm" },
     weather_memory_mb: 256, network: { concurrency: 8, timeout_s: 60 },
     projection: "equirectangular", plot_tws_band_kn: 1,
+    mcp: { enabled: false, port: 47392, token: "" },
   };
   dialog.open.mockReset().mockResolvedValue(null);
   dialog.save.mockReset().mockResolvedValue(null);

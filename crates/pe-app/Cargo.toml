@@ -46,6 +46,26 @@ rustls-platform-verifier = "0.7"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 uuid = { version = "1", features = ["v5", "v4"] }
 
+# The MCP service (spec.md 3.7, D29). Pure Rust, always compiled in; the
+# listener exists only while the setting is on (invariant 4's one inbound
+# exception). As VectorEffects' `ve-app`.
+rmcp = { version = "3.4", default-features = false, features = ["server", "macros", "transport-streamable-http-server"] }
+schemars = "1"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+http = "1"
+bytes = "1"
+tokio = { version = "1", features = ["net", "sync", "time", "macros", "rt"] }
+tokio-util = "0.7"
+getrandom = "0.3"
+base64 = "0.22"
+# Adding the service to Codex edits its `config.toml` in place, keeping
+# every other line.
+toml_edit = "0.25"
+# The Claude Desktop extension and the skill archive are zip files.
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+
 [features]
 # WebDriver automation for agent-driven UI tests (macOS), off by default.
 # Copied from VectorEffects (D25).
@@ -72,8 +92,14 @@ uuid = { version = "1", features = ["v5", "v4"] }
 webdriver = ["dep:tauri-plugin-webdriver-automation"]
 
 [dev-dependencies]
-# Writing a project archive by hand, for the newer-schema refusal test.
-zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+# The MCP service's tests drive a mock application over real HTTP with an
+# `rmcp` client (`tests/mcp.rs`). `reqwest` without default features: no
+# TLS at all is needed for loopback, and none is pulled in.
+tauri = { version = "2.11.5", features = ["test"] }
+rmcp = { version = "3.4", default-features = false, features = ["client", "transport-streamable-http-client-reqwest"] }
+reqwest = { version = "0.13", default-features = false }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tempfile = "3"
 # Pinning the export hashes the CI matrix compares (invariant 5, plan.md M14).
 # Pure Rust, already in the lock file through Tauri.
 sha2 = "0.10.9"

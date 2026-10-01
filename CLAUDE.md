@@ -68,6 +68,20 @@ stop and raise it rather than working around it.
    Its seams (`PE_AUTOMATION_ROOT`, `PE_DRIVER_YELLOWBRICK`) are compiled only
    with the feature; the frontend's (`ui/src/automation.ts`) only in
    development builds. Never ship the WebDriver feature.
+   **And one inbound exception (D29):** the MCP service, `pe-app`'s `mcp`
+   module (spec §3.7), listens on `127.0.0.1` only while the person has
+   switched it on in Settings and only for the token that switch issued. It
+   is always compiled in, and creates no socket, thread or task while off.
+   `tests/mcp.rs`'s `off_means_no_socket_and_stop_releases_the_port` is the
+   enforcement; `check:offline` still cannot see a listener, and admits in
+   `pe-app` exactly the service's server crates with exactly their server
+   features, each on one line (`hyper`: server, http1; `hyper-util`: tokio;
+   `rmcp` without default features: server, macros,
+   transport-streamable-http-server; `reqwest` in dev-dependencies only). The WebDriver rule is unchanged: that endpoint is unauthenticated,
+   drives the interface rather than the domain, and has no switch. A second
+   inbound socket would need the same four properties (off until switched
+   on, a token that switch issues, loopback names only, the domain through
+   the interface's own commands) and its own decision.
 5. **Export is deterministic and byte-reproducible** across machines and
    platforms: the same project gives the same `.txt`, `.pol`, `.csv` and
    `.grib2` bytes.
@@ -100,13 +114,16 @@ crates/
                 reads by HTTP Range; in-memory block LRU; space-time sampling
   pe-grib/      GRIB2 writer (fixed-layout message template, as in
                 VectorEffects' ve-grib), regional grids
-  pe-app/       Tauri shell: IPC commands, state, jobs, autosave, settings
+  pe-app/       Tauri shell: IPC commands, state, jobs, autosave, settings;
+                `src/mcp/` the MCP service (listener, tools, client
+                registration, the Claude Desktop bridge)
 ui/             React + TypeScript + Vite front end
   src/project/  Start screen, project menu, save guard, dialogs
   src/map/      WebGL2 world map with tracks
   src/polar/    2D polar plot, 3D polar view (three.js), compare view
   src/panels/   Left navigation (ORC / Polar files / Tracks), source list
-  src/settings/ Settings dialog, themes, language picker
+  src/settings/ Settings dialog, themes, language picker, MCP section
+  src/mcp/      The interface following the MCP service; the stage capture
   src/help/     Feature registry, search, highlight, help topics
   src/i18n/     Catalogues (en, fr, de), glossary, coverage tests
   src/generated/ ts-rs bindings. Never edit by hand
@@ -227,6 +244,31 @@ its dataset, units, direction sense and fill behaviour (land is NaN for waves
 and currents). Add a fixture chunk test and record the dataset version on
 each sample.
 
+**Adding an MCP tool.** In `crates/pe-app/src/mcp/tools/<group>.rs`, inside
+the group's `#[tool_router]` block: a parameter struct deriving `Deserialize`
+and `JsonSchema` with a doc comment on every field (the comment is the
+description a client sees; `tests/mcp.rs` refuses a property without one),
+and a tool that calls the **`#[tauri::command]` function itself** with
+`app.state::<AppState>()` — never a copy of its logic — through `run` (a
+read) or `write` (an edit: it emits `document://changed`, so the interface
+follows). Every tool that reads or edits a boat takes the optional `boat`
+id and passes it as the command's `boat_context`. A structured parameter
+that is one of the interface's IPC types is a `serde_json::Value` read with
+`typed`, so a client's string of JSON is read and a bad value is a refusal
+in words. A parameter that holds "only what to change" is written over the
+current value with `patch_over`, which refuses a key that is no field. A
+tool that writes a file where the caller says takes `overwrite` and asks
+`may_write` first, and its command goes into `invoke`'s `EXCLUDED`. Answer
+with `json(&value)`. A long tool watches `ctx.ct`: `rmcp` cancels that
+token, it does not drop the future. Report the call through `run` or
+`note`: that is what counts a client that keeps no session, and so what
+shows the person the badge. Name the tool in
+`tools/guide.rs` (the suite fails on a tool the guide never mentions, and
+on a name in the guide that is no tool), and add an integration test in
+`tests/mcp.rs` that drives it over HTTP and checks the document through the
+interface's own read. A new IPC command also goes into `mcp/invoke.rs`:
+its `TABLE`, or `EXCLUDED` with the reason.
+
 **Changing export output.** Formats are pinned by golden files in
 `crates/pe-polar/tests/golden/`. Change the golden file in the same commit and
 say why in the commit message. GRIB output is checked with the test reader
@@ -251,7 +293,15 @@ and, in CI, ecCodes.
   and CI explicitly use `CARGO_INCREMENTAL=0`.
 
 - The whole back end is Rust. No Python, Node or browser sidecars, and no
-  headless browser for scraping. Tracker formats are decoded in Rust.
+  headless browser for scraping. Tracker formats are decoded in Rust. The
+  one JavaScript file in `pe-app`, `src/mcp/bridge.js`, is not run by the
+  application: it is packed into the Claude Desktop extension and run by
+  Claude Desktop's own Node. It may `require` only `node:` built-ins
+  (nothing is installed beside it) and writes only JSON-RPC to stdout.
+- The workspace builds `reqwest` with `rustls-no-provider`, so even a
+  loopback test client needs a provider installed first
+  (`rustls::crypto::ring::default_provider().install_default()`), as
+  `tests/mcp.rs`'s `http()` does.
 - Use `rustls` with the `ring` provider and `reqwest` blocking with
   `default-features = false` and the `rustls-no-provider` feature (reqwest's
   plain `rustls` feature pulls in `aws-lc-rs`, a C library). No OpenSSL, no

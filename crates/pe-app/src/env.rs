@@ -841,9 +841,12 @@ pub fn queue_fetch(
 /// Fetches the environment of the named tracks: what is missing, or all
 /// of it again with `restart`. `interval` is `"hourly"` or
 /// `"three_hourly"`.
+///
+/// Generic over the Tauri runtime so the MCP service's tools, and their
+/// tests on a mock application, call this very command.
 #[tauri::command]
-pub fn start_env_fetch(
-    app: tauri::AppHandle,
+pub fn start_env_fetch<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     state: tauri::State<'_, AppState>,
     boat_context: Option<u64>,
     source_ids: Vec<u64>,
@@ -858,9 +861,10 @@ pub fn start_env_fetch(
 }
 
 /// Cancels the fetches of the named tracks, or all of them for null.
+/// Generic over the Tauri runtime, as [`start_env_fetch`].
 #[tauri::command]
-pub fn cancel_env_fetch(
-    app: tauri::AppHandle,
+pub fn cancel_env_fetch<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     state: tauri::State<'_, AppState>,
     boat_context: Option<u64>,
     source_ids: Option<Vec<u64>>,

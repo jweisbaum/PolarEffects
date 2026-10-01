@@ -461,6 +461,8 @@ button.source-label:hover { border-color: var(--border); background: var(--raise
   white-space: nowrap;
 }
 .polar-plot-tooltip strong { display: block; }
+/* The status bar's badge while an MCP client is connected (spec.md 3.7). */
+.mcp-badge { padding: 1px 7px; border: 1px solid var(--accent); border-radius: 9px; color: var(--accent); font-size: 11px; white-space: nowrap; }
 /* The Measure tool's readout (spec.md 9.2): pinned to the plot's corner, out of the pointer's way. */
 .polar-plot-canvas-wrap canvas.measuring { cursor: crosshair; }
 .polar-plot-controls button[aria-pressed="true"] { background: var(--selected-bg); color: var(--selected-ink); border-color: var(--accent); }
@@ -981,6 +983,14 @@ button.source-label:hover { border-color: var(--border); background: var(--raise
   color: var(--text);
 }
 .settings-buttons { display: flex; gap: 8px; margin: 6px 0; }
+/* Settings → MCP service (spec.md 3.7). */
+.mcp-settings .settings-buttons { flex-wrap: wrap; }
+.mcp-settings .settings-check { justify-content: flex-start; gap: 8px; }
+.mcp-settings .mcp-value { gap: 8px; }
+.mcp-settings code { font-size: 11px; overflow-wrap: anywhere; user-select: all; }
+.mcp-settings details { margin-top: 8px; }
+.mcp-settings summary { cursor: pointer; font-size: 12px; }
+.settings-snippet { margin: 8px 0 4px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--inset); font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; user-select: all; }
 
 .theme-picker { position: relative; width: 320px; max-width: 100%; margin: 6px 0; }
 .theme-picker > label { display: block; margin-bottom: 4px; color: var(--muted); }

@@ -65,6 +65,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     PolarPlotResult::export_all(&cfg)?;
     BlendSummary::export_all(&cfg)?;
     BlendCell::export_all(&cfg)?;
+    // The MCP service (spec.md 3.7): its settings and status, and what it
+    // tells the frontend.
+    pe_app::settings::McpStatus::export_all(&cfg)?;
+    pe_app::mcp::clients::McpClient::export_all(&cfg)?;
+    pe_app::mcp::clients::McpRegistered::export_all(&cfg)?;
+    pe_app::mcp::events::DocumentChanged::export_all(&cfg)?;
+    pe_app::mcp::events::McpActivity::export_all(&cfg)?;
+    pe_app::mcp::events::ViewStage::export_all(&cfg)?;
+    pe_app::mcp::events::ViewBoat::export_all(&cfg)?;
+    pe_app::mcp::events::ViewSelection::export_all(&cfg)?;
+    pe_app::mcp::capture::CaptureRequest::export_all(&cfg)?;
     pe_app::orr::OrrCatalogueInfo::export_all(&cfg)?;
     pe_app::orr::OrrSearchResult::export_all(&cfg)?;
     pe_app::orr::OrrProgress::export_all(&cfg)?;

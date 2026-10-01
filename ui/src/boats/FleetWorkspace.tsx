@@ -8,6 +8,7 @@ import { api, boatApi } from "../ipc";
 import { reportFailure } from "../errors";
 import { useT } from "../i18n";
 import { onReveal } from "../help/highlight";
+import { onShowBoat } from "../mcp/follow";
 import { pickExportDirectory } from "../project/dialogs";
 import { BoatProvider } from "./context";
 import BoatWorkspace from "./BoatWorkspace";
@@ -39,13 +40,21 @@ export default function FleetWorkspace({ project, settings, onSettings, onProjec
   rootId.current = project.id;
   const removed = useRef(new Set<number>());
   const tabsRequest = useRef(0);
+  /** The boats of the latest tabs read, and that read: what a failed reload asks before it is reported. */
+  const tabIds = useRef<Set<number> | null>(null);
+  const lastRefresh = useRef<Promise<void>>(Promise.resolve());
   const merge = useCallback((next: ProjectSummary) => setSummaries(current =>
     !removed.current.has(next.id) && (!current[next.id] || current[next.id]!.revision <= next.revision) ? { ...current, [next.id]: next } : current), []);
   const refreshTabs = useCallback(() => {
     const request = ++tabsRequest.current;
-    return api.boatTabs().then(value => {
-      if (request === tabsRequest.current && value?.tabs && value.project_id === rootId.current) setTabs(value);
+    const done = api.boatTabs().then(value => {
+      if (request === tabsRequest.current && value?.tabs && value.project_id === rootId.current) {
+        tabIds.current = new Set(value.tabs.map(tab => tab.id));
+        setTabs(value);
+      }
     }).catch(reportFailure);
+    lastRefresh.current = done;
+    return done;
   }, []);
   useEffect(() => { merge(project); void refreshTabs(); }, [project, merge, refreshTabs]);
   useEffect(() => { if (changedBoat) { merge(changedBoat); void refreshTabs(); } }, [changedBoat, merge, refreshTabs]);
@@ -57,9 +66,35 @@ export default function FleetWorkspace({ project, settings, onSettings, onProjec
   useEffect(() => {
     // A child write also advances the root revision. Refresh cached child
     // summaries after weather writes and save/undo, without a second event listener.
-    for (const id of loaded.current) if (id !== project.id) void boatApi(id).projectSummary().then(value => { if (value) merge(value); }).catch(reportFailure);
+    for (const id of loaded.current) if (id !== project.id) void boatApi(id).projectSummary().then(value => { if (value) merge(value); }).catch(error => {
+      // A boat that went with this very change (the MCP service's
+      // boat_remove) has no summary to read, and that is not a failure:
+      // the tabs, read again for the same change, say whether it is there.
+      void lastRefresh.current.then(() => { if (tabIds.current?.has(id) ?? true) reportFailure(error); });
+    });
   }, [project.revision, project.dirty, project.id, merge]);
   const select = (id: number) => { setActive(id); onActive(id); setRenaming(null); void load(id); };
+  // The MCP service's `view://boat`: show a boat's tab, as a click on it would.
+  const selectRef = useRef(select);
+  selectRef.current = select;
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  useEffect(() => onShowBoat(id => { setLayout(1); selectRef.current(id); }), []);
+  // The tabs are what boats there are. One can go or come back without this
+  // component having done it (the MCP service's boat_remove and
+  // boat_restore): drop the view of a boat that is gone, stop refusing one
+  // that is back, and show another when the one on show went.
+  useEffect(() => {
+    if (!tabs) return;
+    const ids = new Set(tabs.tabs.map(tab => tab.id));
+    for (const id of [...removed.current]) if (ids.has(id)) removed.current.delete(id);
+    setSummaries(current => Object.keys(current).every(id => ids.has(Number(id))) ? current
+      : Object.fromEntries(Object.entries(current).filter(([id]) => ids.has(Number(id)))));
+    setPanes(current => current.every(id => ids.has(id)) ? current : current.filter(id => ids.has(id)));
+    if (!ids.has(activeRef.current) && tabs.tabs[0]) selectRef.current(tabs.tabs[0].id);
+    // Only when the tabs were read again: a boat just added here is on show
+    // before the tabs that name it arrive.
+  }, [tabs]);
   const update = (next: ProjectSummary) => {
     merge(next);
     void refreshTabs();

@@ -3,6 +3,7 @@ import type { ProjectSummary } from "../generated/ProjectSummary";
 import type { AppSettings } from "../generated/AppSettings";
 import { msg, useT } from "../i18n";
 import { onReveal } from "../help/highlight";
+import { onShowStage } from "../mcp/follow";
 import MapView from "../map/MapView";
 import LeftNav from "../panels/LeftNav";
 import RightPanel from "../panels/RightPanel";
@@ -39,6 +40,12 @@ export default function BoatWorkspace({ project, settings, onSettings: setSettin
   useEffect(() => onFocusMap(() => { if (!split) setStage("map"); setPlotFull(false); }), [onFocusMap, split]);
   useEffect(() => onEditSource(() => { setStage("3d"); setPlotFull(false); }), [onEditSource]);
   useEffect(() => onCompareSource(id => { if (id === project.id && !split) { setStage("compare"); setPlotFull(false); } }), [project.id, split]);
+  // The MCP service's `view://stage`: this boat's stage, whether or not this
+  // boat is the one on show (its tab is shown next, in the single layout).
+  useEffect(() => onShowStage(project.id, next => {
+    if (next === "plot") { setPlotFull(true); return; }
+    setStage(next); setPlotFull(false);
+  }), [project.id]);
   useEffect(() => {
     if (!active) return;
     const open = (name: keyof PanelState) => setPanels(current => reveal(current, name));

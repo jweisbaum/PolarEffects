@@ -17,30 +17,9 @@ import { describeError } from "../errors";
 import { api } from "../ipc";
 import ThemePicker from "./ThemePicker";
 import DatabaseSettings from "./DatabaseSettings";
+import IntegerField from "./IntegerField";
+import McpSection from "./McpSection";
 import OrrScraper from "./OrrScraper";
-
-/**
- * A whole number typed in and committed on Enter or on leaving the field,
- * so a half-typed value is never saved.
- */
-function IntegerField({ value, min, max, onCommit, ...rest }: {
-  value: number; min: number; max: number; onCommit: (value: number) => void;
-  "data-feature": string; title: string; "aria-label": string;
-}) {
-  const [text, setText] = useState(String(value));
-  useEffect(() => setText(String(value)), [value]);
-  const commit = () => {
-    const parsed = Number(text);
-    if (Number.isInteger(parsed) && parsed >= min && parsed <= max) {
-      if (parsed !== value) onCommit(parsed);
-    } else {
-      setText(String(value));
-    }
-  };
-  return <input type="number" inputMode="numeric" min={min} max={max} step={1} value={text} {...rest}
-    onChange={(event) => setText(event.target.value)} onBlur={commit}
-    onKeyDown={(event) => { if (event.key === "Enter") commit(); }} />;
-}
 
 /** The dot bands offered, knots either side of the plot's wind speed (spec.md 9.2). */
 const PLOT_BANDS = [0.25, 0.5, 1, 1.5, 2, 3, 5];
@@ -86,6 +65,7 @@ export default function SettingsDialog({ settings, onSettings, onClose }: {
       onReveal("settings:autosave", show),
       onReveal("settings:weather", show),
       onReveal("settings:network", show),
+      onReveal("settings:mcp", show),
       onReveal("settings:orr", show),
       onReveal("settings:database", show),
     ];
@@ -197,6 +177,8 @@ export default function SettingsDialog({ settings, onSettings, onClose }: {
               onCommit={(value) => save(api.setNetwork({ ...settings.network, timeout_s: value }))} />
           </label>
         </section>
+
+        <McpSection onError={setError} />
 
         <DatabaseSettings settings={settings} onSettings={onSettings} />
         <OrrScraper />

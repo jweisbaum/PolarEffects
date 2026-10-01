@@ -264,9 +264,9 @@ does not touch it.
   an MCP tool*, and the gotcha that `bridge.js` may use only `node:`
   built-ins and writes only JSON-RPC to stdout. `docs/USER-GUIDE.md`
   describes the section.
-- `npm run check:offline` is unchanged in what it reads. It cannot see a
-  listener; the *off means off* test (§8) is the enforcement, and a comment
-  in `tools/check-offline.sh` says so.
+- `npm run check:offline` cannot see a listener; the *off means off* test
+  (§8) is the enforcement, and a comment in `tools/check-offline.sh` says
+  so. Its dependency layer changes (§10).
 
 ## 8. Testing
 
@@ -315,3 +315,71 @@ does not touch it.
 - MCP resources and prompts.
 - The PostgreSQL track library through MCP (§3, `invoke`'s exclusions).
 - Exposing the block cache, packets or other rendering internals.
+
+## 10. Deviations from this design
+
+Recorded as the service was built (2026-10-01); `spec.md` §3.7 is the
+description of what exists.
+
+- **`check:offline` did change.** Unlike VectorEffects' script, this one
+  refuses any HTTP crate named in a manifest outside `pe-env` and
+  `pe-trackers`. It now admits, in `pe-app` only: `hyper` with features from
+  {server, http1}, `hyper-util` with {tokio}, and `rmcp` without default
+  features and with features from {server, macros,
+  transport-streamable-http-server}, each on one line in `[dependencies]`;
+  and `reqwest` in `[dev-dependencies]` without default features. Any other
+  feature, a feature list continued on another line, or a
+  `[dependencies.<crate>]` table fails it.
+- **Results are JSON, not typed.** Tools answer with one `json()` helper
+  (text plus `structuredContent`) rather than `Json<T>` with an output
+  schema, so the interface's IPC types need no `JsonSchema` derive.
+- **Structured parameters are patches.** `track_set`, `blend_set` and
+  `blend_filters_set` take only the fields to change, written over what
+  the boat has. `clear_global` removes the global filters. A key that is
+  not a field is refused with the fields listed (final review): dropped in
+  silence, it left an agent believing a filter was on.
+- **`track_samples` was added**: without it no tool gives the sample ids
+  that `sample_get` and `samples_exclude` take. `boat_select` became
+  `view_boat` plus an optional `boat` on every tool (§3).
+- **Cells by value.** `blend_cell` and `polar_edit` take TWA and TWS
+  values, refused with the axis listed when off the grid.
+- **`invoke` excludes every settings command**, not only the language: each
+  answers the whole settings file (the PostgreSQL password, the YellowBrick
+  keys, the service's own token). The ORR scrape, which §1 names among
+  what a client may start, is the tool `orr_refresh` (final review; first
+  left out): the command takes the application handle, which `invoke`'s
+  table cannot give.
+- **A file already there is not replaced without `overwrite: true`**
+  (final review): `project_save` to a new path and `export_polar`. §1's "no
+  extra confirmation dialogs" stands; this is the caller saying it in the
+  call, as `discard_unsaved` already was. `save_project_as` and
+  `export_polar` are not reachable through `invoke`, which would be the way
+  around it. `export_all` writes into a folder as the interface's own does.
+- **Reading files is not narrowed.** `track_files_inspect` answers the
+  header and first rows of any text file it is pointed at, as the
+  interface's dialog (which offers "All files") can open any. Left for the
+  user to decide whether tools should take only track and polar extensions.
+- **A long tool watches the request's token.** `rmcp` cancels
+  `ctx.ct`; it does not drop the tool's future. `weather_fetch` returns on
+  it, and a guard cancels the fetch.
+- **A session is uncounted only if it was counted**, where VectorEffects
+  decrements on every drop. **A client that keeps no session is counted
+  from its calls** (final review): `rmcp` answers a 2026-07-28 request
+  without `initialize` or a session, so the indicator §1's consent rests on
+  would never have shown for such a client. Stopping the listener resets
+  the count at once, whatever idle sessions `rmcp` still holds.
+- **`view://stage` names its boat** (final review), set on that boat's own
+  view rather than through the help search's reveal steps, which only the
+  boat on show hears. Without a boat the tool means the first, as every
+  tool does, and shows its tab.
+- **`tracker_event` does not watch the request's token yet**: an abandoned
+  call's download runs to its end (bounded by the network timeout) and the
+  event is kept for the session. Deferred.
+- **No `tracing`.** A bind failure is stored for Settings to show; a failed
+  accept is dropped.
+- **The screenshot is the stage's canvas alone**, the largest one on show,
+  without the panels or the labels drawn over it.
+- **A contradictory settings file** (on without a token, a token while off)
+  loads as off.
+- **The end-to-end check** connects with the MCP SDK's own client from the
+  driver suite (`tools/webdriver/ux/16-mcp-follow.test.mjs`).

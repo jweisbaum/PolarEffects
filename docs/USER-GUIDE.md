@@ -321,6 +321,38 @@ or a custom grid. Inspect the preview, then choose a destination. The blend is
 recomputed for every export; exporting does not save the project or replace
 its sources. Given the same project and options, export bytes are reproducible.
 
+## Let an AI client drive PolarExplorer
+
+**Settings → MCP service** lets an AI client on the same computer work in
+PolarExplorer for you: open a project, add certificates, polar files and
+tracks, fetch weather, set weights and filters, read what stands behind a
+blend cell, compare and export. It uses the same commands the interface
+does, so every change it makes is one you can undo, and you watch the views
+follow it. While a client is connected the status bar shows **MCP** and the
+last tool it called. It does not replace a file that is already there (a
+project saved under a new name, an exported polar) unless it was told to.
+
+The service is off until you turn it on. Turning it on opens a port on this
+computer only (47392 unless you change it) and issues a token a client must
+present; turning it off closes the port and forgets the token. **Rotate
+token** issues a new one, after which a client added before must be added
+again.
+
+- **Add to Claude Code** and **Add to Codex** write the service into that
+  client's own configuration. Restart a session that is already running.
+- **Add to Claude Desktop** (macOS and Windows) opens PolarExplorer's
+  extension in Claude Desktop, where you confirm the install. It needs
+  installing once.
+- **Configuration for other clients** gives the address and token as text.
+- **ChatGPT** is not offered: it reaches MCP servers only over the public
+  internet, and this service answers only on this computer.
+
+A client cannot read or change Settings, use the track database or quit the
+application. It can start the downloads you can start (a tracker's race,
+weather for a track, a year of the ORR catalogue); ask it to say so first
+if that matters to you. It can also read the files you could open here: a
+track or polar file it is pointed at is read wherever it is.
+
 ## When something is missing
 
 - **Track absent in a polar view:** fetch wind and check filters and exclusions.

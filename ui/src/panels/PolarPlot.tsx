@@ -2,6 +2,7 @@ import { useBoatApi } from "../boats/context";
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 
 import { needsOutline } from "../colourContrast";
+import { registerCapture } from "../mcp/capture";
 import DayBandLegend from "../DayBandLegend";
 import { reportFailure } from "../errors";
 import type { BlendCell } from "../generated/BlendCell";
@@ -345,6 +346,13 @@ export default function PolarPlot({ project, variant, unit = "kn", onFullSize, o
   }, [redraw]);
 
   useEffect(() => onThemeChange(redraw), [redraw]);
+
+  // The MCP service's screenshot reads the full-size plot when it is the
+  // stage on show (the panel's small plot is not a stage).
+  useEffect(() => {
+    const element = canvas.current;
+    return variant === "overlay" && element ? registerCapture(element, redraw) : undefined;
+  }, [variant, redraw, visibleCount]);
 
   /** The pointer's place on the plot, or null where the fan is not (the port side of a symmetric plot). */
   const pointed = useCallback((event: MouseEvent<HTMLCanvasElement>): { point: PolarPoint; scale: number } | null => {

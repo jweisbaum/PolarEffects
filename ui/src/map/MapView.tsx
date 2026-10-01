@@ -2,6 +2,7 @@ import { useBoatApi } from "../boats/context";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { registerRedraw } from "../automation";
+import { registerCapture } from "../mcp/capture";
 import type { AppSettings } from "../generated/AppSettings";
 import type { ProjectSummary } from "../generated/ProjectSummary";
 import type { SampleDetails } from "../generated/SampleDetails";
@@ -109,6 +110,11 @@ export default function MapView({ project, settings, onSettings }: {
   useEffect(() => {
     const element = canvas.current;
     return element ? registerRedraw(element, paint) : undefined;
+  }, [paint]);
+  // The MCP service's screenshot reads this canvas (every build).
+  useEffect(() => {
+    const element = canvas.current;
+    return element ? registerCapture(element, paint) : undefined;
   }, [paint]);
 
   const fit = useCallback(() => {

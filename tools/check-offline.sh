@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Enforces invariant 4: nothing is fetched that the user did not ask for, and
-# HTTP is limited to two crates; pe-app additionally connects to the user-configured PostgreSQL server.
+# HTTP is limited to two crates; pe-app additionally connects to the user-configured PostgreSQL server,
+# and holds the MCP service's loopback listener (D29), whose server crates layer 2 admits and nothing else.
 #
 # Adapted from VectorEffects. Four layers, each checking what it can check:
 #
@@ -96,8 +97,57 @@ hits=$(grep -nE 'https?://' "$CONF" 2>/dev/null | grep -vE "$ALLOW" || true)
 # A network client named as a direct dependency outside the two network crates.
 NET_CRATES='reqwest|ureq|hyper|hyper-util|isahc|curl|attohttpc|surf|tokio-tungstenite|tungstenite|zarrs_http'
 hits=$(find crates -name Cargo.toml -not -path 'crates/pe-env/*' -not -path 'crates/pe-trackers/*' \
+  -not -path 'crates/pe-app/*' \
   -exec grep -nHE "^[[:space:]]*($NET_CRATES)[[:space:]]*=" {} + 2>/dev/null || true)
 [ -n "$hits" ] && report "network client dependency outside pe-env and pe-trackers" "$hits"
+
+# pe-app holds the MCP service (spec.md 3.7, D29): the one inbound exception
+# to invariant 4, a loopback listener that exists only while the person has
+# switched it on. It needs an HTTP *server*, never a client, so exactly this
+# is admitted and nothing wider:
+#   - `hyper` in [dependencies] with features from {server, http1} only;
+#   - `hyper-util` in [dependencies] with features from {tokio} only;
+#   - `rmcp` in [dependencies] without default features and with features
+#     from {server, macros, transport-streamable-http-server} only (its
+#     `auth`, `reqwest` and client transports all pull in an HTTP client);
+#   - `reqwest` in [dev-dependencies] only, without default features: the
+#     tests' own HTTP client, which talks to that listener on 127.0.0.1.
+# The feature list is read from the dependency's own line, so each of the
+# three is written on one line with its `features = [...]`; a list continued
+# on the next line, or a `[dependencies.<crate>]` table, is refused rather
+# than left unread.
+# **This check cannot see a listener.** It reads manifests, source URLs, the
+# built bundle and the CSP. That the socket is absent while the setting is
+# off is held by `off_means_no_socket_and_stop_releases_the_port`
+# (crates/pe-app/tests/mcp.rs), not here.
+hits=$(awk -v crates="^[[:space:]]*($NET_CRATES|rmcp)[[:space:]]*=" \
+  -v tables="^\\[[a-z.-]*dependencies\\.($NET_CRATES|rmcp)\\]" '
+  # Whether every feature the line names is one of `allowed` (space-separated).
+  function only(line, allowed,    list, parts, n, i, feature) {
+    if (match(line, /features[[:space:]]*=[[:space:]]*\[[^]]*\]/) == 0) return 0
+    list = substr(line, RSTART, RLENGTH)
+    sub(/^[^[]*\[/, "", list); sub(/\]$/, "", list)
+    n = split(list, parts, ",")
+    for (i = 1; i <= n; i++) {
+      feature = parts[i]; gsub(/[[:space:]"]/, "", feature)
+      if (feature != "" && index(" " allowed " ", " " feature " ") == 0) return 0
+    }
+    return 1
+  }
+  /^\[/ { section = $0 }
+  $0 ~ tables { print FILENAME ":" FNR ":" $0 }
+  $0 ~ crates {
+    name = $1
+    ok = 0
+    bare = ($0 ~ /default-features[[:space:]]*=[[:space:]]*false/)
+    if (section == "[dependencies]" && name == "hyper" && only($0, "server http1")) ok = 1
+    if (section == "[dependencies]" && name == "hyper-util" && only($0, "tokio")) ok = 1
+    if (section == "[dependencies]" && name == "rmcp" && bare && only($0, "server macros transport-streamable-http-server")) ok = 1
+    if (section == "[dev-dependencies]" && name == "reqwest" && bare) ok = 1
+    if (section == "[dev-dependencies]" && name == "rmcp") ok = 1
+    if (!ok) print FILENAME ":" FNR ":" $0
+  }' crates/pe-app/Cargo.toml)
+[ -n "$hits" ] && report "network client dependency in pe-app (only the MCP service's server crates are admitted)" "$hits"
 
 # PostgreSQL is explicitly configured by the user and belongs only in pe-app.
 hits=$(find crates -name Cargo.toml -not -path 'crates/pe-app/*' \

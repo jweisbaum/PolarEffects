@@ -19,6 +19,7 @@ pub mod env;
 pub mod error;
 pub mod grib;
 pub mod map_tracks;
+pub mod mcp;
 pub mod menu;
 pub mod orc;
 pub mod orr;
@@ -57,6 +58,7 @@ pub fn run() -> anyhow::Result<()> {
     };
     let app = builder
         .manage(commands::AppState::new(paths))
+        .manage(mcp::McpService::default())
         .setup(|app| {
             let language = app
                 .state::<commands::AppState>()
@@ -66,6 +68,15 @@ pub fn run() -> anyhow::Result<()> {
             autosave::start(app.handle().clone());
             env::start(app.handle().clone());
             database::on_startup(app.handle().clone());
+            // The MCP service, only if the person left it on (spec.md 3.7).
+            // With the setting off this starts nothing: no socket, no task.
+            let mcp_settings = app
+                .state::<commands::AppState>()
+                .with_session(|session| Ok(session.settings.mcp.clone()));
+            if let Ok(mcp_settings) = mcp_settings {
+                app.state::<mcp::McpService>()
+                    .apply(app.handle(), &mcp_settings);
+            }
             Ok(())
         })
         .on_menu_event(|app, event| match event.id().as_ref() {
@@ -182,6 +193,12 @@ pub fn run() -> anyhow::Result<()> {
             settings::set_network,
             settings::set_projection,
             settings::set_plot_band,
+            settings::mcp_status,
+            settings::mcp_set,
+            settings::mcp_rotate_token,
+            mcp::clients::mcp_register_client,
+            mcp::capture::deliver_capture,
+            mcp::capture::refuse_capture,
             settings::legacy_cache_notice,
             settings::remove_old_chunk_cache,
             quit::quit_app,

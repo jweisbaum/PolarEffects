@@ -31,7 +31,15 @@ import StartScreen from "./project/StartScreen";
 import UnsavedChangesDialog from "./project/UnsavedChangesDialog";
 import SettingsDialog from "./settings/SettingsDialog";
 import { applyTheme } from "./settings/themes";
-import { resetSelection } from "./selection";
+import { resetSelection, selectSamplesOf } from "./selection";
+import type { CaptureRequest } from "./generated/CaptureRequest";
+import type { DocumentChanged } from "./generated/DocumentChanged";
+import type { McpActivity } from "./generated/McpActivity";
+import type { ViewBoat } from "./generated/ViewBoat";
+import type { ViewSelection } from "./generated/ViewSelection";
+import type { ViewStage } from "./generated/ViewStage";
+import { captureStage } from "./mcp/capture";
+import { applyDocumentChanged, showBoat, showStage, type ShownStage } from "./mcp/follow";
 
 /**
  * Application shell (spec.md 3). The help window wraps everything so F1 and
@@ -69,6 +77,8 @@ function Shell() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [status, setStatus] = useState<Line | null>(null);
+  // What an MCP client is doing, for the status bar's badge (spec.md 3.7).
+  const [mcpActivity, setMcpActivity] = useState<McpActivity | null>(null);
   // Non-null while the New Project dialog is up; the boolean is the answer the
   // user already gave about unsaved changes, carried through to the command.
   const [trackerOpening, setTrackerOpening] = useState<{ discardUnsaved: boolean } | null>(null);
@@ -314,6 +324,44 @@ function Shell() {
   }, [mayReplace, enter]);
 
   /**
+   * The interface follows the MCP service (spec.md 3.7): each event is what
+   * the shell would have done itself had it made the call. The latest
+   * project and `enter` are read through a ref, since the listeners are
+   * registered once.
+   */
+  const followDeps = useRef({ enter, updateProject, project });
+  followDeps.current = { enter, updateProject, project };
+  useEffect(() => {
+    const subs = [
+      listen<DocumentChanged>("document://changed", (event) => applyDocumentChanged(event.payload, {
+        currentId: followDeps.current.project?.id ?? null,
+        enter: (next) => followDeps.current.enter(next),
+        update: (next) => followDeps.current.updateProject(next),
+      })),
+      // To the named boat's own view, then that boat's tab: each boat's
+      // view holds its stage, and the one on show may be another's.
+      listen<ViewStage>("view://stage", (event) => {
+        showStage(event.payload.boat, event.payload.stage as ShownStage);
+        showBoat(event.payload.boat);
+      }),
+      listen<ViewBoat>("view://boat", (event) => showBoat(event.payload.boat)),
+      listen<ViewSelection>("view://selection", (event) => {
+        selectSamplesOf(event.payload.boat ?? activeBoat.current, event.payload.samples, "tracks");
+      }),
+      listen<CaptureRequest>("view://capture", (event) => {
+        const { id } = event.payload;
+        try {
+          void api.deliverCapture(id, captureStage()).catch(() => undefined);
+        } catch (error) {
+          void api.refuseCapture(id, error instanceof Error ? error.message : String(error)).catch(() => undefined);
+        }
+      }),
+      listen<McpActivity>("mcp://activity", (event) => setMcpActivity(event.payload)),
+    ].map((pending) => pending.catch(() => null));
+    return () => { for (const pending of subs) void pending.then((off) => off?.()); };
+  }, []);
+
+  /**
    * Quit and the window's close button (spec.md 3.3). Rust asks only when
    * there is something to lose; the latest guard is read through a ref, since
    * the listener is registered once.
@@ -461,6 +509,7 @@ function Shell() {
       <div className="statusbar" data-feature="shell:statusbar" title={t("Hints, errors and work in progress")}>
         <BusySpinner />
         <EnvJobsIndicator />
+        <McpBadge activity={mcpActivity} />
         <StatusHint status={status} />
         <span className="spacer" />
         {project.path !== null && <span className="muted path" title={project.path}>{project.path}</span>}
@@ -511,6 +560,22 @@ function EnvJobsIndicator() {
         onClick={() => { api.cancelEnvFetch(null).catch(reportFailure); }}>
         {t("Cancel fetch")}
       </button>
+    </span>
+  );
+}
+
+/**
+ * The status bar's badge while an MCP client is connected (spec.md 3.7):
+ * the application says so whenever something other than the person is
+ * driving it, and names the last tool called. Nothing while none is.
+ */
+function McpBadge({ activity }: { activity: McpActivity | null }) {
+  const t = useT();
+  if (activity === null || activity.sessions === 0) return null;
+  return (
+    <span className="mcp-badge" role="status" data-feature="shell:mcp-badge"
+      title={t("An AI client is connected through the MCP service (Settings)")}>
+      {activity.last_tool === null ? t("MCP: connected") : t("MCP: {tool}", { tool: activity.last_tool })}
     </span>
   );
 }

@@ -2,6 +2,7 @@
 import type { AutosaveMode } from "./AutosaveMode";
 import type { DatabaseSettings } from "./DatabaseSettings";
 import type { MapProjection } from "./MapProjection";
+import type { McpSettings } from "./McpSettings";
 import type { NetworkSettings } from "./NetworkSettings";
 import type { Units } from "./Units";
 
@@ -51,4 +52,8 @@ projection: MapProjection,
  * drawn, knots either side (spec.md 9.2). A display preference: it
  * changes what is drawn, never the blend.
  */
-plot_tws_band_kn: number, };
+plot_tws_band_kn: number,
+/**
+ * The MCP service (spec.md 3.7). Absent from older files: off.
+ */
+mcp: McpSettings, };

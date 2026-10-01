@@ -11,6 +11,7 @@ import { DEFAULT_UNITS } from "../panels/filterUnits";
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 
 import { registerPolarInspection, registerRedraw } from "../automation";
+import { registerCapture } from "../mcp/capture";
 import { needsOutline } from "../colourContrast";
 import { reportFailure } from "../errors";
 import type { AppSettings } from "../generated/AppSettings";
@@ -203,6 +204,8 @@ export default function PolarView({ project, settings, onProject, compact = fals
     scene.current = made;
     // The WebDriver screenshot's synchronous redraw (development builds only).
     const offRedraw = registerRedraw(element, paint);
+    // The MCP service's screenshot reads this canvas (every build).
+    const offCapture = registerCapture(element, paint);
     const offInspection = registerPolarInspection(element, () => ({ view: made.getView(), points: Array.from(made.projected()) }));
     made.setBackground(cssColour("--inset", "#1f2c3c"));
     made.enableControls(element, draw, () => syncRef.current?.publish({ kind: "camera", boat: project.id, view: made.getView(), layout: linkedLayout.current }));
@@ -222,6 +225,7 @@ export default function PolarView({ project, settings, onProject, compact = fals
       observer?.disconnect();
       offTheme();
       offRedraw();
+      offCapture();
       offInspection();
       cancelAnimationFrame(frame.current);
       frame.current = 0;

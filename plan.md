@@ -1272,11 +1272,72 @@ the last track selects the Map stage again; the stage code is untouched here.
 The rename's search-and-replace also rewrote the name inside the binary GRIB
 golden file; it was regenerated from the writer and its pinned hash updated.
 
-### M21 — MCP service · **in progress**
+### M21 — MCP service · **complete** (2026-10-01)
 
 Design approved 2026-10-01 (D29,
-`docs/superpowers/specs/2026-10-01-mcp-service-design.md`); implementation
-plan in `docs/superpowers/plans/2026-10-01-mcp-service.md`.
+`docs/superpowers/specs/2026-10-01-mcp-service-design.md`, whose §10 lists
+where the implementation departed from it); implementation plan in
+`docs/superpowers/plans/2026-10-01-mcp-service.md`.
+
+- [x] The listener: `rmcp` over Streamable HTTP on `127.0.0.1`, a bearer
+  token checked before any MCP handling, `Host` and `Origin` held to the
+  loopback names, nothing created while the setting is off.
+- [x] Settings → MCP service: the switch, the port, the token and its
+  rotation, the address, who is connected, and a translated line when the
+  port cannot be opened.
+- [x] 51 tools in eleven groups, each calling the interface's own command;
+  `invoke` for the rest, with its exclusions held to the registered commands
+  by a test.
+- [x] The interface follows: `document://changed`, a boat's stage and tab,
+  the selection, a screenshot of the stage, and the status bar's **MCP**
+  badge — also for a client that keeps no session, and cleared at once when
+  the service is switched off.
+- [x] *Add to Claude Code*, *Add to Codex*, *Add to Claude Desktop* (an
+  extension holding no secret), and text for other clients. No ChatGPT.
+- [x] Invariant 4's inbound exception recorded (CLAUDE.md, spec §1.5,
+  §3.7); `check-offline.sh` admits in `pe-app` only the service's server
+  crates with their server features.
+
+**Validation (2026-10-01).** 783 Rust tests (27 ignored: live and
+platform-only), of which 58 drive the service over HTTP against a mock
+application and one runs Claude Desktop's bridge under Node; 420 UI tests;
+the 5 performance checks; formatting, workspace clippy, TypeScript, the
+offline check (its `pe-app` rule checked against seven mutated manifests)
+and the driver tooling's 10 tests. The desktop walkthrough
+`16-mcp-follow` connects the MCP SDK's own client to the real application
+and passes; its four screenshots were inspected (Settings with the service
+on, the interface after the client's import and weight, a second boat on
+Compare, the same boat removed). The whole desktop suite: 16 of 17 pass.
+
+One fresh-context review of the whole milestone found no critical defect
+and six important ones, all fixed with a test that failed first: a client
+on the 2026-07-28 protocol was never counted (so no badge); a misspelt key
+in a patch was dropped and the tool answered success; `project_save` and
+`export_polar` replaced existing files without being told to; the `Host`
+and `Origin` tests could not fail; a boat removed or restored by a client
+left the boat tabs inconsistent; and `view_stage` for a named boat set the
+stage of whichever boat was on show. With them: weather cancel and wait
+are per boat, the offline check's `pe-app` rule is an exact feature list,
+switching off clears the count at once, the bind error is translated, and
+the ORR catalogue scrape is the tool `orr_refresh`, as the design's consent
+line said. The minors left are in the design's §10 and below.
+
+**Open.** `01-new-project` still fails at "undo restores Map without
+reopening it" (as under M20; `BoatWorkspace` keeps the requested stage at
+"map" while the last track is gone, so undoing the removal shows the map
+again). Not narrowed: `track_files_inspect` reads the first rows of any
+text file it is pointed at, as the interface's "All files" dialog can.
+Deferred minors from the review: an unknown boat id is refused as "No
+project is open."; `tracker_event` does not stop when its request is
+cancelled; enabling and disabling at the same instant is not serialised; a
+refused write on the start screen closes an open New Project dialog; the
+Codex and settings files are written before they are made owner-only, a
+symlinked `config.toml` is replaced by a file, and `claude`'s own error
+text is shown unscrubbed; the accept loop does not back off on a
+persistent accept error; UNC paths, device files and `invoke`'s path
+arguments are not checked; three test gaps (a dropped connection rather
+than a closed session, one assertion that cannot fail, the nothing-open
+refusal checked for six tools rather than all).
 
 ## 3. Testing strategy
 

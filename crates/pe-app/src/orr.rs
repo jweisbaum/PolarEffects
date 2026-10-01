@@ -475,10 +475,12 @@ pub fn cancel_orr_scrape(
     Ok(())
 }
 
-/// Start a background scrape only on this explicit command.
+/// Start a background scrape only on this explicit command. Generic over
+/// the Tauri runtime so the MCP service's `orr_refresh` calls this same
+/// command, and its tests can through a mock application.
 #[tauri::command]
-pub fn start_orr_scrape(
-    app: tauri::AppHandle,
+pub fn start_orr_scrape<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     state: tauri::State<'_, AppState>,
     boat_context: Option<u64>,
     year: i32,

@@ -2,6 +2,7 @@ import { useBoatApi } from "../boats/context";
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import { registerRedraw } from "../automation";
+import { registerCapture } from "../mcp/capture";
 import { describeError, reportFailure } from "../errors";
 import type { AppSettings } from "../generated/AppSettings";
 import type { CompareOperand } from "../generated/CompareOperand";
@@ -108,6 +109,8 @@ export default function CompareView({ project, settings }: {
     }
     scene.current = made;
     const offRedraw = registerRedraw(element, paint);
+    // The MCP service's screenshot reads this canvas (every build).
+    const offCapture = registerCapture(element, paint);
     made.setBackground(cssColour("--inset", "#1f2c3c"));
     made.enableControls(element, draw);
     const resize = () => {
@@ -126,6 +129,7 @@ export default function CompareView({ project, settings }: {
       observer?.disconnect();
       offTheme();
       offRedraw();
+      offCapture();
       cancelAnimationFrame(frame.current);
       frame.current = 0;
       made.dispose();

@@ -79,9 +79,11 @@ These are repeated from `CLAUDE.md`, which is authoritative:
 2. The blend is derived, never stored as truth.
 3. Fetched environment samples are project data; rendered views are not.
 4. Nothing is fetched that the user did not ask for, and nothing reaches in.
-   The one inbound socket, a WebDriver endpoint on loopback for agent-driven
-   UI tests, is compiled in only with `pe-app`'s `webdriver` feature, which
-   no shipped build enables (D25).
+   A WebDriver endpoint on loopback for agent-driven UI tests is compiled in
+   only with `pe-app`'s `webdriver` feature, which no shipped build enables
+   (D25). **One inbound exception (D29):** the MCP service of §3.7 listens
+   on `127.0.0.1` while — and only while — the person has switched it on in
+   Settings, and answers only to the token that switch issued.
 5. Export is deterministic and byte-reproducible.
 6. Interaction stays fast; imports and fetches may be slow.
 7. Every string is translatable and every control is findable.
@@ -304,6 +306,8 @@ or a failed write leaves the previous setting in place.
 - **Polar plot dot band** (§9.2): how far from the plot's wind speed a
   sample may be and still be drawn, ±0.25 to ±5 kn (default ±1 kn). A display
   preference; it never changes the blend.
+- **MCP service** (§3.7): off by default; a port (default 47392) and, while
+  on, a token. The settings file is written owner-only.
 
 ### 3.4.1 PostgreSQL track library
 
@@ -475,6 +479,107 @@ Copied from VectorEffects (spec §5.8 there), with the highlight in orange:
 - Errors are shown translated by their `kind` (§1.4); Rust's English message
   is kept only as the tooltip, and an unknown kind shows a translated generic
   line.
+
+### 3.7 MCP service
+
+An MCP (Model Context Protocol) server inside the application (D29), so an
+AI client on the same computer can drive it. Follows VectorEffects' service;
+the design is `docs/superpowers/specs/2026-10-01-mcp-service-design.md`.
+
+- **Off unless switched on.** Settings → MCP service turns it on, which
+  issues a token (32 random bytes, base64url) and opens a listener on
+  `127.0.0.1` at the port in Settings (47392 by default; a taken port is
+  shown as an error and the setting stays on, so the next launch tries
+  again). Turning it off closes the port and clears the token. While off the
+  module creates no socket, thread or task. *Rotate token* issues a new one.
+  A settings file that says on without a token, or holds a token while off,
+  loads as off.
+- **Guards.** Streamable HTTP at `/mcp` only. Every request must carry
+  `Authorization: Bearer <token>`, compared in constant time, or is answered
+  `401` before any MCP handling. `Host` and `Origin` are held to the
+  loopback names, so a web page cannot reach it through a rebound name.
+- **Tools call the interface's own commands**, so an agent's edit is
+  validated, undoable and autosaved exactly as a person's, and sources stay
+  immutable behind overlays (invariant 1). A refusal reaches the client as a
+  tool result with the text the interface would show, and — where the
+  interface would ask — what to do instead (`discard_unsaved`, a `path`).
+  Units are the domain's (knots, degrees, "from"/"toward", UTC seconds),
+  never the display units. Every tool that reads or edits a boat takes an
+  optional `boat` id. A structured parameter (filters, settings, an edit)
+  is an object holding only what changes, also accepted as a string of JSON;
+  a key that is not one of its fields is refused with the fields listed,
+  never dropped. `project_save` to a new path and `export_polar` refuse to
+  replace a file that is already there unless the call passes
+  `overwrite: true`, as the interface's save dialog asks.
+
+  | Group | Tools |
+  |---|---|
+  | Guide | `polarexplorer_guide` |
+  | Project | `project_status`, `project_new`, `project_open`, `project_save`, `project_close`, `recent_projects` |
+  | Boats | `boats_list`, `boat_add`, `boat_rename`, `boat_remove`, `boat_restore` |
+  | Sources | `sources_list`, `source_set`, `source_move`, `source_remove`, `orc_search`, `orc_add`, `orr_search`, `orr_add`, `orr_refresh`, `polar_files_import` |
+  | Tracks | `track_files_inspect`, `track_files_import`, `tracker_event`, `tracker_import`, `track_set`, `track_samples`, `sample_get`, `samples_exclude` |
+  | Weather | `weather_estimate`, `weather_fetch`, `weather_cancel`, `weather_jobs` |
+  | Blend | `blend_status`, `blend_set`, `blend_filters_set`, `polar_read`, `blend_cell`, `polar_edit`, `compare` |
+  | Export | `export_preview`, `export_polar`, `export_all` |
+  | View | `screenshot`, `view_stage`, `view_boat`, `selection_set` |
+  | History | `undo`, `redo` |
+  | Escape hatch | `invoke` |
+
+- **Cells are named by value.** `blend_cell` and `polar_edit` take TWA and
+  TWS values; a value not on the grid is refused with the axis listed.
+- **Long tools.** `weather_fetch` waits for the given tracks, reports MCP
+  progress, and cancels its fetch when the client cancels the request or
+  goes away (invariant 6); what was already fetched is kept. Source ids are
+  each boat's own, so a fetch or a cancel without `boat` is the first
+  boat's and leaves the others' alone. `tracker_event` downloads through
+  `pe-trackers` as the dialog does, and `orr_refresh` starts the ORR
+  catalogue's scrape of one certificate year as Settings does. These are
+  the person's agent asking, on the allow-listed hosts only (invariant 4).
+- **`invoke`** runs any other IPC command by name, with unknown arguments
+  refused. Not reachable through it: the service's own commands, every
+  settings command (each answers the whole settings file, which holds the
+  PostgreSQL password, the YellowBrick keys and the service's token), the
+  PostgreSQL track library, quitting, the commands that answer packed
+  bytes, those that need the application handle (their tools carry them),
+  and `save_project_as` and `export_polar` (their tools hold the overwrite
+  rule). A test holds the table and the exclusions equal to the registered
+  commands.
+- **The view follows.** The service — and only the service — emits
+  `document://changed` after every tool that wrote or opened, saved or closed
+  a project (whether it succeeded or refused part-way), and the shell applies
+  it as it applies its own results: an edit replaces the summary, a
+  different project is entered. A boat a client removed leaves no pane
+  behind, and one it restored is shown again. `view://stage`, `view://boat`
+  and `view://selection` move what is on screen; they are not edits. A
+  stage is a boat's own, so `view://stage` names its boat (the first when
+  the tool was given none): that boat's stage is set and its tab shown.
+  While a client is connected the status bar shows **MCP** and the last
+  tool called. A client is connected from its initialisation until it ends
+  its session; one that only drops its connection is counted until the
+  session's idle timeout (five minutes, `rmcp`'s default), so the badge can
+  outlast such a client by that long. A client on the 2026-07-28 protocol
+  keeps no session: it is counted from each tool call, for the same five
+  minutes after its last. Switching the service off, or rotating its token,
+  leaves nobody counted at once.
+- **`screenshot`** returns a PNG of the stage on show (the 3D view, the map,
+  Compare, or the full-size plot): its canvas, redrawn and read in one task,
+  without the panels around it. Refused at once with no project open; a
+  frontend with no frame says why. Nothing is written to disk.
+- **Clients.** *Add to Claude Code* runs `claude mcp add --scope user
+  --transport http polarexplorer …` and writes a skill to
+  `~/.claude/skills/polarexplorer/`. *Add to Codex* edits
+  `~/.codex/config.toml` in place, keeping every other line, owner-only.
+  *Add to Claude Desktop* (macOS and Windows) writes `PolarExplorer.mcpb`
+  beside the settings file and opens it there; the bundle holds no secret
+  (its bridge reads the port and token from the settings file per request)
+  and follows the application through restarts. *Configuration for other
+  clients* gives the address and token as text. **ChatGPT is not offered**:
+  it reaches MCP servers only over public HTTPS or a tunnel, never
+  loopback, and the application neither exposes itself nor runs a tunnel.
+- The server's instructions open with today's date and fit the 2,048
+  characters Claude Code keeps; the full manual is the `polarexplorer_guide`
+  tool and the skill's body. A test holds both to the tools that exist.
 
 ---
 

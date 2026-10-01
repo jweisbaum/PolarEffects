@@ -14,91 +14,11 @@ use pe_app::blend::{self, BlendCellOrigin};
 use pe_app::commands::AppState;
 use pe_app::polar_edit::{self, EditOp, PolarCell};
 use pe_app::{edit, projects};
-use pe_core::polar::{PolarFileFormat, PolarGrid};
-use pe_core::track::{Fix, Sample, Track, TrackOrigin};
-use pe_core::{Colour, Command, SampleId, Source, SourceId, SourceKind, TrackId};
-
-/// On output-grid points: 45°, 90°, 135° × 6, 10, 14 kn. At 90° it reads
-/// 9 kn in 10 kn of wind and 7 kn in 14, so 8.0 kn half way, at 12.
-fn file_source() -> Source {
-    Source::new(
-        SourceId(1),
-        "File",
-        Colour::parse("#4e79a7").unwrap(),
-        SourceKind::PolarFile {
-            format: PolarFileFormat::Adrena,
-            file_name: "file.pol".to_owned(),
-            polar: PolarGrid {
-                twa: vec![45.0, 90.0, 135.0],
-                tws: vec![6.0, 10.0, 14.0],
-                bsp: vec![
-                    vec![Some(4.0), Some(5.0), Some(6.0)],
-                    vec![Some(5.0), Some(9.0), Some(7.0)],
-                    vec![Some(4.5), None, Some(6.5)],
-                ],
-            },
-        },
-    )
-}
-
-/// Ten samples at 90° in 12 kn, BSP 6.0 … 6.9: one segment cell, the 90th
-/// percentile 6.81 (rank 8.1 between 6.8 and 6.9), at a third of full
-/// confidence (10 of 30 samples).
-fn track_source() -> Source {
-    let mut track = Track::new(
-        TrackId(3),
-        TrackOrigin::File {
-            name: "race.csv".to_owned(),
-            boat_name: None,
-        },
-    );
-    for k in 0..10u64 {
-        let fix = Fix {
-            tws: None,
-            twd_from: None,
-            t: 1_753_531_200 + k as i64 * 60,
-            lat: 50.0,
-            lon: -5.0,
-            cog: None,
-            sog: None,
-        };
-        let mut sample = Sample::at(SampleId(200 + k), k as u32, &fix);
-        sample.twa = Some(90.0);
-        sample.tws = Some(12.0);
-        sample.speed = Some(6.0 + k as f64 / 10.0);
-        sample.heading = Some(0.0);
-        track.fixes.push(fix);
-        track.samples.push(sample);
-    }
-    let mut source = Source::new(
-        SourceId(2),
-        "Track",
-        Colour::parse("#e15759").unwrap(),
-        SourceKind::Track {
-            track: Box::new(track),
-        },
-    );
-    source.overlay.filters.min_bsp_kn = None;
-    source.overlay.filters.max_heading_change_deg = None;
-    source
-}
 
 fn app(root: &TempRoot) -> AppState {
     let app = root.state();
     projects::create(&app, "Blend cell".to_owned(), None, false).unwrap();
-    app.with_session(|session| {
-        let open = session.require_open()?;
-        open.project.next_id = 10_000;
-        for (index, source) in [file_source(), track_source()].into_iter().enumerate() {
-            open.apply(Command::AddSource {
-                index,
-                source: Box::new(source),
-            })?;
-        }
-        open.history.clear();
-        Ok(())
-    })
-    .unwrap();
+    common::add_blend_sources(&app);
     app
 }
 
