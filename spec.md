@@ -660,8 +660,8 @@ Track
 
 ### 4.2 New project
 
-The form has one required field, **Project name**. Optional: boat name and
-notes. The grid and blend settings start from defaults (§12.2) and are
+The form has one field, **Project name**, required. The project starts with
+one boat tab, named on the tab afterwards. The grid and blend settings start from defaults (§12.2) and are
 changed later from the Blend section of the source list. A new project opens
 straight into the project window with the 3D stage.
 

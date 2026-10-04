@@ -20,7 +20,7 @@ const topics: HelpTopic[] = [
       "Quando un’azione chiuderebbe un progetto con modifiche non salvate — Nuovo, Apri, Apri recenti, Chiudi o l’uscita — PolarExplorer lo chiede prima: Salva, Non salvare o Annulla. Annulla, il tasto Esc e un clic fuori dalla domanda lasciano il progetto aperto così com’è. Salvare un progetto mai salvato chiede dove metterlo; annullare questa scelta annulla anche l’azione.",
     ],
     parameters: [
-      ["Nuovo… (⌘+N)", "Crea un progetto. Il nome è obbligatorio; il nome della barca e le note sono facoltativi."],
+      ["Nuovo… (⌘+N)", "Crea un progetto con il nome indicato."],
       ["Apri… (⌘+O)", "Apre un file .wpsproj."],
       ["Apri recenti", "Elenca i dieci progetti più recenti, dal più nuovo."],
       ["Salva (⌘+S) / Salva con nome… (⌘+Maiusc+S)", "Scrive il progetto nel suo file, o in uno nuovo."],

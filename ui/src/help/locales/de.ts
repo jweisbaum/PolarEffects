@@ -20,7 +20,7 @@ const topics: HelpTopic[] = [
       "Wenn eine Aktion ein Projekt mit ungespeicherten Änderungen schließen würde — Neu, Öffnen, Zuletzt geöffnet, Schließen oder Beenden —, fragt PolarExplorer zuerst: Speichern, Nicht speichern oder Abbrechen. Abbrechen, die Esc-Taste und ein Klick neben die Frage lassen das Projekt unverändert offen. Beim Speichern eines noch nie gespeicherten Projekts wird nach dem Ort gefragt; wer diese Auswahl abbricht, bricht auch die Aktion ab.",
     ],
     parameters: [
-      ["Neu… (⌘+N)", "Erstellt ein Projekt. Der Name ist Pflicht; Bootsname und Notizen sind optional."],
+      ["Neu… (⌘+N)", "Erstellt ein Projekt mit dem Namen, den Sie angeben."],
       ["Öffnen… (⌘+O)", "Öffnet eine .wpsproj-Datei."],
       ["Zuletzt geöffnet", "Listet die zehn zuletzt verwendeten Projekte, das neueste zuerst."],
       ["Speichern (⌘+S) / Speichern unter… (⌘+Umschalt+S)", "Schreibt das Projekt in seine Datei oder in eine neue."],

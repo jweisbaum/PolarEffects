@@ -294,9 +294,12 @@ describe("the start screen", () => {
 
   it("creates a project and opens the project window", async () => {
     await mount();
+    // The name only: the boat is named on its tab (asked 2026-10-04).
+    expect(q(".new-project-form")?.querySelectorAll("input, textarea")).toHaveLength(1);
+    expect(q(".new-project-form")?.textContent).not.toContain("Boat");
     await click(feature("new:create"));
     expect(calls.find(([c]) => c === "new_project")?.[1]).toEqual({
-      name: "Untitled Project", boat: { name: "", notes: "" }, discardUnsaved: false,
+      name: "Untitled Project", boat: null, discardUnsaved: false,
     });
     for (const id of ["shell:project-menu", "shell:rename", "stage:3d", "stage:compare", "shell:search",
       "shell:help", "shell:settings", "shell:asymmetric", "nav:orc", "nav:polar-files", "nav:tracks", "panel:sources", "stage:2d",

@@ -20,7 +20,7 @@ const topics: HelpTopic[] = [
       "Lorsqu’une action fermerait un projet contenant des modifications non enregistrées — Nouveau, Ouvrir, Ouvrir un projet récent, Fermer ou quitter —, PolarExplorer vous le demande d’abord : Enregistrer, Ne pas enregistrer ou Annuler. Annuler, la touche Échap et un clic en dehors de la question laissent le projet ouvert tel quel. Enregistrer un projet jamais enregistré demande où le mettre ; annuler ce choix annule aussi l’action.",
     ],
     parameters: [
-      ["Nouveau… (⌘+N)", "Crée un projet. Le nom est obligatoire ; le nom du bateau et les notes sont facultatifs."],
+      ["Nouveau… (⌘+N)", "Crée un projet portant le nom que vous lui donnez."],
       ["Ouvrir… (⌘+O)", "Ouvre un fichier .wpsproj."],
       ["Ouvrir un projet récent", "Liste les dix projets les plus récents, du plus récent au plus ancien."],
       ["Enregistrer (⌘+S) / Enregistrer sous… (⌘+Maj+S)", "Écrit le projet dans son fichier, ou dans un nouveau."],

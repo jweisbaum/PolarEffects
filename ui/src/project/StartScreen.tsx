@@ -64,7 +64,7 @@ export default function StartScreen({
     }
   };
 
-  const create = (request: NewProjectRequest) => void run(() => api.newProject(request.name, request.boat));
+  const create = (request: NewProjectRequest) => void run(() => api.newProject(request.name));
   const openFrom = (path: string) => run(() => api.openProject(path));
   const browse = async () => {
     let path: string | null;

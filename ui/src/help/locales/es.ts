@@ -20,7 +20,7 @@ const topics: HelpTopic[] = [
       "Cuando una acción cerraría un proyecto con cambios sin guardar —Nuevo, Abrir, Abrir reciente, Cerrar o salir—, PolarExplorer pregunta primero: Guardar, No guardar o Cancelar. Cancelar, la tecla Esc y un clic fuera de la pregunta dejan el proyecto abierto tal como está. Guardar un proyecto que nunca se ha guardado pregunta dónde ponerlo; cancelar esa elección también cancela la acción.",
     ],
     parameters: [
-      ["Nuevo… (⌘+N)", "Crea un proyecto. El nombre es obligatorio; el nombre del barco y las notas son opcionales."],
+      ["Nuevo… (⌘+N)", "Crea un proyecto con el nombre que usted indique."],
       ["Abrir… (⌘+O)", "Abre un archivo .wpsproj."],
       ["Abrir reciente", "Lista los diez proyectos más recientes, del más nuevo al más antiguo."],
       ["Guardar (⌘+S) / Guardar como… (⌘+Mayús+S)", "Escribe el proyecto en su archivo, o en uno nuevo."],

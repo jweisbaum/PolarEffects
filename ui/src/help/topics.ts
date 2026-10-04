@@ -37,7 +37,7 @@ export const TOPICS: HelpTopic[] = [
       "When an action would close a project with unsaved changes — New, Open, Open Recent, Close or quitting — PolarExplorer asks first: Save, Don’t save or Cancel. Cancel, Escape and a click outside the question all keep the project open as it is. Saving a project that has never been saved asks where to put it; cancelling that also cancels the action.",
     ],
     parameters: [
-      ["New… (Cmd+N)", "Creates a project. The name is required; the boat’s name and notes are optional."],
+      ["New… (Cmd+N)", "Creates a project with the name you give it."],
       ["Open… (Cmd+O)", "Opens a .wpsproj file."],
       ["Open Recent", "Lists the ten most recent projects, newest first."],
       ["Save (Cmd+S) / Save As… (Cmd+Shift+S)", "Writes the project to its file, or to a new one."],

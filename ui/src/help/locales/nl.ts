@@ -20,7 +20,7 @@ const topics: HelpTopic[] = [
       "Als een actie een project met niet-opgeslagen wijzigingen zou sluiten — Nieuw, Openen, Recent geopend, Sluiten of afsluiten — vraagt PolarExplorer het eerst: Opslaan, Niet opslaan of Annuleren. Annuleren, Esc en een klik buiten de vraag laten het project open zoals het is. Een project dat nog nooit is opgeslagen vraagt waar het moet komen; wie dat annuleert, annuleert ook de actie.",
     ],
     parameters: [
-      ["Nieuw… (Cmd+N)", "Maakt een project. De naam is verplicht; de naam van de boot en notities zijn optioneel."],
+      ["Nieuw… (Cmd+N)", "Maakt een project met de naam die u opgeeft."],
       ["Openen… (Cmd+O)", "Opent een .wpsproj-bestand."],
       ["Recent geopend", "Toont de tien meest recente projecten, nieuwste eerst."],
       ["Opslaan (Cmd+S) / Opslaan als… (Cmd+Shift+S)", "Schrijft het project naar zijn bestand, of naar een nieuw bestand."],

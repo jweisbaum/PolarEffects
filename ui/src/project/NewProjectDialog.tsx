@@ -43,7 +43,7 @@ export default function NewProjectDialog({
     setBusy(true);
     setError(null);
     api
-      .newProject(request.name, request.boat, discardUnsaved)
+      .newProject(request.name, null, discardUnsaved)
       .then(onCreated)
       .catch((err: unknown) => setError(err ?? new Error("unknown")))
       .finally(() => setBusy(false));

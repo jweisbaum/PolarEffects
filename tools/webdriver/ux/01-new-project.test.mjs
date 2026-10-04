@@ -31,6 +31,9 @@ export default {
     const d = t.driver;
     await d.waitFor('[data-feature="new:create"]');
     await t.shot("start-screen");
+    // The name only, here and in the New Project dialog (asked 2026-10-04).
+    const fields = (scope) => d.run(`done(document.querySelectorAll(arguments[0] + " .new-project-form input, " + arguments[0] + " .new-project-form textarea").length);`, [scope]);
+    assert.equal(await fields(".start"), 1, "the start screen asks for the project name only");
     await newProject(d, "Farr 40 study");
     assert.equal(await d.text('[data-feature="stage:3d"][aria-selected="true"]'), "3D");
     assert.equal(await d.exists('[data-feature="stage:map"]'), false);
@@ -47,7 +50,19 @@ export default {
     assert.ok(await d.run(`var r = document.querySelector(".project-menu-items").getBoundingClientRect();
       done(r.left >= 0 && r.right <= window.innerWidth);`), "the menu stays within the window");
     await t.shot("project-menu");
+    await d.click('[data-feature="project:new"]');
+    await d.waitFor(".modal-backdrop");
+    // A new project starts dirty, so New asks about its changes first.
+    if (!(await d.exists(".modal .new-project-form"))) {
+      await d.click(".modal button.danger");
+      await d.waitFor(".modal .new-project-form");
+    }
+    assert.equal(await fields(".modal"), 1, "the New Project dialog asks for the project name only");
+    await t.shot("new-project-dialog");
     await d.key("Escape");
+    await d.waitGone(".modal-backdrop");
+    assert.ok((await d.texts('[data-feature="shell:rename"]')).some((s) => s.includes("Farr 40 study")),
+      "cancelling the dialog keeps the project open");
 
     for (const feature of ["tracks:yellowbrick", "sources:blend-settings"]) {
       await d.click(`[data-feature="${feature}"]`);
