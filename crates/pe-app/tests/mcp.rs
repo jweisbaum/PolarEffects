@@ -423,6 +423,13 @@ async fn switching_off_leaves_nobody_counted() {
 
     let (port, token) = serve(&app);
     let second = client(port, &token).await;
+    // Counted when the server reads the client's `initialized`, a
+    // notification the client sends without waiting for an answer: so it
+    // may land after `client` has returned.
+    let counted = std::time::Instant::now() + SOON;
+    while service.status(&settings).sessions == 0 && std::time::Instant::now() < counted {
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
     assert_eq!(service.status(&settings).sessions, 1);
     // The first client's goodbye, to a listener that is gone.
     let _ = first.cancel().await;
