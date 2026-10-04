@@ -35,10 +35,10 @@ and cannot be verified by those fixture tests.
 
 Connect the checkout to the repository, push the working branch, then dispatch
 **Release builds**, choosing that branch, `platform: all`, and no release tag.
-CLI equivalent, for this project's build branch:
+CLI equivalent, for this project's main branch:
 
 ```sh
-gh workflow run release.yml --ref build/v1 -f platform=all
+gh workflow run release.yml --ref main -f platform=all
 gh run list --workflow release.yml
 gh run watch RUN_ID --exit-status
 gh run download RUN_ID --dir target/release-downloads

@@ -1086,8 +1086,9 @@ DMG integrity and bundled documents verified. fmt, clippy, 612 Rust tests
 (20 ignored), 340 UI tests, 4 serial performance tests, 10 driver tests,
 8 release-tool tests and the offline check pass. The Help UX flow passes in
 all three languages; its credits screenshots were opened and reviewed.
-The repository is [jweisbaum/PolarEffects](https://github.com/jweisbaum/PolarEffects),
-with `build/v1` as its default branch. At commit `0c2932d`,
+The repository is [jweisbaum/PolarExplorer](https://github.com/jweisbaum/PolarExplorer)
+(named PolarEffects, with `build/v1` as its default branch, until 2026-10-04;
+`main` since). At commit `0c2932d`,
 [CI passed all ten jobs](https://github.com/jweisbaum/PolarEffects/actions/runs/36720234361)
 and [all five platform bundles passed](https://github.com/jweisbaum/PolarEffects/actions/runs/36720247704)
 in artifact-only mode. This includes the Windows PFX fixture, Windows application
