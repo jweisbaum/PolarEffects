@@ -684,33 +684,49 @@ describe("finding every control (plan.md M2 acceptance)", () => {
     expect(flashed!.style.left, `${id} flashes where ${landing} is`).not.toBe("");
   }
 
+  // Revealing and flashing a control does not depend on the language, and
+  // the sweep mounts the window once per control (about 0.5 s each): in all
+  // nine languages it took the suite past CI's patience. So the sweep runs
+  // in English, and every other language checks what does depend on it —
+  // that the search offers each control under its translated name.
+  it("finds and flashes every project-window control in en", async () => {
+    settings = { ...settings, language: "en" };
+    setLanguage("en");
+    for (const entry of windowFeatures) {
+      foldEverything();
+      // Sources, so that the source list's row controls and each
+      // section's Remove (and a track's filters) are on screen.
+      project = summary(false, "/p.wpsproj", [POLAR, ORC, TRACKED]);
+      await mount();
+      // The map and 3D stages are hidden behind the Compare stage, to be
+      // revealed; the Compare stage's own controls behind the 3D stage.
+      await click(feature(entry.id.startsWith("compare:") ? "stage:3d" : "stage:compare"));
+      // Boat tabs are hidden by the fleet comparison layout, not by a stage.
+      if (entry.reveal?.includes("boats:tabs")) await click(feature("boats:split"));
+      if (entry.reveal?.length) {
+        expect(feature(entry.id), `${entry.id} starts hidden`).toBeNull();
+      }
+      await findAndFlash(entry.id);
+      await act(async () => root.unmount());
+      host.remove();
+      document.body.innerHTML = "";
+    }
+    await mount();
+    // One mount per control: 322 controls took 155 s on the development
+    // machine at 0.3.0, and a CI runner is slower.
+  }, 600_000);
+
   for (const { id: lang } of LANGUAGES) {
-    it(`finds and flashes every project-window control in ${lang}`, async () => {
+    it(`offers every project-window control under its ${lang} name`, async () => {
       settings = { ...settings, language: lang };
       setLanguage(lang);
-      for (const entry of windowFeatures) {
-        foldEverything();
-        // Sources, so that the source list's row controls and each
-        // section's Remove (and a track's filters) are on screen.
-        project = summary(false, "/p.wpsproj", [POLAR, ORC, TRACKED]);
-        await mount();
-        // The map and 3D stages are hidden behind the Compare stage, to be
-        // revealed; the Compare stage's own controls behind the 3D stage.
-        await click(feature(entry.id.startsWith("compare:") ? "stage:3d" : "stage:compare"));
-        // Boat tabs are hidden by the fleet comparison layout, not by a stage.
-        if (entry.reveal?.includes("boats:tabs")) await click(feature("boats:split"));
-        if (entry.reveal?.length) {
-          expect(feature(entry.id), `${entry.id} starts hidden`).toBeNull();
-        }
-        await findAndFlash(entry.id);
-        await act(async () => root.unmount());
-        host.remove();
-        document.body.innerHTML = "";
-      }
       await mount();
-      // One mount per control: about 0.3 s each, and M14 took the registry
-      // past 60 s on the development machine.
-    }, 180_000);
+      const { searchFeatures } = await import("./help/features");
+      for (const entry of windowFeatures) {
+        const found = searchFeatures(t(entry.label)).find((m) => m.feature.id === entry.id);
+        expect(found, `${entry.id} is offered for “${t(entry.label)}”`).toBeDefined();
+      }
+    });
 
     it(`finds every start-screen control in ${lang}`, async () => {
       settings = { ...settings, language: lang };
