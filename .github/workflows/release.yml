@@ -164,7 +164,7 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       # A cross-built target cannot run its tests; its host twin already did.
-      - run: cargo test --workspace
+      - run: cargo test --workspace --no-fail-fast
         if: ${{ !matrix.cross }}
       - run: npm run bindings
       - run: git diff --exit-code -- ui/src/generated

@@ -515,10 +515,12 @@ async fn unsaved_work_is_refused_without_discard() {
 
     // Listen only from here: the refusal below is the one event wanted.
     let changed = changes(&app);
+    // Absolute on every platform: "/nowhere" has no drive on Windows.
+    let elsewhere = root.0.join("nowhere").join("else.wpsproj");
     for (tool, args) in [
         ("project_new", json!({ "name": "Two" })),
         ("project_close", json!({})),
-        ("project_open", json!({ "path": "/nowhere/else.wpsproj" })),
+        ("project_open", json!({ "path": elsewhere })),
     ] {
         let message = call_err(&client, tool, args).await;
         assert!(message.contains("has unsaved changes"), "{tool}: {message}");
