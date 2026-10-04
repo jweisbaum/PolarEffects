@@ -18,7 +18,7 @@ async function choose(d, id, value) {
 
 /** Sends a mouse event to the full-size plot's canvas at a fraction of its box; answers the client point. */
 function plotMouse(d, type, fx, fy) {
-  return d.run(`var c = document.querySelector(".polar-plot-overlay canvas"), r = c.getBoundingClientRect();
+  return d.run(`var c = document.querySelector(".polar-plot-stage canvas"), r = c.getBoundingClientRect();
     var x = r.left + r.width * arguments[1], y = r.top + r.height * arguments[2];
     c.dispatchEvent(new MouseEvent(arguments[0], { bubbles: true, clientX: x, clientY: y }));
     done({ x: x, y: y });`, [type, fx, fy]);
@@ -84,30 +84,30 @@ export default {
     await t.shot("3d-blend-cell-tooltip");
 
     // --- The full-size plot: dots by time of day ---
-    await d.click(f("plot:full-size"));
-    await d.waitFor(".polar-plot-overlay canvas", { visible: true });
-    await d.run(`var el = document.querySelector('.polar-plot-overlay [data-feature="plot:colour"]'); el.value = "timeOfDay";
+    await d.click(f("stage:2d"));
+    await d.waitFor(".polar-plot-stage canvas", { visible: true });
+    await d.run(`var el = document.querySelector('.polar-plot-stage [data-feature="plot:colour"]'); el.value = "timeOfDay";
       el.dispatchEvent(new Event("change", { bubbles: true })); done(true);`);
-    await d.waitFor(".polar-plot-overlay .polar-plot-bands li", { text: "Evening 17:00–21:00" });
+    await d.waitFor(".polar-plot-stage .polar-plot-bands li", { text: "Evening 17:00–21:00" });
     await pause(200);
-    const morning = await colourPixels(d, ".polar-plot-overlay canvas", MORNING);
-    const afternoon = await colourPixels(d, ".polar-plot-overlay canvas", AFTERNOON);
+    const morning = await colourPixels(d, ".polar-plot-stage canvas", MORNING);
+    const afternoon = await colourPixels(d, ".polar-plot-stage canvas", AFTERNOON);
     assert.ok(afternoon > 0, "afternoon dots are green on the plot");
     assert.ok(morning + afternoon > 0);
     await t.shot("plot-dots-by-time-of-day");
 
     // --- Measure: every curve at the pointer's angle, then a pinned point ---
-    await d.click('.polar-plot-overlay [data-feature="plot:measure"]');
-    assert.equal(await d.run(`done(document.querySelector('.polar-plot-overlay [data-feature="plot:measure"]').getAttribute("aria-pressed"));`), "true");
+    await d.click('.polar-plot-stage [data-feature="plot:measure"]');
+    assert.equal(await d.run(`done(document.querySelector('.polar-plot-stage [data-feature="plot:measure"]').getAttribute("aria-pressed"));`), "true");
     // The fan's centre is on the left edge at mid height: 90° is straight right.
-    await plotMouse(d, "mousemove", 0.35, 0.5);
+    await plotMouse(d, "mousemove", 0.75, 0.5);
     await d.waitFor(".polar-plot-measure h4", { text: "At TWA 90°" });
     const rows = await d.texts(".polar-plot-measure li");
     assert.ok(rows.length >= 1, "a curve crosses the 90° spoke");
     assert.ok(rows.some((row) => row.includes("pointed at")), "one curve is the one compared against");
     assert.equal(await d.exists(".polar-plot-tooltip"), false, "the hover is off while measuring");
-    await plotMouse(d, "click", 0.35, 0.5);
-    await plotMouse(d, "mousemove", 0.3, 0.3);
+    await plotMouse(d, "click", 0.75, 0.5);
+    await plotMouse(d, "mousemove", 0.7, 0.3);
     await d.waitFor(".polar-plot-measure-pin", { text: "B − A:" });
     assert.match(await d.text(".polar-plot-measure-pin"), /A: [\d.]+ kn at 90°B − A: [+−]?[\d.]+ kn \([+−]?[\d.]+%\), \d+° apart/);
     await t.shot("plot-measure-pinned");
@@ -115,10 +115,10 @@ export default {
     // Escape lets the pin go and leaves the overlay open; the next closes it.
     await d.key("Escape");
     await d.waitGone(".polar-plot-measure-pin");
-    assert.ok(await d.exists(".polar-plot-overlay"), "the first Escape only unpins");
-    await d.click('.polar-plot-overlay [data-feature="plot:measure"]');
+    assert.ok(await d.exists(".polar-plot-stage"), "the first Escape only unpins");
+    await d.click('.polar-plot-stage [data-feature="plot:measure"]');
     await d.waitGone(".polar-plot-measure");
-    await d.click(f("plot:close"));
-    await d.waitGone(".polar-plot-overlay");
+    await d.click(f("stage:3d"));
+    await d.waitGone(".polar-plot-stage");
   },
 };

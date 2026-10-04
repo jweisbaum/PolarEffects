@@ -1,14 +1,15 @@
 import { msg, useT } from "../i18n";
 
-export type Stage = "map" | "3d" | "compare";
+export type Stage = "map" | "3d" | "2d" | "compare";
 
 const STAGES: ReadonlyArray<{ id: Stage; label: string; tip: string }> = [
   { id: "3d", label: msg("3D"), tip: msg("The polar as a 3D surface, with the samples") },
-  { id: "map", label: msg("Map"), tip: msg("The world map with the tracks") },
+  { id: "2d", label: msg("2D"), tip: msg("The polar plot: boat speed against wind angle") },
   { id: "compare", label: msg("Compare"), tip: msg("The difference between two polars") },
+  { id: "map", label: msg("Map"), tip: msg("The world map with the tracks") },
 ];
 
-/** The centre stage's switch (spec.md 3.2): 3D (default), Map with tracks, or Compare. */
+/** The centre stage's switch (spec.md 3.2): 3D (default), 2D, Compare, or Map with tracks. */
 export default function StageSwitcher({ stage, hasTracks, onStage }: {
   stage: Stage; hasTracks: boolean; onStage: (stage: Stage) => void;
 }) {

@@ -51,10 +51,10 @@ let root: Root;
 const TRACK: TrackSummary = {
   origin: "file", boat_name: "Alpha", event_title: "fleet.geojson", start: 1_753_531_200, end: 1_753_617_600,
   samples: 120, filtered: 20, excluded: 0, used: 100, with_wind: 0, env_status: "not_fetched", env_fetched: 0, env_interval: null, no_tide: 0, max_gap_s: 10_800,
-  prefer: "given", supplied_wind: 0, downloaded_wind_only: false, environment_filters: false,
-  filters: { max_awa_change: null, max_wind_speed_change: null, max_wind_direction_change: null, time_start: null, time_end: null, min_bsp: 1, max_bsp: null, max_heading_change: 30, heading_origin: "any", speed_origin: "any",
+  prefer_heading: "given", prefer_speed: "given", supplied_wind: 0, supplied_heading: 0, supplied_speed: 0, downloaded_wind_only: false, environment_filters: false,
+  filters: { max_awa_change: null, max_wind_speed_change: null, max_wind_direction_change: null, time_start: null, time_end: null, min_bsp: 1, max_bsp: null, max_heading_change: 30, heading_from: null, heading_to: null, cog_from: null, cog_to: null, vmg_min: null, vmg_max: null, twd_from: null, twd_to: null, exclude_tacks: false,
     tws_min: null, tws_max: null, twa_min: null, twa_max: null, hs_min: null, hs_max: null, current_min: null, current_max: null,
-    wave_mode: "off", wave_sectors: [], wave_min: null, wave_max: null, wave_from: null, wave_to: null, exclude_no_tide: false, exclude_unknown_wave: false, exclude_unknown_current: false, tack_gybe_padding_s: null, stop_speed_kn: null, stop_padding_s: 0, utc_interval_s: null },
+    wave_mode: "off", wave_sectors: [], wave_min: null, wave_max: null, wave_from: null, wave_to: null, exclude_no_tide: false, exclude_unknown_wave: false, exclude_unknown_current: false },
 };
 const SOURCE: SourceSummary = {
   id: 5, kind: "track", label: "Alpha", colour: "#e15759", visible: true, weight: 1, count: 120, used: 100,
@@ -122,12 +122,20 @@ it("edits the filters and the derivation through their commands", async () => {
   await act(async () => { min.blur(); min.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); });
   expect(calls.find(([n]) => n === "setTrackFilters")?.[1]).toEqual([5, { ...TRACK.filters, min_bsp: 3 }]);
 
-  const prefer = q('[data-feature="tracks:prefer"]') as HTMLSelectElement;
-  await act(async () => {
-    prefer.value = "derived";
-    prefer.dispatchEvent(new Event("change", { bubbles: true }));
-  });
-  expect(calls.find(([n]) => n === "setTrackDerivation")?.[1]).toEqual([5, 10_800, "derived"]);
+  // A provided-or-derived choice is offered only for what the track gave
+  // (asked 2026-10-02): this track gives nothing, so none is shown.
+  expect(q('[data-feature="tracks:heading-source"]')).toBeNull();
+  expect(q('[data-feature="tracks:speed-source"]')).toBeNull();
+  expect(q('[data-feature="tracks:wind-source"]')).toBeNull();
+  // Nor the options that are gone, nor a separate derivation section.
+  for (const gone of ["tack-window", "stop-speed", "stop-window", "utc-interval", "utc-unit", "heading-origin", "speed-origin", "prefer", "max-gap"]) {
+    expect(q(`[data-feature="tracks:${gone}"]`)).toBeNull();
+  }
+  const tacks = q('[data-feature="tracks:tacks"]') as HTMLInputElement;
+  expect(tacks.checked).toBe(false);
+  await act(async () => { tacks.click(); });
+  expect(calls.filter(([n]) => n === "setTrackFilters").at(-1)?.[1]).toEqual([5, { ...TRACK.filters, min_bsp: 3, exclude_tacks: true }]);
+  await act(async () => { tacks.click(); });
   // The environment filters are edited the same way (spec.md 7.6).
   const tws = q('[data-feature="tracks:tws-min"]') as HTMLInputElement;
   await act(async () => {
@@ -170,9 +178,6 @@ it("applies numeric filters while typing and preserves edits made during a slow 
   const sent = calls.filter(([name]) => name === "setTrackFilters");
   expect(sent).toHaveLength(2);
   expect(sent[1]![1]).toEqual([5, { ...TRACK.filters, min_bsp: 3, max_wind_speed_change: 2, max_wind_direction_change: 120 }]);
-  const wind = q('[data-feature="tracks:wind-source"]') as HTMLSelectElement;
-  await act(async () => { wind.value = "weather"; wind.dispatchEvent(new Event("change", { bubbles: true })); });
-  expect(calls.find(([name]) => name === "setTrackWind")?.[1]).toEqual([5, true]);
   delete responses.setTrackFilters;
 });
 
@@ -616,7 +621,7 @@ it("shows and takes the speed and wave filters in the display units, storing kno
   const min = q('[data-feature="tracks:min-bsp"]') as HTMLInputElement;
   // The stored 1 kn is 1.852 km/h, and the label names the unit.
   expect(min.value).toBe("1.852");
-  expect(min.closest("label")!.textContent).toContain("Minimum BSP (km/h)");
+  expect(min.closest("label")!.textContent).toContain("BSP from (km/h)");
   // Leaving the box untouched sends nothing.
   await act(async () => { min.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); });
   expect(calls.filter(([n]) => n === "setTrackFilters")).toEqual([]);
@@ -629,4 +634,43 @@ it("shows and takes the speed and wave filters in the display units, storing kno
   const waves = calls.filter(([n]) => n === "setTrackFilters").at(-1)?.[1] as [number, { hs_min: number }];
   expect(waves[1].hs_min).toBeCloseTo(3.048, 12);
   expect(q('[data-feature="tracks:hs-min"]')!.closest("label")!.textContent).toContain("(ft)");
+});
+
+it("offers the provided-or-derived choice of each quantity only where the track gives it, each its own command", async () => {
+  const giving: SourceSummary = { ...SOURCE, track: { ...TRACK, supplied_heading: 120, supplied_speed: 0, supplied_wind: 40, prefer_heading: "derived", prefer_speed: "given" } };
+  await act(async () => root.render(<Tracks project={project([giving])} onProject={() => undefined} />));
+  await click(q('[data-feature="tracks:filters"]'));
+  const heading = q('[data-feature="tracks:heading-source"]') as HTMLSelectElement;
+  expect(heading.value).toBe("derived");
+  expect(q('[data-feature="tracks:speed-source"]')).toBeNull();
+  const wind = q('[data-feature="tracks:wind-source"]') as HTMLSelectElement;
+  expect(wind.value).toBe("given");
+  await act(async () => {
+    heading.value = "given";
+    heading.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  // The speed's choice is kept as it was.
+  expect(calls.find(([n]) => n === "setTrackDerivation")?.[1]).toEqual([5, 10_800, "given", "given"]);
+  await act(async () => {
+    wind.value = "derived";
+    wind.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  expect(calls.find(([n]) => n === "setTrackWind")?.[1]).toEqual([5, true]);
+  // A compass sector needs both bounds: the start alone is held, not sent
+  // (Rust refuses half a sector); with its end, both go together.
+  const typeIn = async (feature: string, value: string) => {
+    const input = q(`[data-feature="${feature}"]`) as HTMLInputElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => { input.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); });
+  };
+  const sent = () => calls.filter(([n]) => n === "setTrackFilters").length;
+  const before = sent();
+  await typeIn("tracks:twd-from", "180");
+  expect(sent()).toBe(before);
+  expect((q('[data-feature="tracks:twd-from"]') as HTMLInputElement).value).toBe("180");
+  await typeIn("tracks:twd-to", "200");
+  expect(calls.filter(([n]) => n === "setTrackFilters").at(-1)?.[1]).toEqual([5, { ...TRACK.filters, twd_from: 180, twd_to: 200 }]);
 });

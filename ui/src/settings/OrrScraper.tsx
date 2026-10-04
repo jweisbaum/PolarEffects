@@ -1,13 +1,18 @@
 import { useEffect, useState } from "react";
 
 import { describeError } from "../errors";
+import type { AppSettings } from "../generated/AppSettings";
 import type { OrrCatalogueInfo } from "../generated/OrrCatalogueInfo";
 import type { OrrProgress } from "../generated/OrrProgress";
 import { useT } from "../i18n";
 import { api } from "../ipc";
+import CatalogueSchedule from "./CatalogueSchedule";
 
 /** An explicit, cancellable catalogue refresh; opening Settings never fetches. */
-export default function OrrScraper() {
+export default function OrrScraper({ settings, onSettings }: {
+  settings: AppSettings;
+  onSettings: (settings: AppSettings) => void;
+}) {
   const t = useT();
   const [year, setYear] = useState(String(new Date().getUTCFullYear()));
   const [status, setStatus] = useState<OrrProgress | null>(null);
@@ -49,6 +54,7 @@ export default function OrrScraper() {
       <button data-feature="settings:orr-scrape" disabled={!valid || running || starting} onClick={() => void start()}>{t("Scrape ORR polars")}</button>
       <button data-feature="settings:orr-cancel" disabled={!running} onClick={() => void api.cancelOrrScrape().catch(setFailure)}>{t("Cancel download")}</button>
     </div>
+    <CatalogueSchedule catalogue="orr" feature="settings:orr-schedule" settings={settings} onSettings={onSettings} onError={setFailure} />
     {status && <div role="status">
       {running ? <>
         <progress max={Math.max(1, status.total)} value={status.done} />

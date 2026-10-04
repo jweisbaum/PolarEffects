@@ -15,20 +15,34 @@ export default {
     await d.waitFor(".track-list li", { text: "Minute samples" });
     assert.equal(await d.exists(f("tracks:export-grib")), false);
 
-    await choose(d, "orc:catalogue", "orr");
-    await d.waitFor(".orc-count", { text: "of 600" });
-    const first = await d.text(".orc-results li:first-child .orc-name");
-    await d.click(f("orc:next-page"));
-    await d.waitFor(".orc-count", { text: "51–100" });
-    // The page number changes before the asynchronous search returns its rows.
-    let next = first;
-    for (let attempt = 0; attempt < 100 && (next === null || next === first); attempt++) {
+    // One search over both catalogues, each hit badged (asked 2026-10-02):
+    // a broad query lists more than a page, and the next page arrives as the
+    // list is scrolled to its end.
+    assert.equal(await d.exists(f("orc:catalogue")), false);
+    await d.type(f("orc:search"), "a");
+    await d.waitFor(".orc-count", { text: "Certificates 1–" });
+    const count = await d.text(".orc-count");
+    const shown = Number(count.match(/1–(\d+)/)[1]), total = Number(count.match(/of (\d+)/)[1]);
+    assert.ok(total > shown && shown >= 50, count);
+    assert.ok(await d.exists(".orc-results .catalogue-badge.orc"), "ORC hits are badged");
+    assert.ok(await d.exists(".orc-results .catalogue-badge.orr"), "ORR hits are badged");
+    // Interleaved by rank (asked 2026-10-03): ORR hits are near the top, not below every ORC page.
+    assert.deepEqual(await d.run(`done(Array.from(document.querySelectorAll(".orc-results li .catalogue-badge")).slice(0, 4).map(function (b) { return b.textContent; }));`),
+      ["ORC", "ORR", "ORC", "ORR"]);
+    await d.run(`var list = document.querySelector(".orc-results"); list.scrollTop = list.scrollHeight; done(true);`);
+    let grown = false;
+    for (let attempt = 0; attempt < 100 && !grown; attempt++) {
       await new Promise((resolve) => setTimeout(resolve, 100));
-      next = await d.text(".orc-results li:first-child .orc-name");
+      grown = Number((await d.text(".orc-count")).match(/1–(\d+)/)[1]) > shown;
     }
-    assert.notEqual(next, null);
-    assert.notEqual(next, first);
+    assert.ok(grown, "scrolling to the end loads the next page");
+    await t.shot("both-catalogues-scrolled");
+    await d.run(`var el = document.querySelector('[data-feature="orc:search"]'); el.focus(); el.select(); done(true);`);
+    await d.key("Backspace", f("orc:search"));
     await d.click(f("orc:fields"));
+    // The measurements are folded until asked for (asked 2026-10-02).
+    assert.equal(await d.exists(f("orc-measure:loa-min")), false);
+    await d.click(f("orc:measurements"));
     await number(d, "orc-measure:loa-min", 12);
     await number(d, "orc-measure:loa-max", 13);
     await d.type(f("orc:search"), "Phoenix");
@@ -36,9 +50,11 @@ export default {
     await d.type(f("orc:field-builder"), "TPI");
     await d.waitFor(".orc-results li .orc-meta", { text: "1994 · TPI" });
     await d.click(f("orc:fields"));
-    await d.click(f("orc:add"));
+    // The first ORR hit (ORC hits are listed first); an ORR certificate is added once.
+    const orr = '.orc-results li:has(.catalogue-badge.orr) [data-feature="orc:add"]';
+    await d.click(orr);
     await d.waitFor(".orc-added li", { text: "PHOENIX" });
-    await d.waitFor('.orc-results li:first-child [data-feature="orc:add"][disabled]');
+    await d.waitFor(`${orr}[disabled]`);
     await t.shot("orr-measurements-and-import");
 
     await d.click(f("shell:asymmetric"));
@@ -81,11 +97,11 @@ export default {
     assert.ok(pixels > 5000, "the full-circle surfaces have arrived and are painted");
     assert.ok(await distinctColours(d, "canvas.view3d-canvas") > 8);
     await t.shot("full-circle-plots");
-    await d.click(f("plot:full-size"));
-    await d.waitFor(".polar-plot-overlay canvas", { visible: true });
+    await d.click(f("stage:2d"));
+    await d.waitFor(".polar-plot-stage canvas", { visible: true });
     await t.shot("asymmetric-2d-angle-labels");
-    await d.click(f("plot:close"));
-    await d.waitGone(".polar-plot-overlay");
+    await d.click(f("stage:3d"));
+    await d.waitGone(".polar-plot-stage");
 
     await d.click(f("sources:blend-edit"));
     await d.waitFor(".blend-correction .view3d-edit-table-wrap input");
@@ -99,9 +115,10 @@ export default {
     await d.waitGone(".blend-correction");
 
     await d.click(f("tracks:filters"));
-    await number(d, "tracks:tack-window", 60);
-    await number(d, "tracks:stop-speed", 0.5);
-    await number(d, "tracks:stop-window", 60);
+    await number(d, "tracks:vmg-min", 0);
+    await number(d, "tracks:cog-from", 80);
+    await number(d, "tracks:cog-to", 100);
+    await d.click(f("tracks:tacks"));
     await d.click(f("tracks:unknown-wave"));
     await t.shot("individual-point-filters");
     await d.click(f("tracks:filters"));
@@ -109,8 +126,9 @@ export default {
     await d.click(f("view3d:global-filters-enabled"));
     await d.waitFor(f("global-filters:unknown-current"));
     await d.click(f("global-filters:unknown-current"));
-    await choose(d, "global-filters:utc-unit", "minutes");
-    await number(d, "global-filters:utc-interval", 2);
+    await d.click(f("global-filters:tacks"));
+    await number(d, "global-filters:twd-from", 350);
+    await number(d, "global-filters:twd-to", 10);
     assert.equal(await d.exists(f("global-filters:time-start")), false);
     await choose(d, "view3d:colour", "time");
     await d.waitFor(".view3d-ramp", { text: "UTC" });

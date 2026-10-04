@@ -266,11 +266,75 @@ pub fn blend_cell(
     blend_cell_of(&state, twa_index, tws_index)
 }
 
+/// [`blend_cell`] for one copy of a split view (spec.md 10.5): the cell of
+/// that copy's blend, with the sources behind it there — each track counted
+/// with only that direction's samples.
+#[tauri::command]
+pub fn blend_cell_split(
+    state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
+    twa_index: u32,
+    tws_index: u32,
+    split: crate::wave_split::WaveSplit,
+    cell: u32,
+) -> Result<BlendCell> {
+    blend_cell_split_of(
+        &state.scoped(boat_context),
+        twa_index,
+        tws_index,
+        split,
+        cell,
+    )
+}
+
+/// [`blend_cell_split`] without a Tauri handle.
+pub fn blend_cell_split_of(
+    state: &AppState,
+    twa_index: u32,
+    tws_index: u32,
+    split: crate::wave_split::WaveSplit,
+    cell: u32,
+) -> Result<BlendCell> {
+    let split = split.checked()?;
+    let cell = split.cell(cell)?;
+    state.with_session(|session| {
+        let open = session.require_open()?;
+        let project = &open.project;
+        let derived = crate::wave_split::direction_derived(
+            project,
+            &open.derived.visible(project),
+            split,
+            cell,
+        );
+        let blend = match open.derived.split_blends(project, split).get(cell as usize) {
+            Some(Some(blend)) => blend.clone(),
+            // A copy with nothing to say: every cell is empty.
+            _ => assemble(project, &derived),
+        };
+        cell_of(project, &derived, &blend, twa_index, tws_index)
+    })
+}
+
 /// [`blend_cell`] without a Tauri handle.
 pub fn blend_cell_of(state: &AppState, twa_index: u32, tws_index: u32) -> Result<BlendCell> {
     state.with_session(|session| {
         let open = session.require_open()?;
         let project = &open.project;
+        let derived = open.derived.visible(project);
+        let blend = open.derived.blend(project);
+        cell_of(project, &derived, &blend, twa_index, tws_index)
+    })
+}
+
+/// One cell of `blend` and what `derived` says stood for it.
+fn cell_of(
+    project: &Project,
+    derived: &BTreeMap<u64, Arc<Derived>>,
+    blend: &pe_polar::Blend,
+    twa_index: u32,
+    tws_index: u32,
+) -> Result<BlendCell> {
+    {
         let (i, j) = (twa_index as usize, tws_index as usize);
         let (Some(twa), Some(tws)) = (project.grid.twa.get(i), project.grid.tws.get(j)) else {
             return Err(AppError::BadOption {
@@ -279,9 +343,7 @@ pub fn blend_cell_of(state: &AppState, twa_index: u32, tws_index: u32) -> Result
             });
         };
         let (twa, tws) = (*twa, *tws);
-        let derived = open.derived.visible(project);
-        let blend = open.derived.blend(project);
-        let terms = with_blend_sources(project, &derived, |sources, options| {
+        let terms = with_blend_sources(project, derived, |sources, options| {
             pe_polar::blend::contributions(
                 &project.grid.twa,
                 &project.grid.tws,
@@ -317,7 +379,7 @@ pub fn blend_cell_of(state: &AppState, twa_index: u32, tws_index: u32) -> Result
                 })
                 .collect(),
         })
-    })
+    }
 }
 
 /// The blend derived from scratch: what export writes (invariant 2).
@@ -544,8 +606,6 @@ pub struct BlendSettingsInput {
     pub default_statistic: String,
     /// Feed the polar from current-corrected values.
     pub use_corrected: bool,
-    /// Include Stokes drift in the global merged current.
-    pub stokes_drift: bool,
     /// Independent port/starboard values.
     #[serde(default)]
     pub asymmetric: bool,
@@ -599,7 +659,6 @@ pub fn blend_settings_set(state: &AppState, input: BlendSettingsInput) -> Result
             n_full: input.n_full,
             smoothing: input.smoothing,
             use_corrected: input.use_corrected,
-            include_stokes_drift: input.stokes_drift,
             default_statistic: statistic,
             asymmetric: input.asymmetric,
             interpolation,

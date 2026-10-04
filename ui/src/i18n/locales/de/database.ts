@@ -57,9 +57,10 @@ export default {
   "Import this boat track; weather can be fetched afterwards": "Diesen Bootstrack importieren; Wetter kann anschließend abgerufen werden",
   "Importing track…": "Track wird importiert…",
   "Import boat track": "Bootstrack importieren",
-  "Previous boat tracks": "Vorherige Bootstracks",
   "More boat tracks": "Weitere Bootstracks",
   "Choosing a library directory": "Bibliotheksverzeichnis auswählen",
   "Choosing where to export the database": "Exportziel für die Datenbank auswählen",
-  "SQL database export": "SQL-Datenbankexport"
+  "SQL database export": "SQL-Datenbankexport",
+  "The next hundred tracks of the search; they load on their own as the list is scrolled to its end.": "Die nächsten hundert Spuren der Suche; sie laden von selbst, wenn die Liste bis ans Ende gescrollt wird.",
+  "library": "Bibliothek",
 };

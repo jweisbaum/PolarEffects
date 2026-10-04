@@ -18,6 +18,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
 import { dotPositions, hatchLines, lassoSelect, project, surfaceMesh, type Layout, type PolarGrid } from "./geometry3d";
+import { cellAt, cellRect, type Rect } from "./waveSplit";
 
 /** A disc: a sample or a node in the blend. */
 export const SHAPE_DISC = 0;
@@ -53,6 +54,12 @@ export interface SurfaceInput {
   /** Nodes (indexed `j * ni + i`, non-zero marked) whose quads are hatched, in `hatchColor`. */
   hatched?: Uint8Array;
   hatchColor?: string;
+  /**
+   * The one copy of a split view this surface is drawn in (spec.md 10.5):
+   * a copy's own blend. Absent, the surface is in every copy; with no
+   * copies (`setCells(null)`) a surface given one is not drawn at all.
+   */
+  cell?: number;
 }
 
 /** What the scene draws. */
@@ -83,6 +90,27 @@ export interface RendererLike {
   setSize(width: number, height: number, updateStyle?: boolean): void;
   render(scene: THREE.Object3D, camera: THREE.Camera): void;
   dispose(): void;
+  // Drawing the scene as a grid of copies (`setCells`); CSS pixels, y from the bottom.
+  setViewport?(x: number, y: number, width: number, height: number): void;
+  setScissor?(x: number, y: number, width: number, height: number): void;
+  setScissorTest?(on: boolean): void;
+  setClearColor?(color: THREE.ColorRepresentation): void;
+  clear?(): void;
+}
+
+/**
+ * The scene drawn as a grid of copies (Split Wave Angle, spec.md 10.5): one
+ * camera, one canvas, each copy drawn into its own part of it. A page may
+ * hold only so many WebGL contexts (WebKit: sixteen), so thirty-six copies
+ * cannot each have a canvas.
+ */
+export interface Cells {
+  /** The copy of each dot: its index, `CELL_EVERY` (-1) or `CELL_NONE` (-2). */
+  of: Int16Array;
+  /** How many copies. */
+  count: number;
+  /** The part of the canvas the grid fills, CSS pixels from its top left. */
+  region: Rect;
 }
 
 /** A pickable surface under the pointer, and the grid node of it nearest the hit. */
@@ -105,12 +133,22 @@ const VERTEX = `
 attribute vec3 color;
 attribute float selected;
 attribute float shape;
+attribute float cell;
 uniform float size;
+// The copy being drawn, or -1 when the scene is one view.
+uniform float drawCell;
 varying vec3 vColor;
 varying float vShape;
 void main() {
   vColor = mix(color, vec3(1.0), selected * 0.85);
   vShape = shape;
+  // A dot of another copy, or of none, is put outside the clip volume: every
+  // copy is one draw of all the dots, and the vertex stage keeps its own.
+  if (drawCell > -0.5 && (cell < -1.5 || (cell > -0.5 && abs(cell - drawCell) > 0.5))) {
+    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+    gl_PointSize = 0.0;
+    return;
+  }
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   gl_PointSize = size * (1.0 + selected) * (shape > 2.5 ? 1.6 : (shape > 1.5 ? 1.8 : (shape > 0.5 ? 1.4 : 1.0)));
 }`;
@@ -160,10 +198,17 @@ export class PolarScene {
   private readonly mvp = new THREE.Matrix4();
   private readonly raycaster = new THREE.Raycaster();
   /** The pickable surfaces' face meshes, with what `pickSurface` answers about each. */
-  private pickable: { mesh: THREE.Mesh; surface: number; ni: number }[] = [];
+  private pickable: { mesh: THREE.Mesh; surface: number; ni: number; cell: number | undefined }[] = [];
+  /** What is drawn in one copy only, by copy. */
+  private bound: { objects: THREE.Object3D[]; cell: number }[] = [];
   private width = 1;
   private height = 1;
   private orbitAngle = Math.PI / 4;
+  /** The grid of copies, or null when the scene is one view. */
+  private cells: Cells | null = null;
+  /** Each dot's copy, as the shader reads it. */
+  private cellOf = new Float32Array(0);
+  private background: THREE.Color | null = null;
 
   /** `renderer` is for tests; the app lets the scene make a WebGL one, which throws where WebGL is missing. */
   constructor(canvas: HTMLCanvasElement, renderer?: RendererLike) {
@@ -201,11 +246,16 @@ export class PolarScene {
     this.positions = dotPositions(input.samples, input.layout);
     this.screenFresh = false;
     this.selected = new Float32Array(n);
+    // New dots are in every copy until the owner says which is whose: the
+    // copies of the dots before these mean nothing for them.
+    this.cellOf = new Float32Array(n).fill(-1);
+    if (this.cells) this.cells = { ...this.cells, of: new Int16Array(n).fill(-1) };
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.BufferAttribute(this.positions, 3));
     geometry.setAttribute("color", new THREE.BufferAttribute(input.colors, 3));
     geometry.setAttribute("selected", new THREE.BufferAttribute(this.selected, 1));
     geometry.setAttribute("shape", new THREE.BufferAttribute(input.shapes ?? new Float32Array(n), 1));
+    geometry.setAttribute("cell", new THREE.BufferAttribute(this.cellOf, 1));
     geometry.computeBoundingSphere();
     if (this.dots) {
       this.scene.remove(this.dots);
@@ -215,14 +265,17 @@ export class PolarScene {
     this.dots = new THREE.Points(geometry, new THREE.ShaderMaterial({
       vertexShader: VERTEX,
       fragmentShader: FRAGMENT,
-      uniforms: { size: { value: 4 * this.renderer.getPixelRatio() } },
+      uniforms: { size: { value: 4 * this.renderer.getPixelRatio() }, drawCell: { value: -1 } },
     }));
     this.scene.add(this.dots);
     const t1 = performance.now();
 
     disposeChildren(this.surfaces);
     this.pickable = [];
+    this.bound = [];
     for (const [index, surface] of input.surfaces.entries()) {
+      const own: THREE.Object3D[] = [];
+      if (surface.cell !== undefined) this.bound.push({ objects: own, cell: surface.cell });
       const mesh = surfaceMesh(surface.grid, input.layout);
       const shared = new THREE.BufferAttribute(mesh.positions, 3);
       const faces = new THREE.BufferGeometry();
@@ -243,25 +296,31 @@ export class PolarScene {
         transparent: !opaque, opacity: opaque ? 1 : opacity, side: THREE.DoubleSide, depthWrite: opaque,
       }));
       this.surfaces.add(drawn);
-      if (surface.pickable) this.pickable.push({ mesh: drawn, surface: index, ni: surface.grid.twa.length });
+      own.push(drawn);
+      if (surface.pickable) this.pickable.push({ mesh: drawn, surface: index, ni: surface.grid.twa.length, cell: surface.cell });
       if (surface.hatched) {
         const hatch = hatchLines(surface.grid, surface.hatched);
         if (hatch.length > 0) {
           const crossing = new THREE.BufferGeometry();
           crossing.setAttribute("position", shared);
           crossing.setIndex(new THREE.BufferAttribute(hatch, 1));
-          this.surfaces.add(new THREE.LineSegments(crossing, new THREE.LineBasicMaterial({
+          const hatching = new THREE.LineSegments(crossing, new THREE.LineBasicMaterial({
             color: new THREE.Color(surface.hatchColor ?? "#888888"), transparent: true, opacity: 0.9, depthWrite: false,
-          })));
+          }));
+          this.surfaces.add(hatching);
+          own.push(hatching);
         }
       }
-      this.surfaces.add(new THREE.LineSegments(lines, new THREE.LineBasicMaterial({
+      const outline = new THREE.LineSegments(lines, new THREE.LineBasicMaterial({
         // On an opaque surface the grid lines are lightened, or they vanish into it.
         color: surface.lineColor !== undefined ? new THREE.Color(surface.lineColor)
           : opaque ? color.clone().lerp(new THREE.Color(0xffffff), 0.6) : color, transparent: true,
         opacity: opaque ? 0.9 : Math.min(0.55, opacity * 3), depthWrite: false,
-      })));
+      }));
+      this.surfaces.add(outline);
+      own.push(outline);
     }
+    this.showBound(-1);
     const t2 = performance.now();
     return { dots: t1 - t0, surfaces: t2 - t1 };
   }
@@ -279,7 +338,68 @@ export class PolarScene {
 
   /** The colour behind everything, `#rrggbb` (follows the theme). */
   setBackground(color: string) {
-    this.scene.background = new THREE.Color(color);
+    this.background = new THREE.Color(color);
+    this.scene.background = this.background;
+    // What lies between and around the copies of a grid is cleared to it.
+    this.renderer.setClearColor?.(this.background);
+  }
+
+  /**
+   * Draws the scene as a grid of copies, or as one view for null. Refuses
+   * (with a `RangeError`) copies that do not name every dot: a dot with no
+   * copy would be drawn by whichever value lay past the buffer.
+   */
+  setCells(cells: Cells | null) {
+    if (cells && cells.of.length !== this.dotCount) {
+      throw new RangeError(`${cells.of.length} copies for ${this.dotCount} dots`);
+    }
+    this.cells = cells;
+    if (cells) this.cellOf.set(cells.of);
+    else this.cellOf.fill(-1);
+    const attribute = this.dots?.geometry.getAttribute("cell");
+    if (attribute) attribute.needsUpdate = true;
+    this.shape();
+  }
+
+  /** The copy under a canvas point, -1 for none; a scene that is one view is copy 0 everywhere. */
+  cellAt(x: number, y: number): number {
+    return this.cells ? cellAt(x, y, this.cells.count, this.cells.region) : 0;
+  }
+
+  /** Where a copy is drawn, CSS pixels from the canvas's top left: the whole canvas when the scene is one view. */
+  cellRect(cell: number): Rect {
+    return this.cells ? cellRect(cell, this.cells.count, this.cells.region) : { x: 0, y: 0, width: this.width, height: this.height };
+  }
+
+  /** The camera's shape is a copy's, and the dots' screen positions are within one. */
+  private shape() {
+    const size = this.cellRect(0);
+    this.camera.aspect = Math.max(1, size.width) / Math.max(1, size.height);
+    // The view's centre, where the camera's target is drawn: the canvas's
+    // centre unless told otherwise, and always a copy's own in a grid.
+    const centre = this.cells ? null : this.centre;
+    if (centre) {
+      const width = Math.max(1, this.width), height = Math.max(1, this.height);
+      this.camera.setViewOffset(width, height, width / 2 - centre[0], height / 2 - centre[1], width, height);
+    } else {
+      this.camera.clearViewOffset();
+    }
+    this.camera.updateProjectionMatrix();
+    this.screenFresh = false;
+  }
+
+  /** Where the camera's target is drawn, CSS pixels from the canvas's top left. */
+  private centre: [number, number] | null = null;
+
+  /**
+   * Draws the camera's target at (x, y) rather than the canvas's centre,
+   * so the polar's middle sits in the middle of what the panels leave in
+   * view (asked 2026-10-02); turning still pivots on the target. Kept in
+   * pixels from the canvas's top left across resizes; null for the centre.
+   */
+  setViewCentre(x: number | null, y?: number) {
+    this.centre = x === null || y === undefined ? null : [x, y];
+    this.shape();
   }
 
   /** Sizes the drawing buffer to the canvas's CSS size. */
@@ -287,9 +407,7 @@ export class PolarScene {
     this.width = Math.max(1, width);
     this.height = Math.max(1, height);
     this.renderer.setSize(this.width, this.height, false);
-    this.camera.aspect = this.width / this.height;
-    this.camera.updateProjectionMatrix();
-    this.screenFresh = false;
+    this.shape();
   }
 
   /**
@@ -343,8 +461,41 @@ export class PolarScene {
     this.setView({ position: [r * Math.cos(angle), r * Math.sin(angle), 32], target: [0, 0, 14] });
   }
 
+  /** Shows what belongs to copy `cell` and hides the other copies' own; -1 hides them all. */
+  private showBound(cell: number) {
+    for (const entry of this.bound) {
+      const shown = entry.cell === cell;
+      for (const object of entry.objects) object.visible = shown;
+    }
+  }
+
   render() {
-    this.renderer.render(this.scene, this.camera);
+    const cells = this.cells;
+    const drawCell = (this.dots?.material as THREE.ShaderMaterial | undefined)?.uniforms.drawCell;
+    if (!cells) {
+      if (drawCell) drawCell.value = -1;
+      this.showBound(-1);
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
+    const renderer = this.renderer;
+    // The canvas behind and between the copies, then each copy in its part
+    // of it. WebGL counts y from the bottom.
+    renderer.setScissorTest?.(false);
+    renderer.setViewport?.(0, 0, this.width, this.height);
+    renderer.clear?.();
+    renderer.setScissorTest?.(true);
+    for (let k = 0; k < cells.count; k++) {
+      const at = cellRect(k, cells.count, cells.region);
+      const bottom = this.height - at.y - at.height;
+      renderer.setViewport?.(at.x, bottom, at.width, at.height);
+      renderer.setScissor?.(at.x, bottom, at.width, at.height);
+      if (drawCell) drawCell.value = k;
+      this.showBound(k);
+      renderer.render(this.scene, this.camera);
+    }
+    renderer.setScissorTest?.(false);
+    renderer.setViewport?.(0, 0, this.width, this.height);
   }
 
   /**
@@ -371,10 +522,18 @@ export class PolarScene {
     if (!this.screenFresh) {
       this.camera.updateMatrixWorld();
       this.mvp.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
-      this.screen = project(this.positions, this.mvp.elements, this.width, this.height, this.screen);
+      // Within a copy: every copy is the same picture of its own dots.
+      const size = this.cellRect(0);
+      this.screen = project(this.positions, this.mvp.elements, size.width, size.height, this.screen);
       this.screenFresh = true;
     }
     return this.screen.subarray(0, this.dotCount * 2);
+  }
+
+  /** Whether dot `i` is drawn in copy `cell`. */
+  private inCell(i: number, cell: number): boolean {
+    const of = this.cellOf[i]!;
+    return of === -1 || of === cell;
   }
 
   /**
@@ -382,7 +541,14 @@ export class PolarScene {
    * from the canvas's top left), for the current camera.
    */
   lasso(polygon: ArrayLike<number>): Uint32Array {
-    return lassoSelect(this.projected(), polygon);
+    if (!this.cells) return lassoSelect(this.projected(), polygon);
+    // In a grid the gesture belongs to the copy it began in, and selects
+    // that copy's dots.
+    const cell = polygon.length >= 2 ? this.cellAt(polygon[0]!, polygon[1]!) : -1;
+    if (cell < 0) return new Uint32Array(0);
+    const at = this.cellRect(cell);
+    const local = Array.from(polygon, (value, k) => value - (k % 2 === 0 ? at.x : at.y));
+    return lassoSelect(this.projected(), local).filter((dot) => this.inCell(dot, cell));
   }
 
   /** The dots inside a screen-space box between two corners. */
@@ -392,10 +558,17 @@ export class PolarScene {
 
   /** The dot nearest a screen point within `radius` pixels, or -1. */
   pick(x: number, y: number, radius: number): number {
+    const cell = this.cellAt(x, y);
+    if (cell < 0) return -1;
+    const split = this.cells !== null;
+    const at = this.cellRect(cell);
+    x -= at.x;
+    y -= at.y;
     const screen = this.projected();
     let best = -1;
     let bestDistance = radius * radius;
     for (let i = 0; i < screen.length / 2; i++) {
+      if (split && !this.inCell(i, cell)) continue;
       const dx = screen[i * 2]! - x, dy = screen[i * 2 + 1]! - y;
       const d = dx * dx + dy * dy;
       // NaN (behind the camera) fails the comparison.
@@ -413,10 +586,15 @@ export class PolarScene {
    */
   pickSurface(x: number, y: number): SurfaceHit | null {
     if (this.pickable.length === 0) return null;
+    const cell = this.cellAt(x, y);
+    if (cell < 0) return null;
+    const at = this.cellRect(cell);
     this.camera.updateMatrixWorld();
-    this.raycaster.setFromCamera(new THREE.Vector2((x / this.width) * 2 - 1, 1 - (y / this.height) * 2), this.camera);
-    const hit = this.raycaster.intersectObjects(this.pickable.map((entry) => entry.mesh), false)[0];
-    const entry = hit && this.pickable.find((candidate) => candidate.mesh === hit.object);
+    this.raycaster.setFromCamera(new THREE.Vector2(((x - at.x) / at.width) * 2 - 1, 1 - ((y - at.y) / at.height) * 2), this.camera);
+    // A copy's own surface is found in that copy alone.
+    const here = this.pickable.filter((entry) => entry.cell === undefined || (this.cells !== null && entry.cell === cell));
+    const hit = this.raycaster.intersectObjects(here.map((entry) => entry.mesh), false)[0];
+    const entry = hit && here.find((candidate) => candidate.mesh === hit.object);
     if (!hit || !entry || !hit.face) return null;
     // The hit triangle's corner nearest the hit: a vertex is a grid node,
     // `j * ni + i` (`surfaceMesh`).
@@ -431,12 +609,18 @@ export class PolarScene {
     return { surface: entry.surface, twaIndex: vertex % entry.ni, twsIndex: Math.floor(vertex / entry.ni) };
   }
 
-  /** A model-space point's screen position, or null when it is behind the camera. */
+  /** A model-space point's screen position (in the first copy of a grid), or null when it is behind the camera. */
   toScreen(x: number, y: number, z: number): [number, number] | null {
+    return this.toScreenIn(0, x, y, z);
+  }
+
+  /** A model-space point's position on the canvas as copy `cell` draws it, or null when it is behind the camera. */
+  toScreenIn(cell: number, x: number, y: number, z: number): [number, number] | null {
+    const at = this.cellRect(cell);
     this.camera.updateMatrixWorld();
     this.mvp.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
-    const out = project(new Float32Array([x, y, z]), this.mvp.elements, this.width, this.height);
-    return Number.isNaN(out[0]) ? null : [out[0]!, out[1]!];
+    const out = project(new Float32Array([x, y, z]), this.mvp.elements, at.width, at.height);
+    return Number.isNaN(out[0]) ? null : [at.x + out[0]!, at.y + out[1]!];
   }
 
   /** Frees every GPU resource: geometries, materials, controls and the renderer. */
@@ -454,6 +638,8 @@ export class PolarScene {
     disposeChildren(this.guides);
     this.positions = new Float32Array(0);
     this.selected = new Float32Array(0);
+    this.cellOf = new Float32Array(0);
+    this.cells = null;
     this.renderer.dispose();
   }
 }

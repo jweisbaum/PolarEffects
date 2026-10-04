@@ -111,7 +111,7 @@ export default function StartScreen({
           </div>
           <h1>PolarExplorer</h1>
           <p className="muted">
-            {t("Build sailing polars from ORC certificates, polar files and race tracks.")}
+            {t("Build sailing polars from certificates, polar files and race tracks.")}
           </p>
         </header>
 

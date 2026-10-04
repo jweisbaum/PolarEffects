@@ -19,6 +19,25 @@ const DEFAULT_SAMPLES: usize = 200;
 const MAX_SAMPLES: usize = 2000;
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct LibrarySearchParams {
+    /// Words to find: a boat's name, sail number, model or class, builder or
+    /// event. Every word must match; accents and case do not matter.
+    pub query: String,
+    /// Skip this many hits, for the next page (a page is 100).
+    #[serde(default)]
+    pub offset: u32,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct LibraryImportParams {
+    /// The track's `id` from library_search.
+    pub id: String,
+    /// The boat to import it into, from boats_list; the first boat without it.
+    #[serde(default)]
+    pub boat: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct InspectParams {
     /// Track files to look into: GeoJSON, CSV or an archive of them. Each
     /// path absolute, or beginning with `~/`.
@@ -87,10 +106,13 @@ pub struct TrackSetParams {
     /// and speed are still derived.
     #[serde(default)]
     pub max_gap_s: Option<i64>,
-    /// Which heading and speed to prefer where the file gave them:
-    /// "given" or "derived" (from the positions).
+    /// Which heading to prefer where the file gave one: "given" or
+    /// "derived" (from the positions).
     #[serde(default)]
-    pub prefer: Option<String>,
+    pub prefer_heading: Option<String>,
+    /// Which speed to prefer where the file gave one: "given" or "derived".
+    #[serde(default)]
+    pub prefer_speed: Option<String>,
     /// Use only downloaded (reanalysis) wind, ignoring wind the track
     /// itself supplied.
     #[serde(default)]
@@ -237,6 +259,34 @@ impl<R: tauri::Runtime> PolarExplorer<R> {
     }
 
     #[tool(
+        description = "Searches the user's track library (the SYRF database set up in Settings) for tracks of earlier races: by boat name, sail number, model or class, builder or event. Answers `total` and up to 100 hits, each with its `id`, boat, sail number, model, event, dates and whether its file is available; `downloaded: false` means the library has not been set up, so there is nothing to search. Read-only and local."
+    )]
+    async fn library_search(&self, Parameters(p): Parameters<LibrarySearchParams>) -> ToolResult {
+        let found = self
+            .run("library_search", move |app| {
+                crate::database::catalogue::search(
+                    app.state::<AppState>().inner(),
+                    &p.query,
+                    p.offset,
+                )
+            })
+            .await?;
+        json(&found)
+    }
+
+    #[tool(
+        description = "Imports one track from the user's track library (its `id` from library_search) into a boat as a track source, one undo step. Positions only: follow with weather_fetch for its wind, waves and current. Refused when the track's file is not available."
+    )]
+    async fn library_import(&self, Parameters(p): Parameters<LibraryImportParams>) -> ToolResult {
+        let result = self
+            .write("library_import", false, move |app| {
+                crate::database::catalogue::import_database_track(app.state(), p.boat, p.id)
+            })
+            .await?;
+        json(&result)
+    }
+
+    #[tool(
         description = "Downloads a race from a tracker (YellowBrick, Geovoile, Blue Water Tracks) and answers its title, dates, `key` and every boat with its id and name; nothing is imported yet. This reaches the tracker's site and can take a while; the event is then kept for this session. Follow with tracker_import."
     )]
     async fn tracker_event(&self, Parameters(p): Parameters<TrackerEventParams>) -> ToolResult {
@@ -273,10 +323,11 @@ impl<R: tauri::Runtime> PolarExplorer<R> {
         description = "Changes a track's sample filters, how its heading and speed are derived, or which wind it uses; give the ones to change. Filters decide which samples make the track's polar segment: the raw positions are never changed. `filters` holds only the filters to change. Each of filters, derivation and wind choice is one undo step."
     )]
     async fn track_set(&self, Parameters(p): Parameters<TrackSetParams>) -> ToolResult {
-        let derivation = p.max_gap_s.is_some() || p.prefer.is_some();
+        let derivation =
+            p.max_gap_s.is_some() || p.prefer_heading.is_some() || p.prefer_speed.is_some();
         if p.filters.is_none() && !derivation && p.downloaded_wind_only.is_none() {
             return Err(ToolError::Refused(
-                "there is nothing to change: give filters, max_gap_s, prefer or downloaded_wind_only"
+                "there is nothing to change: give filters, max_gap_s, prefer_heading, prefer_speed or downloaded_wind_only"
                     .to_owned(),
             ));
         }
@@ -311,7 +362,8 @@ impl<R: tauri::Runtime> PolarExplorer<R> {
                         boat,
                         source,
                         p.max_gap_s.unwrap_or(current.max_gap_s),
-                        p.prefer.unwrap_or(current.prefer),
+                        p.prefer_heading.unwrap_or(current.prefer_heading),
+                        p.prefer_speed.unwrap_or(current.prefer_speed),
                     )?);
                 }
                 if let Some(downloaded_only) = p.downloaded_wind_only {

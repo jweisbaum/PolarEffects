@@ -468,7 +468,7 @@ fn refetch_starts_over_and_rederiving_needs_no_fetch() {
 
     let before = track(&app, id);
     let calls = coarse.calls.load(Ordering::SeqCst);
-    tracks::track_derivation_set(&app, id, 300, "derived").unwrap();
+    tracks::track_derivation_set(&app, id, 300, "derived", "derived").unwrap();
     let after = track(&app, id);
     assert_eq!(
         coarse.calls.load(Ordering::SeqCst),

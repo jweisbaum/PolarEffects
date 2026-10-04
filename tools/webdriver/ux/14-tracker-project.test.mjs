@@ -44,13 +44,13 @@ export default {
     await d.click('[data-feature="boats:tracker-open"]');
     await d.waitFor('.boat-import-report tbody tr',{timeoutMs:60000});
     await d.click('[data-feature="boats:tracker-close"]');
-    await d.waitFor('.boat-tabs [role="tab"]:nth-child(2)'); assert.equal(await d.count('.boat-tabs [role="tab"]'),2);
+    await d.waitFor('.boat-tab:nth-child(2) [role="tab"]'); assert.equal(await d.count('.boat-tabs [role="tab"]'),2);
     await d.waitFor('.track-list li'); await t.shot("tracker-project-open");
     assert.ok(fixture.requests.some(r=>r.includes('AllPositions3')));
     // Each imported track exposes weather download after the race import.
     assert.ok(await d.count('[data-feature="tracks:fetch-weather"]')>0);
     await d.click('.titlebar [data-feature="boats:add"]');
-    await d.waitFor('.boat-tabs [role="tab"]',{text:"Boat 3"});
+    await d.waitFor('.boat-tabs [role="tab"]',{text:"Polar 3"});
     assert.equal(await d.count('.boat-tabs [role="tab"]'),3,"tracker projects can add boats");
     const previous = await d.invoke("project_summary");
     await d.click('[data-feature="shell:project-menu"]');

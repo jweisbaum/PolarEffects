@@ -21,6 +21,7 @@ pub mod geovoile;
 pub mod http;
 pub mod kml;
 pub mod net;
+pub mod orc;
 pub mod orr;
 pub mod yellowbrick;
 

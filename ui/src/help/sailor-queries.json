@@ -1,6 +1,6 @@
 {
   "fr": [
-    ["empannage", "tracks:tack-window", "tracks:tack-window"],
+    ["empannage", "tracks:tacks", "tracks:tacks"],
     ["marée", "tracks:no-tide", "tracks:no-tide"],
     ["houle", "tracks:hs-max", "tracks:hs-max"],
     ["mer de face", "tracks:wave-mode", "tracks:wave-mode"],
@@ -8,7 +8,7 @@
     ["au portant", "tracks:twa-max", "tracks:twa-max"],
     ["grille de sortie", "blend-settings:twa", "sources:blend-settings"],
     ["Expedition", "export:expedition", "sources:export"],
-    ["vitesse d’arrêt", "tracks:stop-speed", "tracks:stop-speed"],
+    ["VMG minimale", "tracks:vmg-min", "tracks:vmg-min"],
     ["étape", "tracker-import:leg", "tracks:yellowbrick"],
     ["numéro de voile", "orc:field-sail", "orc:field-sail"],
     ["chantier", "orc:field-builder", "orc:field-builder"],
@@ -18,18 +18,18 @@
     ["globe", "map:projection", "map:projection"],
     ["carte de chaleur", "compare:heat-map", "compare:heat-map"],
     ["vue de dessus", "view3d:camera-top", "view3d:camera-top"],
-    ["dérive", "tracks:stokes-drift", "tracks:stokes-drift"],
+    ["COG depuis", "tracks:cog-from", "tracks:cog-from"],
     ["lasso", "view3d:tool-lasso", "view3d:tool-lasso"]
   ],
   "de": [
-    ["Halse", "tracks:tack-window", "tracks:tack-window"],
+    ["Halse", "tracks:tacks", "tracks:tacks"],
     ["Gezeiten", "tracks:no-tide", "tracks:no-tide"],
     ["Dünung", "tracks:hs-max", "tracks:hs-max"],
     ["Wellen von vorn", "tracks:wave-sectors", "tracks:wave-mode"],
     ["Motorfahrt", "tracks:time-start", "tracks:time-start"],
     ["vor dem Wind", "tracks:twa-max", "tracks:twa-max"],
     ["Ausgaberaster", "export:project-grid", "sources:export"],
-    ["Stillstand", "tracks:stop-speed", "tracks:stop-speed"],
+    ["Minimale VMG", "tracks:vmg-min", "tracks:vmg-min"],
     ["Etappe", "tracker-import:leg", "tracks:yellowbrick"],
     ["Segelnummer", "orc:field-sail", "orc:field-sail"],
     ["Werft", "orc:field-builder", "orc:field-builder"],
@@ -38,7 +38,7 @@
     ["Globus", "map:projection", "map:projection"],
     ["Heatmap", "compare:heat-map", "compare:heat-map"],
     ["Draufsicht", "view3d:camera-top", "view3d:camera-top"],
-    ["Stokes", "tracks:stokes-drift", "tracks:stokes-drift"],
+    ["COG von", "tracks:cog-from", "tracks:cog-from"],
     ["Lasso", "view3d:tool-lasso", "view3d:tool-lasso"],
     ["Sprache", "settings:language", "settings:language"],
     ["Wetter", "tracks:fetch-weather", "tracks:fetch-weather"]

@@ -24,5 +24,5 @@ export default {
   "Choose linear or shape-preserving monotone spline interpolation for the blend, plots and export.": "Choisir une interpolation linéaire ou par spline monotone préservant la forme pour la fusion, les graphiques et l’export.",
   "Set the output wind-angle spacing to 1, 2, 5 or 10 degrees.": "Régler le pas d’angle du vent de sortie sur 1, 2, 5 ou 10 degrés.",
   "Set the output wind-speed spacing to 1, 2, 5 or 10 knots.": "Régler le pas de vitesse du vent de sortie sur 1, 2, 5 ou 10 nœuds.",
-  "Edit a priority group": "Modifier un groupe prioritaire"
+  "Edit a priority group": "Modifier un groupe prioritaire",
 };

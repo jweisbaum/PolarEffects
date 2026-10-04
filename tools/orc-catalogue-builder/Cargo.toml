@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 pe-orc = { workspace = true }
+pe-core = { workspace = true }
 serde_json = { workspace = true }
 
 [lints]

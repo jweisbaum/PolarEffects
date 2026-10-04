@@ -46,15 +46,19 @@ stop and raise it rather than working around it.
    in.** No CDN fonts, no map tiles, no telemetry, no remote schema fetches.
    The webview's CSP stays `'self'`-only. Only two crates may use the network:
    `pe-env` (reanalysis archives) and `pe-trackers` (YellowBrick, Geovoile,
-   Blue Water Tracks, and user-started ORR catalogue scraping on
-   `www.regattaman.com`), each for its allow-listed hosts only.
+   Blue Water Tracks, and the certificate catalogues' scraping: ORR on
+   `www.regattaman.com`, ORC on `data.orc.org`), each for its allow-listed
+   hosts only. A catalogue scrape runs when the person starts it, or at
+   startup or shutdown once they have chosen that schedule for it in
+   Settings, and then at most once a day (spec §5.4).
    `pe-app` may additionally connect to the PostgreSQL host explicitly saved
    in Settings, for the user-requested SYRF library. Library HTTP discovery
    remains in `pe-trackers`; startup/shutdown scraping runs only after the
    user selects that schedule. Whole-database export invokes installed
    `pg_dump` only; scraping never uses a sidecar.
    `npm run check:offline` enforces this. The ORC catalogue is bundled at
-   build time and never fetched at run time.
+   build time; what a scrape adds is kept beside it on this computer, and
+   searching or adding a certificate never fetches.
    **The invariant runs both ways** (D25): an *inbound* socket that drives the
    application is the same promise broken from the other side. `pe-app`'s
    optional `webdriver` feature compiles in a WebDriver endpoint on loopback
@@ -103,12 +107,14 @@ crates/
                 IDs, geodesy, .wpsproj I/O, migrations, canonical floats
   pe-polar/     Polar grid type, interpolation, Expedition/Adrena readers
                 and writers, track-sample binning, blending, comparison
-  pe-orc/       The embedded ORC catalogue (generated at build time) and
-                its search index
+  pe-orc/       The embedded ORC catalogue (generated at build time), the
+                store of scraped certificates merged into it, and the
+                search index
   pe-tracks/    Track model, GeoJSON/CSV import, heading/speed derivation,
                 sample filters. No network
   pe-trackers/  Network: YellowBrick, Geovoile (hwx decoder), Blue Water
-                Tracks clients and decoders
+                Tracks clients and decoders; the ORR and ORC certificate
+                scrapers
   pe-env/       Network: zarr readers for WeatherBench2 wind, ARCO-ERA5
                 waves, and ocean currents; pure-Rust blosc/LZ4 with block
                 reads by HTTP Range; in-memory block LRU; space-time sampling
@@ -125,7 +131,8 @@ ui/             React + TypeScript + Vite front end
   src/settings/ Settings dialog, themes, language picker, MCP section
   src/mcp/      The interface following the MCP service; the stage capture
   src/help/     Feature registry, search, highlight, help topics
-  src/i18n/     Catalogues (en, fr, de), glossary, coverage tests
+  src/i18n/     Catalogues (en, fr, de, es, it, nl, zh, ja, ar), glossaries,
+                coverage tests
   src/generated/ ts-rs bindings. Never edit by hand
 assets/         Natural Earth basemap, ORC catalogue build input, samples
 tools/          orc-catalogue-builder, basemap-builder, check-offline.sh,
@@ -212,9 +219,12 @@ npm run tools:test                         # the driver's parsing and the MCP ha
 ## Recipes
 
 **Adding interface text.** Write English in `t("…")` or `msg("…")`. Add the
-key to `ui/src/i18n/locales/{fr,de}/<area>.ts` with a real translation (use
-the glossary in `ui/src/i18n/GLOSSARY*.md`). `npm run ui:test` fails on a
-missing or unused key.
+key to `ui/src/i18n/locales/{fr,de,es,it,nl,zh,ja,ar}/<area>.ts` with a real
+translation (use the glossaries in `ui/src/i18n/GLOSSARY*.md`). `npm run
+ui:test` fails on a missing or unused key. A help topic change goes into
+`ui/src/help/topics.ts` and every `ui/src/help/locales/<lang>.ts`. Arabic is
+laid out right to left (`dir="rtl"`); anything that reads as a scale (a
+slider, numbers with units over a plot) stays left to right in `styles.css`.
 
 **Adding a control.** Give it `data-feature="<area>:<name>"` and a registry
 entry in `ui/src/help/features/<area>.ts` (label, description, keywords,
@@ -320,6 +330,18 @@ and, in CI, ecCodes.
 - The ARCO-ERA5 time axis is preallocated past today. Coverage comes from
   the root `.zattrs` (`valid_time_start`, `valid_time_stop`,
   `valid_time_stop_era5t`), and a 404 chunk means missing, not an error.
+- ORC's service (`data.orc.org`, `DownRMS`) serves only the current VPP
+  year: any other year, and any country code it does not know, answers no
+  certificates and no error. Every answer carries the country list, opens
+  with a UTF-8 byte-order mark, and is sent uncompressed (5–10 MB a
+  country). Its `RefNo` is the certificate's identity, and the only one:
+  a boat can hold two valid certificates in a year (crewed and
+  double-handed), so never merge scraped certificates by boat. The embedded
+  catalogue has no numbers, so a scraped certificate meets its embedded
+  twin by boat, sail number and certificate year
+  (`pe_orc::Catalogue::with_scraped`). Catalogue ids must stay put across
+  scrapes: embedded entries keep their places, scraped ones are only ever
+  appended, and one ORC has taken back is withdrawn in place, not removed.
 - The YellowBrick `RaceSetup` JSON is ISO-8859-1, not UTF-8.
 - Blue Water Tracks answers an unknown slug with HTTP 200, `race` an empty
   array rather than an object; check for that, not only for a 404.
@@ -359,7 +381,7 @@ exercised in the real app with the driver: a UX test in
 `tools/webdriver/ux/`, or a screenshot the agent has opened and looked at
 (`docs/AGENT-UI-TESTING.md`). The relevant recipe is
 followed. `spec.md` is updated in the same commit as any behaviour change.
-Every new string is translated into French and German. Every new control is
+Every new string is translated into all eight languages. Every new control is
 in the help search. `plan.md` milestone status is updated.
 
 ## Ask, don't guess

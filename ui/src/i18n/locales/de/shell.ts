@@ -12,8 +12,6 @@ const catalogue: Record<string, string> = {
   "Compare": "Vergleich",
   "Show the navigation": "Navigation einblenden",
   "Hide the navigation": "Navigation ausblenden",
-  "Show the sources and polar plot": "Quellen und Polardiagramm einblenden",
-  "Hide the sources and polar plot": "Quellen und Polardiagramm ausblenden",
   "Hints, errors and work in progress": "Hinweise, Fehler und laufende Arbeiten",
   "Idle": "Bereit",
   "Project": "Projekt",
@@ -73,7 +71,7 @@ const catalogue: Record<string, string> = {
   "Change nothing": "Nichts ändern",
   "Cancel": "Abbrechen",
   "Close without creating a project": "Schließen, ohne ein Projekt anzulegen",
-  "Untitled polar": "Unbenannte Polare",
+  "Untitled Project": "Unbenanntes Projekt",
   "The project's name, shown in the title bar": "Der Name des Projekts, in der Titelleiste angezeigt",
   "The boat this polar is for (optional)": "Das Boot, für das diese Polare gedacht ist (optional)",
   "Optional": "Optional",
@@ -137,6 +135,12 @@ const catalogue: Record<string, string> = {
   "job": "Auftrag",
   "The environment fetch of {label} left out a current source that would not open.": "Der Abruf der Umweltdaten von {label} hat eine Strömungsquelle ausgelassen, die sich nicht öffnen ließ.",
   "Downloaded weather is no longer kept on disk: removing {size} an earlier version left in {path}. Projects keep every value they use.": "Heruntergeladenes Wetter wird nicht mehr auf der Festplatte gespeichert: {size}, die eine frühere Version in {path} hinterlassen hat, werden entfernt. Projekte behalten jeden Wert, den sie verwenden.",
+  "Show the sources": "Quellen einblenden",
+  "Hide the sources": "Quellen ausblenden",
+  "2D": "2D",
+  "Show the polar plot in the centre: boat speed against wind angle, one wind speed or all.": "Zeigt das Polardiagramm in der Mitte: Bootsgeschwindigkeit über dem Windwinkel, für eine Windgeschwindigkeit oder alle.",
+  "polar plot": "Polardiagramm",
+  "The polar plot: boat speed against wind angle": "Das Polardiagramm: Bootsgeschwindigkeit über dem Windwinkel",
 };
 
 export default catalogue;

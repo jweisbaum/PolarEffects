@@ -114,8 +114,8 @@ pub fn derive(fixes: &[Fix], settings: &DerivationSettings) -> Vec<Motion> {
             let (heading, speed) = derived_at(fixes, i, settings.max_gap_s);
             let given_heading = fix.cog.filter(|v| v.is_finite()).map(wrap_360);
             let given_speed = fix.sog.filter(|v| v.is_finite() && *v >= 0.0);
-            let (heading, heading_origin) = choose(given_heading, heading, settings.prefer);
-            let (speed, speed_origin) = choose(given_speed, speed, settings.prefer);
+            let (heading, heading_origin) = choose(given_heading, heading, settings.prefer_heading);
+            let (speed, speed_origin) = choose(given_speed, speed, settings.prefer_speed);
             Motion {
                 heading,
                 heading_origin,
@@ -341,12 +341,23 @@ mod tests {
         assert_eq!(given[1].speed, Some(4.0));
         assert_eq!(given[0].heading_origin, Some(ValueOrigin::Derived));
         let prefer_derived = DerivationSettings {
-            prefer: PreferValues::Derived,
+            prefer_heading: PreferValues::Derived,
+            prefer_speed: PreferValues::Derived,
             ..default()
         };
         let derived = derive(&fixes, &prefer_derived);
         assert!(close(derived[1].heading, 90.0, 1e-9));
         assert_eq!(derived[1].speed_origin, Some(ValueOrigin::Derived));
+        // Each is chosen on its own: the derived heading with the given speed.
+        let heading_only = DerivationSettings {
+            prefer_heading: PreferValues::Derived,
+            ..default()
+        };
+        let mixed = derive(&fixes, &heading_only);
+        assert!(close(mixed[1].heading, 90.0, 1e-9));
+        assert_eq!(mixed[1].heading_origin, Some(ValueOrigin::Derived));
+        assert_eq!(mixed[1].speed, Some(4.0));
+        assert_eq!(mixed[1].speed_origin, Some(ValueOrigin::Given));
         // With nothing to derive from, a preferred-derived fix falls back to
         // what it was given.
         let alone = [fixes[1].clone()];

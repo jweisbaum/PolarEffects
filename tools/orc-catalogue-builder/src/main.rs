@@ -36,6 +36,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use pe_core::orc::sail_display;
 use pe_orc::format::{self, Entry, Provenance, Vpp, hundredths};
 use serde_json::Value;
 
@@ -259,30 +260,6 @@ fn certificate_year(
         (Some(600), Some(2400), _) => Some(2024),
         (Some(600), Some(2000), 7) => lists.latest(sail, ..=2023),
         _ => None,
-    }
-}
-
-/// The sail number as shown: `"GBR/GBR1124"` is `"GBR 1124"`, and orc-data's
-/// stand-in for a missing number (`"GBR/_3"`) is empty.
-fn sail_display(sailnumber: &str, country: &str) -> String {
-    let raw = sailnumber
-        .split_once('/')
-        .map_or(sailnumber, |(_, sail)| sail)
-        .trim();
-    if raw.is_empty() || raw.starts_with('_') {
-        return String::new();
-    }
-    let rest = raw
-        .get(..country.len())
-        .filter(|head| !country.is_empty() && head.eq_ignore_ascii_case(country))
-        .and_then(|_| raw.get(country.len()..))
-        .map(|rest| rest.trim_start_matches([' ', '-', '/']))
-        .filter(|rest| !rest.is_empty())
-        .unwrap_or(raw);
-    if country.is_empty() {
-        rest.to_owned()
-    } else {
-        format!("{country} {rest}")
     }
 }
 
@@ -752,16 +729,6 @@ mod tests {
             None
         );
         assert!(lists.years[&2022].contains("GBR/O'NEIL"));
-    }
-
-    #[test]
-    fn sail_numbers_are_shown_once_with_their_country() {
-        assert_eq!(sail_display("GBR/GBR1124", "GBR"), "GBR 1124");
-        assert_eq!(sail_display("GBR/1124", "GBR"), "GBR 1124");
-        assert_eq!(sail_display("AUS/Sm35", "AUS"), "AUS Sm35");
-        assert_eq!(sail_display("FIN/Fin71", "FIN"), "FIN 71");
-        assert_eq!(sail_display("GBR/_1", "GBR"), "");
-        assert_eq!(sail_display("GBR/GBR", "GBR"), "GBR GBR");
     }
 
     #[test]

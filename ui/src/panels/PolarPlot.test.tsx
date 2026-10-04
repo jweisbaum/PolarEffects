@@ -94,26 +94,11 @@ it("switches off \"all\" to a specific wind speed within the fetched domain", as
   expect(called).toBeLessThanOrEqual(20);
 });
 
-it("shows the full-size button only in the panel variant and the close button only in the overlay variant", async () => {
-  await render({ project: project(), variant: "panel" });
-  expect(host.querySelector('[data-feature="plot:full-size"]')).not.toBeNull();
-  expect(host.querySelector('[data-feature="plot:close"]')).toBeNull();
-
-  await render({ project: project(), variant: "overlay" });
+it("has no full-size or close button: the plot is a stage of its own (asked 2026-10-02)", async () => {
+  await render({ project: project(), variant: "stage" });
   expect(host.querySelector('[data-feature="plot:full-size"]')).toBeNull();
-  expect(host.querySelector('[data-feature="plot:close"]')).not.toBeNull();
-});
-
-it("calls onFullSize and onClose", async () => {
-  const onFullSize = vi.fn();
-  const onClose = vi.fn();
-  await render({ project: project(), variant: "panel", onFullSize, onClose });
-  await act(async () => host.querySelector<HTMLButtonElement>('[data-feature="plot:full-size"]')!.click());
-  expect(onFullSize).toHaveBeenCalledTimes(1);
-
-  await render({ project: project(), variant: "overlay", onFullSize, onClose });
-  await act(async () => host.querySelector<HTMLButtonElement>('[data-feature="plot:close"]')!.click());
-  expect(onClose).toHaveBeenCalledTimes(1);
+  expect(host.querySelector('[data-feature="plot:close"]')).toBeNull();
+  expect(host.querySelector(".polar-plot-stage")).not.toBeNull();
 });
 
 it("shows a message when the plot has no point at the chosen slice", async () => {

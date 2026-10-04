@@ -231,7 +231,7 @@ export default {
     await d.type('[data-feature="start:language"]', "fr");
     await d.waitFor('html[lang="fr"]', { timeoutMs: 10_000 });
     await d.waitFor('[data-feature="start:new"]', { text: "Nouveau projet" });
-    assert.equal(await d.text('[data-feature="new:name"] input'), "Polaire sans titre",
+    assert.equal(await d.text('[data-feature="new:name"] input'), "Projet sans titre",
       "the untouched default name follows the language");
     await t.shot("fr-start");
 

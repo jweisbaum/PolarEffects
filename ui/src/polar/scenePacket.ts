@@ -5,7 +5,7 @@
  *
  * The frontend's copy of the layout; the Rust side's is the module
  * documentation of `crates/pe-app/src/polar3d.rs`. Both are held to the same
- * bytes by `fixtures/scene-v4.bin` and `fixtures/scene-v4-flags.bin`
+ * bytes by `fixtures/scene-v5.bin` and `fixtures/scene-v5-flags.bin`
  * (written by a Rust test, read by `scenePacket.test.ts`). Every value is
  * little-endian and 4 bytes wide except the time origin and the samples
  * key, and every section starts on a 4-byte boundary, so each array below
@@ -40,6 +40,8 @@
  *   f32 [M]      wave period, seconds (NaN: none)
  *   f32 [M]      wave/bow angle, degrees (NaN: none)
  *   f32 [M]      wave/wind angle, degrees (NaN: none)
+ *   f32 [M]      wave bearing, degrees clockwise from the bow, 0–360: where
+ *                the waves come from as seen from the boat (NaN: none)
  *   u32 [M]      flags
  * samples, flags only
  *   u32 [M]      flags
@@ -60,7 +62,7 @@
  */
 
 export const SCENE_MAGIC = 0x44334550;
-export const SCENE_VERSION = 4;
+export const SCENE_VERSION = 5;
 export const HEADER_BYTES = 48;
 export const BLEND_SOURCE = 0xffffffff;
 export const FLAG_EXCLUDED = 1;
@@ -114,6 +116,8 @@ export interface ScenePacket {
     wavePeriod: Float32Array;
     waveAngle: Float32Array;
     waveWindAngle: Float32Array;
+    /** Where the waves come from as seen from the boat, degrees clockwise from the bow (spec.md 10.5). */
+    waveBearing: Float32Array;
     flags: Uint32Array;
   };
   surfaces: PacketSurface[];
@@ -187,7 +191,7 @@ export function unpackScene(buffer: ArrayBuffer, held?: ScenePacket): ScenePacke
   } else {
     samples = {
       count: m, points: f32(m * 3), source: u32(m), ids: u32(m * 2),
-      hs: f32(m), current: f32(m), time: f32(m), wavePeriod: f32(m), waveAngle: f32(m), waveWindAngle: f32(m), flags: u32(m),
+      hs: f32(m), current: f32(m), time: f32(m), wavePeriod: f32(m), waveAngle: f32(m), waveWindAngle: f32(m), waveBearing: f32(m), flags: u32(m),
     };
   }
   for (const [what, indices] of [["node", nodes.source], ["sample", samples.source]] as const) {
@@ -216,4 +220,56 @@ export function emptyScene(): ScenePacket {
   view.setUint32(0, SCENE_MAGIC, true);
   view.setUint32(4, SCENE_VERSION, true);
   return unpackScene(buffer);
+}
+
+/** "PE3W": the split blends packet (spec.md 10.5; `pe-app/src/polar3d.rs`, `pack_split`). */
+export const SPLIT_MAGIC = 0x57334550;
+export const SPLIT_VERSION = 1;
+
+/** The blend of one copy of a split view. */
+export interface SplitSurface {
+  /** Which copy, 0 ≤ cell < count. */
+  cell: number;
+  twa: Float32Array;
+  tws: Float32Array;
+  /** TWA-major: `bsp[i * tws.length + j]`; NaN is an empty cell. */
+  bsp: Float32Array;
+}
+
+/** The blends of a split view: one surface per copy whose blend has something to say. */
+export interface SplitPacket {
+  count: number;
+  surfaces: SplitSurface[];
+}
+
+/**
+ * Reads the split blends packet: a 4-word header (magic "PE3W", version,
+ * copies, surfaces), then surfaces laid out as the scene's, each naming
+ * its copy where the scene's name a source.
+ */
+export function unpackSplit(buffer: ArrayBuffer): SplitPacket {
+  if (buffer.byteLength < 16) throw new ScenePacketError(`a split of ${buffer.byteLength} bytes has no header`);
+  const view = new DataView(buffer);
+  const word = (i: number) => view.getUint32(i * 4, true);
+  if (word(0) !== SPLIT_MAGIC) throw new ScenePacketError("this is not a split blends packet (PE3W)");
+  if (word(1) !== SPLIT_VERSION) throw new ScenePacketError(`split version ${word(1)} is not ${SPLIT_VERSION}`);
+  const [count, f] = [word(2), word(3)];
+  let offset = 16;
+  const take = (length: number) => {
+    const at = offset, end = at + length * 4;
+    if (end > buffer.byteLength) throw new ScenePacketError(`the split is short: it ends at byte ${buffer.byteLength}, before ${end}`);
+    offset = end;
+    return at;
+  };
+  const u32 = (length: number) => new Uint32Array(buffer, take(length), length);
+  const f32 = (length: number) => new Float32Array(buffer, take(length), length);
+  const surfaces: SplitSurface[] = [];
+  for (let k = 0; k < f; k++) {
+    const head = u32(3);
+    const cell = head[0]!, ni = head[1]!, nj = head[2]!;
+    if (cell >= count) throw new ScenePacketError(`surface ${k} is for copy ${cell} of ${count}`);
+    surfaces.push({ cell, twa: f32(ni), tws: f32(nj), bsp: f32(ni * nj) });
+  }
+  if (offset !== buffer.byteLength) throw new ScenePacketError(`the split has ${buffer.byteLength - offset} bytes after its last surface`);
+  return { count, surfaces };
 }

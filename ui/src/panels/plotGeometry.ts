@@ -23,15 +23,22 @@ export interface PlotLayout {
   scale: number;
 }
 
-/** A layout that fits a fan of `maxBsp` knots' radius into `width` × `height`, with `padding` pixels kept clear on every side. */
-export function fitLayout(width: number, height: number, maxBsp: number, padding = 28, asymmetric = false): PlotLayout {
+/**
+ * A layout that fits a fan of `maxBsp` knots' radius into `width` ×
+ * `height`, with `padding` pixels kept clear on every side. In the panel a
+ * symmetric fan sits against the left edge, its 0°–180° axis there; on the
+ * stage (`centred`, asked 2026-10-02) that axis runs down the middle, as a
+ * full circle's does.
+ */
+export function fitLayout(width: number, height: number, maxBsp: number, padding = 28, asymmetric = false, centred = false): PlotLayout {
   const usableWidth = Math.max(width - padding * 2, 1);
   const usableHeight = Math.max(height - padding * 2, 1);
   // The fan spans one radius across (0° to 180° is straight up to straight
   // down: height = 2 × radius) and one radius wide (90° is the widest point).
-  const radius = maxBsp > 0 ? Math.min(usableWidth / (asymmetric ? 2 : 1), usableHeight / 2) : 1;
+  const halves = asymmetric || centred ? 2 : 1;
+  const radius = maxBsp > 0 ? Math.min(usableWidth / halves, usableHeight / 2) : 1;
   const scale = maxBsp > 0 ? radius / maxBsp : 0;
-  return { centerX: asymmetric ? width / 2 : padding, centerY: height / 2, scale };
+  return { centerX: asymmetric || centred ? width / 2 : padding, centerY: height / 2, scale };
 }
 
 /** The canvas position of one (TWA, BSP) point. */

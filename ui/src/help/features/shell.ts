@@ -32,6 +32,8 @@ const features: Feature[] = [
     keywords: [msg("stage"), msg("chart"), msg("world")], topic: "map" },
   { id: "stage:3d", label: msg("3D"), description: msg("Show the polar as a 3D surface in the centre."),
     keywords: [msg("stage"), msg("surface"), msg("three dimensions")], topic: "polar-3d" },
+  { id: "stage:2d", label: msg("2D"), description: msg("Show the polar plot in the centre: boat speed against wind angle, one wind speed or all."),
+    keywords: [msg("stage"), msg("polar diagram"), msg("polar plot"), "TWA", "BSP"], topic: "sources" },
   { id: "stage:compare", label: msg("Compare"), description: msg("Show the difference between two polars in the centre."),
     keywords: [msg("stage"), msg("difference")], topic: "compare" },
 

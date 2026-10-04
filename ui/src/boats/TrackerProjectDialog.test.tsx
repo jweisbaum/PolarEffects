@@ -29,6 +29,9 @@ async function showBoats() {
   await act(async () => host.querySelector<HTMLButtonElement>('[data-feature="boats:tracker-open"]')!.click());
 }
 it("passes the exact-boat choice and displays original boat details in the report", async () => {
+  // Geovoile beside the other two (asked 2026-10-03).
+  expect([...host.querySelectorAll<HTMLOptionElement>('[data-feature="boats:tracker-provider"] option')].map(o => o.value))
+    .toEqual(["yellowbrick", "geovoile", "bluewater"]);
   const mode = host.querySelector<HTMLSelectElement>('[data-feature="boats:tracker-match"]')!;
   expect(mode.value).toBe("identical_model");
   await act(async () => { mode.value = "exact_boat"; mode.dispatchEvent(new Event("change", { bubbles: true })); });

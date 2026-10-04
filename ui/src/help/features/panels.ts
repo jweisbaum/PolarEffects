@@ -14,8 +14,6 @@ const features: Feature[] = [
     keywords: [msg("race"), msg("tracker"), "YellowBrick", "Geovoile", "GPS"], topic: "tracks", reveal: left },
   { id: "panel:sources", label: msg("Sources"), description: msg("Every source, with its colour, visibility and weight."),
     keywords: [msg("source list"), msg("weight"), msg("blend")], topic: "sources", reveal: right },
-  { id: "panel:plot", label: msg("Polar plot"), description: msg("Boat speed against wind angle for one wind speed."),
-    keywords: [msg("polar diagram"), "TWA", "TWS", "BSP"], topic: "sources", reveal: right },
 ];
 
 export default features;

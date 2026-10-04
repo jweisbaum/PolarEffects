@@ -2,7 +2,7 @@
 use super::matching::Profile;
 use crate::{
     commands::AppState,
-    error::{AppError, Context, Result},
+    error::{AppError, Result},
     projects::ProjectSummary,
     session::OpenProject,
 };
@@ -208,6 +208,7 @@ pub async fn open_tracker_project(
 ) -> Result<TrackerProjectResult> {
     let tracker = match tracker.as_str() {
         "yellowbrick" => Tracker::YellowBrick,
+        "geovoile" => Tracker::Geovoile,
         "bluewater" => Tracker::BlueWaterTracks,
         _ => {
             return Err(AppError::BadOption {
@@ -354,7 +355,9 @@ pub fn build_with_mode(
     if event.boats.is_empty() {
         return Err(AppError::Internal("The tracker returned no boats".into()));
     }
-    let catalogue = pe_orc::catalogue().doing("open", "ORC catalogue")?;
+    // The embedded catalogue with what was scraped since (spec.md 5.4), so a
+    // boat is matched against this year's certificates too.
+    let catalogue = crate::orc::catalogue(state)?;
     let mut warnings = Vec::new();
     let orr = match crate::orr::records(state) {
         Ok(r) => r,
@@ -490,8 +493,7 @@ pub fn build_with_mode(
             if !match_mode.matches(&profile, candidate) {
                 continue;
             }
-            if let Some(entry) = catalogue.entry(*id) {
-                let record = entry.to_record();
+            if let Some(record) = catalogue.record(*id) {
                 if project.sources.iter().any(|source| matches!(&source.kind, SourceKind::Orc { record: existing } if pe_orc::same_certificate(existing, &record))) { continue; }
                 polar_source(
                     &mut project,

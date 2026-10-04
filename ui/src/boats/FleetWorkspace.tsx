@@ -17,10 +17,23 @@ import ConfirmDialog from "../project/ConfirmDialog";
 
 type Layout = 1 | 2 | 4;
 
-export default function FleetWorkspace({ project, settings, onSettings, onProject, changedBoat, onActive, toolbarHost, onReplace }: {
+/** One, two or four panes, drawn: the layout switch's icons. */
+function LayoutIcon({ panes }: { panes: Layout }) {
+  return <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5">
+    <rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.5" />
+    {panes >= 2 && <line x1="8" y1="2.75" x2="8" y2="13.25" />}
+    {panes === 4 && <line x1="1.75" y1="8" x2="14.25" y2="8" />}
+  </svg>;
+}
+
+export default function FleetWorkspace({ project, settings, onSettings, onProject, changedBoat, onActive, toolbarHost, statusHost, onReplace }: {
   project: ProjectSummary; settings: AppSettings | null; onSettings: (settings: AppSettings) => void;
   onProject: (project: ProjectSummary) => void; changedBoat: ProjectSummary | null; onActive: (id: number) => void;
-  toolbarHost: HTMLElement | null; onReplace: (previousId: number, project: ProjectSummary) => void;
+  /** The title bar's place for Add Polar and the layout switch. */
+  toolbarHost: HTMLElement | null;
+  /** The status bar's place for Export all, beside the version. */
+  statusHost?: HTMLElement | null;
+  onReplace: (previousId: number, project: ProjectSummary) => void;
 }) {
   const t = useT();
   const [tabs, setTabs] = useState<BoatTabs | null>(null);
@@ -111,7 +124,7 @@ export default function FleetWorkspace({ project, settings, onSettings, onProjec
   const add = async () => {
     setChangingBoats(true);
     try {
-      const next = await api.addBoat(t("Boat {number}", { number: rows.length + 1 }));
+      const next = await api.addBoat(t("Polar {number}", { number: rows.length + 1 }));
       update(next); select(next.id);
       if (layout > 1) setPanes(current => current.length < layout ? [...current, next.id] : current);
     } catch (error) { reportFailure(error); }
@@ -164,30 +177,39 @@ export default function FleetWorkspace({ project, settings, onSettings, onProjec
     finally { setBusy(false); }
   };
   return <div className="fleet-workspace">
-    {toolbarHost && createPortal(<button data-feature="boats:add" disabled={changingBoats} onClick={() => void add()}>{t("Add boat")}</button>, toolbarHost)}
-    <div className="boat-actions">
-      <div role="group" aria-label={t("Boat comparison layout")}>
-        <button data-feature="boats:single" aria-pressed={layout === 1} onClick={() => chooseLayout(1)}>{t("Single view")}</button>
-        <button data-feature="boats:split" aria-pressed={layout === 2} onClick={() => chooseLayout(2)}>{t("Split view")}</button>
-        <button data-feature="boats:four" aria-pressed={layout === 4} onClick={() => chooseLayout(4)}>{t("Four-way view")}</button>
+    {toolbarHost && createPortal(<>
+      <button data-feature="boats:add" disabled={changingBoats} onClick={() => void add()}>{t("Add Polar")}</button>
+      {/* Icons, named in their tooltips: one pane, two, four. */}
+      <div className="layout-switch" role="group" aria-label={t("Boat comparison layout")}>
+        <button data-feature="boats:single" aria-pressed={layout === 1} aria-label={t("Single view")} title={t("Single view")}
+          onClick={() => chooseLayout(1)}><LayoutIcon panes={1} /></button>
+        <button data-feature="boats:split" aria-pressed={layout === 2} aria-label={t("Split view")} title={t("Split view")}
+          onClick={() => chooseLayout(2)}><LayoutIcon panes={2} /></button>
+        <button data-feature="boats:four" aria-pressed={layout === 4} aria-label={t("Four-way view")} title={t("Four-way view")}
+          onClick={() => chooseLayout(4)}><LayoutIcon panes={4} /></button>
       </div>
-      <span className="spacer" />
-      {tabs?.can_restore && <button data-feature="boats:restore" disabled={changingBoats} onClick={() => void restore()}>{t("Undo delete boat")}</button>}
-      <button data-feature="boats:delete" disabled={changingBoats || rows.length < 2}
-        title={rows.length < 2 ? t("A project must contain at least one boat") : t("Delete {boat}", { boat: rows.find(row => row.id === active)?.name ?? "" })}
-        onClick={() => { const row = rows.find(row => row.id === active); if (row) setDeleting(row); }}>{t("Delete boat…")}</button>
-      {rows.length > 1 && <button data-feature="boats:export-all" onClick={() => { setResult(null); setExporting(true); }}>{t("Export all…")}</button>}
-    </div>
+    </>, toolbarHost)}
+    {statusHost && rows.length > 1 && createPortal(
+      <button className="small" data-feature="boats:export-all" onClick={() => { setResult(null); setExporting(true); }}>{t("Export all…")}</button>,
+      statusHost)}
     {layout === 1 && <div className="boat-tabs-row">
       <div className="boat-tabs" role="tablist" aria-label={t("Boats")}>
-        {rows.map(row => renaming?.id === row.id
-          ? <input key={row.id} className="boat-tab-name" value={renaming.name} autoFocus aria-label={t("Boat name")} data-feature="boats:name"
-            onFocus={event => event.currentTarget.select()} onChange={event => setRenaming({ id: row.id, name: event.target.value })} onBlur={commitName}
-            onKeyDown={event => { event.stopPropagation(); if (event.key === "Enter") event.currentTarget.blur(); if (event.key === "Escape") setRenaming(null); }} />
-          : <button key={row.id} role="tab" aria-selected={active === row.id} data-feature="boats:tab" title={t("Double-click to rename the boat")}
-            onClick={() => select(row.id)} onDoubleClick={() => { select(row.id); setRenaming({ id: row.id, name: row.name }); }}
-            onKeyDown={event => { if (event.key === "F2") { event.preventDefault(); select(row.id); setRenaming({ id: row.id, name: row.name }); } }}>{row.name}</button>)}
+        {rows.map(row => <div key={row.id} role="presentation" className={`boat-tab${active === row.id ? " selected" : ""}`}>
+          {renaming?.id === row.id
+            ? <input className="boat-tab-name" value={renaming.name} autoFocus aria-label={t("Boat name")} data-feature="boats:name"
+              onFocus={event => event.currentTarget.select()} onChange={event => setRenaming({ id: row.id, name: event.target.value })} onBlur={commitName}
+              onKeyDown={event => { event.stopPropagation(); if (event.key === "Enter") event.currentTarget.blur(); if (event.key === "Escape") setRenaming(null); }} />
+            : <button role="tab" aria-selected={active === row.id} data-feature="boats:tab" title={t("Double-click to rename the boat")}
+              onClick={() => select(row.id)} onDoubleClick={() => { select(row.id); setRenaming({ id: row.id, name: row.name }); }}
+              onKeyDown={event => { if (event.key === "F2") { event.preventDefault(); select(row.id); setRenaming({ id: row.id, name: row.name }); } }}>{row.name}</button>}
+          {/* Closing a tab deletes its polar, so it asks first; the last one cannot go. */}
+          <button className="boat-tab-close" data-feature="boats:delete" disabled={changingBoats || rows.length < 2}
+            aria-label={t("Delete {boat}", { boat: row.name })}
+            title={rows.length < 2 ? t("A project must contain at least one polar") : t("Delete {boat}", { boat: row.name })}
+            onClick={() => setDeleting(row)}>×</button>
+        </div>)}
       </div>
+      {tabs?.can_restore && <button className="small" data-feature="boats:restore" disabled={changingBoats} onClick={() => void restore()}>{t("Undo Delete Polar")}</button>}
     </div>}
     <FleetSyncProvider enabled={layout > 1}>
       <div className={`boat-grid boats-${layout}`}>
@@ -206,13 +228,13 @@ export default function FleetWorkspace({ project, settings, onSettings, onProjec
           </section>;
         })}
         {Array.from({ length: Math.max(0, layout - shown.length) }, (_, i) => <div className="boat-pane empty" key={`empty-${i}`} style={{ order: shown.length + i }}>
-          <p>{t("Add another boat to compare.")}</p><button data-feature="boats:add-empty" disabled={changingBoats} onClick={() => void add()}>{t("Add boat")}</button>
+          <p>{t("Add another polar to compare.")}</p><button data-feature="boats:add-empty" disabled={changingBoats} onClick={() => void add()}>{t("Add Polar")}</button>
         </div>)}
       </div>
     </FleetSyncProvider>
     {deleting && <ConfirmDialog title={t("Delete {boat}", { boat: deleting.name })}
-      body={t("Remove this boat and its sources from the project? You can undo this deletion while the project remains open.")}
-      confirmLabel={t("Delete boat")} onConfirm={() => void remove()} onCancel={() => setDeleting(null)} />}
+      body={t("Remove this polar and its sources from the project? You can undo this deletion while the project remains open.")}
+      confirmLabel={t("Delete Polar")} onConfirm={() => void remove()} onCancel={() => setDeleting(null)} />}
     {exporting && <div className="modal-backdrop"><section className="modal boat-export-dialog" role="dialog" aria-modal="true" aria-label={t("Export all polars")}>
       <h2>{t("Export all polars")}</h2>
       <label>{t("Format")} <select data-feature="boats:export-format" value={format} onChange={event => setFormat(event.target.value)}>

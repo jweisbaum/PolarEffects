@@ -14,7 +14,7 @@ import type { PolarCell } from "../generated/PolarCell";
 import type { PolarNodeRef } from "../generated/PolarNodeRef";
 import type { SpeedUnit } from "../generated/SpeedUnit";
 import { CARTESIAN_TWA_SCALE, place, type Layout, type PolarGrid } from "./geometry3d";
-import { BLEND_SOURCE, FLAG_EDITED, FLAG_EXCLUDED, FLAG_FILTERED, sampleId, type ScenePacket } from "./scenePacket";
+import { BLEND_SOURCE, FLAG_EDITED, FLAG_EXCLUDED, FLAG_FILTERED, sampleId, type ScenePacket, type SplitPacket } from "./scenePacket";
 import { SHAPE_CROSS, SHAPE_DISC, SHAPE_RING, SHAPE_SQUARE, type SurfaceInput, type View } from "./scene3d";
 
 export type ColourMode = "source" | "hs" | "current" | "time" | "timeOfDay" | "wavePeriod" | "waveAngle" | "waveWindAngle";
@@ -254,10 +254,13 @@ export const FADED_OPACITY = 0.05;
  * left out.
  */
 export function buildSurfaces(packet: ScenePacket, blendColour: string, focus: Focus | null = null,
-  blendLine?: string): SurfaceInput[] {
+  blendLine?: string, split: SplitPacket | null = null): SurfaceInput[] {
   const focused = focus !== null && focus.index >= 0;
-  return packet.surfaces.flatMap((surface): SurfaceInput[] => {
+  const surfaces = packet.surfaces.flatMap((surface): SurfaceInput[] => {
     const blend = surface.source === BLEND_SOURCE;
+    // In a split view each copy has a blend of its own (spec.md 10.5): the
+    // whole blend gives way to them.
+    if (blend && split) return [];
     const mine = focused && surface.source === focus.index;
     if (focused && !mine && focus.hideOthers) return [];
     return [{
@@ -270,6 +273,14 @@ export function buildSurfaces(packet: ScenePacket, blendColour: string, focus: F
       ...(focused && !mine ? { opacity: FADED_OPACITY } : {}),
     }];
   });
+  for (const surface of split?.surfaces ?? []) {
+    surfaces.push({
+      grid: surfaceGrid(surface.twa, surface.tws, surface.bsp),
+      color: blendColour, opaque: true, pickable: true, cell: surface.cell,
+      ...(blendLine !== undefined ? { lineColor: blendLine } : {}),
+    });
+  }
+  return surfaces;
 }
 
 /**
@@ -365,9 +376,18 @@ export type CameraPreset = "top" | "side" | "iso";
  * **side** looks across it, so each TWS is a level; **iso** is the three-
  * quarter view. Far enough back that the whole box fits a `fov`° lens.
  */
-export function presetView(preset: CameraPreset, bounds: Bounds, fov = 40): View {
-  const target: [number, number, number] = [0, 1, 2].map((a) => (bounds.min[a]! + bounds.max[a]!) / 2) as [number, number, number];
-  const radius = Math.max(1, Math.hypot(...[0, 1, 2].map((a) => bounds.max[a]! - bounds.min[a]!)) / 2);
+/**
+ * A preset camera framing `bounds`, looking at their middle or (`"origin"`,
+ * the 3D polar since 2026-10-03) at the origin: the polar's axis at no wind,
+ * from far enough back that the corner farthest from it is in the frame.
+ */
+export function presetView(preset: CameraPreset, bounds: Bounds, fov = 40, look: "middle" | "origin" = "middle"): View {
+  const target: [number, number, number] = look === "origin"
+    ? [0, 0, 0]
+    : [0, 1, 2].map((a) => (bounds.min[a]! + bounds.max[a]!) / 2) as [number, number, number];
+  const radius = Math.max(1, look === "origin"
+    ? Math.hypot(...[0, 1, 2].map((a) => Math.max(Math.abs(bounds.min[a]!), Math.abs(bounds.max[a]!))))
+    : Math.hypot(...[0, 1, 2].map((a) => bounds.max[a]! - bounds.min[a]!)) / 2);
   const distance = (radius / Math.tan(((fov / 2) * Math.PI) / 180)) * 1.1;
   // `up` is +z; straight down would leave the view's roll undefined, so the
   // top view leans a hair toward -y.

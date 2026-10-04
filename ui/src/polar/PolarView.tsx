@@ -1,5 +1,5 @@
 import { useBoatApi } from "../boats/context";
-import { useFleetSync, correspondingDot } from "../boats/synchronization";
+import { useFleetSync, correspondingCell, correspondingDot, type HoverPoint } from "../boats/synchronization";
 import WaveRangeControls from "./WaveRangeControls";
 import BlendCellTooltip from "./BlendCellTooltip";
 import PolarDotTooltip from "./PolarDotTooltip";
@@ -27,7 +27,10 @@ import EditPanel, { cellCode } from "./EditPanel";
 import { useEditFocus, useBoatEditing } from "./editFocus";
 import { place, type Layout } from "./geometry3d";
 import { PolarScene, type SurfaceHit } from "./scene3d";
-import { emptyScene, ScenePacketError, type ScenePacket } from "./scenePacket";
+import {
+  bucketCentre, CELL_NONE, cellRect, cellTotals, correspondingInCells, uncrowded, waveCells, WAVE_SPLIT_COUNTS, type Rect, type WaveSense,
+} from "./waveSplit";
+import { emptyScene, ScenePacketError, type ScenePacket, type SplitPacket } from "./scenePacket";
 import {
   availableModes, buildGuides, buildSurfaces, combine, DEFAULT_TOGGLES, drawnOnly, editCells, emptyKeys,
   exclusionTargets, modeValues, focusIndex, hasFiltered, keysOf, mergeDots, nearestIndex, nodeDots, nodesAtCells, sampleDots, presetView, range, resolveKeys, sampleIdsOf, sceneBounds,
@@ -80,6 +83,86 @@ const TOOLS: readonly { id: Tool; label: string; tip: string }[] = [
 
 let dragGestures = 0;
 
+/** A direction in whole degrees where it is whole, to a tenth where it is not (22.5°). */
+const degrees = (angle: number) => (Number.isInteger(angle) ? String(angle) : angle.toFixed(1));
+
+/**
+ * The big arrow of a Split Wave Angle copy (spec.md 10.5): a boat seen from
+ * above, bow up, and the waves against it. From: the arrow comes in from
+ * the copy's direction to the boat. To: it leaves the boat toward it.
+ */
+/** A copy's blend at the output-grid cell nearest a wind, or null where it has none. */
+function copyBsp(split: SplitPacket, cell: number, twa: number, tws: number): number | null {
+  const surface = split.surfaces.find((s) => s.cell === cell);
+  if (!surface) return null;
+  const i = nearestIndex(surface.twa, twa), j = nearestIndex(surface.tws, tws);
+  if (i < 0 || j < 0) return null;
+  const bsp = surface.bsp[i * surface.tws.length + j]!;
+  return Number.isFinite(bsp) ? bsp : null;
+}
+
+/** A copy narrower than this (CSS px) is drawn compactly, without axis labels. */
+const SMALL_COPY = 150;
+
+/**
+ * A copy's glyph: a boat drawn bow up, the big arrow of its waves (pointing
+ * at the boat from their direction, or away from it where they go), and
+ * round the boat an arc of the directions the copy holds — its share of
+ * the circle, `width` degrees centred on `direction` — on a faint ring.
+ */
+function WaveArrow({ direction, width, sense }: { direction: number; width: number; sense: WaveSense }) {
+  const from = ((direction - width / 2) % 360 + 360) % 360, to = (from + width) % 360;
+  return (
+    <svg className="wave-split-arrow" viewBox="-52 -52 104 104" aria-hidden="true" data-direction={degrees(direction)} data-sense={sense}>
+      <circle className="wave-split-ring" r={ARC_RADIUS} />
+      <path className="wave-split-arc" d={arcPath(direction - width / 2, direction + width / 2)}
+        data-from={degrees(from)} data-to={degrees(to)} />
+      <path className="wave-split-boat" d="M0,-12 C5,-5 5,7 3,12 L-3,12 C-5,7 -5,-5 0,-12 Z" />
+      <g transform={`rotate(${direction})`}>
+        {sense === "from"
+          ? <path className="wave-split-shaft" d="M-6,-50 L6,-50 L6,-36 L15,-36 L0,-23 L-15,-36 L-6,-36 Z" />
+          : <path className="wave-split-shaft" d="M-6,-23 L6,-23 L6,-37 L15,-37 L0,-50 L-15,-37 L-6,-37 Z" />}
+      </g>
+    </svg>
+  );
+}
+
+const ARC_RADIUS = 17;
+
+/** An SVG arc on the ring from one bearing to another, clockwise, degrees from the bow. */
+function arcPath(from: number, to: number): string {
+  const at = (bearing: number) => {
+    const a = (bearing * Math.PI) / 180;
+    return `${(ARC_RADIUS * Math.sin(a)).toFixed(2)},${(-ARC_RADIUS * Math.cos(a)).toFixed(2)}`;
+  };
+  return `M${at(from)} A${ARC_RADIUS},${ARC_RADIUS} 0 ${to - from > 180 ? 1 : 0} 1 ${at(to)}`;
+}
+
+/**
+ * The part of the canvas a grid of copies may use: what the toolbar, the
+ * view's own side panel and wave filters, and the workspace's docked panels
+ * leave free, so no copy is drawn behind a control. A stage too small to
+ * measure (or not laid out at all, as in a test) is used whole.
+ */
+function freeRegion(canvas: HTMLCanvasElement): Rect {
+  const stage = canvas.getBoundingClientRect();
+  const whole = { x: 0, y: 0, width: Math.max(1, stage.width), height: Math.max(1, stage.height) };
+  const view = canvas.parentElement;
+  if (!view) return whole;
+  let left = 0, right = stage.width, top = 0, bottom = stage.height;
+  const box = (root: Element | null | undefined, selector: string) => root?.querySelector(selector)?.getBoundingClientRect() ?? null;
+  const workspace = view.closest(".workspace");
+  const dockLeft = box(workspace, ".sidebar.left"), dockRight = box(workspace, ".sidebar.right");
+  if (dockLeft && dockLeft.width > 0) left = Math.max(left, dockLeft.right - stage.left);
+  if (dockRight && dockRight.width > 0) right = Math.min(right, dockRight.left - stage.left);
+  const toolbar = box(view, ".view3d-toolbar"), side = box(view, ".view3d-side"), waves = box(view, ".wave-display-ranges");
+  if (toolbar && toolbar.height > 0) top = Math.max(top, toolbar.bottom - stage.top + 6);
+  if (side && side.width > 0) right = Math.min(right, side.left - stage.left - 6);
+  if (waves && waves.height > 0) bottom = Math.min(bottom, waves.top - stage.top - 6);
+  const free = { x: left + 4, y: top, width: right - left - 8, height: bottom - top };
+  return free.width >= 80 && free.height >= 80 ? free : whole;
+}
+
 function cssColour(name: string, fallback: string): string {
   if (typeof document === "undefined") return fallback;
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
@@ -96,8 +179,10 @@ function cssColour(name: string, fallback: string): string {
  * The WebGL renderer, its geometries and the orbit controls are disposed on
  * unmount, as the map disposes its own.
  */
-export default function PolarView({ project, settings, onProject, compact = false }: {
+export default function PolarView({ project, settings, onProject, compact = false, comparison = false }: {
   compact?: boolean;
+  /** A pane of split or four-way view: no Split Wave Angle there (spec.md 10.5). */
+  comparison?: boolean;
   project: ProjectSummary;
   settings: AppSettings | null;
   onProject: (summary: ProjectSummary) => void;
@@ -117,6 +202,7 @@ export default function PolarView({ project, settings, onProject, compact = fals
   const hoverFrame = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hoverPoint = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
   const labels = useRef<GuideLabel[]>([]);
+  const cellsRef = useRef<{ cells: Int16Array | null; waveCount: number; region: Rect }>({ cells: null, waveCount: 0, region: { x: 0, y: 0, width: 1, height: 1 } });
   const gesture = useRef<{ x: number; y: number; path: number[] } | null>(null);
   const request = useRef(0);
   const fitted = useRef(false);
@@ -150,8 +236,29 @@ export default function PolarView({ project, settings, onProject, compact = fals
     hoverPoint.current = null;
     setHover(null);
     setNoHoverMatch(false);
+    setMarks([]);
     clearBlendHover();
   }, [clearBlendHover]);
+  // Split Wave Angle (spec.md 10.5): the view as one copy per wave direction.
+  const [waveSplit, setWaveSplit] = useState(false);
+  const [waveCountIndex, setWaveCountIndex] = useState(1);
+  const [waveSense, setWaveSense] = useState<WaveSense>("from");
+  const splitOn = waveSplit && !comparison;
+  const waveCount = WAVE_SPLIT_COUNTS[waveCountIndex] ?? WAVE_SPLIT_COUNTS[0];
+  /** Each copy's own blend, made from its direction's samples; asked of Rust for every scene the view holds. */
+  const [splitBlends, setSplitBlends] = useState<SplitPacket | null>(null);
+  useEffect(() => {
+    if (!splitOn) { setSplitBlends(null); return; }
+    let live = true;
+    api.polarSceneSplit({ count: waveCount, sense: waveSense })
+      .then((found) => { if (live) setSplitBlends(found); })
+      // A split that cannot be read (the project closed under it) draws no copy's blend.
+      .catch(() => { if (live) setSplitBlends(null); });
+    return () => { live = false; };
+  }, [splitOn, waveCount, waveSense, packet]);
+  const [region, setRegion] = useState<Rect>({ x: 0, y: 0, width: 1, height: 1 });
+  /** For a dot or blend cell hovered in one copy: the same wind in the others, each with its speed. */
+  const [marks, setMarks] = useState<{ cell: number; x: number; y: number; bsp: number }[]>([]);
   const [hideOthers, setHideOthers] = useState(false);
   const [dragValue, setDragValue] = useState<{ x: number; y: number; bsp: number } | null>(null);
   const held = useRef<ScenePacket | null>(null);
@@ -172,11 +279,19 @@ export default function PolarView({ project, settings, onProject, compact = fals
     current.render();
     const host = labelsHost.current;
     if (!host) return;
-    labels.current.forEach((label, k) => {
+    const places = labels.current.map((label) => current.toScreen(...label.at));
+    // In a copy of the view the labels have a fraction of the room: the ones
+    // that would be written over another are left out (about 6 px a letter).
+    // Copies too small for them have none: the frame's own words need the room.
+    const split = cellsRef.current;
+    const keep = !split.cells ? null
+      : cellRect(0, split.waveCount, split.region).width < SMALL_COPY ? places.map(() => false)
+      : uncrowded(places.map((at, k) => at && { x: at[0], y: at[1], width: labels.current[k]!.text.length * 6 + 4, height: 12 }));
+    places.forEach((at, k) => {
       const span = host.children[k] as HTMLElement | undefined;
       if (!span) return;
-      const at = current.toScreen(...label.at);
-      span.style.display = at ? "" : "none";
+      const shown = at !== null && (keep === null || keep[k]!);
+      span.style.display = shown ? "" : "none";
       if (at) span.style.transform = `translate(${at[0]}px, ${at[1]}px)`;
     });
   }, []);
@@ -206,10 +321,15 @@ export default function PolarView({ project, settings, onProject, compact = fals
     const offRedraw = registerRedraw(element, paint);
     // The MCP service's screenshot reads this canvas (every build).
     const offCapture = registerCapture(element, paint);
-    const offInspection = registerPolarInspection(element, () => ({ view: made.getView(), points: Array.from(made.projected()) }));
+    const offInspection = registerPolarInspection(element, () => ({
+      view: made.getView(), points: Array.from(made.projected()),
+      // Where a (TWA, TWS, BSP) falls on the canvas in copy `cell`, and what the surface pick answers at a canvas point.
+      at: (cell: number, twa: number, tws: number, bsp: number) => made.toScreenIn(cell, ...place(twa, tws, bsp, linkedLayout.current)),
+      surfaceAt: (x: number, y: number) => made.pickSurface(x, y),
+    }));
     made.setBackground(cssColour("--inset", "#1f2c3c"));
     made.enableControls(element, draw, () => syncRef.current?.publish({ kind: "camera", boat: project.id, view: made.getView(), layout: linkedLayout.current }));
-    made.setView(syncRef.current?.camera?.view ?? presetView("top", sceneBounds(emptyScene(), "tower"), made.camera.fov));
+    made.setView(syncRef.current?.camera?.view ?? presetView("top", sceneBounds(emptyScene(), "tower"), made.camera.fov, "origin"));
     const resize = () => {
       made.resize(element.clientWidth, element.clientHeight);
       draw();
@@ -310,35 +430,83 @@ export default function PolarView({ project, settings, onProject, compact = fals
     [focus, focused, hideOthers],
   );
   const surfaces = useMemo(
-    () => (toggles.surfaces ? buildSurfaces(packet, blendColour, focusStyle, blendLine) : []),
-    [packet, blendColour, focusStyle, blendLine, toggles.surfaces],
+    () => (toggles.surfaces ? buildSurfaces(packet, blendColour, focusStyle, blendLine, splitOn ? splitBlends : null) : []),
+    [packet, blendColour, focusStyle, blendLine, toggles.surfaces, splitOn, splitBlends],
   );
   /**
-   * Shows the blend cell under a surface hit: the output-grid cell nearest
-   * the hit node (the drawn surface is finer than the grid in spline mode),
-   * asked of Rust once per cell and per revision.
+   * Shows a cell of this boat's output grid, asked of Rust once per cell and
+   * per revision. `where` places the tooltip once the cell is known: at the
+   * pointer in the pane being hovered, at the cell itself in a linked one.
    */
-  const hoverBlend = (hit: SurfaceHit, x: number, y: number) => {
-    const grid = surfaces[hit.surface]?.grid;
-    const i = grid ? nearestIndex(project.blend.twa, grid.twa[hit.twaIndex]!) : -1;
-    const j = grid ? nearestIndex(project.blend.tws, grid.tws[hit.twsIndex]!) : -1;
-    if (i < 0 || j < 0) { clearBlendHover(); return; }
-    const key = `${project.id}:${project.revision}:${i}:${j}`;
+  const showBlendCell = (i: number, j: number, where: (cell: BlendCell) => { x: number; y: number }, copy?: number) => {
+    const split = copy === undefined ? "" : `:${waveCount}:${waveSense}:${copy}`;
+    const key = `${project.id}:${project.revision}:${i}:${j}${split}`;
     if (blendAsked.current.key === key) {
       const cell = blendAsked.current.cell;
-      if (cell) setBlendHover({ cell, x, y });
+      if (cell) setBlendHover({ cell, ...where(cell) });
       return;
     }
     blendAsked.current = { key, cell: null };
-    void api.blendCell(i, j)
+    void (copy === undefined ? api.blendCell(i, j) : api.blendCellSplit(i, j, { count: waveCount, sense: waveSense }, copy))
       .then((cell) => {
         if (blendAsked.current.key !== key) return;
         blendAsked.current = { key, cell };
-        setBlendHover({ cell, x, y });
+        setBlendHover({ cell, ...where(cell) });
       })
       // A cell that cannot be read (the grid changed under the pointer) shows nothing.
       .catch(() => { if (blendAsked.current.key === key) clearBlendHover(); });
   };
+  /**
+   * Shows the blend cell under a surface hit: the output-grid cell nearest
+   * the hit node (the drawn surface is finer than the grid in spline mode).
+   * Answers the cell's wind, for the panes linked to this one.
+   */
+  const hoverBlend = (hit: SurfaceHit, x: number, y: number): HoverPoint | null => {
+    const surface = surfaces[hit.surface];
+    const grid = surface?.grid;
+    const i = grid ? nearestIndex(project.blend.twa, grid.twa[hit.twaIndex]!) : -1;
+    const j = grid ? nearestIndex(project.blend.tws, grid.tws[hit.twsIndex]!) : -1;
+    if (i < 0 || j < 0) { clearBlendHover(); return null; }
+    showBlendCell(i, j, (found) => {
+      // In a split view the same cell is marked in the other copies, each
+      // with its own blend's speed there, so the eye finds the same place
+      // in each and sees how the waves change it.
+      const current = scene.current;
+      const own = current?.cellAt(x, y) ?? -1;
+      if (cells && current) {
+        const next: typeof marks = [];
+        for (let k = 0; k < waveCount; k++) {
+          if (k === own) continue;
+          const bsp = splitBlends ? copyBsp(splitBlends, k, found.twa, found.tws) : found.bsp;
+          if (bsp === null) continue;
+          const at = current.toScreenIn(k, ...place(found.twa, found.tws, bsp, layout));
+          if (at) next.push({ cell: k, x: at[0], y: at[1], bsp });
+        }
+        setMarks(next);
+      }
+      return { x, y };
+    }, surface?.cell);
+    return { twa: project.blend.twa[i]!, tws: project.blend.tws[j]! };
+  };
+  /**
+   * The blend cell hovered in a linked pane (split and four-way view), shown
+   * here for this boat: its cell at the same wind, the tooltip beside that
+   * cell on this boat's own surface. Read through a ref by the subscription,
+   * which is made once per pane.
+   */
+  const showLinkedBlend = (point: HoverPoint | null) => {
+    const cell = point && correspondingCell(project.blend.twa, project.blend.tws, point);
+    if (!cell) { clearBlendHover(); return; }
+    showBlendCell(cell.twa, cell.tws, (found) => {
+      const size = canvas.current?.getBoundingClientRect();
+      const at = found.bsp === null ? null : scene.current?.toScreen(...place(found.twa, found.tws, found.bsp, layout)) ?? null;
+      // A cell with no speed has no place on the surface: the corner, as the linked dots' tooltip.
+      if (!at || !size) return { x: 12, y: 58 };
+      return { x: Math.max(8, Math.min(at[0] + 12, size.width - 280)), y: Math.max(8, Math.min(at[1] + 12, size.height - 260)) };
+    });
+  };
+  const showLinkedBlendRef = useRef(showLinkedBlend);
+  showLinkedBlendRef.current = showLinkedBlend;
   // The samples' dots are rebuilt only when they, their colours or how they
   // are shown change: an edit of a polar node rebuilds the nodes alone
   // (spec.md 13, plan.md M13).
@@ -351,6 +519,17 @@ export default function PolarView({ project, settings, onProject, compact = fals
     () => mergeDots(nodeDots(packet, toggles, focusStyle), sampleDotsBuilt),
     [packet, toggles, focusStyle, sampleDotsBuilt],
   );
+  // The copy of every drawn dot, and how many samples each copy holds. Made
+  // from the dots drawn, so the show toggles, the track and global filters
+  // and the wave ranges all still decide what there is to split.
+  const cells = useMemo(
+    () => (splitOn ? waveCells(packet.nodes.count, packet.samples.waveBearing, dots.refs, waveCount, waveSense) : null),
+    [splitOn, packet, dots, waveCount, waveSense],
+  );
+  const totals = useMemo(() => (cells ? cellTotals(cells, waveCount) : null), [cells, waveCount]);
+  // The samples drawn in no copy: their waves' direction is not known.
+  const unplaced = useMemo(() => (cells ? cells.reduce((n, cell) => n + (cell === CELL_NONE ? 1 : 0), 0) : 0), [cells]);
+  cellsRef.current = { cells, waveCount, region };
   useEffect(() => {
     if (!sync) { setNoHoverMatch(false); return; }
     return sync.subscribe(event => {
@@ -360,12 +539,25 @@ export default function PolarView({ project, settings, onProject, compact = fals
         setLayout(event.layout);
         scene.current?.setView(event.view);
         draw();
+      } else if (event.kind === "blend") {
+        showLinkedBlendRef.current(event.point);
       } else if (event.point === null) {
         setHover(null); setNoHoverMatch(false);
       } else {
         const local = correspondingDot(dots.points, event.point);
         setNoHoverMatch(local < 0);
-        setHover(local < 0 ? null : { index: dots.refs[local]!, x: 12, y: 58 });
+        if (local < 0) { setHover(null); return; }
+        // Beside the dot itself, as this pane's own hover would be (asked
+        // 2026-10-02); the corner only when the dot is behind the camera.
+        const screen = scene.current?.projected();
+        const size = canvas.current?.getBoundingClientRect();
+        const x = screen?.[local * 2], y = screen?.[local * 2 + 1];
+        const at = x !== undefined && y !== undefined && Number.isFinite(x) && Number.isFinite(y)
+          ? size && size.width > 0
+            ? { x: Math.max(8, Math.min(x + 12, size.width - 280)), y: Math.max(8, Math.min(y + 12, size.height - 260)) }
+            : { x: x + 12, y: y + 12 }
+          : { x: 12, y: 58 };
+        setHover({ index: dots.refs[local]!, ...at });
       }
     });
   }, [sync, project.id, dots, draw, clearHover]);
@@ -381,6 +573,10 @@ export default function PolarView({ project, settings, onProject, compact = fals
     const current = scene.current;
     if (!current) return;
     current.setData({ samples: dots.points, colors: dots.colors, shapes: dots.shapes, layout, surfaces });
+    // New dots are in every copy until told otherwise: say whose they are.
+    const held = cellsRef.current;
+    current.setCells(held.cells && held.cells.length === dots.refs.length
+      ? { of: held.cells, count: held.waveCount, region: held.region } : null);
     const guides = buildGuides(bounds, layout, unit, project.blend.asymmetric);
     current.setGuides(guides.segments, cssColour("--muted", "#b3c9de"));
     labels.current = guides.labels;
@@ -389,15 +585,68 @@ export default function PolarView({ project, settings, onProject, compact = fals
       host.replaceChildren(...guides.labels.map((label) => {
         const span = document.createElement("span");
         span.textContent = label.text;
+        // In a split view the next paint decides which labels have room:
+        // none shows before it, even while frames are held back.
+        if (cellsRef.current.cells) span.style.display = "none";
         return span;
       }));
     }
     if (!fitted.current && (packet.nodes.count > 0 || packet.samples.count > 0)) {
-      current.setView(syncRef.current?.camera?.view ?? presetView("top", bounds, current.camera.fov));
+      // The origin in the middle of what the panels and the view's own
+      // controls leave in sight, and all of the polar there (asked
+      // 2026-10-02 and 2026-10-03).
+      // Once: opening or closing a panel later leaves the framing alone.
+      const element = canvas.current;
+      const size = element?.getBoundingClientRect();
+      const region = element && size && size.width > 0 ? freeRegion(element) : null;
+      const linked = syncRef.current?.camera?.view;
+      let view = linked ?? presetView("top", bounds, current.camera.fov, "origin");
+      if (region && size) {
+        current.setViewCentre(region.x + region.width / 2, region.y + region.height / 2);
+        const shrink = size.height / Math.max(1, Math.min(region.width, region.height));
+        if (!linked && shrink > 1) {
+          view = { ...view, position: view.position.map((p, a) => view.target[a]! + (p - view.target[a]!) * shrink) as [number, number, number] };
+        }
+      }
+      current.setView(view);
       fitted.current = true;
     }
     draw();
   }, [dots, packet, layout, surfaces, bounds, unit, draw, project.blend.asymmetric]);
+
+  // The grid of copies follows the split's settings and the room there is.
+  useEffect(() => {
+    const current = scene.current;
+    if (!current) return;
+    current.setCells(cells && cells.length === dots.refs.length ? { of: cells, count: waveCount, region } : null);
+    setMarks([]);
+    draw();
+  }, [cells, waveCount, region, dots, draw]);
+
+  // The room there is: measured while the split is on, and again whenever
+  // the stage is resized or a panel over it opens, closes or changes size.
+  useEffect(() => {
+    const element = canvas.current;
+    if (!splitOn || !element) return;
+    const measure = () => {
+      const next = freeRegion(element);
+      setRegion((now) => (now.x === next.x && now.y === next.y && now.width === next.width && now.height === next.height ? now : next));
+    };
+    measure();
+    const resized = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    const changed = typeof MutationObserver === "undefined" ? null : new MutationObserver(measure);
+    const view = element.parentElement, workspace = element.closest(".workspace");
+    resized?.observe(element);
+    for (const selector of [".view3d-toolbar", ".view3d-side", ".wave-display-ranges"]) {
+      const panel = view?.querySelector(selector);
+      if (panel) resized?.observe(panel);
+    }
+    // The docked panels mount and unmount beside the stage.
+    if (workspace) changed?.observe(workspace, { childList: true });
+    if (view) changed?.observe(view, { childList: true });
+    window.addEventListener("resize", measure);
+    return () => { resized?.disconnect(); changed?.disconnect(); window.removeEventListener("resize", measure); };
+  }, [splitOn, waveCount]);
 
   // Selection is by global index; the scene highlights by drawn index.
   useEffect(() => {
@@ -413,7 +662,7 @@ export default function PolarView({ project, settings, onProject, compact = fals
     const current = scene.current;
     if (!current) return;
     clearHover();
-    current.setView(presetView(preset, bounds, current.camera.fov));
+    current.setView(presetView(preset, bounds, current.camera.fov, "origin"));
     sync?.publish({ kind: "camera", boat: project.id, view: current.getView(), layout });
     draw();
   };
@@ -421,7 +670,7 @@ export default function PolarView({ project, settings, onProject, compact = fals
   const chooseLayout = (next: Layout) => {
     setLayout(next);
     const current = scene.current;
-    if (current) current.setView(presetView("iso", sceneBounds(packet, next), current.camera.fov));
+    if (current) current.setView(presetView("iso", sceneBounds(packet, next), current.camera.fov, "origin"));
     if (current) sync?.publish({ kind: "camera", boat: project.id, view: current.getView(), layout: next });
   };
 
@@ -508,9 +757,29 @@ export default function PolarView({ project, settings, onProject, compact = fals
         setHover(hit < 0 ? null : { index: dots.refs[hit]!, x: tipX, y: tipY });
         // A dot wins; otherwise the blend's surface, if it is under the pointer.
         const surface = hit < 0 ? scene.current?.pickSurface(at.x, at.y) ?? null : null;
-        if (surface) hoverBlend(surface, tipX, tipY);
-        else clearBlendHover();
+        const cell = surface ? hoverBlend(surface, tipX, tipY) : null;
+        if (!surface) clearBlendHover();
+        // In a split view the same wind is marked in the other copies, with
+        // its speed there (spec.md 10.5).
+        const current = scene.current;
+        const own = cells && hit >= 0 ? cells[hit]! : -1;
+        if (cells && current && own >= 0) {
+          const twa = dots.points[hit * 3]!, tws = dots.points[hit * 3 + 1]!;
+          const found = correspondingInCells(dots.points, cells, waveCount, { twa, tws }, own);
+          const next: typeof marks = [];
+          found.forEach((dot, k) => {
+            if (dot < 0) return;
+            const bsp = dots.points[dot * 3 + 2]!;
+            const at = current.toScreenIn(k, ...place(dots.points[dot * 3]!, dots.points[dot * 3 + 1]!, bsp, layout));
+            if (at) next.push({ cell: k, x: at[0], y: at[1], bsp });
+          });
+          setMarks(next);
+        } else if (!surface) {
+          setMarks([]);
+        }
         sync?.publish({ kind: "hover", boat: project.id, point: hit < 0 ? null : { twa: dots.points[hit * 3]!, tws: dots.points[hit * 3 + 1]! } });
+        // The linked panes show their own blend at the same wind (spec.md 10.1).
+        sync?.publish({ kind: "blend", boat: project.id, point: cell });
       }, 16);
       return;
     }
@@ -589,10 +858,32 @@ export default function PolarView({ project, settings, onProject, compact = fals
       onKeyDown={(event) => { if (event.key === "Escape" && selection.length > 0) { event.stopPropagation(); select([]); } }}>
       <canvas ref={canvas} className={`view3d-canvas tool-${tool}`}
         onPointerEnter={() => setHint(later(msg("Drag to turn, right-drag to pan, scroll to zoom. Click a dot to select it; Shift adds.")))}
-        onPointerLeave={() => { setHint(null); clearHover(); sync?.publish({ kind: "hover", boat: project.id, point: null }); }} onWheel={clearHover}
+        onPointerLeave={() => {
+          setHint(null); clearHover();
+          sync?.publish({ kind: "hover", boat: project.id, point: null });
+          sync?.publish({ kind: "blend", boat: project.id, point: null });
+        }} onWheel={clearHover}
         onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
         onPointerCancel={() => { gesture.current = null; drag.current = null; setPath(null); setDragValue(null); }} />
       <div className="view3d-labels" ref={labelsHost} aria-hidden="true" />
+      {cells && totals && (
+        <div className="wave-split-cells">
+          {Array.from({ length: waveCount }, (_, k) => {
+            const at = cellRect(k, waveCount, region);
+            const angle = degrees(bucketCentre(k, waveCount));
+            return (
+              <div key={k} className={at.width < SMALL_COPY ? "wave-split-cell small" : "wave-split-cell"} style={{ left: at.x, top: at.y, width: at.width, height: at.height }}>
+                <WaveArrow direction={bucketCentre(k, waveCount)} width={360 / waveCount} sense={waveSense} />
+                <span className="wave-split-name">{waveSense === "from" ? t("From {angle}°", { angle }) : t("To {angle}°", { angle })}</span>
+                <span className="wave-split-total">{t("{count} samples", { count: totals[k]! })}</span>
+              </div>
+            );
+          })}
+          {marks.map((mark) => (
+            <span key={mark.cell} className="wave-split-mark" data-cell={mark.cell} style={{ left: mark.x, top: mark.y }}>{speed(mark.bsp)}</span>
+          ))}
+        </div>
+      )}
       {hover && <PolarDotTooltip packet={packet} index={hover.index} sources={project.sources}
         units={settings?.units ?? DEFAULT_UNITS} x={hover.x} y={hover.y} />}
       {!hover && blendHover && <BlendCellTooltip cell={blendHover.cell} sources={project.sources} colour={blendColour}
@@ -610,7 +901,7 @@ export default function PolarView({ project, settings, onProject, compact = fals
       )}
       {unavailable !== null && <p className="view3d-unavailable muted">{t(unavailable)}</p>}
       {unavailable === null && empty && (
-        <p className="view3d-empty muted">{t("The 3D view shows the project's visible polars and samples. Add an ORC polar or a polar file to see one.")}</p>
+        <p className="view3d-empty muted">{t("The 3D view shows the project's visible polars and samples.")}</p>
       )}
 
       <div className="view3d-toolbar">
@@ -634,6 +925,36 @@ export default function PolarView({ project, settings, onProject, compact = fals
             </button>
           ))}
         </span>
+        {!comparison && (
+          <span className="view3d-group wave-split-controls" role="group" aria-label={t("Split Wave Angle")}>
+            <button className={splitOn ? "small selected" : "small"} aria-pressed={splitOn} data-feature="view3d:wave-split"
+              title={t("Draw the view once per wave direction, as seen from the boat: each copy holds only the samples whose waves came from, or went to, its direction")}
+              onClick={() => { clearHover(); setWaveSplit((on) => !on); }}>
+              {t("Split Wave Angle")}
+            </button>
+            {splitOn && (
+              <>
+                <input type="range" min={0} max={WAVE_SPLIT_COUNTS.length - 1} step={1} value={waveCountIndex}
+                  data-feature="view3d:wave-split-count" aria-label={t("Wave directions")}
+                  aria-valuetext={t("{count} directions", { count: waveCount })}
+                  title={t("How many wave directions to split into: 4, 8, 16, 18, 24 or 36. One is always centred on the bow, so none begins or ends at 0°")}
+                  onChange={(event) => { clearHover(); setWaveCountIndex(Number(event.target.value)); }} />
+                <span className="wave-split-count">{t("{count} directions", { count: waveCount })}</span>
+                <select data-feature="view3d:wave-split-sense" aria-label={t("Wave direction sense")} value={waveSense}
+                  title={t("From: each copy is where the waves come from. To: where they go")}
+                  onChange={(event) => { clearHover(); setWaveSense(event.target.value as WaveSense); }}>
+                  <option value="from">{t("From")}</option>
+                  <option value="to">{t("To")}</option>
+                </select>
+                {unplaced > 0 && (
+                  <span className="wave-split-none muted" title={t("Samples with no wave direction are in no copy")}>
+                    {t("{count} without a wave direction", { count: unplaced })}
+                  </span>
+                )}
+              </>
+            )}
+          </span>
+        )}
       </div>
 
       {focus !== null && (

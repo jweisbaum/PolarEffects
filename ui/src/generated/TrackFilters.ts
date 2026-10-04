@@ -38,13 +38,42 @@ max_wind_speed_change: number | null,
  */
 max_wind_direction_change: number | null,
 /**
- * `"any"`, `"given"` or `"derived"`.
+ * Heading through the water kept, compass degrees clockwise from
+ * `heading_from` to `heading_to`; both null for no bound.
  */
-heading_origin: string,
+heading_from: number | null,
 /**
- * `"any"`, `"given"` or `"derived"`.
+ * See `heading_from`.
  */
-speed_origin: string,
+heading_to: number | null,
+/**
+ * Course over the ground kept, compass degrees clockwise.
+ */
+cog_from: number | null,
+/**
+ * See `cog_from`.
+ */
+cog_to: number | null,
+/**
+ * VMG range, knots: BSP × cos TWA, negative downwind.
+ */
+vmg_min: number | null,
+/**
+ * See `vmg_min`.
+ */
+vmg_max: number | null,
+/**
+ * True wind direction kept, compass degrees clockwise.
+ */
+twd_from: number | null,
+/**
+ * See `twd_from`.
+ */
+twd_to: number | null,
+/**
+ * Leave out the sample on either side of each tack and gybe.
+ */
+exclude_tacks: boolean,
 /**
  * True wind speed range, knots.
  */
@@ -115,20 +144,4 @@ exclude_unknown_wave: boolean,
 /**
  * Require complete current data.
  */
-exclude_unknown_current: boolean,
-/**
- * Seconds before and after tack/gybe, null to disable.
- */
-tack_gybe_padding_s: number | null,
-/**
- * Maximum ground speed considered stopped, knots; null to disable.
- */
-stop_speed_kn: number | null,
-/**
- * Seconds before and after a stop.
- */
-stop_padding_s: number,
-/**
- * UTC interval in seconds, null to disable.
- */
-utc_interval_s: number | null, };
+exclude_unknown_current: boolean, };

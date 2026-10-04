@@ -25,6 +25,8 @@ use pe_core::track::SegmentStatistic;
 use pe_core::{Command, Project};
 use pe_polar::{Polar, Segment};
 
+use crate::wave_split::WaveSplit;
+
 /// How far a change reaches into what is derived from one source. Each
 /// level includes the ones below it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -197,6 +199,8 @@ impl PartialEq for BlendKey {
 }
 
 type PriorityFlags = Arc<BTreeMap<u64, Vec<bool>>>;
+/// The blend of each copy of a split view, `None` where a copy has none.
+pub type SplitBlends = Arc<Vec<Option<pe_polar::Blend>>>;
 
 /// The revisions and the cache of one opening of a project.
 #[derive(Debug, Default)]
@@ -211,6 +215,9 @@ pub struct Derivations {
     revs: BTreeMap<u64, SourceRevs>,
     cache: BTreeMap<u64, Entry>,
     blend: Option<(BlendKey, Arc<pe_polar::Blend>)>,
+    /// The blends of a split view's copies (spec.md 10.5), for the split
+    /// they were made for, kept on the blend's own terms.
+    split: Option<(BlendKey, WaveSplit, SplitBlends)>,
     priority: Option<(crate::priority::Key, u64, PriorityFlags)>,
     /// Entries computed since the opening, for tests of what recomputes.
     pub computed: u64,
@@ -239,6 +246,13 @@ impl Derivations {
             .is_some_and(|(key, _)| key.sources.iter().any(|(id, ..)| !present(*id)))
         {
             self.blend = None;
+        }
+        if self
+            .split
+            .as_ref()
+            .is_some_and(|(key, ..)| key.sources.iter().any(|(id, ..)| !present(*id)))
+        {
+            self.split = None;
         }
     }
 
@@ -402,6 +416,36 @@ impl Derivations {
     /// weight, grid or blend setting it reads has moved. For the views;
     /// export recomputes from scratch (invariant 2, [`crate::blend::fresh`]).
     pub fn blend(&mut self, project: &Project) -> Arc<pe_polar::Blend> {
+        let (key, derived) = self.blend_key(project);
+        if let Some((held, value)) = &self.blend
+            && *held == key
+        {
+            return Arc::clone(value);
+        }
+        self.blends += 1;
+        let value = Arc::new(crate::blend::assemble(project, &derived));
+        self.blend = Some((key, Arc::clone(&value)));
+        value
+    }
+
+    /// The blend of each copy of a split view (spec.md 10.5,
+    /// [`crate::wave_split::blends`]), kept while the blend would be: a
+    /// change that leaves the blend alone leaves these alone.
+    pub fn split_blends(&mut self, project: &Project, split: WaveSplit) -> SplitBlends {
+        let (key, derived) = self.blend_key(project);
+        if let Some((held, held_split, value)) = &self.split
+            && *held == key
+            && *held_split == split
+        {
+            return Arc::clone(value);
+        }
+        let value = Arc::new(crate::wave_split::blends(project, &derived, split));
+        self.split = Some((key, split, Arc::clone(&value)));
+        value
+    }
+
+    /// What the blend is made from, and the derived data it reads.
+    fn blend_key(&mut self, project: &Project) -> (BlendKey, BTreeMap<u64, Arc<Derived>>) {
         let derived = self.visible(project);
         let key = BlendKey {
             grid: project.grid.clone(),
@@ -423,15 +467,7 @@ impl Derivations {
         // sums in id order, so reordering must not recompute it.
         let mut key = key;
         key.sources.sort_by_key(|(id, ..)| *id);
-        if let Some((held, value)) = &self.blend
-            && *held == key
-        {
-            return Arc::clone(value);
-        }
-        self.blends += 1;
-        let value = Arc::new(crate::blend::assemble(project, &derived));
-        self.blend = Some((key, Arc::clone(&value)));
-        value
+        (key, derived)
     }
 
     /// Every visible source's derived data, by id.
@@ -497,7 +533,7 @@ pub(crate) fn hard_filters(
     flags
 }
 
-fn derive_base_with_filters(
+pub(crate) fn derive_base_with_filters(
     project: &Project,
     source: &Source,
     flags: Option<&Vec<bool>>,

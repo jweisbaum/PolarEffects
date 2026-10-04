@@ -206,3 +206,73 @@ fn bluewater_unknown_slug() {
         "{err:?}"
     );
 }
+
+/// ORC's data service end to end (spec.md 5.4): every country's valid
+/// certificates of the current year, through the application's own client.
+/// About 60 MB and a minute or two.
+#[test]
+#[ignore = "network; run with PE_TEST_LIVE=1"]
+fn orc_service_current_year() {
+    if !live() {
+        return;
+    }
+    let start = Instant::now();
+    let fetcher = Fetcher::new("ORC", Duration::from_secs(120), Arc::default()).expect("a client");
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    // The year of today's date, UTC, without a calendar crate: good to the
+    // day except across a year's last hours, which this test does not need.
+    let year = 1970 + i32::try_from(seconds / 31_556_952).unwrap();
+    let mut countries = (0, 0);
+    let mut failures = Vec::new();
+    let harvest = pe_trackers::orc::scrape(
+        &fetcher,
+        year,
+        &mut |done, total, _| countries = (done, total),
+        &mut |what, why| failures.push(format!("{what}: {why}")),
+    )
+    .expect("the scrape");
+    let records = harvest.records;
+    assert_eq!(harvest.listed.len(), countries.1, "every country's list");
+    assert_eq!(
+        harvest
+            .listed
+            .values()
+            .map(|refs| refs.len())
+            .sum::<usize>(),
+        records.len() + failures.len()
+    );
+    println!(
+        "ORC {year}: {} certificates from {} of {} countries in {:.0?}; {} left out",
+        records.len(),
+        countries.0,
+        countries.1,
+        start.elapsed(),
+        failures.len()
+    );
+    for failure in failures.iter().take(20) {
+        println!("  {failure}");
+    }
+    assert!(countries.1 >= 20, "{countries:?}");
+    assert_eq!(countries.0, countries.1);
+    assert!(records.len() > 3000, "{} certificates", records.len());
+    // Every one carries what the catalogue needs of it.
+    let mut references = std::collections::BTreeSet::new();
+    for record in &records {
+        assert!(record.ref_no.as_deref().is_some_and(|r| !r.is_empty()));
+        assert_eq!(record.certificate_year, Some(year));
+        assert_eq!(record.vpp.bsp.len(), record.vpp.angles.len());
+        references.insert(record.ref_no.clone());
+    }
+    println!(
+        "  {} distinct references; {} without a sail number",
+        references.len(),
+        records.iter().filter(|r| r.sail_no.is_empty()).count()
+    );
+    assert!(
+        failures.len() * 20 < records.len(),
+        "more than one in twenty left out"
+    );
+}

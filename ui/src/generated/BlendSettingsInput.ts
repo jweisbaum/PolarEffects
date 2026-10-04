@@ -33,10 +33,6 @@ default_statistic: string,
  */
 use_corrected: boolean,
 /**
- * Include Stokes drift in the global merged current.
- */
-stokes_drift: boolean,
-/**
  * Independent port/starboard values.
  */
 asymmetric: boolean,

@@ -79,15 +79,53 @@ select, input, textarea {
 
 .app { display: flex; flex-direction: column; height: 100%; }
 .fleet-workspace { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.boat-actions, .boat-tabs-row, .boat-view-toolbar { display: flex; align-items: center; gap: 8px; padding: 5px 10px; background: var(--surface); border-bottom: 1px solid var(--border); }
-.boat-actions { font-size: 11px; }
-.boat-actions [role="group"] { display: flex; gap: 4px; }
-.boat-actions button[aria-pressed="true"], .boat-tabs button[aria-selected="true"] { background: var(--selected-bg); color: var(--selected-ink); border-color: var(--accent); }
-.boat-tabs-row { min-height: 38px; }
-.boat-tabs { display: flex; flex: 1; gap: 5px; overflow-x: auto; }
-.boat-tabs button { flex-shrink: 0; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.boat-tab-name { width: 20ch; flex-shrink: 0; }
-.boat-title-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.boat-tabs-row, .boat-view-toolbar { display: flex; align-items: center; gap: 8px; padding: 5px 10px; background: var(--surface); border-bottom: 1px solid var(--border); }
+.layout-switch button[aria-pressed="true"] { background: var(--selected-bg); color: var(--selected-ink); border-color: var(--accent); }
+/* The layout switch in the title bar: three icons, joined, as the stage switcher's tabs are. */
+.layout-switch { display: flex; }
+.layout-switch button { display: flex; align-items: center; padding: 4px 8px; border-radius: 0; margin-left: -1px; }
+.layout-switch button:first-child { border-radius: 5px 0 0 5px; margin-left: 0; }
+.layout-switch button:last-child { border-radius: 0 5px 5px 0; }
+.layout-switch svg { display: block; }
+.statusbar-actions { display: flex; align-items: center; }
+.statusbar-actions:empty { display: none; }
+/* The boat tabs stand on the boat's own toolbar. The one on show shares that
+   toolbar's surface and has no line under it, so it reads as the front of
+   the page below; the others sit back on the strip. Each is its name and,
+   beside it, the × that closes it. */
+.boat-tabs-row { min-height: 0; padding: 7px 10px 0; align-items: flex-end; background: var(--bg); }
+.boat-tabs-row > button { align-self: center; margin-bottom: 5px; flex-shrink: 0; }
+/* One pixel over the strip's bottom line, which the tab on show covers. */
+.boat-tabs { display: flex; flex: 1; align-items: flex-end; gap: 2px; overflow-x: auto; margin-bottom: -1px; }
+.boat-tab {
+  display: flex; align-items: center; flex-shrink: 0; max-width: 260px;
+  border: 1px solid transparent; border-bottom-color: var(--border);
+  border-radius: 7px 7px 0 0;
+  color: var(--muted);
+}
+.boat-tab:hover:not(.selected) { background: var(--hover); color: var(--text); }
+.boat-tab.selected {
+  background: var(--surface); color: var(--text);
+  border-color: var(--border); border-bottom-color: var(--surface);
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+.boat-tab button { border: none; background: transparent; color: inherit; }
+.boat-tab button:hover:not(:disabled) { background: transparent; }
+.boat-tab [role="tab"] {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 5px 4px 6px 16px; border-radius: 7px 0 0 0;
+}
+.boat-tab-close {
+  flex-shrink: 0; margin: 0 6px 0 2px; padding: 0 5px; line-height: 18px; font-size: 14px;
+  border-radius: 4px; opacity: 0.55;
+}
+.boat-tab .boat-tab-close:hover:not(:disabled) { background: var(--hover); opacity: 1; }
+.boat-tab.selected .boat-tab-close:hover:not(:disabled) { background: var(--bg); }
+.boat-tab-close:disabled { opacity: 0.25; }
+/* Inside the tab: the strip scrolls sideways, and would clip a ring outside. */
+.boat-tab button:focus-visible { outline-offset: -3px; }
+.boat-tab-name { width: 20ch; flex-shrink: 0; margin: 3px 4px 3px 8px; }
+.boat-title-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 .boat-grid { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
 .boat-grid.boats-2, .boat-grid.boats-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px; background: var(--border); }
 .boat-grid.boats-4 { grid-template-rows: repeat(2, minmax(0, 1fr)); }
@@ -416,6 +454,7 @@ button.source-label:hover { border-color: var(--border); background: var(--raise
 .source-count { font-size: 11px; white-space: nowrap; }
 .source-line input[type="range"] { flex: 1; min-width: 60px; }
 .source-weight { font-size: 11px; width: 28px; text-align: right; font-variant-numeric: tabular-nums; }
+.source-weight-label { font-size: 11px; white-space: nowrap; }
 .colour-popover { position: absolute; z-index: 20; left: 18px; top: 24px; padding: 8px; border: 1px solid var(--border);
   border-radius: 6px; background: var(--surface); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35); }
 .palette { display: grid; grid-template-columns: repeat(8, 18px); gap: 4px; }
@@ -486,19 +525,20 @@ button.source-label:hover { border-color: var(--border); background: var(--raise
   font-size: 11px;
   pointer-events: none;
 }
-.polar-plot-overlay {
+/* The 2D stage: the plot fills the centre, its controls along the top. */
+/* Between the open panels, so the 0° axis is on the centre line of what is in sight. */
+.polar-plot-stage {
   position: absolute;
-  z-index: 5;
-  inset: 16px;
-  display: flex;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--panel);
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  inset: 0 var(--dock-right, 0px) 0 var(--dock-left, 0px);
+  padding: 10px 12px 12px;
+  box-sizing: border-box;
+  background: var(--inset);
 }
-.polar-plot-overlay .polar-plot { flex: 1; min-width: 0; }
-.polar-plot-overlay .polar-plot-canvas-wrap { aspect-ratio: auto; }
+.polar-plot-stage .polar-plot-canvas-wrap { aspect-ratio: auto; flex: 1; min-height: 0; }
+/* On the stage the controls are one row along the top: the wind speed
+   slider a usable length, not the stage's whole width. */
+.polar-plot-stage .polar-plot-controls input[type="range"] { flex: 0 1 220px; }
+.polar-plot-stage .polar-plot-controls, .polar-plot-stage .polar-plot-bands { justify-content: center; }
 
 /* --- Compare (spec.md 11) --------------------------------------------- */
 
@@ -638,6 +678,38 @@ button.source-label:hover { border-color: var(--border); background: var(--raise
 }
 .view3d-group { display: inline-flex; gap: 2px; }
 .view3d-group button.selected { background: var(--selected-bg); color: var(--selected-ink); border-color: var(--selected-border); }
+/* Split Wave Angle (spec.md 10.5): its controls in the toolbar, then the
+   frames of the copies over the one canvas they are all drawn on. */
+.wave-split-controls { align-items: center; gap: 6px; }
+.wave-split-controls input[type="range"] { width: 84px; }
+.wave-split-count { min-width: 10ch; font-size: 11px; white-space: nowrap; }
+.wave-split-cells { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.wave-split-cell { position: absolute; box-sizing: border-box; border: 1px solid var(--border-subtle); }
+/* The big arrow: as large as a third of its copy allows, never a speck. */
+.wave-split-arrow { position: absolute; left: 3px; top: 3px; width: clamp(34px, 40%, 130px); max-height: calc(100% - 6px); aspect-ratio: 1; }
+/* A small copy: the arrow keeps clear of the name, and the count goes to the foot. */
+.wave-split-cell.small .wave-split-arrow { width: clamp(16px, calc(100% - 66px), 40px); }
+.wave-split-cell.small .wave-split-name { font-size: 10px; }
+.wave-split-cell.small .wave-split-total { top: auto; bottom: 2px; }
+.wave-split-boat { fill: var(--muted); opacity: 0.7; }
+/* The copy's share of the circle round the boat, on a faint ring of the whole. */
+.wave-split-ring { fill: none; stroke: var(--muted); stroke-width: 1.5; opacity: 0.35; }
+.wave-split-arc { fill: none; stroke: var(--accent); stroke-width: 5; stroke-linecap: round; }
+.wave-split-shaft { fill: var(--accent); stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; opacity: 0.9; }
+.wave-split-none { font-size: 11px; white-space: nowrap; }
+.wave-split-name, .wave-split-total { position: absolute; right: 5px; white-space: nowrap; text-shadow: 0 0 3px var(--inset, #000); }
+.wave-split-name { top: 3px; font-size: 11px; font-weight: 600; }
+.wave-split-total { top: 18px; font-size: 10px; color: var(--muted); }
+/* The same wind in another copy: a ring on the dot and its speed beside it. */
+.wave-split-mark {
+  position: absolute; transform: translate(9px, -50%);
+  padding: 1px 5px; border: 1px solid var(--accent); border-radius: 9px;
+  background: var(--panel); font-size: 10px; white-space: nowrap;
+}
+.wave-split-mark::before {
+  content: ""; position: absolute; left: -15px; top: 50%; width: 9px; height: 9px; margin-top: -6px;
+  border: 2px solid var(--accent); border-radius: 50%;
+}
 .view3d-side {
   position: absolute;
   top: 10px;
@@ -1078,8 +1150,19 @@ button.source-label:hover { border-color: var(--border); background: var(--raise
 .global-filters .point-filter-body > label { display: flex; gap: 6px; margin-bottom: 8px; }
 .point-filter-body { max-height: 46vh; overflow: auto; }
 
-.orc-measurements { grid-column: 1 / -1; min-width: 0; border: 1px solid var(--border); }
-.orc-pages { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin: 4px 0; }
+.orc-measurements { grid-column: 1 / -1; min-width: 0; margin-top: 2px; }
+/* The end of a scrolling list: the next page loads as it comes into view. */
+.orc-more { justify-content: center; }
+.catalogue-badge {
+  display: inline-block; margin-right: 5px; padding: 0 4px; border-radius: 3px;
+  font-size: 9px; font-weight: 700; letter-spacing: 0.04em; line-height: 14px; vertical-align: 1px;
+  background: var(--accent); color: var(--inset, #1f2c3c);
+}
+.catalogue-badge.orr { background: var(--muted); }
+.orc-measure { display: grid; grid-template-columns: minmax(0, 1fr) 4.5rem 4.5rem; gap: 4px; align-items: center; margin: 2px 0; font-size: 12px; }
+.orc-measure input { min-width: 0; width: 100%; box-sizing: border-box; }
+.orc-measure-head { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.orc-measure-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .view3d-ramp-time { flex-direction: column; align-items: stretch; }
 .view3d-ramp-time span { white-space: nowrap; }
 .view3d-ramp-time .view3d-ramp-bar { flex: none; min-height: 8px; }
@@ -1092,8 +1175,8 @@ button.source-label:hover { border-color: var(--border); background: var(--raise
 .priority-filters input[type=number] { width: 70px; margin: 4px; }
 .priority-group { margin: 8px 0; padding: 6px; border: 1px solid var(--border); }
 .catalogue-picker { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
-.orr-scraper progress { width: 100%; margin-top: 6px; }
-.orr-scraper details { max-height: 180px; overflow: auto; }
+.orr-scraper progress, .orc-scraper progress { width: 100%; margin-top: 6px; }
+.orr-scraper details, .orc-scraper details { max-height: 180px; overflow: auto; }
 
 .track-field:has(> input[type="checkbox"]) { display: flex; gap: 6px; }
 .track-field input[type="checkbox"] { width: auto; flex: none; }
@@ -1223,3 +1306,17 @@ button.source-label:hover { border-color: var(--border); background: var(--raise
 .view3d.compact-comparison .view3d-side, .view3d.compact-comparison .wave-display-ranges { display: none; }
 .view3d.compact-comparison .view3d-toolbar:not(.compare-toolbar) { left: 50%; max-width: calc(100% - 24px); }
 .boat-view-toolbar button[aria-pressed="true"] { background: var(--selected-bg); color: var(--selected-ink); }
+
+/* --- Right to left (Arabic, spec.md 3.5) ------------------------------------
+   The page mirrors, but what reads as a scale stays left to right, as charts
+   and maps do in right-to-left software: the dual-handle sliders (their
+   highlighted track is placed from the left), and the numbers with units
+   drawn over the 3D view, the comparison and the copies of a split view. */
+[dir="rtl"] .wave-range-row,
+[dir="rtl"] .view3d-labels,
+[dir="rtl"] .compare-labels,
+[dir="rtl"] .wave-split-mark,
+[dir="rtl"] .view3d-drag-value { direction: ltr; }
+/* A wave range row reads min, slider, max from the left, as its scale does;
+   only its name stays right to left. */
+[dir="rtl"] .wave-range-row .wave-range-label { direction: rtl; text-align: right; }

@@ -60,10 +60,11 @@ const TRACKED: SourceSummary = {
   ...TRACK, id: 10, visible: true, track: {
     origin: "file", boat_name: "Alpha", event_title: "race.geojson", start: 1_753_531_200, end: 1_753_617_600,
     samples: 120, filtered: 20, excluded: 0, used: 100, with_wind: 0, env_status: "not_fetched", env_fetched: 0, env_interval: null, no_tide: 0, max_gap_s: 10_800,
-    prefer: "given", supplied_wind: 0, downloaded_wind_only: false, environment_filters: false,
-    filters: { max_awa_change: null, max_wind_speed_change: null, max_wind_direction_change: null, time_start: null, time_end: null, min_bsp: 1, max_bsp: null, max_heading_change: 30, heading_origin: "any", speed_origin: "any",
+    // The track gives wind, headings and speeds, so every provided-or-derived choice is on screen to be found.
+    prefer_heading: "given", prefer_speed: "given", supplied_wind: 40, supplied_heading: 120, supplied_speed: 120, downloaded_wind_only: false, environment_filters: false,
+    filters: { max_awa_change: null, max_wind_speed_change: null, max_wind_direction_change: null, time_start: null, time_end: null, min_bsp: 1, max_bsp: null, max_heading_change: 30, heading_from: null, heading_to: null, cog_from: null, cog_to: null, vmg_min: null, vmg_max: null, twd_from: null, twd_to: null, exclude_tacks: false,
     tws_min: null, tws_max: null, twa_min: null, twa_max: null, hs_min: null, hs_max: null, current_min: null, current_max: null,
-    wave_mode: "off", wave_sectors: [], wave_min: null, wave_max: null, wave_from: null, wave_to: null, exclude_no_tide: false, exclude_unknown_wave: false, exclude_unknown_current: false, tack_gybe_padding_s: null, stop_speed_kn: null, stop_padding_s: 0, utc_interval_s: null },
+    wave_mode: "off", wave_sectors: [], wave_min: null, wave_max: null, wave_from: null, wave_to: null, exclude_no_tide: false, exclude_unknown_wave: false, exclude_unknown_current: false },
   },
 };
 /** An ORC certificate, as the source list and the ORC polars section show it. */
@@ -74,7 +75,7 @@ const ORC: SourceSummary = {
 /** A search result for it. */
 const HIT: OrcHit = {
   id: 4242, name: "Eratosthenes", sail_no: "GBR 1124", country: "GBR", model: "Swan 112", builder: "Nautor",
-  year: 1999, certificate_year: 2023, in_project: false,
+  year: 1999, certificate_year: 2023, ref_no: null, in_project: false,
   thumb: [{ tws: 6, twa: [52, 90, 150], bsp: [6.87, 7.75, 5.17] }],
 };
 
@@ -135,7 +136,7 @@ function backend() {
         // An empty scene: the header alone (layout in polar/scenePacket.ts).
         const header = new ArrayBuffer(48);
         new DataView(header).setUint32(0, 0x44334550, true);
-        new DataView(header).setUint32(4, 4, true);
+        new DataView(header).setUint32(4, 5, true);
         return header;
       }
       case "compare_polars": {
@@ -194,13 +195,16 @@ function backend() {
       case "move_source": case "remove_source": case "edit_polar": case "set_segment_statistic":
         return project;
       case "orc_catalogue_info": return {
-        records: 18135, source: "jieter/orc-data", commit: "c2ca870c6b22cc02c25afd5bac0f2d8297bf95de",
+        records: 18135, scraped: 0, scraped_at: null, source: "jieter/orc-data", commit: "c2ca870c6b22cc02c25afd5bac0f2d8297bf95de",
         commit_date: "2026-09-28", build_date: "2026-09-28", countries: ["GBR", "NED"], year_min: 1900, year_max: 2026,
       };
       case "orc_search": {
         const inProject = project?.sources.some((s) => s.kind === "orc") ?? false;
         return { total: 120, hits: [{ ...HIT, in_project: inProject }] };
       }
+      // Both catalogues are searched at once (asked 2026-10-02); the ORR one has nothing here.
+      case "orr_catalogue_info": return { records: 600, scraped_at: null };
+      case "orr_search": return { total: 0, hits: [] };
       case "orc_add":
         if (!args?.allowDuplicate && project?.sources.some((s) => s.kind === "orc")) {
           throw { kind: "orc-duplicate", message: "The project already holds the certificate of Eratosthenes." };
@@ -255,6 +259,7 @@ beforeEach(() => {
     weather_memory_mb: 256, network: { concurrency: 8, timeout_s: 60 },
     projection: "equirectangular", plot_tws_band_kn: 1,
     mcp: { enabled: false, port: 47392, token: "" },
+    catalogues: { orc_schedule: "on_demand", orr_schedule: "on_demand" },
   };
   dialog.open.mockReset().mockResolvedValue(null);
   dialog.save.mockReset().mockResolvedValue(null);
@@ -291,10 +296,10 @@ describe("the start screen", () => {
     await mount();
     await click(feature("new:create"));
     expect(calls.find(([c]) => c === "new_project")?.[1]).toEqual({
-      name: "Untitled polar", boat: { name: "", notes: "" }, discardUnsaved: false,
+      name: "Untitled Project", boat: { name: "", notes: "" }, discardUnsaved: false,
     });
     for (const id of ["shell:project-menu", "shell:rename", "stage:3d", "stage:compare", "shell:search",
-      "shell:help", "shell:settings", "shell:asymmetric", "nav:orc", "nav:polar-files", "nav:tracks", "panel:sources", "panel:plot",
+      "shell:help", "shell:settings", "shell:asymmetric", "nav:orc", "nav:polar-files", "nav:tracks", "panel:sources", "stage:2d",
       "shell:statusbar", "dock:left", "dock:right", "view3d:layout"]) {
       expect(feature(id), id).not.toBeNull();
     }
@@ -569,7 +574,7 @@ describe("switching language (plan.md M2 acceptance)", () => {
   // Data, not interface: the project's name and path, the version, the
   // languages' own names, and symbols.
   const data = new Set(["Fastnet", "/boats/Fastnet.wpsproj", "v0.1.0", "PolarExplorer", "English", "Français",
-    "Deutsch", "/cache/chunks", "…", "Old", "/gone/Old.wpsproj", "Lost", "?",
+    "Deutsch", "Español", "Italiano", "Nederlands", "中文", "日本語", "العربية", "/cache/chunks", "…", "Old", "/gone/Old.wpsproj", "Lost", "?",
     // Country codes and the catalogue's commit, from the ORC polars section.
     "ORC", "ORR", "GBR", "NED", "c2ca870c6b22cc02c25afd5bac0f2d8297bf95de"]);
   const untranslated = (target: "fr" | "de", before: string[], after: string[]) =>
@@ -634,7 +639,7 @@ describe("switching language (plan.md M2 acceptance)", () => {
       // Data, not interface: the project's name and path, the version, the
       // languages' own names, and symbols.
       const data = new Set(["Fastnet", "/boats/Fastnet.wpsproj", "v0.1.0", "PolarExplorer", "English", "Français",
-        "Deutsch", "/cache/chunks", "…",
+        "Deutsch", "Español", "Italiano", "Nederlands", "中文", "日本語", "العربية", "/cache/chunks", "…",
         // Country codes and the catalogue's commit, from the ORC polars section.
         "ORC", "ORR", "GBR", "NED", "c2ca870c6b22cc02c25afd5bac0f2d8297bf95de"]);
       const untranslated = before.filter((text, index) =>
@@ -877,7 +882,7 @@ describe("polar files and the source list (plan.md M4)", () => {
     expect(commands("set_blend_settings")).toEqual([{ boatContext: 1,
       settings: {
         twa: [0, 45, 90, 135, 180], tws: [4, 6, 8, 10, 12, 14, 16, 20, 25, 30], min_samples: 5, n_full: 12,
-        smoothing: true, default_statistic: "p90", use_corrected: true, stokes_drift: false, asymmetric: false, interpolation: "linear",
+        smoothing: true, default_statistic: "p90", use_corrected: true, asymmetric: false, interpolation: "linear",
       },
     }]);
     expect(feature("blend-settings:twa")).toBeNull();
@@ -1001,10 +1006,12 @@ describe("ORC polars (plan.md M5)", () => {
     expect(searches.map((s) => s.query)).toEqual(["G", "GBR 1124"]);
     expect(searches[1]!.filters).toEqual({
       year_min: null, year_max: null, country: null,
-      name: "", sail_no: "", model: "", builder: "", designer: "", certificate_year: "", size_min: Array(9).fill(null), size_max: Array(9).fill(null),
+      name: "", sail_no: "", model: "", builder: "", designer: "", certificate_year: "", size_min: Array(8).fill(null), size_max: Array(8).fill(null),
     });
     const row = q(".orc-results li")!;
-    expect(row.querySelector(".orc-name")!.textContent).toBe("Eratosthenes");
+    // Badged with its catalogue (asked 2026-10-02).
+    expect(row.querySelector(".orc-name .catalogue-badge")!.textContent).toBe("ORC");
+    expect(row.querySelector(".orc-name")!.textContent).toBe("ORCEratosthenes");
     expect(row.querySelector(".orc-meta")!.textContent).toBe("GBR 1124 · Swan 112 · 1999 · Nautor");
     expect(row.querySelector("svg.orc-thumb path")!.getAttribute("d")).toMatch(/^M/);
     expect(q(".orc-count")!.textContent).toBe("Certificates 1–1 of 120");
@@ -1042,9 +1049,9 @@ describe("ORC polars (plan.md M5)", () => {
     expect(searches.map((s) => s.query)).toEqual(["", ""]);
     expect(searches.at(-1)!.filters).toEqual({
       year_min: null, year_max: null, country: null,
-      name: "", sail_no: "GBR/1124", model: "", builder: "", designer: "frers", certificate_year: "", size_min: Array(9).fill(null), size_max: Array(9).fill(null),
+      name: "", sail_no: "GBR/1124", model: "", builder: "", designer: "frers", certificate_year: "", size_min: Array(8).fill(null), size_max: Array(8).fill(null),
     });
-    expect(q(".orc-results li .orc-name")!.textContent).toBe("Eratosthenes");
+    expect(q(".orc-results li .orc-name")!.textContent).toBe("ORCEratosthenes");
 
     // Year built is one field however many ends are set; the count shows.
     await type(feature("orc:year-from") as HTMLInputElement, "1990");

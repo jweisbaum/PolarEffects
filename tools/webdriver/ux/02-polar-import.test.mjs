@@ -18,7 +18,9 @@ export default {
       `done(getComputedStyle(document.querySelector(".polar-file-list .swatch")).backgroundColor);`));
     await t.shot("imported");
 
-    const plot = ".polar-plot-panel canvas";
+    // The plot is the 2D stage now (asked 2026-10-02).
+    await d.click('[data-feature="stage:2d"]');
+    const plot = ".polar-plot-stage canvas";
     await d.waitFor(plot, { visible: true });
     let curve = 0;
     for (let i = 0; i < 50 && curve < 50; i += 1) {
@@ -27,12 +29,21 @@ export default {
     }
     assert.ok(curve >= 50, `the 2D plot shows a curve in ${colour} (${curve} pixels)`);
     await t.shot("plot-curve");
-    await d.click('[data-feature="plot:full-size"]');
-    await d.waitFor(".polar-plot-overlay canvas", { visible: true });
     assert.equal(await d.exists('[data-feature="stage:map"]'), false);
-    await t.shot("full-size-without-tracks");
-    await d.click('[data-feature="plot:close"]');
-    await d.waitGone(".polar-plot-overlay");
+    // On the stage a symmetric polar's 0° axis runs down the middle (asked
+    // 2026-10-02): the pointer finds the fan to the right of centre and
+    // nothing to its left.
+    const halves = await d.run(`var c = document.querySelector(".polar-plot-stage canvas"), ctx = c.getContext("2d");
+      var data = ctx.getImageData(0, 0, c.width, c.height).data, bg = [data[0], data[1], data[2]], left = 0, right = 0;
+      for (var y = 0; y < c.height; y += 2) for (var x = 0; x < c.width; x += 2) {
+        var i = (y * c.width + x) * 4;
+        if (Math.abs(data[i] - bg[0]) + Math.abs(data[i + 1] - bg[1]) + Math.abs(data[i + 2] - bg[2]) > 60) { if (x < c.width / 2) left++; else right++; }
+      }
+      done({ left: left, right: right });`);
+    assert.ok(halves.right > halves.left * 3, `the fan is to the right of the centre line: ${JSON.stringify(halves)}`);
+    await t.shot("plot-stage-without-tracks");
+    await d.click('[data-feature="stage:3d"]');
+    await d.waitGone(".polar-plot-stage");
 
     await d.click('[data-feature="stage:3d"]');
     await d.waitFor("canvas.view3d-canvas", { visible: true });

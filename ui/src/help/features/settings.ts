@@ -11,7 +11,7 @@ const features: Feature[] = [
   { id: "settings:theme", label: msg("Theme"), description: msg("Choose the colours of the whole application."),
     keywords: [msg("colours"), msg("appearance"), msg("dark mode")], topic: "settings", reveal: open("appearance") },
   { id: "settings:language", label: msg("Language"), description: msg("Choose the language of the interface and help."),
-    keywords: [msg("translation"), msg("French"), msg("German"), msg("English")], topic: "settings", reveal: open("appearance") },
+    keywords: [msg("translation"), msg("French"), msg("German"), msg("English"), msg("Spanish"), msg("Italian"), msg("Dutch"), msg("Chinese"), msg("Japanese"), msg("Arabic")], topic: "settings", reveal: open("appearance") },
   { id: "settings:speed-unit", label: msg("Boat and wind speed"), description: msg("The unit speeds are shown in: knots, m/s or km/h."),
     keywords: [msg("units"), msg("knots"), "BSP", "TWS"], topic: "settings", reveal: open("units") },
   { id: "settings:wave-unit", label: msg("Wave height"), description: msg("The unit wave heights are shown in: metres or feet."),

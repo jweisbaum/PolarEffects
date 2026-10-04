@@ -32,7 +32,7 @@ function packet(): ScenePacket {
       flags: Uint32Array.from([0, FLAG_EXCLUDED, 0]),
     },
     samples: {
-      wavePeriod: new Float32Array(0), waveAngle: new Float32Array(0), waveWindAngle: new Float32Array(0),
+      wavePeriod: new Float32Array(0), waveAngle: new Float32Array(0), waveWindAngle: new Float32Array(0), waveBearing: new Float32Array(0),
       count: 2,
       points: Float32Array.from([120, 14, 9, 150, 16, 10]),
       source: Uint32Array.from([2, 2]),
@@ -210,7 +210,7 @@ describe("what the selection acts on", () => {
       ...packet(),
       nodes: { count: 0, points: new Float32Array(), source: new Uint32Array(), cell: new Uint32Array(), flags: new Uint32Array() },
       samples: {
-      wavePeriod: new Float32Array(0), waveAngle: new Float32Array(0), waveWindAngle: new Float32Array(0),
+      wavePeriod: new Float32Array(0), waveAngle: new Float32Array(0), waveWindAngle: new Float32Array(0), waveBearing: new Float32Array(0),
         count, points: new Float32Array(count * 3), source: new Uint32Array(count),
         ids: Uint32Array.from({ length: count * 2 }, (_, i) => (i % 2 === 0 ? i / 2 : 0)),
         hs: new Float32Array(count), current: new Float32Array(count), time: new Float32Array(count), flags: new Uint32Array(count),
@@ -242,6 +242,20 @@ describe("cameras and guides (spec.md 10.1)", () => {
     const distance = Math.hypot(...iso.position.map((v, a) => v - iso.target[a]!));
     const radius = Math.hypot(...bounds.max.map((v, a) => v - bounds.min[a]!)) / 2;
     expect(distance).toBeGreaterThan(radius / Math.tan((20 * Math.PI) / 180));
+  });
+
+  it("can look at the origin, far enough back that every corner of the scene is in the frame (asked 2026-10-03)", () => {
+    const bounds = sceneBounds(packet(), "tower");
+    for (const preset of ["top", "side", "iso"] as const) {
+      const view = presetView(preset, bounds, 40, "origin");
+      expect(view.target).toEqual([0, 0, 0]);
+      const distance = Math.hypot(...view.position);
+      // The farthest corner of the bounds from the origin fits in the half angle.
+      const reach = Math.hypot(...[0, 1, 2].map((a) => Math.max(Math.abs(bounds.min[a]!), Math.abs(bounds.max[a]!))));
+      expect(distance * Math.tan((20 * Math.PI) / 180)).toBeGreaterThanOrEqual(reach);
+    }
+    // By default the middle of the bounds, as the Compare stage keeps.
+    expect(presetView("top", bounds).target).not.toEqual([0, 0, 0]);
   });
 
   it("bounds every dot, and the origin", () => {

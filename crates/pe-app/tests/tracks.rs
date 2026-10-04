@@ -116,7 +116,7 @@ fn supplied_wind_choice_survives_fetch_rederive_undo_and_save() {
     );
     tracks::track_wind_set(&app, id, true).unwrap();
     assert_eq!(winds(), [Some((20.0, 180.0)); 3]);
-    tracks::track_derivation_set(&app, id, 3600, "given").unwrap();
+    tracks::track_derivation_set(&app, id, 3600, "given", "given").unwrap();
     assert_eq!(winds(), [Some((20.0, 180.0)); 3]);
     edit::undo_last(&app).unwrap(); // derivation
     edit::undo_last(&app).unwrap(); // wind choice
@@ -232,18 +232,27 @@ fn live_change_filters_refresh_cached_blend_and_both_views() {
     assert_eq!(check(), 0);
     edit::redo_next(&app).unwrap();
     assert_eq!(check(), 20);
-    for field in ["stop", "awa", "speed", "direction", "heading", "tack"] {
+    for field in [
+        "vmg",
+        "awa",
+        "speed",
+        "direction",
+        "heading",
+        "tack",
+        "course",
+    ] {
         let mut f = base.clone();
         match field {
-            "stop" => {
-                f.stop_speed_kn = Some(0.5);
-                f.stop_padding_s = 60;
-            }
+            "vmg" => f.vmg_min = Some(0.0),
             "awa" => f.max_awa_change = Some(1.0),
             "speed" => f.max_wind_speed_change = Some(2.0),
             "direction" => f.max_wind_direction_change = Some(10.0),
             "heading" => f.max_heading_change = Some(10.0),
-            _ => f.tack_gybe_padding_s = Some(60),
+            "tack" => f.exclude_tacks = true,
+            _ => {
+                f.cog_from = Some(350.0);
+                f.cog_to = Some(10.0);
+            }
         }
         tracks::track_filters_set(&app, id, &f).unwrap();
         let individual = check();
@@ -286,10 +295,11 @@ fn global_filters_compose_with_track_filters_roundtrip_and_undo() {
         ..Default::default()
     };
     let mut global = TrackFilters::of(&none);
-    global.utc_interval_s = Some(1200);
+    // Alpha makes 3.6 kn along the equator: a ceiling of 2 kn takes every sample out.
+    global.max_bsp = Some(2.0);
     let changed = pe_app::blend::global_filters_set(&app, Some(global.clone())).unwrap();
     let alpha = changed.sources[0].track.as_ref().unwrap();
-    assert_eq!(alpha.filtered, 1); // 12:10 is between the 20-minute boundaries.
+    assert_eq!(alpha.filtered, 3);
     assert_eq!(alpha.filters, original); // Individual settings untouched.
     assert_eq!(changed.sources[1].track.as_ref().unwrap().filtered, 3); // Stopped boat stays out.
     assert_eq!(
@@ -306,7 +316,7 @@ fn global_filters_compose_with_track_filters_roundtrip_and_undo() {
     projects::open(&app, saved.clone(), false).unwrap();
     let loaded = projects::summary(&app).unwrap().unwrap();
     assert_eq!(loaded.blend.global_filters, Some(global.clone()));
-    assert_eq!(loaded.sources[0].track.as_ref().unwrap().filtered, 1);
+    assert_eq!(loaded.sources[0].track.as_ref().unwrap().filtered, 3);
     projects::save(&app).unwrap();
     assert_eq!(std::fs::read(&saved).unwrap(), first);
     global.time_start = Some(NOON);
@@ -504,7 +514,7 @@ fn filters_and_derivation_are_edited_undoably() {
     assert!(tracks::track_filters_set(&app, id, &upside_down).is_err());
 
     // A 5-minute maximum gap leaves every fix of a 10-minute track alone.
-    let rederived = tracks::track_derivation_set(&app, id, 300, "given").unwrap();
+    let rederived = tracks::track_derivation_set(&app, id, 300, "given", "given").unwrap();
     assert_eq!(
         rederived.undo_label.as_deref(),
         Some("Change heading and speed derivation")
@@ -529,8 +539,9 @@ fn filters_and_derivation_are_edited_undoably() {
             .iter()
             .all(|m| m.0.is_some_and(|h| (h - 90.0).abs() < 1e-9))
     );
-    assert!(tracks::track_derivation_set(&app, id, 0, "given").is_err());
-    assert!(tracks::track_derivation_set(&app, id, 600, "sometimes").is_err());
+    assert!(tracks::track_derivation_set(&app, id, 0, "given", "given").is_err());
+    assert!(tracks::track_derivation_set(&app, id, 600, "sometimes", "given").is_err());
+    assert!(tracks::track_derivation_set(&app, id, 600, "given", "sometimes").is_err());
 }
 
 #[test]

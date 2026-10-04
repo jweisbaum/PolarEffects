@@ -10,7 +10,7 @@
 //!
 //! The one place the layout is defined on the Rust side; the frontend's
 //! mirror is `ui/src/polar/scenePacket.ts`, and both are held to the same
-//! bytes by `ui/src/polar/fixtures/scene-v4.bin`. Every value is
+//! bytes by `ui/src/polar/fixtures/scene-v5.bin`. Every value is
 //! little-endian and 4 bytes wide except the time origin and the samples
 //! key, and every section starts on a 4-byte boundary, so the frontend views
 //! each array in place.
@@ -18,7 +18,7 @@
 //! ```text
 //! header, 12 × u32 (48 bytes)
 //!   0  magic       0x44334550 (the bytes "PE3D")
-//!   1  version     4
+//!   1  version     5
 //!   2  S           sources
 //!   3  N           polar nodes
 //!   4  M           samples
@@ -44,6 +44,8 @@
 //!   f32 [M]      wave period, seconds (NaN: none)
 //!   f32 [M]      wave angle off the bow, degrees (NaN: none)
 //!   f32 [M]      wave angle to wind, degrees (NaN: none)
+//!   f32 [M]      wave bearing, degrees clockwise from the bow, 0–360: where
+//!                the waves come from as seen from the boat (NaN: none)
 //!   u32 [M]      flags
 //! samples, flags only
 //!   u32 [M]      flags
@@ -98,7 +100,7 @@ use crate::projects::ProjectSummary;
 /// "PE3D" read as a little-endian u32.
 pub const SCENE_MAGIC: u32 = u32::from_le_bytes(*b"PE3D");
 /// The wire layout's version.
-pub const SCENE_VERSION: u32 = 4;
+pub const SCENE_VERSION: u32 = 5;
 /// Header length in bytes.
 pub const HEADER_BYTES: usize = 48;
 /// The source index a blend surface carries.
@@ -178,6 +180,10 @@ pub struct SceneSample {
     pub wave_angle: f32,
     /// Angle between wave and wind from-directions, 0–180 degrees.
     pub wave_wind_angle: f32,
+    /// Where the waves come from as seen from the boat, degrees clockwise
+    /// from the bow, 0–360 ([`wave_bearing`]); NaN when unknown. The side
+    /// that `wave_angle` folds away.
+    pub wave_bearing: f32,
     /// Current speed, knots; NaN when unknown.
     pub current: f32,
     /// Seconds since [`Scene::time_origin`].
@@ -297,6 +303,7 @@ pub fn scene_with(
                         wave_period: 0.0,
                         wave_angle: 0.0,
                         wave_wind_angle: 0.0,
+                        wave_bearing: 0.0,
                         current: 0.0,
                         time: 0.0,
                         excluded,
@@ -304,6 +311,14 @@ pub fn scene_with(
                         band,
                     }
                 } else {
+                    // The heading the wave angles are measured from: through
+                    // the water when the project corrects for current.
+                    let heading = if project.blend.use_corrected {
+                        sample.heading_corrected.or(sample.heading)
+                    } else {
+                        sample.heading
+                    };
+                    let wave_bearing = crate::wave_split::sample_bearing(project, sample);
                     SceneSample {
                         twa: twa as f32,
                         tws: tws as f32,
@@ -312,16 +327,10 @@ pub fn scene_with(
                         id: sample.id.raw(),
                         hs: sample.hs_m.map_or(f32::NAN, |v| v as f32),
                         wave_period: sample.wave_period_s.map_or(f32::NAN, |v| v as f32),
-                        wave_angle: sample
-                            .wave_from
-                            .zip(if project.blend.use_corrected {
-                                sample.heading_corrected.or(sample.heading)
-                            } else {
-                                sample.heading
-                            })
-                            .map_or(f32::NAN, |(w, h)| {
-                                pe_tracks::geo::angle_between(w, h) as f32
-                            }),
+                        wave_angle: sample.wave_from.zip(heading).map_or(f32::NAN, |(w, h)| {
+                            pe_tracks::geo::angle_between(w, h) as f32
+                        }),
+                        wave_bearing,
                         wave_wind_angle: sample
                             .wave_from
                             .zip(if project.blend.use_corrected {
@@ -466,6 +475,14 @@ fn sample_flags(sample: &SceneSample) -> u32 {
 }
 
 /// Packs a scene into the wire layout in the module documentation.
+fn u(out: &mut Vec<u8>, value: u32) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn f(out: &mut Vec<u8>, value: f32) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
 pub fn pack(scene: &Scene) -> Vec<u8> {
     let (n, m) = (scene.nodes.len(), scene.samples.len());
     let surface_words: usize = scene
@@ -473,11 +490,9 @@ pub fn pack(scene: &Scene) -> Vec<u8> {
         .iter()
         .map(|s| 3 + s.twa.len() + s.tws.len() + s.bsp.len())
         .sum();
-    let per_sample = if scene.flags_only { 1 } else { 13 };
+    let per_sample = if scene.flags_only { 1 } else { 14 };
     let words = 12 + scene.sources.len() * 4 + n * 6 + m * per_sample + surface_words;
     let mut out = Vec::with_capacity(words * 4);
-    let u = |out: &mut Vec<u8>, value: u32| out.extend_from_slice(&value.to_le_bytes());
-    let f = |out: &mut Vec<u8>, value: f32| out.extend_from_slice(&value.to_le_bytes());
 
     u(&mut out, SCENE_MAGIC);
     u(&mut out, SCENE_VERSION);
@@ -530,15 +545,57 @@ pub fn pack(scene: &Scene) -> Vec<u8> {
         pack_samples(&mut out, scene);
     }
 
-    for surface in &scene.surfaces {
-        u(&mut out, surface.source);
-        u(&mut out, surface.twa.len() as u32);
-        u(&mut out, surface.tws.len() as u32);
+    pack_surfaces(&mut out, &scene.surfaces);
+    out
+}
+
+/// "PE3W" read as a little-endian u32: the split blends packet.
+pub const SPLIT_MAGIC: u32 = u32::from_le_bytes(*b"PE3W");
+/// The split blends packet's layout version.
+pub const SPLIT_VERSION: u32 = 1;
+
+/// The blend of each copy of a split view (spec.md 10.5), packed.
+///
+/// ```text
+/// header, 4 × u32
+///   0  magic     0x57334550 (the bytes "PE3W")
+///   1  version   1
+///   2  C         copies the view was split into
+///   3  F         surfaces: one per copy whose blend has something to say
+/// surfaces, F times, as the scene's: u32 copy (0 ≤ copy < C) in place of the
+///   source index, u32 ni, u32 nj, f32 [ni] TWA, f32 [nj] TWS, f32 [ni × nj] BSP
+/// ```
+pub fn pack_split(count: u32, surfaces: &[SceneSurface]) -> Vec<u8> {
+    let words: usize = 4 + surfaces.iter().map(surface_words).sum::<usize>();
+    let mut out = Vec::with_capacity(words * 4);
+    for value in [SPLIT_MAGIC, SPLIT_VERSION, count, surfaces.len() as u32] {
+        u(&mut out, value);
+    }
+    pack_surfaces(&mut out, surfaces);
+    out
+}
+
+fn surface_words(surface: &SceneSurface) -> usize {
+    3 + surface.twa.len() + surface.tws.len() + surface.bsp.len()
+}
+
+fn pack_surfaces(out: &mut Vec<u8>, surfaces: &[SceneSurface]) {
+    for surface in surfaces {
+        u(out, surface.source);
+        u(out, surface.twa.len() as u32);
+        u(out, surface.tws.len() as u32);
         for value in surface.twa.iter().chain(&surface.tws).chain(&surface.bsp) {
-            f(&mut out, *value);
+            f(out, *value);
         }
     }
-    out
+}
+
+/// Where waves come from as seen from the boat (spec.md 10.5): degrees
+/// clockwise from the bow, 0 on the bow, 90 on the starboard beam, 180
+/// astern, 270 on the port beam. `wave_from` and `heading` are compass
+/// directions; the waves' is the one they come from.
+pub fn wave_bearing(wave_from: f64, heading: f64) -> f32 {
+    crate::wave_split::bearing(wave_from, heading)
 }
 
 /// The full samples section.
@@ -576,6 +633,9 @@ fn pack_samples(out: &mut Vec<u8>, scene: &Scene) {
         u(sample.wave_wind_angle.to_bits());
     }
     for sample in samples {
+        u(sample.wave_bearing.to_bits());
+    }
+    for sample in samples {
         u(sample_flags(sample));
     }
 }
@@ -593,6 +653,41 @@ pub fn polar_scene(
 ) -> Result<tauri::ipc::Response> {
     let state = state.scoped(boat_context);
     scene_bytes_for(&state, focus, samples_key).map(tauri::ipc::Response::new)
+}
+
+/// The blend of each copy of a split view (spec.md 10.5), packed
+/// ([`pack_split`]): one surface per copy whose blend has something to say,
+/// refined for the project's interpolation as the scene's blend is.
+#[tauri::command]
+pub fn polar_scene_split(
+    state: tauri::State<'_, AppState>,
+    boat_context: Option<u64>,
+    split: crate::wave_split::WaveSplit,
+) -> Result<tauri::ipc::Response> {
+    let state = state.scoped(boat_context);
+    split_bytes(&state, split).map(tauri::ipc::Response::new)
+}
+
+/// [`polar_scene_split`] without a Tauri handle.
+pub fn split_bytes(state: &AppState, split: crate::wave_split::WaveSplit) -> Result<Vec<u8>> {
+    let split = split.checked()?;
+    state.with_session(|session| {
+        let open = session.require_open()?;
+        let blends = open.derived.split_blends(&open.project, split);
+        let mut scene = Scene::default();
+        for (cell, blend) in blends.iter().enumerate() {
+            if let Some(blend) = blend {
+                add_surface(
+                    &mut scene,
+                    &blend.polar,
+                    cell as u32,
+                    open.project.blend.interpolation,
+                    true,
+                );
+            }
+        }
+        Ok(pack_split(split.count, &scene.surfaces))
+    })
 }
 
 /// The whole scene, without a focus: [`polar_scene`] without a Tauri handle.
@@ -866,6 +961,7 @@ mod tests {
                 wave_period: 8.5,
                 wave_angle: 30.0,
                 wave_wind_angle: 15.0,
+                wave_bearing: 330.0,
                 current: f32::NAN,
                 time: 600.0,
                 excluded: true,
@@ -901,13 +997,13 @@ mod tests {
     #[test]
     fn the_layout_is_the_documented_one() {
         let bytes = pack(&fixture_scene());
-        // 12 header + 2×4 sources + 2×6 nodes + 1×13 samples
-        // + (3 + 2 + 2 + 4) + (3 + 1 + 1 + 1) surfaces = 62 words.
-        assert_eq!(bytes.len(), 62 * 4);
+        // 12 header + 2×4 sources + 2×6 nodes + 1×14 samples
+        // + (3 + 2 + 2 + 4) + (3 + 1 + 1 + 1) surfaces = 63 words.
+        assert_eq!(bytes.len(), 63 * 4);
         assert_eq!(&bytes[0..4], b"PE3D");
         assert_eq!(
             (1..6).map(|i| word(&bytes, i)).collect::<Vec<_>>(),
-            [4, 2, 2, 1, 2]
+            [5, 2, 2, 1, 2]
         );
         assert_eq!(
             i64::from_le_bytes(bytes[24..32].try_into().unwrap()),
@@ -932,8 +1028,8 @@ mod tests {
             [0, 0, 1, 2 | (1 << 16), FLAG_EDITED, FLAG_EXCLUDED]
         );
         // Sample: position 32–34, source 35, id 36–37, hs 38, current 39,
-        // time 40, wave period/angle/wind angle 41–43, flags 44 (the band,
-        // afternoon = 2, in bits 8–9).
+        // time 40, wave period/angle/wind angle 41–43, wave bearing 44,
+        // flags 45 (the band, afternoon = 2, in bits 8–9).
         assert_eq!(
             (32..35).map(|i| float(&bytes, i)).collect::<Vec<_>>(),
             [135.0, 14.25, 9.5]
@@ -945,29 +1041,56 @@ mod tests {
         assert_eq!(float(&bytes, 38), 1.5);
         assert!(float(&bytes, 39).is_nan());
         assert_eq!(float(&bytes, 40), 600.0);
-        assert_eq!(word(&bytes, 44), FLAG_EXCLUDED | FLAG_FILTERED | (2 << 8));
+        assert_eq!(word(&bytes, 45), FLAG_EXCLUDED | FLAG_FILTERED | (2 << 8));
         assert_eq!(float(&bytes, 41), 8.5);
         assert_eq!(float(&bytes, 42), 30.0);
         assert_eq!(float(&bytes, 43), 15.0);
-        // First surface: header 45–47, axes 48–51, values 52–55.
+        assert_eq!(float(&bytes, 44), 330.0);
+        // First surface: header 46–48, axes 49–52, values 53–56.
         assert_eq!(
-            (45..48).map(|i| word(&bytes, i)).collect::<Vec<_>>(),
+            (46..49).map(|i| word(&bytes, i)).collect::<Vec<_>>(),
             [0, 2, 2]
         );
         assert_eq!(
-            (48..55).map(|i| float(&bytes, i)).collect::<Vec<_>>(),
+            (49..56).map(|i| float(&bytes, i)).collect::<Vec<_>>(),
             [52.0, 90.0, 6.0, 12.0, 5.9, 7.3, 6.8]
         );
-        assert!(float(&bytes, 55).is_nan());
-        // The blend: 56–58, then its one-cell grid.
+        assert!(float(&bytes, 56).is_nan());
+        // The blend: 57–59, then its one-cell grid.
         assert_eq!(
-            (56..59).map(|i| word(&bytes, i)).collect::<Vec<_>>(),
+            (57..60).map(|i| word(&bytes, i)).collect::<Vec<_>>(),
             [u32::MAX, 1, 1]
         );
         assert_eq!(
-            (59..62).map(|i| float(&bytes, i)).collect::<Vec<_>>(),
+            (60..63).map(|i| float(&bytes, i)).collect::<Vec<_>>(),
             [45.0, 10.0, 6.0]
         );
+    }
+
+    /// By hand, on the compass: a boat heading 350° with waves from 020°
+    /// has them 30° on the starboard bow; heading 020° with waves from 350°,
+    /// 30° on the port bow, which is 330° clockwise.
+    #[test]
+    fn the_wave_bearing_is_clockwise_from_the_bow_and_keeps_its_side() {
+        assert_eq!(wave_bearing(20.0, 350.0), 30.0);
+        assert_eq!(wave_bearing(350.0, 20.0), 330.0);
+        assert_eq!(wave_bearing(90.0, 90.0), 0.0);
+        assert_eq!(wave_bearing(270.0, 90.0), 180.0);
+        assert_eq!(wave_bearing(180.0, 90.0), 90.0, "the starboard beam");
+        assert_eq!(wave_bearing(0.0, 90.0), 270.0, "the port beam");
+        // Never 360: the circle closes on 0.
+        assert_eq!(wave_bearing(359.999_999_999_999_9, 0.0), 0.0);
+        assert_eq!(wave_bearing(0.0, 0.0), 0.0);
+        // It folds to the angle off the bow the scene already carries.
+        for (wave, heading) in [(20.0, 350.0), (350.0, 20.0), (200.0, 10.0)] {
+            let bearing = f64::from(wave_bearing(wave, heading));
+            let folded = if bearing > 180.0 {
+                360.0 - bearing
+            } else {
+                bearing
+            };
+            assert!((folded - pe_tracks::geo::angle_between(wave, heading)).abs() < 1e-4);
+        }
     }
 
     /// A flags-only scene carries the samples' flags and nothing else of
@@ -996,7 +1119,7 @@ mod tests {
             flags_only: true,
             ..fixture_scene()
         });
-        for (name, bytes) in [("scene-v4.bin", full), ("scene-v4-flags.bin", flags)] {
+        for (name, bytes) in [("scene-v5.bin", full), ("scene-v5-flags.bin", flags)] {
             let path = dir.join(name);
             if std::env::var_os("PE_BLESS").is_some() {
                 std::fs::create_dir_all(&dir).unwrap();
@@ -1013,7 +1136,7 @@ mod tests {
         assert_eq!(word(&bytes, 0), SCENE_MAGIC);
     }
 
-    /// The spec.md 13 scale: 200,000 samples pack into 8 MB with no
+    /// The spec.md 13 scale: 200,000 samples pack into 11 MB with no
     /// per-sample allocation.
     #[test]
     fn two_hundred_thousand_samples_pack_to_the_expected_size() {
@@ -1025,7 +1148,7 @@ mod tests {
         let started = std::time::Instant::now();
         let bytes = pack(&scene);
         let elapsed = started.elapsed();
-        assert_eq!(bytes.len(), HEADER_BYTES + 200_000 * 13 * 4);
+        assert_eq!(bytes.len(), HEADER_BYTES + 200_000 * 14 * 4);
         println!("packed 200k samples in {elapsed:?}");
     }
 }

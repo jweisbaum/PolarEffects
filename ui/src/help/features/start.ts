@@ -4,7 +4,7 @@ import type { Feature } from "../features";
 /** The start screen (spec.md 3.1) and the new-project form it shares with the dialog. */
 const features: Feature[] = [
   { id: "start:language", label: msg("Language"), description: msg("Choose the language of the interface and help."),
-    keywords: [msg("translation"), msg("French"), msg("German"), msg("English")], topic: "settings" },
+    keywords: [msg("translation"), msg("French"), msg("German"), msg("English"), msg("Spanish"), msg("Italian"), msg("Dutch"), msg("Chinese"), msg("Japanese"), msg("Arabic")], topic: "settings" },
   { id: "start:help", label: msg("Help"), description: msg("Open the help reference."),
     keywords: [msg("manual"), msg("documentation")], topic: "search" },
   { id: "start:settings", label: msg("Settings"), description: msg("Language, theme, units, autosave, cache and network."),

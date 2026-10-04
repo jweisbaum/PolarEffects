@@ -14,6 +14,13 @@ the application. The native About panel records the embedded catalogue's
 commit, source date, build date and certificate count. Its source polars are
 based on ORC certificates; inclusion does not imply endorsement by ORC.
 
+Settings → **ORC polars** can add the current year's certificates from
+[ORC's public data service](https://data.orc.org/public/WPub.dll), the origin
+of that data: every listed country's valid certificates, read the same way and
+kept on this computer beside the embedded catalogue, each certificate once.
+Nothing is downloaded unless you start it there or choose a schedule for it.
+Certificates and their contents remain ORC's and the rating offices'.
+
 ## ORR catalogue
 
 Complete public certificates, ratings and offshore/short-course polar tables

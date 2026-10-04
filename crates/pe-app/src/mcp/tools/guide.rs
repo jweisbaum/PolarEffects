@@ -62,7 +62,8 @@ PolarExplorer is the sailing-polar application open on this computer. Use these 
 
 Call polarexplorer_guide first: it is the full manual. In short:
 1. project_status, then project_new or project_open. A dirty project holds the user's unsaved work: never discard it unless told to.
-2. Add sources to a boat: orc_search + orc_add or orr_search + orr_add (rating certificates), polar_files_import (polar files), track_files_import or tracker_event + tracker_import (race tracks).
+2. Add sources to a boat: orc_search + orc_add or orr_search + orr_add (rating certificates), polar_files_import (polar files), track_files_import, tracker_event + tracker_import or library_search + library_import (race tracks).
+A whole race: race_project builds a tab per boat with its track and matched certificates; then, per boat, search again with what you know of it (model, sail number, other races). Carry a job through; stop only for a large download or the user's unsaved work.
 3. A track has no place in the polar until it has wind: weather_estimate, then weather_fetch (downloads; say so first).
 4. Shape it: source_set (weight 0–1, visible), track_set (filters), samples_exclude, polar_edit, blend_set.
 5. Read it: polar_read, blend_cell (who is behind a cell), compare, screenshot.
@@ -85,9 +86,11 @@ Whenever the user wants a polar built, examined, compared, corrected or exported
 1. **Look first.** project_status says what is open. `dirty: true` means unsaved work of the user's: project_new, project_open and project_close refuse to drop it unless `discard_unsaved` is true, and you pass that only when the user said so. recent_projects lists what was open before.
 2. **A project and its boats.** project_new makes a project with one boat. A project holds independent boat tabs (boats_list, boat_add, boat_rename, boat_remove, boat_restore); each boat has its own sources, grid and blend. Every tool below takes an optional `boat` id and otherwise acts on the first boat.
 3. **Sources.**
-   - Rating certificates: orc_search then orc_add (ORC, embedded catalogue), or orr_search then orr_add (ORR). Search by boat name, sail number, model or year. The ORR catalogue is kept on this computer; orr_refresh downloads a certificate year into it (minutes of requests: tell the user first), and is only needed when a recent certificate is missing.
+   - Rating certificates: orc_search then orc_add (ORC, embedded catalogue), or orr_search then orr_add (ORR). Search by boat name, sail number, model or year. Both catalogues are on this computer. orc_refresh and orr_refresh download the current certificates into them (a minute or two and about 60 MB for ORC, several minutes of requests for ORR: tell the user first), and are only needed when a recent certificate is missing.
    - Polar files: polar_files_import with absolute paths (Expedition .txt, Adrena .pol, CSV).
    - Tracks from files: track_files_inspect to see what a file holds, then track_files_import.
+   - A whole race at once: race_project (see \"A whole race\" below).
+   - Tracks from the user's track library: library_search, then library_import.
    - Tracks from a race tracker: tracker_event with the tracker's name (yellowbrick, geovoile, bluewater) and the event's address gives the boat list; tracker_import imports the chosen boats. This downloads from the tracker.
    - sources_list shows every source with its id, kind, colour, visibility, weight and counts. source_remove takes one out (undo puts it back); source_move changes only its place in the list.
 4. **Weather for tracks.** A track sample has no place in the polar until it has wind. weather_estimate says how much would be downloaded; weather_fetch downloads reanalysis wind, waves and current for the given track sources and reports progress; weather_jobs and weather_cancel watch and stop it. Tell the user before a large download.
@@ -102,6 +105,26 @@ Whenever the user wants a polar built, examined, compared, corrected or exported
 8. **Save.** project_save writes the .wpsproj file; a project never saved needs `path`.
 
 export_polar and a project_save to a new `path` refuse to replace a file that is already there unless `overwrite` is true: pass it only when the user means that file to be replaced.
+
+## A whole race
+
+When the user wants a race's boats loaded (\"load all the boats of the Fastnet\"), do the whole job without asking at each step:
+
+1. **Find the race.** Work out the edition (see the date above) and its tracker page. If you can, read the race's own website and entry list for each boat's design, builder, sail number, owner's boat name and class: the tracker often knows less.
+2. **race_project** with the tracker (yellowbrick, geovoile or bluewater) and the race's link or key. A Geovoile race in legs is built from the leg its link shows; add the other legs' tracks with tracker_event and tracker_import. Geovoile gives only each boat's name and sail number, so there step 3 finds almost everything. It opens a project with one tab per boat, each with the boat's track and the ORC and ORR certificates and library tracks the application could match from the tracker's own data. Its answer lists, per boat, what was found (`polars`, `tracks`) and the tracker's details.
+3. **Fill the gaps from what you know.** For every boat — not only those with nothing found — search again with your own knowledge of it, in that boat's tab (`boat` from boats_list):
+   - orc_search and orr_search by the boat's name, sail number (with and without the country), and its design or class name as sailors write it (\"Ker 46\", \"JPK 1180\", \"Sun Fast 3300\"). A boat may race under another name or a sistership may hold a certificate; add the boat's own certificate first, a sistership's only when the boat has none, and name it in the source's label (source_set).
+   - library_search by name, sail number and design for tracks of the boat's other races, and library_import the ones that are the boat itself or, when it has few, its sisterships.
+   - tracker_event + tracker_import for other races you know the boat sailed on YellowBrick, Geovoile or Blue Water Tracks.
+   Do not add the same certificate or track twice: sources_list shows what a boat holds.
+4. **Wind.** weather_estimate for every boat's tracks, tell the user the total size in one line, then weather_fetch boat by boat.
+5. **Report** per boat what it holds now and what you could not find, in one table.
+
+The application only matches on the tracker's data; you know the boats. Step 3 is where most of a fleet's certificates are found.
+
+## Working through a job
+
+Carry a request through to its end in one go: chain the calls, read each answer, and decide the next step yourself. Stop to ask only when the user's unsaved work would be replaced, when a download is large (say how large), or when a choice changes the result and nothing the user said settles it. Tell the user what you did at the end, not at each step.
 
 ## Conventions
 

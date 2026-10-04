@@ -16,7 +16,8 @@ import { msg } from "./i18n/msg";
 import { unpackCompare, type ComparePacket } from "./compare/comparePacket";
 import { unpackTracks, type TrackPacket } from "./map/trackPacket";
 import { unpackDots, type DotPacket } from "./panels/dotPacket";
-import { unpackScene, type ScenePacket } from "./polar/scenePacket";
+import { unpackScene, unpackSplit, type ScenePacket, type SplitPacket } from "./polar/scenePacket";
+import type { WaveSplit } from "./generated/WaveSplit";
 import type { AppErrorPayload } from "./generated/AppErrorPayload";
 import type { AppInfo } from "./generated/AppInfo";
 import type { AppSettings } from "./generated/AppSettings";
@@ -111,6 +112,10 @@ async function invokeCommand<T>(command: string, args?: Record<string, unknown>)
 
 /** The local ORR catalogue changed after a refresh. */
 export const ORR_UPDATED = "orr://updated";
+/** The ORC catalogue changed: a scrape finished (spec.md 5.4). */
+export const ORC_UPDATED = "orc://updated";
+/** Quitting waits for a scheduled catalogue scrape; quitting again stops it. */
+export const QUIT_WAITING = "app://quit-waiting";
 
 /** Every Rust command reachable from the frontend. */
 export function boatApi(boatContext?: number) {
@@ -128,6 +133,14 @@ export function boatApi(boatContext?: number) {
   restoreBoat: (projectId: number) => call<ProjectSummary>("restore_boat", { projectId }),
   renameBoat: (name: string) => call<ProjectSummary>("rename_boat", { name }),
   exportAllPolars: (directory: string, format: string) => call<import("./generated/BoatExportResult").BoatExportResult>("export_all_polars", { directory, format }),
+  /** The ORC scrape's progress; fetches nothing. */
+  orcScrapeStatus: () => call<import("./generated/OrcProgress").OrcProgress>("orc_scrape_status"),
+  /** Downloads every country's valid ORC certificates from data.orc.org. */
+  startOrcScrape: () => call<import("./generated/OrcProgress").OrcProgress>("start_orc_scrape"),
+  cancelOrcScrape: () => call<void>("cancel_orc_scrape"),
+  /** When a catalogue is scraped by itself: never, on startup or on shutdown. */
+  setCatalogueSchedule: (catalogue: "orc" | "orr", schedule: import("./generated/ScrapeSchedule").ScrapeSchedule) =>
+    call<AppSettings>("set_catalogue_schedule", { catalogue, schedule }),
   orrCatalogueInfo: () => call<OrrCatalogueInfo>("orr_catalogue_info"),
   orrSearch: (query: string, filters: OrcFilters, limit = 50, offset = 0) => call<OrrSearchResult>("orr_search", { query, filters, limit, offset }),
   orrAdd: (id: string) => call<ProjectSummary>("orr_add", { id }),
@@ -224,6 +237,12 @@ export function boatApi(boatContext?: number) {
    */
   blendCell: (twaIndex: number, twsIndex: number) =>
     call<import("./generated/BlendCell").BlendCell>("blend_cell", { twaIndex, twsIndex }),
+  /**
+   * The same cell of one copy's blend in a split view (spec.md 10.5): each
+   * track counted with only that direction's samples. Read-only.
+   */
+  blendCellSplit: (twaIndex: number, twsIndex: number, split: WaveSplit, cell: number) =>
+    call<import("./generated/BlendCell").BlendCell>("blend_cell_split", { twaIndex, twsIndex, split, cell }),
   exportPreview: (format: string, axes: ExportAxes | null = null) =>
     call<ExportPreview>("export_preview", { format, axes }),
   /** Writes the blend to `path`, recomputed from the sources. */
@@ -290,10 +309,11 @@ export function boatApi(boatContext?: number) {
   /** Changes a track's time window, boat-speed band, manoeuvre threshold and origin filters (undoable). */
   setTrackFilters: (id: number, filters: TrackFilters) =>
     call<ProjectSummary>("set_track_filters", { id, filters }),
-  /** Changes a track's maximum gap and given-or-derived preference (undoable). */
+  /** Whether a track uses only downloaded weather where it supplied wind of its own (undoable). */
   setTrackWind: (id: number, downloadedOnly: boolean): Promise<ProjectSummary> => invoke("set_track_wind", { id, downloadedOnly }),
-  setTrackDerivation: (id: number, maxGapS: number, prefer: "given" | "derived") =>
-    call<ProjectSummary>("set_track_derivation", { id, maxGapS, prefer }),
+  /** How a track derives its heading and speed (spec.md 7.4): the longest gap, and whether the given or the derived heading and speed come first. */
+  setTrackDerivation: (id: number, maxGapS: number, preferHeading: "given" | "derived", preferSpeed: "given" | "derived") =>
+    call<ProjectSummary>("set_track_derivation", { id, maxGapS, preferHeading, preferSpeed }),
   /** One sample's time, position, motion and environment, for the map's hover. */
   sampleDetails: (sourceId: number, sampleId: number) =>
     call<SampleDetails>("sample_details", { sourceId, sampleId }),
@@ -320,7 +340,6 @@ export function boatApi(boatContext?: number) {
   /** Feeds the polar from current-corrected values, or ground values (undoable). */
   setUseCorrected: (on: boolean) => call<ProjectSummary>("set_use_corrected", { on }),
   /** Includes Stokes drift in the global merged current from the next fetch (undoable). */
-  setStokesDrift: (on: boolean) => call<ProjectSummary>("set_stokes_drift", { on }),
 
   /** Ordered priority groups and the additional global point filter layer. */
   setPriorityFilters: (groups: TrackFilters[], minimum: number) =>
@@ -346,6 +365,15 @@ export function boatApi(boatContext?: number) {
   polarScene: async (focus: number | null = null, held: ScenePacket | null = null): Promise<ScenePacket> => {
     const bytes = await call<ArrayBuffer | number[]>("polar_scene", { focus, samplesKey: held?.samplesKey ?? null });
     return unpackScene(bytes instanceof ArrayBuffer ? bytes : new Uint8Array(bytes).buffer, held ?? undefined);
+  },
+  /**
+   * The blend of each copy of a split view (spec.md 10.5), packed (layout in
+   * `polar/scenePacket.ts`, `unpackSplit`): one surface per copy whose
+   * blend has something to say, each made from its direction's samples.
+   */
+  polarSceneSplit: async (split: WaveSplit): Promise<SplitPacket> => {
+    const bytes = await call<ArrayBuffer | number[]>("polar_scene_split", { split });
+    return unpackSplit(bytes instanceof ArrayBuffer ? bytes : new Uint8Array(bytes).buffer);
   },
   /**
    * Compares two operands on the project output grid (spec.md 11), packed

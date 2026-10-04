@@ -56,18 +56,23 @@ export default {
       await d.key("Escape");
       await d.waitGone(".modal-backdrop");
     }
-    await d.click('[data-feature="plot:full-size"]');
-    await d.waitFor(".polar-plot-overlay");
-    assert.ok(await d.run(`var r = document.querySelector(".polar-plot-overlay").getBoundingClientRect();
-      done(Boolean(document.elementFromPoint(r.left + 8, r.top + r.height / 2).closest(".polar-plot-overlay")));`), "the full-size plot opens above the navigation");
-    await t.shot("full-size-plot-overlay");
+    // The 2D plot is a stage of its own (asked 2026-10-02), second in the switch.
+    assert.deepEqual(await d.run(`done(Array.from(document.querySelectorAll('.stage-switcher [role="tab"]')).map(function (b) { return b.textContent; }));`),
+      ["3D", "2D", "Compare"], "Map comes last once there are tracks");
+    await d.click('[data-feature="stage:2d"]');
+    // An empty project has no plot to draw yet: the stage says so.
+    await d.waitFor(".polar-plot-stage .plot-placeholder", { visible: true });
+    assert.equal(await d.exists(".polar-plot-overlay"), false);
+    assert.equal(await d.exists('[data-feature="plot:full-size"]'), false);
+    assert.equal(await d.exists('[data-feature="panel:plot"]'), false, "the right panel no longer holds the plot");
+    await t.shot("plot-stage");
     assert.equal(await d.exists("canvas.map-canvas"), false);
-    await d.click('[data-feature="plot:close"]');
-    await d.waitGone(".polar-plot-overlay");
+    await d.click('[data-feature="stage:3d"]');
+    await d.waitGone(".polar-plot-stage");
 
     await d.open(t.path("tools/webdriver/fixtures/analysis.wpsproj"));
     await d.waitFor('[data-feature="stage:map"]');
-    assert.deepEqual(await d.texts('.stage-switcher [role="tab"]'), ["3D", "Map", "Compare"]);
+    assert.deepEqual(await d.texts('.stage-switcher [role="tab"]'), ["3D", "2D", "Compare", "Map"]);
     assert.ok(await d.exists('[data-feature="stage:3d"][aria-selected="true"]'));
     await verifyPanelOverlays(d, "canvas.view3d-canvas", [".view3d-toolbar", ".view3d-side"]);
     await t.shot("3d-overlay-panels");

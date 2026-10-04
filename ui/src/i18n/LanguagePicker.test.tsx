@@ -34,9 +34,10 @@ beforeEach(async () => {
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); setLanguage("en"); });
 
-it("offers exactly English, French and German, each named in itself", () => {
+it("offers the nine languages, each named in itself", () => {
   const options = [...host.querySelectorAll("option")].map(o => [o.value, o.textContent]);
-  expect(options).toEqual([["en", "English"], ["fr", "Français"], ["de", "Deutsch"]]);
+  expect(options).toEqual([["en", "English"], ["fr", "Français"], ["de", "Deutsch"], ["es", "Español"], ["it", "Italiano"],
+    ["nl", "Nederlands"], ["zh", "中文"], ["ja", "日本語"], ["ar", "العربية"]]);
 });
 
 it("switches the interface at once, saves, and remembers it for the next launch", async () => {

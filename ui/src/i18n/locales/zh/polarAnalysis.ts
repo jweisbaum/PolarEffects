@@ -1,0 +1,31 @@
+/** Polar analysis: symmetry, interpolation, output spacing, corrections and priority filter groups. */
+const catalogue: Record<string, string> = {
+  "{tws} kn": "{tws} kn",
+  "Asymmetric polar": "非对称极曲线",
+  "Keep port and starboard separate in plots, blending and export.": "在图表、融合和导出中分别保留左舷与右舷。",
+  "Interpolation": "插值",
+  "Linear": "线性",
+  "Monotone spline": "单调样条",
+  "TWA step": "TWA 步长",
+  "TWS step": "TWS 步长",
+  "Choose spacing": "选择间隔",
+  "True wind angles, 0 to {max}": "真风角，0 至 {max}",
+  "Correct blend": "修正融合",
+  "Correct the blend": "修正融合极曲线",
+  "Corrections apply after blending. Reset a cell to restore its calculated value.": "修正在融合之后应用。重置单元格可恢复其计算值。",
+  "Priority filter groups": "优先级筛选组",
+  "Try groups in order for each TWA/TWS cell. Use the first with enough samples across visible tracks.": "对每个 TWA/TWS 单元格按顺序尝试各组，采用在可见航迹中样本点足够的第一组。",
+  "Minimum samples per group": "每组最少样本点数",
+  "No priority groups. Every point passing the track and global filters is eligible.": "没有优先级组。通过航迹筛选和全局筛选的每个点都可以使用。",
+  "Priority {number}": "优先级 {number}",
+  "Add priority group": "添加优先级组",
+  "Move up": "上移",
+  "Move down": "下移",
+  "Priority groups are tried in order for each TWA/TWS cell. The first group with enough samples supplies that cell.": "对每个 TWA/TWS 单元格按顺序尝试优先级组，由第一个样本点足够的组提供该单元格的值。",
+  "Choose linear or shape-preserving monotone spline interpolation for the blend, plots and export.": "为融合、图表和导出选择线性插值或保形单调样条插值。",
+  "Set the output wind-angle spacing to 1, 2, 5 or 10 degrees.": "将输出风角间隔设为 1、2、5 或 10 度。",
+  "Set the output wind-speed spacing to 1, 2, 5 or 10 knots.": "将输出风速间隔设为 1、2、5 或 10 节。",
+  "Edit a priority group": "编辑优先级组",
+};
+
+export default catalogue;

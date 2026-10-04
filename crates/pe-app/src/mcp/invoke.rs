@@ -115,11 +115,14 @@ pub const EXCLUDED: &[&str] = &[
     "set_network",
     "set_projection",
     "set_plot_band",
+    "set_catalogue_schedule",
     "legacy_cache_notice",
     "remove_old_chunk_cache",
     // The PostgreSQL track library: saved credentials, a scraper and
-    // `pg_dump`. It stays something only the person at the keyboard starts
-    // (spec.md 3.7).
+    // `pg_dump`. Setting it up stays something only the person at the
+    // keyboard does (spec.md 3.7). Searching and importing what it holds
+    // are the curated tools library_search and library_import (asked
+    // 2026-10-03).
     "test_database_connection",
     "set_database_settings",
     "search_database_boats",
@@ -134,6 +137,7 @@ pub const EXCLUDED: &[&str] = &[
     "basemap",
     "map_tracks",
     "polar_scene",
+    "polar_scene_split",
     "polar_plot_dots",
     "compare_polars",
     // These take the application handle, for the progress they emit. The
@@ -141,8 +145,10 @@ pub const EXCLUDED: &[&str] = &[
     "start_env_fetch",
     "cancel_env_fetch",
     "tracker_event",
-    // `tracker_event`, and `orr_refresh` for the ORR catalogue's scrape.
+    // `tracker_event`, and `orc_refresh` and `orr_refresh` for the
+    // catalogues' scrapes.
     "start_orr_scrape",
+    "start_orc_scrape",
     // These write a file where the caller says. Their tools (`project_save`,
     // `export_polar`) refuse to replace a file that is already there unless
     // told to, as the interface's save dialog asks; by name here they would
@@ -195,7 +201,9 @@ pub const TABLE: &[(&str, Handler)] = &[
     command!(import_polar_files, crate::polar_files::import_polar_files, { boat_context: Option<u64>, paths: Vec<String> }),
     command!(polar_plot, crate::polar_plot::polar_plot, { boat_context: Option<u64>, tws: Option<f64> }),
     // Catalogues.
-    command!(stateless orc_catalogue_info, crate::orc::orc_catalogue_info, {}),
+    command!(orc_catalogue_info, crate::orc::orc_catalogue_info, {}),
+    command!(orc_scrape_status, crate::orc::orc_scrape_status, {}),
+    command!(cancel_orc_scrape, crate::orc::cancel_orc_scrape, {}),
     command!(orc_search, crate::orc::orc_search, { boat_context: Option<u64>, query: String, filters: crate::orc::OrcFilters, limit: u32, offset: Option<u32> }),
     command!(orc_add, crate::orc::orc_add, { boat_context: Option<u64>, id: u32, allow_duplicate: bool }),
     command!(orr_catalogue_info, crate::orr::orr_catalogue_info, { boat_context: Option<u64> }),
@@ -208,7 +216,7 @@ pub const TABLE: &[(&str, Handler)] = &[
     command!(stateless async inspect_csv_track, crate::tracks::inspect_csv_track, { path: String, mapping: crate::tracks::CsvMappingInput }),
     command!(async import_track_files, crate::tracks::import_track_files, { boat_context: Option<u64>, files: Vec<crate::tracks::TrackFileRequest> }),
     command!(set_track_filters, crate::tracks::set_track_filters, { boat_context: Option<u64>, id: u64, filters: crate::tracks::TrackFilters }),
-    command!(set_track_derivation, crate::tracks::set_track_derivation, { boat_context: Option<u64>, id: u64, max_gap_s: i64, prefer: String }),
+    command!(set_track_derivation, crate::tracks::set_track_derivation, { boat_context: Option<u64>, id: u64, max_gap_s: i64, prefer_heading: String, prefer_speed: String }),
     command!(set_track_wind, crate::tracks::set_track_wind, { boat_context: Option<u64>, id: u64, downloaded_only: bool }),
     command!(sample_details, crate::tracks::sample_details, { boat_context: Option<u64>, source_id: u64, sample_id: u64 }),
     command!(cancel_tracker_event, crate::trackers::cancel_tracker_event, { boat_context: Option<u64> }),
@@ -217,7 +225,6 @@ pub const TABLE: &[(&str, Handler)] = &[
     command!(env_estimate, crate::env::env_estimate, { boat_context: Option<u64>, source_ids: Vec<u64>, restart: bool }),
     command!(env_jobs, crate::env::env_jobs, { boat_context: Option<u64> }),
     command!(set_use_corrected, crate::env::set_use_corrected, { boat_context: Option<u64>, on: bool }),
-    command!(set_stokes_drift, crate::env::set_stokes_drift, { boat_context: Option<u64>, on: bool }),
     // The polar views' edits.
     command!(set_excluded, crate::polar3d::set_excluded, { boat_context: Option<u64>, nodes: Vec<crate::polar3d::PolarNodeRef>, samples: Vec<u64>, excluded: bool }),
     command!(polar_edit_surface, crate::polar_edit::polar_edit_surface, { boat_context: Option<u64>, source_id: u64 }),
@@ -231,6 +238,7 @@ pub const TABLE: &[(&str, Handler)] = &[
     command!(set_wave_ranges, crate::blend::set_wave_ranges, { boat_context: Option<u64>, ranges: crate::blend::WaveRangesInput }),
     command!(set_priority_filters, crate::blend::set_priority_filters, { boat_context: Option<u64>, groups: Vec<crate::tracks::TrackFilters>, minimum: u32 }),
     command!(blend_cell, crate::blend::blend_cell, { boat_context: Option<u64>, twa_index: u32, tws_index: u32 }),
+    command!(blend_cell_split, crate::blend::blend_cell_split, { boat_context: Option<u64>, twa_index: u32, tws_index: u32, split: crate::wave_split::WaveSplit, cell: u32 }),
     command!(export_preview, crate::blend::export_preview, { boat_context: Option<u64>, format: String, axes: Option<crate::blend::ExportAxes> }),
 ];
 

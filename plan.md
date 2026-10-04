@@ -1339,6 +1339,211 @@ arguments are not checked; three test gaps (a dropped connection rather
 than a closed session, one assertion that cannot fail, the nothing-open
 refusal checked for six tools rather than all).
 
+### M22 — ORC scraping and catalogue schedules · **complete** (2026-10-02)
+
+Requested by the user 2026-10-02; decisions in D31.
+
+- [x] `pe-trackers::orc`: ORC's own service, `data.orc.org` (`DownRMS`),
+  one JSON document per country for the current VPP year, read the way the
+  embedded catalogue's records were, plus each certificate's reference
+  number. A recorded answer (Norway, three certificates) is the fixture.
+- [x] Scraped certificates are kept beside the embedded catalogue in its
+  own format and merged into one catalogue, each certificate once. A
+  certificate is its reference number; one ORC no longer lists is
+  withdrawn in place; a scraped twin of an embedded entry takes its place;
+  catalogue ids do not move.
+- [x] Settings → ORC polars: start, cancel, progress by country, what was
+  added, updated, removed and left out. The ORC panel refreshes when a
+  scrape finishes, shows a downloaded certificate's number, and its footer
+  credits what was downloaded to ORC.
+- [x] *Download automatically* on both catalogues: manually only, on
+  startup, on shutdown; at most once a day. On shutdown quitting waits and
+  says so; quitting again cancels and quits.
+- [x] `orc_refresh` for the MCP service; `data.orc.org` on the allow-list
+  and in `check-offline.sh`; invariant 4, spec §5.4 and the notices amended.
+
+**Validation (2026-10-02).** 800 Rust tests (28 ignored: live and
+platform-only); 424 UI tests; the 5 performance checks; formatting,
+workspace clippy, TypeScript, the offline check and the driver tooling's 10
+tests. Live, against ORC's service: the scraper's own test read 7,730
+certificates from all 33 countries in 84 seconds with none left out; the
+desktop walkthrough `17-catalogue-scrape` downloaded them through the real
+application twice (the second time adding, updating and removing nothing)
+and its six screenshots were inspected; `18-catalogue-shutdown` showed a
+quit waiting for a shutdown download and a second quit cancelling it with
+nothing stored; `19-catalogue-startup` showed a startup download starting
+by itself and being cancelled. The same three walkthroughs run offline in
+the default suite (Settings and schedules; quitting quits when nothing is
+scheduled; a startup download is skipped when the catalogue is a day
+fresh). The whole desktop suite: 19 of 20 pass; `01-new-project` fails as
+under M20.
+
+**What the live runs changed.** The first scrape through the real
+application stored 7,716 of 7,730 certificates: the rule then was "the same
+boat's certificate of the same year replaces the stored one", and 14 boats
+hold two valid certificates in 2026 (a crewed and a double-handed one, an
+offshore variant, a second sail configuration), most with different
+polars. Scraping again "updated" 26. The rule is now the reference number
+alone, with what ORC no longer lists withdrawn, and a second live scrape
+reports nothing added, updated or removed. The size was also over-estimated
+before measuring (100–150 MB): it is about 60 MB, 84 seconds on this
+connection.
+
+**Not done.** ORR's schedule shares the ORC schedule's code and its tests;
+its scrape was not run live in this milestone.
+
+### M23 — Fleet controls and the linked blend tooltip · **complete** (2026-10-02)
+
+Requested by the user 2026-10-02.
+
+- [x] The layout switch (single, split, four-way) is three icons in the top
+  bar beside Add Polar, each named in its tooltip and to a screen reader.
+- [x] A tab's controls call it a polar: **Add Polar**, new tabs named
+  *Polar N*, and **Undo Delete Polar**; French and German with them. The
+  boat tabs are drawn as tabs, each with a **×** that closes it after
+  asking (it replaced the Delete Polar button and its row); the last tab's
+  × is disabled.
+- [x] **Export all…** sits at the bottom right, beside the version.
+- [x] In split and four-way view, hovering the blend's surface shows every
+  pane's own blend cell at the same wind, each tooltip beside its cell.
+- [x] Split and four-way view have no left and right panel toggles.
+
+**Validation.** `FleetWorkspace.test.tsx` (10) and `synchronization.test.ts`
+cover the icons, the names, the tab ×'s confirmation and the linked blend
+hover; the driver's `13-boat-tabs` (7 shots) and `14-tracker-project`
+exercise them in the app. Whole suite at the end of M24: 451 UI tests, 811
+Rust tests, 19 of 21 driver tests (`01-new-project`'s undo-restores-Map
+check is the known pre-existing failure; `09-polar-analysis` passed on its
+own and failed once in the full run at an unrelated Add click).
+
+### M24 — Split Wave Angle · **complete** (2026-10-02)
+
+Requested by the user 2026-10-02; decisions in D32. Spec §10.5.
+
+- [x] **Split Wave Angle**, beside the Box tool, in single view only: the 3D
+  view drawn once per wave direction. A slider of 4, 8, 16, 18, 24 or 36
+  directions; **From** or **To**.
+- [x] Directions are centred on multiples of 360/*N* from the bow, so none
+  begins or ends at 0°.
+- [x] Each copy holds only its direction's samples, after every filter and
+  the wave range filters, with its count and a big arrow against a boat.
+  Samples with no wave direction are in no copy and are counted in the
+  toolbar.
+- [x] One canvas and one camera, a viewport per copy: rotation, pan, zoom and
+  presets are shared; a hovered dot is marked at the same wind in the other
+  copies, and a hovered blend cell in all of them.
+- [x] The scene packet is version 5, with the wave bearing clockwise from the
+  bow (0–360) beside the folded wave angle.
+- [x] **Each copy has its own blend** (asked later the same day): every
+  track binned again from that copy's samples, the other sources as they
+  are, through the ordinary blend rule; cached beside the blend
+  (`Derivations::split_blends`), sent as one "PE3W" packet
+  (`polar_scene_split`), and a hovered cell read from that copy's blend
+  (`blend_cell_split`). The whole blend and export are untouched.
+- [x] An arc round each copy's boat shows the directions it holds.
+
+**Validation.** Hand-computed: the analysis fixture's 120 samples
+(heading 90° or 270°, waves from 3k°, a 0.2 kn current turning the heading
+through the water 1.8°) fall 22/23/11/0/0/0/11/23 into eight directions and
+44/24/0/22 into four, which the app shows and `20-wave-split` asserts; a
+track of ten samples half on the bow, half on the beam blends 7.036 kn and
+7.086 kn in those copies against 7.081 kn whole (`wave_split.rs`), and over
+IPC 54.36/7 and 54.86/7 kn with a polar file beside it
+(`tests/wave_split.rs`), a mutation of the direction filter failing both.
+`waveSplit.test.ts` (10), `scene3d.test.ts` (11, the grid of copies and the
+copy-bound surfaces), `scenePacket.test.ts` (the "PE3W" reader) and
+`PolarView.test.tsx` (23) cover the interface; the driver's
+`20-wave-split` (7 shots, looked at) walks 8, 4, To, a narrowed wave range,
+the linked dot hover, each copy's own blend (6.74 kn in the 45° copy
+against 7.0 kn where no sample is) and 36 copies clear of every panel.
+Thirty-six blends of the fixture arrive well within a second.
+
+### M25 — Filters consolidated, both catalogues, the 2D stage · **complete** (2026-10-03)
+
+Requested by the user 2026-10-02; decisions in D33.
+
+- [x] Catalogue search and the track library search load the next page as
+  the list is scrolled to its end; no page buttons.
+- [x] The ORC/ORR picker is gone: one search over both, each hit badged.
+- [x] Measurements under Search by field are folded until asked for; each
+  row is the measurement, then Min and Max under those headings.
+- [x] Include Stokes drift is gone (the setting loads off).
+- [x] Track filters grouped as Boat speed (BSP, VMG), Boat heading (heading,
+  COG, direction change, Remove tacks and gybes) and Wind, waves and current
+  (TWS, TWD, TWA, …). Heading, COG and TWD are compass sectors. Each group
+  offers provided-or-derived only where the track provides that quantity;
+  the separate Heading and speed section is gone.
+- [x] Gone: tack/gybe window, stop speed and window, timestamp interval and
+  unit, given-or-derived origin filters. Remove tacks and gybes leaves out
+  the sample on either side of each change of tack.
+- [x] "Weight" beside each weight slider.
+- [x] 3D: the camera looks at the origin (2026-10-03), drawn in the middle
+  of what the panels leave free, all of the polar in sight.
+- [x] 2D is a stage (3D, 2D, Compare, Map — Map moved last 2026-10-03), its
+  0° axis down the middle and its controls centred;
+  the right panel holds the sources only.
+- [x] Split and four-way: a linked pane's hover tooltip sits beside the
+  matching dot, not in the corner.
+
+**Validation.** Hand-computed filter cases in `pe-tracks` (heading, COG and
+TWD sectors wrapping north; VMG −5.909 kn at TWA 170° and 6 kn; a tack takes
+out exactly the two samples beside it, a gybe likewise, nothing across a
+gap); `derive.rs` prefers heading and speed apart; migration 7 → 8 drops the
+six filters, splits `prefer` and turns Stokes drift off in the project and
+every boat tab, the bytes then saving stably. In the real app (driver):
+`09-polar-analysis` searches both catalogues, sees both badges, scrolls to
+load the next page and adds the ORR hit once; `12-live-analysis` checks the
+supplied-wind fixture by hand — one tack (10 of 12 used), VMG ≥ 0 keeps 11,
+VMG ≤ −1 keeps 1, COG 80–100° keeps 6 — and that a lone sector bound is held
+rather than refused; `02`/`15` use the 2D stage with the fan right of the
+centre line between the panels; `20-wave-split` checks the first-load 3D
+framing (every dot inside the free area, centred within 15 %). Whole suite:
+809 Rust, 454 UI and 5 perf tests pass; the driver suite passes but for the
+long-standing `01-new-project` undo-restores-Map check, and `10-languages`
+passed on a rerun after a focus-timing flake.
+
+### M26 — Six more languages · **complete** (2026-10-03)
+
+Requested by the user 2026-10-03: Spanish, Italian, Dutch, Chinese, Japanese
+and Arabic, beside English, French and German.
+
+- [x] Every interface catalogue (17 areas, 1,755 strings) and the whole help
+  reference in each, with a glossary per language (`GLOSSARY.<lang>.md`).
+  Machine-drafted; each glossary flags (⚑) the terms a native sailor should
+  check.
+- [x] The native menu and the About credits in each language (`menu.rs`).
+- [x] Arabic lays the page out right to left; sliders and plotted numbers
+  stay left to right.
+- [x] The language picker and the help's Language entry name all nine.
+
+**Validation.** The coverage tests hold each catalogue to every string, its
+placeholders and nothing unused; the topics test holds each help reference
+to the English pages; the features test finds every control by its label in
+each language; the menu test checks every label differs from English but
+for words each platform shares (Zoom, File, Help). The app was looked at in
+Chinese, Japanese and Arabic (3D, 2D, filters, Settings).
+
+### M27 — Whole races over MCP · **complete** (2026-10-03)
+
+Asked 2026-10-03: the agent should load a race's boats with their polars
+and tracks in one go, and use its own knowledge of the boats to find more.
+
+- [x] `race_project`: the interface's Open project from tracker… as one
+  tool — a tab per boat with its track, certificates and library tracks.
+- [x] `library_search` and `library_import` over the user's track library.
+- [x] Geovoile races build too, in the dialog and in `race_project` (asked
+  2026-10-03): from the leg the link shows, matched mostly by the agent's
+  own search, since Geovoile gives only names and sail numbers.
+- [x] The guide's "A whole race" recipe and "Working through a job" rule;
+  the short instructions name both and still fit 2,048 characters.
+
+**Validation.** `tests/mcp.rs` builds a race over HTTP from a recorded event
+in the session's tracker cache (nothing reaches a tracker): two tabs, the
+matched boat's certificate and track, the unmatched boat empty; refusals for
+Geovoile, an unknown match mode and unsaved work; the library answers
+`downloaded: false` and refuses an import in words when not set up. The
+guide test holds every tool it names to the tools that exist.
+
 ## 3. Testing strategy
 
 - **Unit**: geodesy, derivation, interpolation, binning, blending, parsers,
@@ -1400,6 +1605,9 @@ refusal checked for six tools rather than all).
 | D28 | Compare (M15, controller rulings): computed in Rust from the derived cache, operands read on the output grid as the other views read them (a polar source as the blend reads it, excluded nodes empty; a segment with its overrides; the cached blend; hidden sources allowed), one binary packet; Δ rounded to 1e-6 kn, Δ % of B absent where B is 0 kn; the 0° row takes no part; a region is a per-TWS run of TWA cells beyond ±threshold (0.05 kn default, a Compare setting); the difference surface lies midway between A and B, one-only cells at that operand's speed, grey and hatched; the diverging scale is blue–orange in OKLab, symmetric about zero, with dark- and light-scheme stops and not the flash orange; A, B, % and threshold are view state keyed by project id, not undoable or saved; a source row's Compare opens A = source, B = blend. Review round 1: in % mode a cell where B is under 0.1 kn is not comparable in % (plain grey, out of the % statistics, counted; packet v2 carries the count); the heat map is a canvas; the 3D hatch covers only all-one-only quads and every one-only node gets a cross | Spec §11 named the operands, the surfaces, the overlap rule and the summary without saying how operands are read, where the difference surface lies, what a region is, or how choices persist |
 | D29 | MCP service (M21): an MCP server inside the application, following VectorEffects' (its `docs/superpowers/specs/2026-09-16-mcp-service-design.md`): `rmcp` over Streamable HTTP on `127.0.0.1` only (default port 47392, one above VectorEffects'), a bearer token issued when the Settings switch is turned on and cleared when it is turned off, `Host` and `Origin` held to loopback names, always compiled in but creating no socket, thread or task while off; curated tools plus an `invoke` escape hatch, every one calling the interface's own command, so an agent's edit is undoable and the views follow it; buttons for Claude Code, Codex and Claude Desktop. **No ChatGPT button**: ChatGPT reaches MCP servers only over public HTTPS or OpenAI's Secure MCP Tunnel, never loopback, and the application neither exposes itself nor runs a tunnel. Recorded as the one inbound exception to invariant 4, not a repeal: a second inbound socket would need the same four properties (off until switched on, bound to a token that switch issues, loopback names only, the domain through the interface's commands) and its own entry. The WebDriver rule (D25) is unchanged. Design in `docs/superpowers/specs/2026-10-01-mcp-service-design.md` | Requested by the user 2026-10-01 ("add mcp server support with on/off in settings … follow the design and decisions in vector effects"); the ChatGPT ruling settled with the user the same day |
 | D30 | M20 (settled with the user 2026-10-01): the application is **PolarExplorer**, renamed in everything a person reads only — the bundle identifier `com.polareffects.desktop`, the settings folder, the PostgreSQL id namespace `polareffects/syrf/…`, the repository, the `pe-` prefix and `.wpsproj` are unchanged, so nothing on disk moves. Source **weights run 0–1** (they ran to 2); a stored weight above 1 is **clamped to 1** on load (schema 7), not rescaled, so a blend that leaned on one changes. Dots can be coloured by the **time of day**, four bands of local mean solar time (UTC shifted by longitude, 15° an hour): night 21–05, morning 05–12, afternoon 12–17, evening 17–21 — clock bands, not the sun's elevation; decided in Rust and carried in bits 8–9 of each sample's flags (3D scene layout 4, 2D dots layout 2). The blend names what is behind a cell (`blend_cell`, from the same code that sums the weighted mean). Compare reads a polar source by the project's interpolation rule, as the blend does. The 2D plot has a Measure tool that reads the drawn curves and changes nothing. The GRIB provenance text follows the name, so `reanalysis.grib2` and its pinned hash changed | The user's request of 2026-10-01 and their answers to four questions (rename depth, band definition, ChatGPT, old weights) |
+| D31 | M22 (settled with the user 2026-10-02): **the ORC catalogue can be scraped at run time**, from ORC's own public service `data.orc.org` (`DownRMS`, ORC family, one JSON document per country for the current VPP year), the origin of the embedded jieter/orc-data catalogue. This amends invariant 4's "never fetched at run time" and adds `data.orc.org` to `pe-trackers`' allow-list; the embedded catalogue stays, and scraped certificates are kept beside it in the catalogue's own format. **No duplicates:** a certificate is its `RefNo` — scraped again it replaces the stored one in place; one its country's list no longer names is withdrawn; and it takes the place of its embedded twin in search. Two valid certificates of one boat in one year (crewed and double-handed: 14 boats in the first live scrape, which is what corrected an earlier same-boat-same-year rule) are both kept, told apart by their numbers. **Another year's certificate of the same boat is kept beside it**, as for ORR. **Schedules:** each catalogue, ORC and ORR, is downloaded *Manually only* (default), *On startup* or *On shutdown*; a scheduled download is skipped when that catalogue was written less than 24 hours ago, because a full ORC scrape is about 60 MB from a public service. On shutdown quitting waits, says so, and a second quit cancels the scrape and quits | Requested by the user 2026-10-02 ("add options to scrape the orc polars to the settings panel. ensure scraped orc polars are not saved as duplicates. add settings to automatically scrape the orc and orr polars on startup, shutdown or manually only"); host, same-boat-newer-year and frequency chosen by the user the same day |
+| D32 | M24 (settled with the user 2026-10-02): **Split Wave Angle sorts samples by the wave direction relative to the boat** (0° on the bow, 90° starboard beam, 180° astern, 270° port beam), not by compass direction, and its counts are **4, 8, 16, 18, 24 and 36** (the request named 4, 8, 16 and 18; 24 and 36 were added when asked). Directions are centred on the bow so 0° is never a boundary. The copies are viewports of one canvas and one camera rather than a view each: a WebGL context per copy would pass the webview's limit well before 36, and one camera is what keeps them in step. The split is a way of looking, kept in the view and not in the project. |
+| D33 | M25 (settled with the user 2026-10-02): **Remove tacks and gybes leaves out only the sample on either side** of a change of tack, no time window. Schema 8: the dropped filters vanish on load, a track's one given-or-derived preference becomes one for heading and one for speed (both what it was), and Stokes drift loads off; the setting stays in the document for the fetch. Full-size 2D puts the 0° axis on the stage's centre line; the right panel keeps the sources. Heading/COG/TWD ranges are compass sectors needing both bounds; the editor holds a lone bound until its partner is typed rather than send half a sector. The 3D first-load framing uses a camera view offset to the free area's centre, set once, so later panel toggles leave the framing as it was (spec §3.2). |
 | D22 | Polar edits and segments (M13): one `EditCells` command for every edit tool (overrides before/after per cell, the tool naming the undo entry, drags coalescing); segment bins are half-steps around each output-grid node with nothing beyond the outer half-steps, and nothing is binned into a 0° TWA node (samples nearest 0° are dropped, not moved: the 0° row is 0 kn, spec §12.3; controller ruling); spread is the sample standard deviation; smooth is the 3×3 binomial kernel over neighbours with a value as the blend reads them (excluded nodes take no part; controller ruling); the 3D samples key mixes a per-opening nonce, so two openings never share one; views show sources as edited, and the 2D curves also leave excluded nodes out | Spec §10.4 and §12.1 named the tools, the statistic and "count and spread" without the binning edges, the spread measure, the kernel or how undo groups them |
 
 ## 6. Settled before coding started

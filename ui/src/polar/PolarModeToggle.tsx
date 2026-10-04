@@ -25,7 +25,7 @@ export default function PolarModeToggle({ project, onProject }: {
         twa: [...new Set(angles)].sort((a, b) => a - b), tws: blend.tws,
         min_samples: blend.min_samples, n_full: blend.n_full,
         smoothing: blend.smoothing, default_statistic: blend.default_statistic,
-        use_corrected: project.use_corrected, stokes_drift: project.stokes_drift,
+        use_corrected: project.use_corrected,
         asymmetric, interpolation: blend.interpolation,
       }));
     } catch (error) {

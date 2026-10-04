@@ -32,6 +32,7 @@ use pe_app::tracks::{
     TrackFileRequest, TrackFilters, TrackImportFailure, TrackImportLine, TrackImportResult,
     TrackSummary,
 };
+use pe_app::wave_split::{WaveSense, WaveSplit};
 use ts_rs::{Config, TS};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -65,6 +66,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     PolarPlotResult::export_all(&cfg)?;
     BlendSummary::export_all(&cfg)?;
     BlendCell::export_all(&cfg)?;
+    WaveSplit::export_all(&cfg)?;
+    WaveSense::export_all(&cfg)?;
     // The MCP service (spec.md 3.7): its settings and status, and what it
     // tells the frontend.
     pe_app::settings::McpStatus::export_all(&cfg)?;
@@ -79,6 +82,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     pe_app::orr::OrrCatalogueInfo::export_all(&cfg)?;
     pe_app::orr::OrrSearchResult::export_all(&cfg)?;
     pe_app::orr::OrrProgress::export_all(&cfg)?;
+    pe_app::orc::OrcProgress::export_all(&cfg)?;
+    pe_app::catalogues::CatalogueSettings::export_all(&cfg)?;
     BlendSettingsInput::export_all(&cfg)?;
     ExportAxes::export_all(&cfg)?;
     ExportPreview::export_all(&cfg)?;

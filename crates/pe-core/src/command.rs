@@ -1136,7 +1136,8 @@ mod tests {
                 after: DerivationSettings {
                     downloaded_wind_only: false,
                     max_gap_s: 600,
-                    prefer: crate::track::PreferValues::Derived,
+                    prefer_heading: crate::track::PreferValues::Derived,
+                    prefer_speed: crate::track::PreferValues::Given,
                 },
                 motion_before,
                 motion_after,

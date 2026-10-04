@@ -452,19 +452,6 @@ pub enum WaveDirectionFilter {
     },
 }
 
-/// Which heading and speed values pass the filter (spec.md 7.6).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OriginFilter {
-    /// Both.
-    #[default]
-    Any,
-    /// Only values the track supplied.
-    GivenOnly,
-    /// Only values derived from neighbours.
-    DerivedOnly,
-}
-
 /// A track source's sample filters (spec.md 7.6). Every bound is optional.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -501,10 +488,20 @@ pub struct SampleFilters {
     /// Largest allowed change of true wind direction, degrees.
     #[serde(with = "canonical::optional_degrees_field")]
     pub max_wind_direction_change_deg: Option<f64>,
-    /// Given versus derived heading.
-    pub heading_origin: OriginFilter,
-    /// Given versus derived speed.
-    pub speed_origin: OriginFilter,
+    /// Heading through the water kept, compass degrees clockwise from
+    /// `from` to `to` (the course over the ground where no current is
+    /// corrected for).
+    pub heading_deg: Option<DirectionRange>,
+    /// Course over the ground kept, compass degrees clockwise.
+    pub cog_deg: Option<DirectionRange>,
+    /// Speed made good to windward kept, knots: BSP × cos TWA, so negative
+    /// downwind.
+    pub vmg_kn: Option<Range>,
+    /// True wind direction kept, compass degrees clockwise.
+    pub twd_deg: Option<DirectionRange>,
+    /// Leave out the sample on either side of a tack or a gybe: where the
+    /// wind crosses the bow or the stern between neighbours (spec.md 7.6).
+    pub exclude_tacks: bool,
     /// Exclude samples whose current came from a tier without tides
     /// (spec.md 7.5.1).
     pub exclude_no_tide: bool,
@@ -512,16 +509,6 @@ pub struct SampleFilters {
     pub exclude_unknown_wave: bool,
     /// Require both current speed and direction; calm current is known.
     pub exclude_unknown_current: bool,
-    /// Exclude a time window on both sides of an observed tack/gybe.
-    /// None disables this filter; zero still removes the bounding fixes.
-    pub tack_gybe_padding_s: Option<i64>,
-    /// A stop is a ground speed at or below this threshold, in knots.
-    #[serde(with = "canonical::optional_knots_field")]
-    pub stop_speed_kn: Option<f64>,
-    /// Time excluded before and after every observed stop.
-    pub stop_padding_s: i64,
-    /// Keep only times aligned to this many seconds since UTC midnight.
-    pub utc_interval_s: Option<i64>,
 }
 
 impl Default for SampleFilters {
@@ -539,15 +526,14 @@ impl Default for SampleFilters {
             max_awa_change_deg: None,
             max_wind_speed_change_kn: None,
             max_wind_direction_change_deg: None,
-            heading_origin: OriginFilter::Any,
-            speed_origin: OriginFilter::Any,
+            heading_deg: None,
+            cog_deg: None,
+            vmg_kn: None,
+            twd_deg: None,
+            exclude_tacks: false,
             exclude_no_tide: false,
             exclude_unknown_wave: false,
             exclude_unknown_current: false,
-            tack_gybe_padding_s: None,
-            stop_speed_kn: None,
-            stop_padding_s: 0,
-            utc_interval_s: None,
         }
     }
 }
@@ -618,34 +604,23 @@ impl SampleFilters {
                 "the time window ends before it starts".to_owned(),
             ));
         }
-        for padding in self
-            .tack_gybe_padding_s
-            .into_iter()
-            .chain([self.stop_padding_s])
-        {
-            if !(0..=86400).contains(&padding) {
-                return Err(CoreError::Invalid(
-                    "an exclusion window must be 0 to 86400 seconds".to_owned(),
-                ));
+        // VMG runs from the full speed to windward to the full speed downwind.
+        check_range(&self.vmg_kn, "VMG", -100.0, 100.0)?;
+        for (range, what) in [
+            (&self.heading_deg, "heading"),
+            (&self.cog_deg, "course over ground"),
+            (&self.twd_deg, "wind direction"),
+        ] {
+            if let Some(range) = range {
+                for value in [range.from, range.to] {
+                    if !(value.is_finite() && (0.0..=360.0).contains(&value)) {
+                        return Err(CoreError::Invalid(format!(
+                            "the {what} filter bound {value} is outside 0° to 360°"
+                        )));
+                    }
+                }
             }
         }
-        if self
-            .utc_interval_s
-            .is_some_and(|v| !(1..=86400).contains(&v))
-        {
-            return Err(CoreError::Invalid(
-                "a timestamp interval must be 1 to 86400 seconds".to_owned(),
-            ));
-        }
-        check_range(
-            &self.stop_speed_kn.map(|v| Range {
-                min: Some(v),
-                max: None,
-            }),
-            "stop speed",
-            0.0,
-            100.0,
-        )?;
         match &self.wave_direction {
             Some(WaveDirectionFilter::Relative { range } | WaveDirectionFilter::Cog { range }) => {
                 check_range(&Some(range.clone()), "wave angle", 0.0, 180.0)?;

@@ -24,14 +24,23 @@ import { interpolate, type Params } from "./msg";
 
 export { interpolate, msg, TranslatableError, type Params } from "./msg";
 
-export type Language = "en" | "fr" | "de";
+export type Language = "en" | "fr" | "de" | "es" | "it" | "nl" | "zh" | "ja" | "ar";
 
 /** The languages offered, each named in itself: a reader looks for their own. */
 export const LANGUAGES: readonly { id: Language; name: string }[] = [
   { id: "en", name: "English" },
   { id: "fr", name: "Français" },
   { id: "de", name: "Deutsch" },
+  { id: "es", name: "Español" },
+  { id: "it", name: "Italiano" },
+  { id: "nl", name: "Nederlands" },
+  { id: "zh", name: "中文" },
+  { id: "ja", name: "日本語" },
+  { id: "ar", name: "العربية" },
 ];
+
+/** Languages written right to left: the page is laid out mirrored for them. */
+const RIGHT_TO_LEFT: ReadonlySet<Language> = new Set(["ar"]);
 
 export type Catalogue = Record<string, string>;
 
@@ -66,10 +75,11 @@ function initial(): Language {
 let current: Language = initial();
 const listeners = new Set<() => void>();
 
-/** The page's language, for the platform's fonts and hyphenation. */
+/** The page's language, for the platform's fonts and hyphenation, and its direction. */
 function applyDocumentLanguage() {
   if (typeof document === "undefined") return;
   document.documentElement.lang = current;
+  document.documentElement.dir = RIGHT_TO_LEFT.has(current) ? "rtl" : "ltr";
 }
 applyDocumentLanguage();
 

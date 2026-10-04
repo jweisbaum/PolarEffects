@@ -29,9 +29,11 @@ export default {
     await type(d, "tracks:manoeuvre", "");
     await used(d, 12);
     await d.waitFor(".wave-range-footer", { text: "12 samples shown" });
-    await choose(d, "tracks:wind-source", "weather");
+    // The track provides wind, so the choice is offered (asked 2026-10-02); it provides headings and speeds too.
+    assert.ok(await d.exists(f("tracks:heading-source")) && await d.exists(f("tracks:speed-source")));
+    await choose(d, "tracks:wind-source", "derived");
     await d.waitFor(".wave-range-footer", { text: "0 samples shown" });
-    await choose(d, "tracks:wind-source", "supplied");
+    await choose(d, "tracks:wind-source", "given");
     await d.waitFor(".wave-range-footer", { text: "12 samples shown" });
     await d.run(`document.querySelector('[data-feature="tracks:wind-source"]').scrollIntoView({ block: 'center' }); done(true);`);
     await t.shot("supplied-wind-selected");
@@ -46,14 +48,26 @@ export default {
     await used(d, 9);
     await type(d, "tracks:wind-direction-change", "");
     await used(d, 12);
-    await type(d, "tracks:stop-window", 60);
-    await type(d, "tracks:stop-speed", 0.5);
-    await used(d, 9);
-    await type(d, "tracks:stop-speed", "");
+    // The fixture turns once, from 90° to 270° in a northerly: one tack, two
+    // samples either side of it.
+    await d.click(f("tracks:tacks"));
+    await used(d, 10);
+    await d.click(f("tracks:tacks"));
     await used(d, 12);
-    await type(d, "tracks:tack-window", 60);
-    await used(d, 8);
-    await type(d, "tracks:tack-window", "");
+    // VMG: every sample is on a beam reach (0) but the one with the wind
+    // from 30°, at 120° off the wind: 6.2 × cos 120° = −3.1 kn.
+    await type(d, "tracks:vmg-min", 0);
+    await used(d, 11);
+    await type(d, "tracks:vmg-min", "");
+    await type(d, "tracks:vmg-max", -1);
+    await used(d, 1);
+    await type(d, "tracks:vmg-max", "");
+    await used(d, 12);
+    // COG: the first six samples head east.
+    await type(d, "tracks:cog-from", 80);
+    await type(d, "tracks:cog-to", 100);
+    await used(d, 6);
+    await type(d, "tracks:cog-from", "");
     await used(d, 12);
     await type(d, "tracks:manoeuvre", 30);
     await used(d, 10);

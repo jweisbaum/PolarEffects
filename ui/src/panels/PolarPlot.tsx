@@ -96,7 +96,7 @@ export function signed(value: number, digits: number): string {
  */
 function draw(canvas: HTMLCanvasElement, result: PolarPlotResult | null, dots: DotPacket, hover: Hover | null,
   colours: ReadonlyMap<number, SourceStyle>, selected: ReadonlySet<number>, unit: SpeedUnit, asymmetric: boolean,
-  dotColour: DotColourMode, measuring: Measuring | null) {
+  dotColour: DotColourMode, measuring: Measuring | null, centred: boolean) {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
   const dpr = window.devicePixelRatio || 1;
@@ -117,7 +117,7 @@ function draw(canvas: HTMLCanvasElement, result: PolarPlotResult | null, dots: D
   const blend = result?.blend ?? [];
   const maxBsp = plotMaxBsp(result, dots);
   if (maxBsp <= 0) return;
-  const layout = fitLayout(width, height, maxBsp, 28, asymmetric);
+  const layout = fitLayout(width, height, maxBsp, 28, asymmetric, centred);
 
   ctx.font = "10px sans-serif";
   ctx.textBaseline = "top";
@@ -260,16 +260,16 @@ function draw(canvas: HTMLCanvasElement, result: PolarPlotResult | null, dots: D
  * command, including undo and redo, and by a source's colour, visibility,
  * weight or label — and whenever the chosen wind speed changes.
  */
-export default function PolarPlot({ project, variant, unit = "kn", onFullSize, onClose }: {
+export default function PolarPlot({ project, variant, unit = "kn" }: {
   project: ProjectSummary;
   /** The display speed unit (Settings); every value arrives and is kept in knots. */
   unit?: SpeedUnit;
-  /** `"panel"` in the right panel; `"overlay"` full size over the current view. */
-  variant: "panel" | "overlay";
-  /** Panel variant only: opens the full-size overlay. */
-  onFullSize?: () => void;
-  /** Overlay variant only: closes it. */
-  onClose?: () => void;
+  /**
+   * `"stage"`: the 2D stage, filling the centre with the 0° axis down its
+   * middle (asked 2026-10-02); `"panel"`: the compact form, the fan against
+   * the left edge (kept for a narrow place; no panel shows it now).
+   */
+  variant: "panel" | "stage";
 }) {
   const api = useBoatApi();
   const t = useT();
@@ -332,8 +332,8 @@ export default function PolarPlot({ project, variant, unit = "kn", onFullSize, o
   );
 
   const redraw = useCallback(() => {
-    if (canvas.current) draw(canvas.current, result, dots, hover, sourcesById, selection.ids, unit, project.blend.asymmetric, shownDotColour, measuring);
-  }, [result, dots, hover, sourcesById, selection, unit, project.blend.asymmetric, shownDotColour, measuring]);
+    if (canvas.current) draw(canvas.current, result, dots, hover, sourcesById, selection.ids, unit, project.blend.asymmetric, shownDotColour, measuring, variant === "stage");
+  }, [result, dots, hover, sourcesById, selection, unit, project.blend.asymmetric, shownDotColour, measuring, variant]);
 
   useEffect(redraw, [redraw]);
 
@@ -351,13 +351,13 @@ export default function PolarPlot({ project, variant, unit = "kn", onFullSize, o
   // stage on show (the panel's small plot is not a stage).
   useEffect(() => {
     const element = canvas.current;
-    return variant === "overlay" && element ? registerCapture(element, redraw) : undefined;
+    return variant === "stage" && element ? registerCapture(element, redraw) : undefined;
   }, [variant, redraw, visibleCount]);
 
   /** The pointer's place on the plot, or null where the fan is not (the port side of a symmetric plot). */
   const pointed = useCallback((event: MouseEvent<HTMLCanvasElement>): { point: PolarPoint; scale: number } | null => {
     const rect = event.currentTarget.getBoundingClientRect();
-    const layout = fitLayout(rect.width, rect.height, Math.max(plotMaxBsp(result, dots), 1), 28, project.blend.asymmetric);
+    const layout = fitLayout(rect.width, rect.height, Math.max(plotMaxBsp(result, dots), 1), 28, project.blend.asymmetric, variant === "stage");
     const x = event.clientX - rect.left;
     if (!project.blend.asymmetric && x < layout.centerX - 1) return null;
     const point = unproject(x, event.clientY - rect.top, layout);
@@ -374,7 +374,7 @@ export default function PolarPlot({ project, variant, unit = "kn", onFullSize, o
       return;
     }
     const rect = event.currentTarget.getBoundingClientRect();
-    const layout = fitLayout(rect.width, rect.height, Math.max(plotMaxBsp(result, dots), 1), 28, project.blend.asymmetric);
+    const layout = fitLayout(rect.width, rect.height, Math.max(plotMaxBsp(result, dots), 1), 28, project.blend.asymmetric, variant === "stage");
     const hit = nearestPoint(
       allCurves, dots, sourcesById,
       event.clientX - rect.left, event.clientY - rect.top, layout, HOVER_DISTANCE_PX,
@@ -491,17 +491,6 @@ export default function PolarPlot({ project, variant, unit = "kn", onFullSize, o
           title={t("Measure boat speeds on the plot: point to compare every curve at one wind angle, click to pin a point and measure from it")}>
           {t("Measure")}
         </button>
-        {variant === "panel" && (
-          <button className="small" data-feature="plot:full-size" onClick={onFullSize}
-            title={t("Open the polar plot full size over the current view")}>
-            {t("Full size")}
-          </button>
-        )}
-        {variant === "overlay" && (
-          <button className="small" data-feature="plot:close" onClick={onClose} title={t("Close")} aria-label={t("Close")}>
-            {t("Close")}
-          </button>
-        )}
       </div>
       {shownDotColour === "timeOfDay" && <DayBandLegend className="polar-plot-bands" />}
       {visibleCount === 0 ? (

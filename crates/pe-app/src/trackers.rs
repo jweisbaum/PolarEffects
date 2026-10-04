@@ -93,7 +93,9 @@ impl TrackerSession {
     /// Keeps `event`, downloaded for `requested` (the key it was asked
     /// for, before the download, which may differ from `event.event.key`
     /// once a race in legs answers with the leg the page actually shows).
-    pub(crate) fn keep(&self, event: Arc<TrackerEvent>, requested: &str) {
+    /// Public for the MCP tests, which put a recorded race here rather than
+    /// reach a tracker.
+    pub fn keep(&self, event: Arc<TrackerEvent>, requested: &str) {
         if let Ok(mut events) = self.events.lock() {
             events.retain(|e| {
                 !(e.event.tracker == event.event.tracker && e.event.key == event.event.key)

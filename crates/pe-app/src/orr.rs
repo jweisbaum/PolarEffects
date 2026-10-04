@@ -69,7 +69,8 @@ fn lock(catalogue: &OrrCatalogue) -> Result<std::sync::MutexGuard<'_, Store>> {
         .map_err(|_| AppError::Internal("ORR catalogue lock was poisoned".into()))
 }
 
-fn cache_path(state: &AppState) -> std::path::PathBuf {
+/// Where the scraped ORR certificates are kept.
+pub fn cache_path(state: &AppState) -> std::path::PathBuf {
     state.paths.config_dir.join("orr-catalogue.json")
 }
 
@@ -469,10 +470,20 @@ pub fn cancel_orr_scrape(
     boat_context: Option<u64>,
 ) -> Result<()> {
     let state = state.scoped(boat_context);
+    cancel(&state)
+}
+
+/// [`cancel_orr_scrape`] without a Tauri handle.
+pub fn cancel(state: &AppState) -> Result<()> {
     if let Some(cancel) = &lock(&state.orr)?.cancel {
         cancel.store(true, Ordering::SeqCst);
     }
     Ok(())
+}
+
+/// Whether a scrape is running.
+pub fn scraping(state: &AppState) -> bool {
+    lock(&state.orr).is_ok_and(|store| store.progress.running)
 }
 
 /// Start a background scrape only on this explicit command. Generic over

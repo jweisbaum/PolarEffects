@@ -38,6 +38,11 @@ year: number | null,
  */
 certificate_year: number | null,
 /**
+ * ORC's reference number of the certificate, for one that was scraped
+ * (spec.md 5.4): what tells two valid certificates of one boat apart.
+ */
+ref_no: string | null,
+/**
  * Whether the open project already holds this certificate.
  */
 in_project: boolean,

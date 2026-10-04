@@ -1,0 +1,30 @@
+/** Point filters on wind, waves and current, and the global point filters. */
+const catalogue: Record<string, string> = {
+  "Direction change (°)": "航向变化 (°)",
+  "Exclude points when heading changes by more than this from the previous or next point. Empty disables the filter.": "当航向与前一个或后一个点相比变化超过此值时排除该点。留空则停用此筛选。",
+  "AWA change (°)": "AWA 变化 (°)",
+  "Exclude points when apparent wind angle changes by more than this from the previous or next point.": "当视风角与前一个或后一个点相比变化超过此值时排除该点。",
+  "Wind speed change ({unit})": "风速变化 ({unit})",
+  "Exclude points when true wind speed changes by more than this from the previous or next point.": "当真风速与前一个或后一个点相比变化超过此值时排除该点。",
+  "Wind direction change (°)": "风向变化 (°)",
+  "Exclude points when true wind direction changes by more than this from the previous or next point.": "当真风向与前一个或后一个点相比变化超过此值时排除该点。",
+  "Supplied wind where available": "可用时使用提供的风",
+  "True wind speed": "真风速",
+  "True wind direction": "真风向",
+  "Wind speed unit": "风速单位",
+  "Exclude unknown waves": "排除未知浪况",
+  "Exclude unknown current": "排除未知海流",
+  "Exclude samples without wave height or direction.": "排除没有浪高或浪向的样本点。",
+  "Exclude samples without current speed or direction.": "排除没有流速或流向的样本点。",
+  "Angle to COG": "与 COG 的夹角",
+  "Global point filters": "全局点筛选",
+  "Applied after each track's filters, including in the blend.": "在各航迹自身的筛选之后应用，融合时同样适用。",
+  "Enable global filters": "启用全局筛选",
+  "Change global point filters": "更改全局点筛选",
+  "Global point filters apply after individual track filters. Open the 3D filter panel to enable or edit them.": "全局点筛选在各航迹的筛选之后应用。打开 3D 筛选面板以启用或编辑它们。",
+  "By wave period": "按浪周期",
+  "By wave angle": "按浪向角",
+  "By wave angle to wind": "按浪与风的夹角",
+};
+
+export default catalogue;

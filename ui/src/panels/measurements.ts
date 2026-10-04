@@ -9,7 +9,6 @@ export const MEASUREMENTS = [
   { id: "genoa", label: msg("Genoa area (m\u00b2)"), minId: "genoa-min", maxId: "genoa-max" },
   { id: "spinnaker", label: msg("Spinnaker area (m\u00b2)"), minId: "spinnaker-min", maxId: "spinnaker-max" },
   { id: "asymmetric", label: msg("Asymmetric spinnaker area (m\u00b2)"), minId: "asymmetric-min", maxId: "asymmetric-max" },
-  { id: "crew", label: msg("Crew weight (kg)"), minId: "crew-min", maxId: "crew-max" },
 ];
 
 /** SI bounds; empty is unconstrained. Reject malformed or negative input. */

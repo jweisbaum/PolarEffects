@@ -67,9 +67,13 @@ no_tide: number,
  */
 max_gap_s: number,
 /**
- * `"given"` or `"derived"`.
+ * The given or the derived heading first: `"given"` or `"derived"`.
  */
-prefer: string,
+prefer_heading: string,
+/**
+ * The given or the derived speed first: `"given"` or `"derived"`.
+ */
+prefer_speed: string,
 /**
  * Use downloaded weather even when the track supplies wind.
  */
@@ -78,6 +82,14 @@ downloaded_wind_only: boolean,
  * Fixes containing both supplied true wind speed and direction.
  */
 supplied_wind: number,
+/**
+ * Fixes that give a heading (a course over the ground).
+ */
+supplied_heading: number,
+/**
+ * Fixes that give a speed (over the ground).
+ */
+supplied_speed: number,
 /**
  * The editable filters.
  */

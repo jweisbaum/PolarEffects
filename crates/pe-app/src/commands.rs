@@ -49,6 +49,10 @@ pub struct AppServices {
     pub trackers: crate::trackers::TrackerSession,
     /// Public ORR catalogue and user-started scraping job.
     pub orr: crate::orr::OrrCatalogue,
+    /// The ORC catalogue with what was scraped, and the running scrape.
+    pub orc: crate::orc::OrcCatalogue,
+    /// The scheduled catalogue scrapes' part in quitting (spec.md 5.4).
+    pub catalogue_shutdown: crate::catalogues::Shutdown,
     /// Database background job and local metadata cache.
     pub database: crate::database::DatabaseState,
     pub boat_import: crate::boats::tracker_project::BoatImportJob,
@@ -75,6 +79,8 @@ impl AppState {
                 grib_jobs: crate::grib::GribJobs::default(),
                 trackers: crate::trackers::TrackerSession::default(),
                 orr: crate::orr::OrrCatalogue::default(),
+                orc: crate::orc::OrcCatalogue::default(),
+                catalogue_shutdown: crate::catalogues::Shutdown::default(),
                 database,
                 boat_import: Default::default(),
                 legacy_cache_checked: std::sync::atomic::AtomicBool::new(false),

@@ -115,3 +115,51 @@ pub struct OrcVpp {
     #[serde(with = "canonical::knots_list")]
     pub run_vmg: Vec<f64>,
 }
+
+/// The sail number as the catalogue shows it, from the number with its
+/// separators removed, optionally behind `"<country>/"`: `"GBR/GBR1124"` and
+/// `"GBR1124"` are `"GBR 1124"`. A stand-in for a missing number (`"_3"`) and
+/// an empty one are empty.
+///
+/// One function for the catalogue builder and the ORC scraper, so the same
+/// certificate reads the same from either and is recognised as one
+/// (spec.md 5.4).
+pub fn sail_display(sailnumber: &str, country: &str) -> String {
+    let raw = sailnumber
+        .split_once('/')
+        .map_or(sailnumber, |(_, sail)| sail)
+        .trim();
+    if raw.is_empty() || raw.starts_with('_') {
+        return String::new();
+    }
+    let rest = raw
+        .get(..country.len())
+        .filter(|head| !country.is_empty() && head.eq_ignore_ascii_case(country))
+        .and_then(|_| raw.get(country.len()..))
+        .map(|rest| rest.trim_start_matches([' ', '-', '/']))
+        .filter(|rest| !rest.is_empty())
+        .unwrap_or(raw);
+    if country.is_empty() {
+        rest.to_owned()
+    } else {
+        format!("{country} {rest}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sail_numbers_are_shown_once_with_their_country() {
+        assert_eq!(sail_display("GBR/GBR1124", "GBR"), "GBR 1124");
+        assert_eq!(sail_display("GBR/1124", "GBR"), "GBR 1124");
+        assert_eq!(sail_display("AUS/Sm35", "AUS"), "AUS Sm35");
+        assert_eq!(sail_display("FIN/Fin71", "FIN"), "FIN 71");
+        assert_eq!(sail_display("GBR/_1", "GBR"), "");
+        assert_eq!(sail_display("GBR/GBR", "GBR"), "GBR GBR");
+        // Without the country in front, as the scraper has it.
+        assert_eq!(sail_display("NOR14438", "NOR"), "NOR 14438");
+        assert_eq!(sail_display("", "NOR"), "");
+    }
+}

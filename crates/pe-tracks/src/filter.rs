@@ -6,8 +6,8 @@
 //! minimum boat speed) is out, since nothing shows it passes; with no
 //! filter on a quantity, a missing value does not matter.
 
-use pe_core::source::{OriginFilter, Range, SampleFilters, WaveDirectionFilter, WaveSector};
-use pe_core::track::{Sample, Track, ValueOrigin};
+use pe_core::source::{DirectionRange, Range, SampleFilters, WaveDirectionFilter, WaveSector};
+use pe_core::track::{Sample, Track};
 
 use crate::geo::{angle_between, wrap_360};
 
@@ -53,11 +53,21 @@ fn in_range(range: &Range, value: Option<f64>) -> bool {
     range.min.is_none_or(|min| value >= min) && range.max.is_none_or(|max| value <= max)
 }
 
-fn origin_passes(filter: OriginFilter, origin: Option<ValueOrigin>) -> bool {
-    match filter {
-        OriginFilter::Any => true,
-        OriginFilter::GivenOnly => origin == Some(ValueOrigin::Given),
-        OriginFilter::DerivedOnly => origin == Some(ValueOrigin::Derived),
+fn in_direction_range(range: &DirectionRange, direction: Option<f64>) -> bool {
+    direction.is_some_and(|d| in_compass_range(d, range.from, range.to))
+}
+
+/// Speed made good to windward, knots: positive upwind, negative downwind.
+fn vmg(sample: &Sample, use_corrected: bool) -> Option<f64> {
+    let (twa, _, bsp) = polar_point(sample, use_corrected)?;
+    Some(bsp * twa.to_radians().cos())
+}
+
+fn wind_direction(sample: &Sample, use_corrected: bool) -> Option<f64> {
+    if use_corrected {
+        sample.twd_from_corrected.or(sample.wind_direction())
+    } else {
+        sample.wind_direction()
     }
 }
 
@@ -134,9 +144,8 @@ pub fn wave_ranges_exclude(
 /// (`true`: filtered out). Hand exclusions are separate (spec.md 10.3).
 pub fn filtered_out(track: &Track, filters: &SampleFilters, use_corrected: bool) -> Vec<bool> {
     let samples = &track.samples;
-    let windows = event_windows(track, filters, use_corrected);
+    let tacks = tack_flags(track, filters, use_corrected);
     let changes = change_flags(track, filters, use_corrected);
-    let mut window_index = 0;
     let no_tide = |index: Option<u16>| {
         index
             .and_then(|i| track.env_meta.datasets.get(usize::from(i)))
@@ -146,29 +155,33 @@ pub fn filtered_out(track: &Track, filters: &SampleFilters, use_corrected: bool)
         .iter()
         .enumerate()
         .map(|(k, sample)| {
-            while windows
-                .get(window_index)
-                .is_some_and(|(_, end)| *end < sample.t)
-            {
-                window_index += 1;
-            }
-            let in_event = windows
-                .get(window_index)
-                .is_some_and(|(start, _)| *start <= sample.t);
             let (twa, tws) = match polar_point(sample, use_corrected) {
                 Some((twa, tws, _)) => (Some(twa), Some(tws)),
                 None => (sample.twa, sample.wind_speed()),
             };
             let bsp = boat_speed(sample, use_corrected);
-            let passes = !in_event
+            let passes = !tacks[k]
                 && !changes[k]
                 && (!filters.exclude_unknown_wave
                     || (sample.hs_m.is_some() && sample.wave_from.is_some()))
                 && (!filters.exclude_unknown_current
                     || (sample.current_speed.is_some() && sample.current_toward.is_some()))
                 && filters
-                    .utc_interval_s
-                    .is_none_or(|step| step > 0 && sample.t.rem_euclid(86400) % step == 0)
+                    .heading_deg
+                    .as_ref()
+                    .is_none_or(|r| in_direction_range(r, heading(sample, use_corrected)))
+                && filters
+                    .cog_deg
+                    .as_ref()
+                    .is_none_or(|r| in_direction_range(r, sample.heading))
+                && filters
+                    .vmg_kn
+                    .as_ref()
+                    .is_none_or(|r| in_range(r, vmg(sample, use_corrected)))
+                && filters
+                    .twd_deg
+                    .as_ref()
+                    .is_none_or(|r| in_direction_range(r, wind_direction(sample, use_corrected)))
                 && filters
                     .wave_height_m
                     .as_ref()
@@ -192,20 +205,23 @@ pub fn filtered_out(track: &Track, filters: &SampleFilters, use_corrected: bool)
                 && filters
                     .max_bsp_kn
                     .is_none_or(|max| bsp.is_some_and(|b| b <= max))
-                && origin_passes(filters.heading_origin, sample.heading_origin)
-                && origin_passes(filters.speed_origin, sample.speed_origin)
                 && !(filters.exclude_no_tide && no_tide(sample.current_dataset));
             !passes
         })
         .collect()
 }
 
-/// Build disjoint time windows first: filtering a long stationary stretch
-/// stays linear in the number of samples rather than scanning every stop
-/// again for every point. Gaps never create an invented manoeuvre.
-fn event_windows(track: &Track, filters: &SampleFilters, corrected: bool) -> Vec<(i64, i64)> {
-    let mut windows = Vec::new();
-    let mut previous: Option<&Sample> = None;
+/// The sample on either side of every tack and gybe, when the filter asks
+/// for them: the wind crosses the bow or the stern where the tack (the side
+/// the wind is on) differs between a sample and the last one that had a
+/// tack. Head to wind or dead downwind in between may bridge a tack;
+/// missing wind or motion cannot establish one, nor can a gap longer than
+/// the track's maximum.
+fn tack_flags(track: &Track, filters: &SampleFilters, corrected: bool) -> Vec<bool> {
+    let mut out = vec![false; track.samples.len()];
+    if !filters.exclude_tacks {
+        return out;
+    }
     let side = |sample: &Sample| {
         if corrected && sample.twa_corrected.is_some() {
             sample.tack_corrected
@@ -213,50 +229,26 @@ fn event_windows(track: &Track, filters: &SampleFilters, corrected: bool) -> Vec
             sample.tack
         }
     };
-    for sample in &track.samples {
-        if let Some(threshold) = filters.stop_speed_kn
-            && sample.speed.is_some_and(|speed| speed <= threshold)
+    let mut previous: Option<usize> = None;
+    for (k, sample) in track.samples.iter().enumerate() {
+        if let Some(p) = previous
+            && sample.t.saturating_sub(track.samples[p].t) > track.derivation.max_gap_s
         {
-            windows.push((
-                sample.t.saturating_sub(filters.stop_padding_s),
-                sample.t.saturating_add(filters.stop_padding_s),
-            ));
+            previous = None;
         }
-        if let Some(padding) = filters.tack_gybe_padding_s {
-            if let Some(prev) = previous
-                && sample.t.saturating_sub(prev.t) > track.derivation.max_gap_s
+        if side(sample).is_some() {
+            if let Some(p) = previous
+                && side(&track.samples[p]) != side(sample)
             {
-                previous = None;
+                out[p] = true;
+                out[k] = true;
             }
-            if side(sample).is_some() {
-                if let Some(prev) = previous
-                    && side(prev) != side(sample)
-                {
-                    windows.push((
-                        prev.t.saturating_sub(padding),
-                        sample.t.saturating_add(padding),
-                    ));
-                }
-                previous = Some(sample);
-            } else if polar_point(sample, corrected).is_none() {
-                // Head to wind/dead downwind may bridge a tack/gybe;
-                // missing wind or motion cannot establish one.
-                previous = None;
-            }
+            previous = Some(k);
+        } else if polar_point(sample, corrected).is_none() {
+            previous = None;
         }
     }
-    windows.sort_unstable();
-    let mut merged: Vec<(i64, i64)> = Vec::new();
-    for (start, end) in windows {
-        if let Some(last) = merged.last_mut()
-            && start <= last.1
-        {
-            last.1 = last.1.max(end);
-        } else {
-            merged.push((start, end));
-        }
-    }
-    merged
+    out
 }
 
 /// Compare each observation only with its immediately previous and next fixes.
@@ -331,7 +323,7 @@ mod tests {
     use pe_core::SampleId;
     use pe_core::TrackId;
     use pe_core::source::{DirectionRange, TimeWindow};
-    use pe_core::track::{DatasetRecord, Fix, TrackOrigin};
+    use pe_core::track::{DatasetRecord, Fix, TrackOrigin, ValueOrigin};
 
     use super::*;
 
@@ -585,17 +577,63 @@ mod tests {
             ..none()
         };
         assert_eq!(filtered_out(&t, &band, true), [true, false, true]);
-        let given = SampleFilters {
-            speed_origin: OriginFilter::DerivedOnly,
+    }
+
+    /// Heading, course over the ground and wind direction are compass
+    /// sectors clockwise from `from` to `to`, wrapping north; VMG is
+    /// BSP × cos TWA. A sample without the value is out.
+    #[test]
+    fn heading_course_vmg_and_wind_direction_ranges() {
+        let mut t = track(&[
+            (0, Some(350.0), Some(6.0)),
+            (60, Some(10.0), Some(6.0)),
+            (120, Some(90.0), Some(6.0)),
+            (180, None, Some(6.0)),
+        ]);
+        let sector = |from, to| Some(DirectionRange { from, to });
+        let cog = SampleFilters {
+            cog_deg: sector(340.0, 20.0),
             ..none()
         };
-        assert_eq!(filtered_out(&t, &given, true), [true; 3]);
+        assert_eq!(filtered_out(&t, &cog, false), [false, false, true, true]);
+        // Through the water the second sample heads 30°: out of the sector.
+        t.samples[1].heading_corrected = Some(30.0);
         let heading = SampleFilters {
-            heading_origin: OriginFilter::GivenOnly,
+            heading_deg: sector(340.0, 20.0),
             ..none()
         };
-        // No heading at all: not given.
-        assert_eq!(filtered_out(&t, &heading, true), [true; 3]);
+        assert_eq!(filtered_out(&t, &heading, true), [false, true, true, true]);
+        assert_eq!(
+            filtered_out(&t, &heading, false),
+            [false, false, true, true]
+        );
+        // Wind from 180° at 10 kn: TWA 170, 170, 90 → VMG −5.909, −5.909, 0.
+        for s in &mut t.samples {
+            s.tws = Some(10.0);
+            s.twd_from = Some(180.0);
+            s.relate();
+        }
+        let downwind = SampleFilters {
+            vmg_kn: Some(Range {
+                min: Some(-6.0),
+                max: Some(-5.0),
+            }),
+            ..none()
+        };
+        assert_eq!(
+            filtered_out(&t, &downwind, false),
+            [false, false, true, true]
+        );
+        let twd = SampleFilters {
+            twd_deg: sector(170.0, 190.0),
+            ..none()
+        };
+        assert_eq!(filtered_out(&t, &twd, false), [false, false, false, false]);
+        t.samples[2].twd_from = Some(200.0);
+        assert_eq!(filtered_out(&t, &twd, false), [false, false, true, false]);
+        // Corrected for current, the wind direction through the water counts.
+        t.samples[0].twd_from_corrected = Some(200.0);
+        assert_eq!(filtered_out(&t, &twd, true), [true, false, true, false]);
     }
 
     #[test]
@@ -688,30 +726,11 @@ mod tests {
         assert_eq!(filtered_out(&t, &none(), true), [false; 3]);
     }
 
+    /// A tack or gybe takes out the sample on either side of it and no
+    /// more (settled with the user 2026-10-02); head to wind in between
+    /// may bridge it; a gap longer than the track's maximum cannot.
     #[test]
-    fn stop_windows_include_both_sides_and_use_ground_speed() {
-        let mut t = track(&[
-            (0, None, Some(6.0)),
-            (60, None, Some(6.0)),
-            (120, None, Some(0.4)),
-            (180, None, Some(0.0)),
-            (240, None, Some(6.0)),
-            (300, None, Some(6.0)),
-        ]);
-        t.samples[2].bsp_corrected = Some(5.0);
-        let f = SampleFilters {
-            stop_speed_kn: Some(0.5),
-            stop_padding_s: 60,
-            ..none()
-        };
-        assert_eq!(
-            filtered_out(&t, &f, true),
-            [false, true, true, true, true, false]
-        );
-    }
-
-    #[test]
-    fn tack_and_gybe_windows_bridge_neutral_angles_but_not_gaps() {
+    fn tacks_and_gybes_drop_only_the_samples_either_side() {
         let mut t = track(&[
             (0, Some(40.0), Some(6.0)),
             (60, Some(40.0), Some(6.0)),
@@ -726,12 +745,17 @@ mod tests {
             s.relate();
         }
         let f = SampleFilters {
-            tack_gybe_padding_s: Some(30),
+            exclude_tacks: true,
             ..none()
         };
         assert_eq!(
             filtered_out(&t, &f, true),
-            [false, true, true, true, false, false]
+            [false, true, false, true, false, false]
+        );
+        assert_eq!(
+            filtered_out(&t, &none(), true),
+            [false; 6],
+            "off by default"
         );
         // Reverse the wind: the same ground turn is now a gybe.
         for s in &mut t.samples {
@@ -740,38 +764,10 @@ mod tests {
         }
         assert_eq!(
             filtered_out(&t, &f, true),
-            [false, true, true, true, false, false]
+            [false, true, false, true, false, false]
         );
         t.derivation.max_gap_s = 30;
         assert_eq!(filtered_out(&t, &f, true), [false; 6]);
-    }
-
-    #[test]
-    fn utc_intervals_keep_minutes_and_seconds_without_rounding() {
-        let t = track(&[
-            (-60, None, None),
-            (-1, None, None),
-            (0, None, None),
-            (30, None, None),
-            (60, None, None),
-            (61, None, None),
-        ]);
-        let f = SampleFilters {
-            utc_interval_s: Some(60),
-            ..none()
-        };
-        assert_eq!(
-            filtered_out(&t, &f, false),
-            [false, true, false, true, false, true]
-        );
-        let f = SampleFilters {
-            utc_interval_s: Some(30),
-            ..none()
-        };
-        assert_eq!(
-            filtered_out(&t, &f, false),
-            [false, true, false, false, false, true]
-        );
     }
 
     #[test]

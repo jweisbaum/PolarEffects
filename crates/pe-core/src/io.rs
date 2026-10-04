@@ -50,7 +50,74 @@ pub const MIGRATIONS: &[(u32, Migration)] = &[
     (4, supplied_wind_and_changes),
     (5, boat_tabs),
     (6, weights_to_one),
+    (7, filters_consolidated),
 ];
+
+/// 7 → 8 (asked 2026-10-02): the sample filters a track, the global filters
+/// and each priority group hold lose the tack/gybe window, the stop speed
+/// and window, the timestamp interval and the given-or-derived origin
+/// filters, which the interface no longer offers (the new bounds — heading,
+/// course, VMG, wind direction, "remove tacks and gybes" — default to off);
+/// a track's one given-or-derived preference becomes one for its heading
+/// and one for its speed, both what it was; and Stokes drift, whose option
+/// is gone, is off. Boat tabs are migrated with the document.
+fn filters_consolidated(value: &mut Value) -> Result<()> {
+    const DROPPED: [&str; 6] = [
+        "heading_origin",
+        "speed_origin",
+        "tack_gybe_padding_s",
+        "stop_speed_kn",
+        "stop_padding_s",
+        "utc_interval_s",
+    ];
+    fn strip(filters: &mut Value) {
+        if let Some(map) = filters.as_object_mut() {
+            for key in DROPPED {
+                map.remove(key);
+            }
+        }
+    }
+    fn document(document: &mut Value) {
+        if let Some(sources) = document.get_mut("sources").and_then(Value::as_array_mut) {
+            for source in sources {
+                if let Some(filters) = source.pointer_mut("/overlay/filters") {
+                    strip(filters);
+                }
+                if let Some(derivation) = source.pointer_mut("/kind/track/derivation")
+                    && let Some(map) = derivation.as_object_mut()
+                {
+                    let prefer = map.remove("prefer").unwrap_or_else(|| Value::from("given"));
+                    map.insert("prefer_heading".to_owned(), prefer.clone());
+                    map.insert("prefer_speed".to_owned(), prefer);
+                }
+            }
+        }
+        if let Some(blend) = document.get_mut("blend").and_then(Value::as_object_mut) {
+            if let Some(filters) = blend.get_mut("global_filters") {
+                strip(filters);
+            }
+            if let Some(groups) = blend
+                .get_mut("priority_groups")
+                .and_then(Value::as_array_mut)
+            {
+                for filters in groups {
+                    strip(filters);
+                }
+            }
+            if blend.contains_key("include_stokes_drift") {
+                blend.insert("include_stokes_drift".to_owned(), Value::from(false));
+            }
+        }
+    }
+    document(value);
+    if let Some(tabs) = value.get_mut("boat_tabs").and_then(Value::as_array_mut) {
+        for tab in tabs {
+            document(tab);
+            tab["schema_version"] = Value::from(8);
+        }
+    }
+    Ok(())
+}
 
 /// 6 → 7: a source's weight runs from 0 to 1 (spec.md 8), where it ran to 2.
 /// A weight above 1 becomes 1, in the project and in each boat tab (settled
@@ -691,12 +758,72 @@ mod tests {
         value["boat_tabs"][0]["sources"][1]["weight"] = Value::from(0.25);
 
         let loaded = from_json(&value.to_string()).unwrap();
-        assert_eq!(loaded.schema_version, 7);
+        assert_eq!(loaded.schema_version, 8);
         assert_eq!(loaded.sources[0].weight, 1.0);
         assert_eq!(loaded.sources[1].weight, 0.4);
-        assert_eq!(loaded.boat_tabs[0].schema_version, 7);
+        assert_eq!(loaded.boat_tabs[0].schema_version, 8);
         assert_eq!(loaded.boat_tabs[0].sources[0].weight, 1.0);
         assert_eq!(loaded.boat_tabs[0].sources[1].weight, 0.25);
+        loaded.validate_document().unwrap();
+    }
+
+    /// 7 → 8: the filters the interface no longer offers are dropped on
+    /// load, a track's one preference becomes two, and Stokes drift is off.
+    #[test]
+    fn dropped_filters_leave_the_preference_splits_and_stokes_drift_is_off() {
+        use crate::track::PreferValues;
+        let mut project = fixtures::project();
+        let tab = {
+            let mut tab = fixtures::project();
+            tab.id = crate::id::ProjectId(tab.id.0 + 1);
+            tab
+        };
+        project.boat_tabs = vec![tab];
+        let mut value = serde_json::to_value(&project).unwrap();
+        value["schema_version"] = Value::from(7);
+        value["boat_tabs"][0]["schema_version"] = Value::from(7);
+        let track = value["sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .position(|s| s["kind"]["type"] == "track")
+            .unwrap();
+        fn age(document: &mut Value, track: usize) {
+            let filters = &mut document["sources"][track]["overlay"]["filters"];
+            filters["tack_gybe_padding_s"] = Value::from(60);
+            filters["stop_speed_kn"] = Value::from(0.5);
+            filters["stop_padding_s"] = Value::from(120);
+            filters["utc_interval_s"] = Value::from(60);
+            filters["heading_origin"] = Value::from("given_only");
+            filters["speed_origin"] = Value::from("derived_only");
+            let derivation = &mut document["sources"][track]["kind"]["track"]["derivation"];
+            derivation.as_object_mut().unwrap().remove("prefer_heading");
+            derivation.as_object_mut().unwrap().remove("prefer_speed");
+            derivation["prefer"] = Value::from("derived");
+            document["blend"]["include_stokes_drift"] = Value::from(true);
+            document["blend"]["global_filters"] = serde_json::json!({ "utc_interval_s": 30 });
+        }
+        age(&mut value["boat_tabs"][0], track);
+        age(&mut value, track);
+
+        let loaded = from_json(&value.to_string()).unwrap();
+        for document in [&loaded, &loaded.boat_tabs[0]] {
+            assert_eq!(document.schema_version, 8);
+            let source = &document.sources[track];
+            // The dropped keys are gone; what the fixture set is kept.
+            assert_eq!(
+                source.overlay.filters,
+                project.sources[track].overlay.filters
+            );
+            let derivation = &source.track().unwrap().derivation;
+            assert_eq!(derivation.prefer_heading, PreferValues::Derived);
+            assert_eq!(derivation.prefer_speed, PreferValues::Derived);
+            assert!(!document.blend.include_stokes_drift);
+            assert_eq!(
+                document.blend.global_filters,
+                Some(crate::source::SampleFilters::default())
+            );
+        }
         loaded.validate_document().unwrap();
     }
 

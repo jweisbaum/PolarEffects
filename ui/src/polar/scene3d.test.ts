@@ -118,6 +118,140 @@ describe("picking a surface (spec.md 10.1)", () => {
   });
 });
 
+describe("the view's centre (asked 2026-10-02)", () => {
+  it("draws what the camera looks at where it is told, and picks there too", () => {
+    const { scene } = make();
+    scene.resize(400, 200);
+    scene.setView({ position: [0, 0, 60], target: [0, 0, 0] });
+    scene.setData({ samples: three(1), colors: three(1), surfaces: [], layout: "cartesian" });
+    // The target is drawn at the canvas's centre…
+    const before = scene.toScreen(0, 0, 0)!;
+    expect(before[0]).toBeCloseTo(200, 1);
+    expect(before[1]).toBeCloseTo(100, 1);
+    // …until the view's centre moves: 40 px right and 10 px up.
+    scene.setViewCentre(240, 90);
+    const after = scene.toScreen(0, 0, 0)!;
+    expect(after[0]).toBeCloseTo(240, 1);
+    expect(after[1]).toBeCloseTo(90, 1);
+    // Picking and the dots' places follow the same shift.
+    const dot = scene.projected();
+    expect(scene.pick(dot[0]!, dot[1]!, 3)).toBe(0);
+    // A resize keeps the point where it was told.
+    scene.resize(600, 300);
+    expect(scene.toScreen(0, 0, 0)![0]).toBeCloseTo(240, 1);
+    // Cleared, the canvas's centre again.
+    scene.setViewCentre(null);
+    expect(scene.toScreen(0, 0, 0)![0]).toBeCloseTo(300, 1);
+  });
+});
+
+describe("the grid of copies (spec.md 10.5)", () => {
+  /** A renderer that records where it was told to draw. */
+  function recording() {
+    const calls: string[] = [];
+    const renderer: RendererLike = {
+      setPixelRatio: () => undefined, getPixelRatio: () => 1, setSize: () => undefined, dispose: () => undefined,
+      render: () => { calls.push("render"); },
+      setViewport: (x, y, w, h) => { calls.push(`viewport ${x} ${y} ${w} ${h}`); },
+      setScissor: (x, y, w, h) => { calls.push(`scissor ${x} ${y} ${w} ${h}`); },
+      setScissorTest: (on) => { calls.push(`scissorTest ${on}`); },
+      clear: () => { calls.push("clear"); },
+    };
+    return { renderer, calls };
+  }
+
+  /** Three dots at the same place seen from above: one in every copy, one each in copies 0 and 1. */
+  function split(renderer: RendererLike) {
+    const scene = new PolarScene({} as HTMLCanvasElement, renderer);
+    scene.resize(400, 200);
+    scene.setView({ position: [0, 0, 60], target: [0, 0, 0] });
+    scene.setData({ samples: Float32Array.from([0, 10, 0, 0, 10, 0, 0, 10, 0]), colors: three(3), surfaces: [], layout: "tower" });
+    scene.setCells({ of: Int16Array.from([-1, 0, 1]), count: 2, region: { x: 0, y: 0, width: 400, height: 200 } });
+    return scene;
+  }
+
+  it("draws a surface given a copy in that copy alone, and a copy's own surface is what its pointer finds", () => {
+    const visible: number[] = [];
+    const renderer: RendererLike = {
+      ...fakeRenderer(),
+      render: (root) => {
+        let n = 0;
+        root.traverse((object) => { if (object instanceof THREE.Mesh && object.visible) n++; });
+        visible.push(n);
+      },
+      setViewport: () => undefined, setScissor: () => undefined, setScissorTest: () => undefined, clear: () => undefined,
+    };
+    const scene = new PolarScene({} as HTMLCanvasElement, renderer);
+    scene.resize(400, 200);
+    // Cartesian sheets seen from above, as in the picking tests: a shared
+    // translucent one, and an opaque pickable one for each of two copies.
+    const sheet = (bsp: number) => ({ twa: [40, 60, 80], tws: [6, 10], bsp: new Float32Array(6).fill(bsp) });
+    scene.setData({
+      samples: three(0), colors: three(0), layout: "cartesian",
+      surfaces: [
+        { grid: sheet(9), color: "#4e79a7" },
+        { grid: sheet(5), color: "#ffffff", opaque: true, pickable: true, cell: 0 },
+        { grid: sheet(6), color: "#ffffff", opaque: true, pickable: true, cell: 1 },
+      ],
+    });
+    scene.setView({ position: [6, 7.999, 60], target: [6, 8, 5] });
+    // One view: only the surface of every copy is drawn.
+    scene.render();
+    expect(visible).toEqual([1]);
+    // Two copies: the shared surface and the copy's own in each.
+    scene.setCells({ of: new Int16Array(0), count: 2, region: { x: 0, y: 0, width: 400, height: 200 } });
+    visible.length = 0;
+    scene.render();
+    expect(visible).toEqual([2, 2]);
+    // The pointer over the middle of copy 1's sheet finds copy 1's, never copy 0's.
+    const one = scene.toScreenIn(1, 6, 8, 6)!;
+    expect(scene.pickSurface(one[0], one[1])?.surface).toBe(2);
+    const zero = scene.toScreenIn(0, 6, 8, 5)!;
+    expect(scene.pickSurface(zero[0], zero[1])?.surface).toBe(1);
+  });
+
+  it("draws every copy in its own part of the canvas, bottom-up as WebGL counts", () => {
+    const { renderer, calls } = recording();
+    const scene = split(renderer);
+    scene.render();
+    // Two copies side by side in 400 × 200: each 200 × 200.
+    expect(calls.filter((call) => call.startsWith("viewport"))).toEqual(["viewport 0 0 400 200", "viewport 0 0 200 200", "viewport 200 0 200 200", "viewport 0 0 400 200"]);
+    expect(calls.filter((call) => call === "render")).toHaveLength(2);
+    // The copy drawn is told to the dots' shader, and they carry their copy.
+    const dots = points(scene)!;
+    expect([...dots.geometry.getAttribute("cell").array]).toEqual([-1, 0, 1]);
+    // Back to one view: one draw over the whole canvas.
+    calls.length = 0;
+    scene.setCells(null);
+    scene.render();
+    expect(calls.filter((call) => call === "render")).toHaveLength(1);
+  });
+
+  it("picks only the dots of the copy under the pointer, by that copy's own geometry", () => {
+    const scene = split(fakeRenderer());
+    // All three dots are at the centre of a copy: (100, 100) in the left one, (300, 100) in the right.
+    expect(scene.cellAt(100, 100)).toBe(0);
+    expect(scene.cellAt(300, 100)).toBe(1);
+    // Under the left copy's centre: the dot in every copy and copy 0's, never copy 1's.
+    expect([0, 1]).toContain(scene.pick(100, 100, 6));
+    expect([...scene.box(90, 90, 110, 110)].sort()).toEqual([0, 1]);
+    // Under the right copy's centre: copy 1's own and the shared one.
+    expect([...scene.box(290, 90, 310, 110)].sort()).toEqual([0, 2]);
+    // Where a dot is drawn in a copy, on the whole canvas.
+    expect(scene.toScreenIn(1, 0, 0, 10)!.map(Math.round)).toEqual([300, 100]);
+    expect(scene.toScreenIn(0, 0, 0, 10)!.map(Math.round)).toEqual([100, 100]);
+    // Between or outside the copies there is nothing to pick.
+    scene.setCells({ of: Int16Array.from([-1, 0, 1]), count: 2, region: { x: 50, y: 0, width: 300, height: 200 } });
+    expect(scene.cellAt(10, 100)).toBe(-1);
+    expect(scene.pick(10, 100, 6)).toBe(-1);
+  });
+
+  it("refuses copies that do not match the dots", () => {
+    const scene = split(fakeRenderer());
+    expect(() => scene.setCells({ of: Int16Array.from([0]), count: 2, region: { x: 0, y: 0, width: 400, height: 200 } })).toThrow(RangeError);
+  });
+});
+
 describe("dispose", () => {
   it("frees the geometries and the renderer", () => {
     const { scene, renderer } = make();

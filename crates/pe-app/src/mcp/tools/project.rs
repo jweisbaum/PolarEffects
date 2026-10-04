@@ -7,7 +7,9 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use tauri::Manager;
 
-use super::{PolarExplorer, ToolResult, absolute, json, may_write};
+use super::{PolarExplorer, ToolError, ToolResult, absolute, json, may_write};
+use crate::boats::tracker_project::{self, BoatMatchMode};
+use crate::commands::AppState;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ProjectNewParams {
@@ -21,6 +23,26 @@ pub struct ProjectNewParams {
     pub boat_notes: Option<String>,
     /// Discard unsaved changes in the open project. Refused without it.
     /// Pass true only when the user said to discard them.
+    #[serde(default)]
+    pub discard_unsaved: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RaceProjectParams {
+    /// The race tracker: "yellowbrick", "geovoile" or "bluewater".
+    pub tracker: String,
+    /// The race on that tracker: its link, or the tracker's race key (for
+    /// YellowBrick, e.g. "fastnet2025"). A Geovoile race sailed in legs is
+    /// built from the leg its link shows.
+    pub url: String,
+    /// How a boat's certificates and library tracks are matched:
+    /// "identical_model" (the default: the same model or class, by model,
+    /// builder and length) or "exact_boat" (that boat alone, by sail number,
+    /// MMSI or name and model).
+    #[serde(default)]
+    pub match_mode: Option<String>,
+    /// Replace the open project even if it has unsaved changes. Refused
+    /// without it; pass true only when the user said to discard them.
     #[serde(default)]
     pub discard_unsaved: bool,
 }
@@ -124,6 +146,67 @@ impl<R: tauri::Runtime> PolarExplorer<R> {
             })
             .await?;
         json(&summary)
+    }
+
+    #[tool(
+        description = "Builds a whole race in one step, as the interface's Open project from tracker… does: downloads the race from the tracker and opens a new project with one boat tab per boat, each holding that boat's track and the ORC and ORR certificates (and track-library tracks) that match it. Answers the project and, per boat, its details from the tracker (model, sail number, builder…), how many certificates and tracks were found and what is missing. Matching is by the tracker's own data and can miss (Geovoile gives only names and sail numbers, so little is matched there): follow it per boat with orc_search/orr_search, library_search and tracker_event using what you know of each boat (see the guide's \"A whole race\"). Then weather_fetch gives the tracks their wind. Replaces the open project: refused with unsaved changes unless discard_unsaved is true. Cancelling the call cancels the download."
+    )]
+    async fn race_project(
+        &self,
+        Parameters(p): Parameters<RaceProjectParams>,
+        ctx: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> ToolResult {
+        let tracker = match p.tracker.as_str() {
+            "yellowbrick" => pe_core::track::Tracker::YellowBrick,
+            "geovoile" => pe_core::track::Tracker::Geovoile,
+            "bluewater" => pe_core::track::Tracker::BlueWaterTracks,
+            other => {
+                return Err(ToolError::Refused(format!(
+                    "race_project builds races from \"yellowbrick\", \"geovoile\" or \"bluewater\", not \"{other}\""
+                )));
+            }
+        };
+        let mode = match p.match_mode.as_deref() {
+            None | Some("identical_model") => BoatMatchMode::IdenticalModel,
+            Some("exact_boat") => BoatMatchMode::ExactBoat,
+            Some(other) => {
+                return Err(ToolError::Refused(format!(
+                    "match_mode is \"identical_model\" or \"exact_boat\", not \"{other}\""
+                )));
+            }
+        };
+        self.note("race_project");
+        let app = self.app.clone();
+        let (url, discard) = (p.url, p.discard_unsaved);
+        // The download and matching run as the interface's do, off the
+        // async thread; the preview they leave is confirmed below.
+        let mut built = tokio::task::spawn_blocking(move || {
+            let state = app.state::<AppState>();
+            let client = crate::trackers::client_of(tracker)?.into();
+            tracker_project::open_with_mode(state.inner(), client, &url, discard, mode)
+        });
+        let preview = tokio::select! {
+            joined = &mut built => joined.map_err(|error| {
+                ToolError::from(crate::error::AppError::Internal(format!("the race import task failed: {error}")))
+            })??,
+            // `rmcp` cancels the request's token rather than dropping this
+            // future: stop the download, which the interface's Cancel does too.
+            () = ctx.ct.cancelled() => {
+                tracker_project::cancel_boat_import(self.app.state());
+                return Err(ToolError::Refused("the race import was cancelled with its request; nothing was opened".to_owned()));
+            }
+        };
+        let project_id = preview.project.id;
+        let project = self
+            .write("race_project", true, move |app| {
+                tracker_project::confirm(app.state::<AppState>().inner(), project_id)
+            })
+            .await?;
+        json(&serde_json::json!({
+            "project": project,
+            "boats": preview.boats,
+            "warnings": preview.warnings,
+        }))
     }
 
     #[tool(

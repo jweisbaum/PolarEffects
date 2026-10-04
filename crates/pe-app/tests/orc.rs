@@ -24,7 +24,11 @@ fn eratosthenes(app: &pe_app::commands::AppState) -> orc::OrcHit {
 
 #[test]
 fn the_catalogue_info_names_its_source() {
-    let info = orc::info().unwrap();
+    let root = TempRoot::new("orc-info");
+    let info = orc::info(&root.state()).unwrap();
+    // Nothing was scraped into this session's folder.
+    assert_eq!(info.scraped, 0);
+    assert_eq!(info.scraped_at, None);
     assert!(info.records > 18_000);
     assert_eq!(info.source, "jieter/orc-data");
     assert_eq!(info.commit.len(), 40);

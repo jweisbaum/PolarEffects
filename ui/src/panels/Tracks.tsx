@@ -188,10 +188,8 @@ export default function Tracks({ project, onProject, units = DEFAULT_UNITS }: {
 }
 
 /**
- * The project's current settings (spec.md 7.5, 7.5.1): whether the polar is
- * fed from water-relative values where a current was found, and whether the
- * global merged current includes Stokes drift (for the next fetch). Each
- * change is one undo.
+ * The project's current setting (spec.md 7.5): whether the polar is fed
+ * from water-relative values where a current was found. One undo.
  */
 function EnvOptions({ project, onProject }: { project: ProjectSummary; onProject: (project: ProjectSummary) => void }) {
   const api = useBoatApi();
@@ -202,11 +200,6 @@ function EnvOptions({ project, onProject }: { project: ProjectSummary; onProject
         <input type="checkbox" data-feature="tracks:use-corrected" checked={project.use_corrected}
           onChange={(e) => { api.setUseCorrected(e.target.checked).then(onProject).catch(reportFailure); }} />
         {t("Correct for current")}
-      </label>
-      <label title={t("Add Stokes drift to the global merged current; applies to the next fetch")}>
-        <input type="checkbox" data-feature="tracks:stokes-drift" checked={project.stokes_drift}
-          onChange={(e) => { api.setStokesDrift(e.target.checked).then(onProject).catch(reportFailure); }} />
-        {t("Include Stokes drift")}
       </label>
     </div>
   );
@@ -261,7 +254,7 @@ function TrackItem({ source, track, open, selected, onSelect, onToggle, onRemove
           ⌖
         </button>
         <button className="icon-button" data-feature="tracks:filters" aria-expanded={open}
-          title={t("Filters and heading and speed derivation")} aria-label={t("Filters")} onClick={onToggle}>
+          title={t("Sample filters, and which heading, speed and wind the track uses")} aria-label={t("Filters")} onClick={onToggle}>
           {open ? "▾" : "▸"}
         </button>
         <button className="icon-button" data-feature="tracks:remove" onClick={onRemove}
@@ -272,7 +265,6 @@ function TrackItem({ source, track, open, selected, onSelect, onToggle, onRemove
       {open && (
         <div className="track-details">
           <TrackFiltersEditor id={source.id} track={track} onProject={onProject} units={units} />
-          <DerivationEditor id={source.id} track={track} onProject={onProject} />
         </div>
       )}
     </li>
@@ -369,29 +361,88 @@ function TrackFiltersEditor({ id, track, onProject, units }: {
   id: number; track: TrackSummary; onProject: (project: ProjectSummary) => void; units: Units;
 }) {
   const api = useBoatApi();
-  return <SampleFiltersEditor filters={track.filters} track={track} units={units}
+  const prefer = (heading: Prefer, speed: Prefer) => {
+    api.setTrackDerivation(id, track.max_gap_s, heading, speed).then(onProject).catch(reportFailure);
+  };
+  // A quantity's choice between what the track gave and what is derived is
+  // offered only where the track gave it (asked 2026-10-02); otherwise it
+  // is derived without a word.
+  const sources: ValueSources = {
+    heading: track.supplied_heading > 0 ? { value: track.prefer_heading as Prefer, choose: (v) => prefer(v, track.prefer_speed as Prefer) } : null,
+    speed: track.supplied_speed > 0 ? { value: track.prefer_speed as Prefer, choose: (v) => prefer(track.prefer_heading as Prefer, v) } : null,
+    wind: track.supplied_wind > 0 ? {
+      value: track.downloaded_wind_only ? "derived" : "given",
+      choose: (v) => { void api.setTrackWind(id, v === "derived").then(onProject).catch(reportFailure); },
+    } : null,
+  };
+  return <SampleFiltersEditor filters={track.filters} track={track} units={units} sources={sources}
     onChange={(filters) => api.setTrackFilters(id, filters).then(onProject)} />;
+}
+
+type Prefer = "given" | "derived";
+
+/** For each quantity a track may give: what it uses now, and how to choose; null where the track gives none. */
+export interface ValueSources {
+  heading: { value: Prefer; choose: (value: Prefer) => void } | null;
+  speed: { value: Prefer; choose: (value: Prefer) => void } | null;
+  wind: { value: Prefer; choose: (value: Prefer) => void } | null;
+}
+
+/** The provided-or-derived choice of one quantity, beside its bounds. */
+function SourceChoice({ feature, label, choice, derived }: {
+  feature: string; label: string; choice: NonNullable<ValueSources[keyof ValueSources]>; derived: string;
+}) {
+  const t = useT();
+  return (
+    <label className="track-field track-choice-field">
+      {label}
+      <select data-feature={feature} value={choice.value} onChange={(e) => choice.choose(e.target.value as Prefer)}>
+        <option value="given">{t("Provided by the track")}</option>
+        <option value="derived">{derived}</option>
+      </select>
+    </label>
+  );
 }
 
 /** Stable feature families shared by individual, global and priority filters. */
 function filterFeature(prefix: string, name: string): string { return `${prefix}:${name}`; }
 
-export function SampleFiltersEditor({ filters, onChange, units, track, prefix = "tracks" }: {
+export function SampleFiltersEditor({ filters, onChange, units, track, prefix = "tracks", sources = null }: {
   filters: TrackFilters; onChange: (filters: TrackFilters) => Promise<unknown>; units: Units;
   track?: TrackSummary; prefix?: "tracks" | "global-filters" | "priority-filters";
+  /** The track's provided-or-derived choices, for its own filters only. */
+  sources?: ValueSources | null;
 }) {
   const t = useT();
-  const [intervalUnit, setIntervalUnit] = useState("seconds");
   const speed = speedUnit(units);
   const wave = waveUnit(units);
   const [f, update] = useLiveEdit(filters, onChange);
   const set = (change: Partial<TrackFilters>) => { void update((previous) => ({ ...previous, ...change })); };
-  const origins = [
-    { id: "any", label: t("Given or derived") },
-    { id: "given", label: t("Given only") },
-    { id: "derived", label: t("Derived only") },
-  ];
   const needsWind = t("These filters read the environment, which this track does not have yet; with one set, samples without it are left out.");
+  /**
+   * A compass sector's two bounds. A sector needs both, so a bound typed
+   * alone is held here, not sent (Rust refuses half a sector), until its
+   * partner is typed; clearing either clears both.
+   */
+  const [lone, setLone] = useState<Partial<Record<keyof TrackFilters, number>>>({});
+  const compass = (from: keyof TrackFilters, to: keyof TrackFilters, features: [string, string], fromLabel: string, title: string) => {
+    const shown = (key: keyof TrackFilters) => lone[key] ?? (f[key] as number | null);
+    const commit = (key: keyof TrackFilters, other: keyof TrackFilters) => (v: number | null) => {
+      setLone((held) => { const next = { ...held }; delete next[from]; delete next[to]; return next; });
+      if (v === null) { set({ [from]: null, [to]: null }); return; }
+      const partner = shown(other);
+      if (partner === null || partner === undefined) setLone((held) => ({ ...held, [key]: v }));
+      else set({ [key]: v, [other]: partner });
+    };
+    return (
+      <div className="track-range">
+        <NumberField feature={features[0]} label={fromLabel} value={shown(from)} min={0} max={360} step={10}
+          title={title} onCommit={commit(from, to)} />
+        <NumberField feature={features[1]} label={t("to (°)")} value={shown(to)} min={0} max={360} step={10}
+          title={title} onCommit={commit(to, from)} />
+      </div>
+    );
+  };
   return (
     <fieldset className="track-filters">
       <legend>{t("Sample filters")}</legend>
@@ -404,51 +455,60 @@ export function SampleFiltersEditor({ filters, onChange, units, track, prefix = 
       {prefix === "tracks" && <TimeField feature={filterFeature(prefix, "time-end")} label={t("To (UTC)")} value={f.time_end}
         title={t("Leave out samples after this time, such as after the finish")}
         onCommit={(v) => set({ time_end: v })} />}
-      <NumberField feature={filterFeature(prefix, "min-bsp")} label={t("Minimum BSP ({unit})", { unit: speed.symbol })} value={f.min_bsp} min={0} max={100} step={0.5} factor={speed.factor}
-        title={t("Leave out samples slower than this; empty for no minimum")} onCommit={(v) => set({ min_bsp: v })} />
-      <NumberField feature={filterFeature(prefix, "max-bsp")} label={t("Maximum BSP ({unit})", { unit: speed.symbol })} value={f.max_bsp} min={0} max={100} step={0.5} factor={speed.factor}
-        title={t("Leave out samples faster than this; empty for no maximum")} onCommit={(v) => set({ max_bsp: v })} />
-      <NumberField feature={filterFeature(prefix, "manoeuvre")} label={t("Direction change (°)")} value={f.max_heading_change} min={1} max={180} step={5}
-        title={t("Exclude points when heading changes by more than this from the previous or next point. Empty disables the filter.")}
-        onCommit={(v) => set({ max_heading_change: v })} />
-      <NumberField feature={filterFeature(prefix, "awa-change")} label={t("AWA change (°)")} value={f.max_awa_change} min={0} max={180} step={5}
-        title={t("Exclude points when apparent wind angle changes by more than this from the previous or next point.")} onCommit={(v) => set({ max_awa_change: v })} />
-      <NumberField feature={filterFeature(prefix, "wind-speed-change")} label={t("Wind speed change ({unit})", { unit: speed.symbol })} value={f.max_wind_speed_change} min={0} max={200} step={0.5} factor={speed.factor}
-        title={t("Exclude points when true wind speed changes by more than this from the previous or next point.")} onCommit={(v) => set({ max_wind_speed_change: v })} />
-      <NumberField feature={filterFeature(prefix, "wind-direction-change")} label={t("Wind direction change (°)")} value={f.max_wind_direction_change} min={0} max={180} step={5}
-        title={t("Exclude points when true wind direction changes by more than this from the previous or next point.")} onCommit={(v) => set({ max_wind_direction_change: v })} />
-      <NumberField feature={filterFeature(prefix, "tack-window")} label={t("Tack/gybe window (s)")} value={f.tack_gybe_padding_s} min={0} max={86400} step={60}
-        title={t("Exclude points before and after a tack or gybe. Empty disables the filter.")} onCommit={(v) => set({ tack_gybe_padding_s: v })} />
-      <NumberField feature={filterFeature(prefix, "stop-speed")} label={t("Stop speed ({unit})", { unit: speed.symbol })} value={f.stop_speed_kn} min={0} max={100} step={0.1} factor={speed.factor}
-        title={t("Treat ground speeds at or below this as stops. Empty disables the filter.")} onCommit={(v) => set({ stop_speed_kn: v })} />
-      <NumberField feature={filterFeature(prefix, "stop-window")} label={t("Stop window (s)")} value={f.stop_padding_s} min={0} max={86400} step={60}
-        title={t("Exclude points this many seconds before and after each stop.")} onCommit={(v) => set({ stop_padding_s: v ?? 0 })} />
-      <NumberField feature={filterFeature(prefix, "utc-interval")} label={intervalUnit === "minutes" ? t("Timestamp interval (min)") : t("Timestamp interval (s)")} value={f.utc_interval_s} min={intervalUnit === "minutes" ? 1 / 60 : 1} max={86400} step={1} factor={intervalUnit === "minutes" ? 1 / 60 : 1}
-        title={t("Keep times aligned to this interval from UTC midnight: 60 for minutes, 3600 for hours. Empty keeps every time.")} onCommit={(v) => set({ utc_interval_s: v === null ? null : Math.round(v) })} />
-      <label className="track-field track-choice-field">{t("Interval unit")}
-        <select data-feature={filterFeature(prefix, "utc-unit")} value={intervalUnit} onChange={(e) => setIntervalUnit(e.target.value)}>
-          <option value="seconds">{t("Seconds")}</option><option value="minutes">{t("Minutes")}</option>
-        </select>
-      </label>
-      <label className="track-field track-choice-field">
-        {t("Heading")}
-        <select data-feature={filterFeature(prefix, "heading-origin")} value={f.heading_origin}
-          title={t("Keep samples whose heading the track gave, was derived, or either")}
-          onChange={(e) => set({ heading_origin: e.target.value })}>
-          {origins.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
-        </select>
-      </label>
-      <label className="track-field track-choice-field">
-        {t("Speed")}
-        <select data-feature={filterFeature(prefix, "speed-origin")} value={f.speed_origin}
-          title={t("Keep samples whose speed the track gave, was derived, or either")}
-          onChange={(e) => set({ speed_origin: e.target.value })}>
-          {origins.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
-        </select>
-      </label>
+      <fieldset className="track-env-filters">
+        <legend>{t("Boat speed")}</legend>
+        {sources?.speed && <SourceChoice feature="tracks:speed-source" label={t("Use")} choice={sources.speed} derived={t("Derived from the positions")} />}
+        <div className="track-range">
+          <NumberField feature={filterFeature(prefix, "min-bsp")} label={t("BSP from ({unit})", { unit: speed.symbol })} value={f.min_bsp} min={0} max={100} step={0.5} factor={speed.factor}
+            title={t("Leave out samples slower than this; empty for no minimum")} onCommit={(v) => set({ min_bsp: v })} />
+          <NumberField feature={filterFeature(prefix, "max-bsp")} label={t("to ({unit})", { unit: speed.symbol })} value={f.max_bsp} min={0} max={100} step={0.5} factor={speed.factor}
+            title={t("Leave out samples faster than this; empty for no maximum")} onCommit={(v) => set({ max_bsp: v })} />
+        </div>
+        <div className="track-range">
+          <NumberField feature={filterFeature(prefix, "vmg-min")} label={t("VMG from ({unit})", { unit: speed.symbol })} value={f.vmg_min} min={-100} max={100} step={0.5} factor={speed.factor}
+            title={t("Speed made good to windward: positive upwind, negative downwind. Leave out samples below this")} onCommit={(v) => set({ vmg_min: v })} />
+          <NumberField feature={filterFeature(prefix, "vmg-max")} label={t("to ({unit})", { unit: speed.symbol })} value={f.vmg_max} min={-100} max={100} step={0.5} factor={speed.factor}
+            title={t("Leave out samples whose VMG is above this")} onCommit={(v) => set({ vmg_max: v })} />
+        </div>
+      </fieldset>
+      <fieldset className="track-env-filters">
+        <legend>{t("Boat heading")}</legend>
+        {sources?.heading && <SourceChoice feature="tracks:heading-source" label={t("Use")} choice={sources.heading} derived={t("Derived from the positions")} />}
+        {compass("heading_from", "heading_to", [filterFeature(prefix, "heading-from"), filterFeature(prefix, "heading-to")], t("Heading from (°)"), t("Keep samples heading from this compass direction clockwise to the next; through the water where the current is corrected for. Both empty for any"))}
+        {compass("cog_from", "cog_to", [filterFeature(prefix, "cog-from"), filterFeature(prefix, "cog-to")], t("COG from (°)"), t("Keep samples whose course over the ground runs from this compass direction clockwise to the next. Both empty for any"))}
+        <NumberField feature={filterFeature(prefix, "manoeuvre")} label={t("Direction change (°)")} value={f.max_heading_change} min={1} max={180} step={5}
+          title={t("Exclude points when heading changes by more than this from the previous or next point. Empty disables the filter.")}
+          onCommit={(v) => set({ max_heading_change: v })} />
+        <label className="track-field">
+          <input type="checkbox" data-feature={filterFeature(prefix, "tacks")} checked={f.exclude_tacks}
+            title={t("Leave out the sample on either side of each tack and gybe: where the wind crosses the bow or the stern between neighbours")}
+            onChange={(e) => set({ exclude_tacks: e.target.checked })} />
+          {t("Remove tacks and gybes")}
+        </label>
+      </fieldset>
       <fieldset className="track-env-filters">
         <legend>{t("Wind, waves and current")}</legend>
         {track?.env_status === "not_fetched" && track.supplied_wind === 0 && <p className="muted">{needsWind}</p>}
+        {sources?.wind && <SourceChoice feature="tracks:wind-source" label={t("Use")} choice={sources.wind} derived={t("Downloaded weather")} />}
+        <div className="track-range">
+          <NumberField feature={filterFeature(prefix, "tws-min")} label={t("TWS from ({unit})", { unit: speed.symbol })} value={f.tws_min} min={0} max={200} step={1} factor={speed.factor}
+            title={t("Leave out samples in less wind than this; empty for no minimum")} onCommit={(v) => set({ tws_min: v })} />
+          <NumberField feature={filterFeature(prefix, "tws-max")} label={t("to ({unit})", { unit: speed.symbol })} value={f.tws_max} min={0} max={200} step={1} factor={speed.factor}
+            title={t("Leave out samples in more wind than this; empty for no maximum")} onCommit={(v) => set({ tws_max: v })} />
+        </div>
+        {compass("twd_from", "twd_to", [filterFeature(prefix, "twd-from"), filterFeature(prefix, "twd-to")], t("TWD from (°)"), t("Keep samples whose true wind comes from this compass direction clockwise to the next. Both empty for any"))}
+        <div className="track-range">
+          <NumberField feature={filterFeature(prefix, "twa-min")} label={t("TWA from (°)")} value={f.twa_min} min={0} max={180} step={5}
+            title={t("Leave out samples closer to the wind than this")} onCommit={(v) => set({ twa_min: v })} />
+          <NumberField feature={filterFeature(prefix, "twa-max")} label={t("to (°)")} value={f.twa_max} min={0} max={180} step={5}
+            title={t("Leave out samples further off the wind than this")} onCommit={(v) => set({ twa_max: v })} />
+        </div>
+        <NumberField feature={filterFeature(prefix, "awa-change")} label={t("AWA change (°)")} value={f.max_awa_change} min={0} max={180} step={5}
+          title={t("Exclude points when apparent wind angle changes by more than this from the previous or next point.")} onCommit={(v) => set({ max_awa_change: v })} />
+        <NumberField feature={filterFeature(prefix, "wind-speed-change")} label={t("Wind speed change ({unit})", { unit: speed.symbol })} value={f.max_wind_speed_change} min={0} max={200} step={0.5} factor={speed.factor}
+          title={t("Exclude points when true wind speed changes by more than this from the previous or next point.")} onCommit={(v) => set({ max_wind_speed_change: v })} />
+        <NumberField feature={filterFeature(prefix, "wind-direction-change")} label={t("Wind direction change (°)")} value={f.max_wind_direction_change} min={0} max={180} step={5}
+          title={t("Exclude points when true wind direction changes by more than this from the previous or next point.")} onCommit={(v) => set({ max_wind_direction_change: v })} />
         <label className="track-field">
           <input type="checkbox" data-feature={filterFeature(prefix, "unknown-wave")} checked={f.exclude_unknown_wave}
             onChange={(e) => set({ exclude_unknown_wave: e.target.checked })} />
@@ -459,18 +519,6 @@ export function SampleFiltersEditor({ filters, onChange, units, track, prefix = 
             onChange={(e) => set({ exclude_unknown_current: e.target.checked })} />
           {t("Exclude unknown current")}
         </label>
-        <div className="track-range">
-          <NumberField feature={filterFeature(prefix, "tws-min")} label={t("TWS from ({unit})", { unit: speed.symbol })} value={f.tws_min} min={0} max={200} step={1} factor={speed.factor}
-            title={t("Leave out samples in less wind than this; empty for no minimum")} onCommit={(v) => set({ tws_min: v })} />
-          <NumberField feature={filterFeature(prefix, "tws-max")} label={t("to ({unit})", { unit: speed.symbol })} value={f.tws_max} min={0} max={200} step={1} factor={speed.factor}
-            title={t("Leave out samples in more wind than this; empty for no maximum")} onCommit={(v) => set({ tws_max: v })} />
-        </div>
-        <div className="track-range">
-          <NumberField feature={filterFeature(prefix, "twa-min")} label={t("TWA from (°)")} value={f.twa_min} min={0} max={180} step={5}
-            title={t("Leave out samples closer to the wind than this")} onCommit={(v) => set({ twa_min: v })} />
-          <NumberField feature={filterFeature(prefix, "twa-max")} label={t("to (°)")} value={f.twa_max} min={0} max={180} step={5}
-            title={t("Leave out samples further off the wind than this")} onCommit={(v) => set({ twa_max: v })} />
-        </div>
         <div className="track-range">
           <NumberField feature={filterFeature(prefix, "hs-min")} label={t("Wave height from ({unit})", { unit: wave.symbol })} value={f.hs_min} min={0} max={100} step={0.5} factor={wave.factor}
             title={t("Leave out samples in smaller waves than this")} onCommit={(v) => set({ hs_min: v })} />
@@ -535,40 +583,3 @@ export function SampleFiltersEditor({ filters, onChange, units, track, prefix = 
   );
 }
 
-function DerivationEditor({ id, track, onProject }: {
-  id: number; track: TrackSummary; onProject: (project: ProjectSummary) => void;
-}) {
-  const api = useBoatApi();
-  const t = useT();
-  const set = (maxGapS: number, prefer: "given" | "derived") => {
-    api.setTrackDerivation(id, maxGapS, prefer).then(onProject).catch(reportFailure);
-  };
-  const prefer = track.prefer === "derived" ? "derived" : "given";
-  return (
-    <fieldset className="track-filters">
-      <legend>{t("Heading and speed")}</legend>
-      <label className="track-field track-choice-field">
-        {t("Wind source")}
-        <select data-feature="tracks:wind-source" value={track.downloaded_wind_only ? "weather" : "supplied"}
-          title={t("Supplied wind is used where both speed and direction are available; other points use downloaded weather.")}
-          onChange={(event) => { void api.setTrackWind(id, event.target.value === "weather").then(onProject).catch(reportFailure); }}>
-          <option value="supplied">{t("Supplied wind where available")}</option>
-          <option value="weather">{t("Downloaded weather only")}</option>
-        </select>
-      </label>
-      <p className="muted">{t("{count} points have supplied wind.", { count: track.supplied_wind ?? 0 })}</p>
-      <NumberField feature="tracks:max-gap" label={t("Maximum gap (h)")} value={track.max_gap_s / 3600} min={0.01} max={24} step={0.5}
-        title={t("Neighbours further apart in time than this are not used to derive heading and speed")}
-        onCommit={(v) => { if (v !== null && v > 0) set(Math.round(v * 3600), prefer); }} />
-      <label className="track-field track-choice-field">
-        {t("Prefer")}
-        <select data-feature="tracks:prefer" value={prefer}
-          title={t("Use the heading and speed the track gives where it gives them, or always derive them from the positions")}
-          onChange={(e) => set(track.max_gap_s, e.target.value === "derived" ? "derived" : "given")}>
-          <option value="given">{t("Given values")}</option>
-          <option value="derived">{t("Derived values")}</option>
-        </select>
-      </label>
-    </fieldset>
-  );
-}

@@ -377,7 +377,6 @@ fn input(summary: &pe_app::blend::BlendSummary) -> BlendSettingsInput {
         smoothing: summary.smoothing,
         default_statistic: summary.default_statistic.clone(),
         use_corrected: true,
-        stokes_drift: false,
     }
 }
 

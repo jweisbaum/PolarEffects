@@ -30,46 +30,37 @@ export default function BoatWorkspace({ project, settings, onSettings: setSettin
   const panels = split ? comparisonPanels : singlePanels;
   const setPanels = split ? setComparisonPanels : setSinglePanels;
   const [comparisonControls, setComparisonControls] = useState(false);
-  const [plotFull, setPlotFull] = useState(false);
   const { onFocusMap } = useBoatSelection();
   const { editFocus, editSource, onEditSource } = useBoatEditing();
-  useEffect(() => { if (split) setPlotFull(false); }, [split]);
   const toggle = useCallback((panel: keyof PanelState) => setPanels(current => {
     const next = togglePanel(current, panel); if (!split) savePanels(next); return next;
   }), [split, setPanels]);
-  useEffect(() => onFocusMap(() => { if (!split) setStage("map"); setPlotFull(false); }), [onFocusMap, split]);
-  useEffect(() => onEditSource(() => { setStage("3d"); setPlotFull(false); }), [onEditSource]);
-  useEffect(() => onCompareSource(id => { if (id === project.id && !split) { setStage("compare"); setPlotFull(false); } }), [project.id, split]);
+  useEffect(() => onFocusMap(() => { if (!split) setStage("map"); }), [onFocusMap, split]);
+  useEffect(() => onEditSource(() => setStage("3d")), [onEditSource]);
+  useEffect(() => onCompareSource(id => { if (id === project.id && !split) setStage("compare"); }), [project.id, split]);
   // The MCP service's `view://stage`: this boat's stage, whether or not this
   // boat is the one on show (its tab is shown next, in the single layout).
-  useEffect(() => onShowStage(project.id, next => {
-    if (next === "plot") { setPlotFull(true); return; }
-    setStage(next); setPlotFull(false);
-  }), [project.id]);
+  // Its "plot" is the 2D stage, named before the plot was one.
+  useEffect(() => onShowStage(project.id, next => setStage(next === "plot" ? "2d" : next)), [project.id]);
   useEffect(() => {
     if (!active) return;
     const open = (name: keyof PanelState) => setPanels(current => reveal(current, name));
     const offs = [
       onReveal("panel:left", () => open("left")), onReveal("panel:right", () => open("right")),
       onReveal("section:orc", () => open("orc")), onReveal("section:polar-files", () => open("polarFiles")),
-      onReveal("section:tracks", () => open("tracks")), onReveal("section:sources", () => open("sources")), onReveal("section:plot", () => open("plot")),
-      onReveal("stage:map", () => { if (!split) setStage("map"); setPlotFull(false); }),
-      onReveal("stage:3d", () => { setComparisonControls(true); setStage("3d"); setPlotFull(false); }),
-      onReveal("stage:compare", () => { if (!split) setStage("compare"); setPlotFull(false); }),
-      onReveal("overlay:plot", () => { if (!split) setPlotFull(true); }),
+      onReveal("section:tracks", () => open("tracks")), onReveal("section:sources", () => open("sources")),
+      onReveal("stage:map", () => { if (!split) setStage("map"); }),
+      onReveal("stage:3d", () => { setComparisonControls(true); setStage("3d"); }),
+      onReveal("stage:2d", () => { if (!split) setStage("2d"); }),
+      onReveal("stage:compare", () => { if (!split) setStage("compare"); }),
       onReveal("edit:open", () => { setStage("3d"); if (editFocus() === null && project.sources[0]) editSource(project.sources[0].id); }),
       onReveal("edit:open-track", () => { setStage("3d"); const source = project.sources.find(s => s.kind === "track"); if (source) editSource(source.id); }),
     ];
     return () => { for (const off of offs) off(); };
   }, [active, split, project.sources, editFocus, editSource]);
-  useEffect(() => {
-    if (!active || !plotFull) return;
-    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") setPlotFull(false); };
-    window.addEventListener("keydown", escape); return () => window.removeEventListener("keydown", escape);
-  }, [active, plotFull]);
   return <>
     <div className="boat-view-toolbar">
-      {split ? <span>{t("3D")}</span> : <StageSwitcher stage={stage} hasTracks={hasTracks} onStage={next => { setStage(next); setPlotFull(false); }} />}
+      {split ? <span>{t("3D")}</span> : <StageSwitcher stage={stage} hasTracks={hasTracks} onStage={setStage} />}
       <PolarModeToggle project={project} onProject={updateProject} />
       {split && <button data-feature="boats:comparison-controls" aria-pressed={comparisonControls} onClick={() => setComparisonControls(value => !value)}>{t("Filters and display")}</button>}
     </div>
@@ -79,7 +70,8 @@ export default function BoatWorkspace({ project, settings, onSettings: setSettin
       } as CSSProperties}>
         <main className="centre-stage" aria-label={t("Stage")}>
           {visible && stage === "map" && <MapView project={project} settings={settings} onSettings={setSettings} />}
-          {visible && stage === "3d" && <PolarView project={project} settings={settings} onProject={updateProject} compact={split && !comparisonControls} />}
+          {visible && stage === "3d" && <PolarView project={project} settings={settings} onProject={updateProject} compact={split && !comparisonControls} comparison={split} />}
+          {visible && stage === "2d" && <PolarPlot project={project} variant="stage" unit={settings?.units.speed ?? "kn"} />}
           {/* Keyed by project: nothing of one project's comparison (its answer, its framing, a hovered cell) shows under another's names. */}
           {visible && stage === "compare" && <CompareView key={project.id} project={project} settings={settings} />}
         </main>
@@ -88,19 +80,16 @@ export default function BoatWorkspace({ project, settings, onSettings: setSettin
         {panels.right && (
           <aside className="sidebar right">
             <RightPanel project={project} onProject={updateProject} panels={panels} onToggle={toggle}
-              speedUnit={settings?.units.speed ?? "kn"} onFullSizePlot={() => setPlotFull(true)} />
+              speedUnit={settings?.units.speed ?? "kn"} />
           </aside>
         )}
-        <DockToggle side="left" open={panels.left}
-          labels={[msg("Show the navigation"), msg("Hide the navigation")]} onToggle={() => toggle("left")} />
-        <DockToggle side="right" open={panels.right}
-          labels={[msg("Show the sources and polar plot"), msg("Hide the sources and polar plot")]} onToggle={() => toggle("right")} />
-        {visible && !split && plotFull && (
-          <div className="polar-plot-overlay" role="dialog" aria-label={t("Polar plot")}>
-            <PolarPlot project={project} variant="overlay" unit={settings?.units.speed ?? "kn"}
-              onClose={() => setPlotFull(false)} />
-          </div>
-        )}
+        {/* Split and four-way panes are for the polars side by side: no panels to open, so no toggles. */}
+        {!split && <>
+          <DockToggle side="left" open={panels.left}
+            labels={[msg("Show the navigation"), msg("Hide the navigation")]} onToggle={() => toggle("left")} />
+          <DockToggle side="right" open={panels.right}
+            labels={[msg("Show the sources"), msg("Hide the sources")]} onToggle={() => toggle("right")} />
+        </>}
       </div>
 
   </>;

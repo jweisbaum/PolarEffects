@@ -33,7 +33,7 @@ pub struct BlendSetParams {
     /// track cell needs), n_full (the samples for full confidence),
     /// smoothing (true/false), default_statistic ("median", "mean", "p75",
     /// "p90", "p95", "max": what a newly imported track starts with),
-    /// use_corrected (correct for current), stokes_drift, asymmetric
+    /// use_corrected (correct for current), asymmetric
     /// (independent port and starboard), interpolation ("linear" or
     /// "monotone_spline").
     pub settings: Value,

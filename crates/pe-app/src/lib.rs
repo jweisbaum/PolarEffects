@@ -10,6 +10,7 @@ pub mod autosave;
 pub mod basemap;
 pub mod blend;
 pub mod boats;
+pub mod catalogues;
 pub mod commands;
 pub mod compare;
 pub mod database;
@@ -35,6 +36,7 @@ pub mod session;
 pub mod settings;
 pub mod trackers;
 pub mod tracks;
+pub mod wave_split;
 
 use tauri::Manager;
 
@@ -68,6 +70,9 @@ pub fn run() -> anyhow::Result<()> {
             autosave::start(app.handle().clone());
             env::start(app.handle().clone());
             database::on_startup(app.handle().clone());
+            // The catalogues' startup schedule, only if the person chose it
+            // (spec.md 5.4).
+            catalogues::on_startup(app.handle().clone());
             // The MCP service, only if the person left it on (spec.md 3.7).
             // With the setting off this starts nothing: no socket, no task.
             let mcp_settings = app
@@ -93,7 +98,7 @@ pub fn run() -> anyhow::Result<()> {
                 if !quit::may_exit(&window.state::<commands::AppState>()) {
                     api.prevent_close();
                     quit::ask(window.app_handle());
-                } else if database::shutdown(window.app_handle()) {
+                } else if catalogues::work_before_exit(window.app_handle()) {
                     api.prevent_close();
                 }
             }
@@ -155,9 +160,9 @@ pub fn run() -> anyhow::Result<()> {
             env::cancel_env_fetch,
             env::env_jobs,
             env::set_use_corrected,
-            env::set_stokes_drift,
             map_tracks::map_tracks,
             polar3d::polar_scene,
+            polar3d::polar_scene_split,
             polar3d::set_excluded,
             polar_edit::polar_edit_surface,
             polar_edit::edit_polar,
@@ -169,6 +174,7 @@ pub fn run() -> anyhow::Result<()> {
             blend::set_wave_ranges,
             blend::set_priority_filters,
             blend::blend_cell,
+            blend::blend_cell_split,
             blend::export_preview,
             blend::export_polar,
             compare::compare_polars,
@@ -181,6 +187,10 @@ pub fn run() -> anyhow::Result<()> {
             orr::start_orr_scrape,
             orr::cancel_orr_scrape,
             orc::orc_add,
+            orc::orc_scrape_status,
+            orc::start_orc_scrape,
+            orc::cancel_orc_scrape,
+            catalogues::set_catalogue_schedule,
             autosave::recovered_projects,
             autosave::open_recovered,
             autosave::discard_recovered,
@@ -211,7 +221,7 @@ pub fn run() -> anyhow::Result<()> {
             if !quit::may_exit(&app.state::<commands::AppState>()) {
                 api.prevent_exit();
                 quit::ask(app);
-            } else if database::shutdown(app) {
+            } else if catalogues::work_before_exit(app) {
                 api.prevent_exit();
             }
         }

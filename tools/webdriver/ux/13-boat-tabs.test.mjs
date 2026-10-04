@@ -26,6 +26,26 @@ export default {
     await populated(d, 1);
     northUp((await cameras(d))[0]);
     assert.equal(await d.count('.titlebar ' + f("boats:add")), 1);
+    assert.equal(await d.text('.titlebar ' + f("boats:add")), "Add Polar");
+    // The layout switch: three icons in the top bar, in Add Polar's row, each named for a pointer.
+    assert.deepEqual(await d.run(`done(["single","split","four"].map(function (name) {
+      var b = document.querySelector('.titlebar [data-feature="boats:' + name + '"]');
+      return [b.title, b.textContent, !!b.querySelector("svg"), b.getAttribute("aria-pressed")]; }));`),
+    [["Single view", "", true, "true"], ["Split view", "", true, "false"], ["Four-way view", "", true, "false"]]);
+    assert.ok(await d.run(`var add = document.querySelector('[data-feature="boats:add"]').getBoundingClientRect(),
+      one = document.querySelector('[data-feature="boats:single"]').getBoundingClientRect();
+      done(one.left >= add.right && Math.abs((one.top + one.bottom) / 2 - (add.top + add.bottom) / 2) < 2);`), "the icons follow Add Polar on its row");
+    // Each tab carries the × that closes it; there is no row of buttons above the tabs.
+    assert.equal(await d.count('.boat-actions'), 0);
+    assert.deepEqual(await d.run(`done(Array.from(document.querySelectorAll('.boat-tab')).map(function (tab) {
+      var x = tab.querySelector('[data-feature="boats:delete"]'); return [tab.querySelector('[role="tab"]').textContent, x.textContent, x.title]; }));`),
+    [["Alpha", "×", "Delete Alpha"], ["Bravo", "×", "Delete Bravo"], ["Charlie", "×", "Delete Charlie"], ["Delta", "×", "Delete Delta"]]);
+    assert.equal(await d.count('.boat-pane:not([hidden]) .dock-toggle'), 2, "single view has both panel toggles");
+    // Export all sits at the bottom right, just before the version.
+    assert.ok(await d.run(`var bar = document.querySelector('.statusbar'), all = bar.querySelector('[data-feature="boats:export-all"]'),
+      version = bar.lastElementChild; done(!!all && /^v[0-9]/.test(version.textContent)
+        && all.getBoundingClientRect().right <= version.getBoundingClientRect().left
+        && all.getBoundingClientRect().left > bar.getBoundingClientRect().width / 2);`), "Export all is beside the version");
     assert.equal(await d.count(f("boats:rename")), 0);
     assert.ok(await d.run(`var title=document.querySelector('.titlebar .project-name').getBoundingClientRect(), add=document.querySelector('[data-feature="boats:add"]').getBoundingClientRect(); done(add.left>=title.right && Math.abs(add.top-title.top)<12);`), "Add boat is beside the project name");
     await d.run(`document.querySelector('.boat-tabs [role="tab"]').dispatchEvent(new MouseEvent('dblclick',{bubbles:true})); done(true);`);
@@ -33,6 +53,7 @@ export default {
     await d.waitFor('.boat-tabs [role="tab"]', {text:"Alpha renamed"});
     await d.click(f("boats:split")); await populated(d, 2);
     assert.equal(await d.count('.boat-tabs-row'), 0, "split navigation uses the dropdowns only");
+    assert.equal(await d.count('.dock-toggle'), 0, "split view has no panel toggles");
     assert.equal(await d.count('.boat-pane:not([hidden]) [data-feature="stage:map"]'), 0);
     await d.click(`${pane(0)} ${f("view3d:camera-top")}`);
     await new Promise(r => setTimeout(r, 150));
@@ -57,29 +78,80 @@ export default {
     await d.waitFor('.view3d-tooltip');
     assert.equal(await d.count('.boat-pane:not([hidden]) .view3d-tooltip'),4,"hover reaches all four boats");
     await t.shot("four-boats-linked-hover");
+    assert.equal(await d.count('.dock-toggle'), 0, "four-way view has no panel toggles");
+    // Hover the blend's surface in one pane: every pane with a blend at that wind shows its own cell.
+    await d.run(`var c = document.querySelector('.boat-pane:not([hidden]) canvas.view3d-canvas');
+      c.dispatchEvent(new PointerEvent('pointerout', { bubbles: true, pointerType: 'mouse', relatedTarget: document.body })); done(true);`);
+    await d.waitGone('.view3d-tooltip');
+    let onBlend = false;
+    for (let attempt = 0; attempt < 12 && !await d.exists('.blend-cell-tooltip'); attempt++) {
+      onBlend = await d.run(`
+        var c = document.querySelector('.boat-pane:not([hidden]) canvas.view3d-canvas'); c.__peRedraw?.();
+        var copy = document.createElement("canvas"); copy.width = c.width; copy.height = c.height;
+        var ctx = copy.getContext("2d"); ctx.drawImage(c, 0, 0);
+        var data = ctx.getImageData(0, 0, copy.width, copy.height).data, rect = c.getBoundingClientRect();
+        var rgb = [0xe0, 0x45, 0x7b], seen = 0;
+        for (var y = 0; y < copy.height; y += 3) for (var x = 0; x < copy.width; x += 3) {
+          var i = 4 * (y * copy.width + x);
+          if (!rgb.every(function (v, k) { return Math.abs(data[i + k] - v) < 6; })) continue;
+          var cx = rect.left + x / copy.width * rect.width, cy = rect.top + y / copy.height * rect.height;
+          if (document.elementFromPoint(cx, cy) !== c) continue;
+          if (seen++ < arguments[0]) continue;
+          c.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerType: "mouse", clientX: cx, clientY: cy, buttons: 0 }));
+          done(true); return;
+        }
+        done(false);`, [attempt * 25]);
+      await new Promise(r => setTimeout(r, 300));
+    }
+    assert.ok(onBlend, "the first pane draws a blend surface to hover");
+    await d.waitFor(`${pane(0)} .blend-cell-tooltip`);
+    await new Promise(r => setTimeout(r, 400));
+    const cells = await d.texts('.boat-pane:not([hidden]) .blend-cell-tooltip');
+    assert.ok(cells.length >= 2, `the blend tooltip reaches the linked panes: ${cells.length}`);
+    const wind = cells.map(text => (text.match(/TWA\d+°TWS[\d.]+ kn/) ?? [text])[0]);
+    assert.ok(wind.every(w => w === wind[0]), `every pane shows the same wind: ${wind.join(" | ")}`);
+    await t.shot("four-boats-linked-blend-hover");
+    // Leaving the surface clears them all.
+    await d.run(`var c = document.querySelector('.boat-pane:not([hidden]) canvas.view3d-canvas');
+      c.dispatchEvent(new PointerEvent('pointerout', { bubbles: true, pointerType: 'mouse', relatedTarget: document.body })); done(true);`);
+    await d.waitGone('.blend-cell-tooltip');
     await d.click(`${pane(0)} ${f("boats:comparison-controls")}`);
     assert.ok(await d.run(`done(document.querySelector('.boat-pane:not([hidden]) .wave-display-ranges').getBoundingClientRect().height > 0);`));
     await d.click(`${pane(0)} ${f("boats:comparison-controls")}`);
     await d.click(f("boats:single")); await populated(d, 1);
-    await d.click(f("boats:add")); await d.waitFor('.boat-tabs [role="tab"]', {text:"Boat 5"});
+    await d.click(f("boats:add")); await d.waitFor('.boat-tabs [role="tab"]', {text:"Polar 5"});
     assert.equal(await d.count('.boat-tabs [role="tab"]'),5);
     assert.equal(await d.count('.boat-pane:not([hidden]) .track-list li'),0,"new boat is empty");
     northUp((await cameras(d))[0]);
-    await d.click(f("boats:delete")); await d.click('[role="dialog"] button.danger');
-    await d.waitGone('.boat-tabs [role="tab"]:nth-child(5)');
+    // The × on a tab asks before it closes the tab; Cancel keeps it.
+    const close = (n) => `.boat-tab:nth-child(${n}) ${f("boats:delete")}`;
+    await d.click(close(5));
+    await d.waitFor('[role="dialog"]', { text: "Delete Polar 5" });
+    assert.ok((await d.text('[role="dialog"]')).includes("Remove this polar and its sources from the project?"));
+    await t.shot("close-tab-asks-first");
+    await d.click('[role="dialog"] button:not(.danger)');
+    await d.waitGone('[role="dialog"]');
+    assert.equal(await d.count('.boat-tabs [role="tab"]'), 5, "cancelling keeps the tab");
+    await d.click(close(5)); await d.click('[role="dialog"] button.danger');
+    await d.waitGone('.boat-tab:nth-child(5)');
     assert.equal(await d.count('.boat-tabs [role="tab"]'),4);
-    await d.click(f("boats:restore")); await d.waitFor('.boat-tabs [role="tab"]',{text:"Boat 5"});
+    await d.click('.boat-tabs-row ' + f("boats:restore")); await d.waitFor('.boat-tabs [role="tab"]',{text:"Polar 5"});
+    // Closing the first tab, which is not the one on show, keeps the title and the tab on show.
     const title = await d.text('.titlebar .project-name');
-    await d.click('.boat-tabs [role="tab"]',{text:"Alpha renamed"});
-    await d.click(f("boats:split")); await populated(d, 2);
-    await d.click(f("boats:delete")); await d.click('[role="dialog"] button.danger');
-    await d.waitGone('.boat-pane-picker option:nth-child(5)');
-    await populated(d, 2);
-    assert.equal(await d.count('.boat-tabs-row'),0,"deleting the first boat keeps comparison mode");
+    await d.click('.boat-tabs [role="tab"]', {text:"Polar 5"});
+    await d.waitFor('.boat-tabs [role="tab"][aria-selected="true"]', {text:"Polar 5"});
+    await d.click(close(1)); await d.click('[role="dialog"] button.danger');
+    await d.waitGone('.boat-tab:nth-child(5)');
+    assert.equal((await d.texts('.boat-tabs [role="tab"]'))[0], "Bravo");
+    assert.equal(await d.text('.boat-tabs [role="tab"][aria-selected="true"]'), "Polar 5", "the tab on show stays on show");
     assert.equal(await d.text('.titlebar .project-name'), title, "deleting the first boat retains the fleet title");
-    await d.click(f("boats:restore")); await d.waitFor('.boat-pane-picker option:nth-child(5)');
-    await populated(d, 2);
-    await d.click(f("boats:single")); await d.waitFor('.boat-tabs [role="tab"]:nth-child(5)');
+    // The comparison layouts compare what is left, and have nothing to close.
+    await d.click('.boat-tabs [role="tab"]', {text:"Bravo"}); await populated(d, 1);
+    await d.click(f("boats:split")); await populated(d, 2);
+    assert.equal(await d.count(f("boats:delete")), 0);
+    assert.equal(await d.run(`done(document.querySelector('.boat-pane-picker').options.length);`), 4, "the closed tab is not offered to compare");
+    await d.click(f("boats:single")); await populated(d, 1);
+    await d.click(f("boats:restore")); await d.waitFor('.boat-tab:nth-child(5)');
     await d.click('.boat-tabs [role="tab"]',{text:"Alpha renamed"}); await populated(d, 1);
     await t.shot("restored-deleted-boat");
     await d.click(f("boats:export-all")); await d.waitFor('.boat-export-dialog');

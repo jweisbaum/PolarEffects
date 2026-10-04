@@ -10,6 +10,14 @@ export type OrcCatalogueInfo = {
  */
 records: number,
 /**
+ * How many of them were scraped from ORC's service (spec.md 5.4).
+ */
+scraped: number,
+/**
+ * When the scraped certificates were last written, UTC epoch seconds.
+ */
+scraped_at: number | null,
+/**
  * The repository it was built from, `"jieter/orc-data"`.
  */
 source: string,

@@ -8,8 +8,8 @@ use crate::orc::{OrcRecord, OrcSize, OrcVpp};
 use crate::polar::{PolarFileFormat, PolarGrid};
 use crate::project::{Boat, Project};
 use crate::source::{
-    CellOverride, CellRef, Colour, DirectionRange, OriginFilter, Range, SampleFilters, Source,
-    SourceKind, TimeWindow, WaveDirectionFilter, WaveSector,
+    CellOverride, CellRef, Colour, DirectionRange, Range, SampleFilters, Source, SourceKind,
+    TimeWindow, WaveDirectionFilter, WaveSector,
 };
 use crate::track::{
     DatasetRecord, EnvStatus, Fix, Sample, Tack, Track, TrackOrigin, Tracker, ValueOrigin,
@@ -257,11 +257,7 @@ fn filters() -> impl Strategy<Value = SampleFilters> {
                     }),
                     max_bsp_kn,
                     max_heading_change_deg: turn,
-                    heading_origin: if no_tide {
-                        OriginFilter::GivenOnly
-                    } else {
-                        OriginFilter::Any
-                    },
+                    exclude_tacks: no_tide,
                     exclude_no_tide: no_tide,
                     ..SampleFilters::default()
                 }

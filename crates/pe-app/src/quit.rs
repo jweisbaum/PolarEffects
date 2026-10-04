@@ -45,7 +45,7 @@ pub fn ask<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 /// The Quit menu item: exits at once if nothing would be lost, else asks.
 pub fn request<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     if may_exit(&app.state::<AppState>()) {
-        if !crate::database::shutdown(app) {
+        if !crate::catalogues::work_before_exit(app) {
             app.exit(0);
         }
     } else {
@@ -73,7 +73,7 @@ pub fn confirm(state: &AppState, discard_unsaved: bool) -> Result<()> {
 #[tauri::command]
 pub fn quit_app(app: tauri::AppHandle, discard_unsaved: bool) -> Result<()> {
     confirm(&app.state::<AppState>(), discard_unsaved)?;
-    if !crate::database::shutdown(&app) {
+    if !crate::catalogues::work_before_exit(&app) {
         app.exit(0);
     }
     Ok(())

@@ -176,6 +176,9 @@ const OTHER: u8 = 4;
 #[derive(Debug)]
 pub struct Index {
     keys: Vec<Keys>,
+    /// The ids no search finds: certificates that keep a place in the
+    /// catalogue but are no longer in it (see [`Self::hide`]).
+    hidden: Vec<bool>,
 }
 
 fn joined(text: Option<&str>) -> String {
@@ -217,7 +220,7 @@ impl Index {
             order[i] = u32::try_from(rank).unwrap_or(u32::MAX);
         }
 
-        let keys = entries
+        let keys: Vec<Keys> = entries
             .iter()
             .zip(order)
             .map(|(entry, order)| {
@@ -293,7 +296,16 @@ impl Index {
                 }
             })
             .collect();
-        Self { keys }
+        let hidden = vec![false; keys.len()];
+        Self { keys, hidden }
+    }
+
+    /// Takes an id out of every search. Its place stays, so the ids after
+    /// it are unchanged.
+    pub fn hide(&mut self, id: usize) {
+        if let Some(hidden) = self.hidden.get_mut(id) {
+            *hidden = true;
+        }
     }
 
     /// The best `limit` records for `query` within `filters`. An empty query
@@ -324,6 +336,9 @@ impl Index {
 
         let mut ranked: Vec<(u8, u32, u32)> = Vec::new();
         for (id, (keys, entry)) in self.keys.iter().zip(entries).enumerate() {
+            if self.hidden[id] {
+                continue;
+            }
             if !needles
                 .iter()
                 .all(|needle| keys.hay.contains(needle.as_str()))

@@ -116,12 +116,15 @@ logs: see §14).
 
 ### 3.0 Boat tabs and fleet comparison
 
-A new project starts with one boat tab. **Add boat**, beside the project name
-in the top bar, creates another empty tab in any project, including tracker
-projects; there is no fixed tab limit. Double-click a boat tab (or press F2) to
+A new project starts with one boat tab. **Add Polar**, beside the project name
+in the top bar, creates another empty tab (named *Polar N*) in any project,
+including tracker projects; there is no fixed tab limit. A tab is one boat's
+polar, and its controls name it so. Double-click a boat tab (or press F2) to
 edit its name in place, Enter/blur to keep it and Escape to cancel. There is no
-separate rename button. **Delete boat…** removes the selected boat and cancels
-its weather jobs, keeping at least one boat. **Undo delete boat** restores removed
+separate rename button. The **×** on a tab closes it: after an "are you sure"
+that names the tab, it removes that boat and cancels its weather jobs. The
+last tab cannot be closed. **Undo Delete Polar**, at the end of the tab row
+once a tab has been closed, restores removed
 tabs, sources and local edit histories while the project remains open. Deleting
 the first boat preserves the project title and save location. Every boat starts
 in the top camera view with 0° upwards, including empty boats and tracker tabs.
@@ -130,17 +133,25 @@ with isolated sources, filters and undo history. Save, recovery and reopen retai
 all boats; older single-boat projects open as one tab. Boat-specific IPC requests
 carry the boat identity, so switching tabs cannot redirect in-flight work.
 
-Above the tabs, **Export all** appears when there are multiple boats and exports
-each boat's blend in the chosen existing polar format, with collision-free file
-names. A split layout compares two selected boats; a four-pane layout compares
-up to four. These layouts only show 3D and hide the tab row; each pane's boat
-dropdown replaces tab navigation. Rotation is synchronized; hovering a point
-shows each boat's nearby point at the corresponding TWA/TWS, or no matching point
-when that boat has none. Each pane retains independent sources and filters.
+**Export all…** appears at the bottom right of the window, beside the version,
+when there are multiple boats and exports each boat's blend in the chosen
+existing polar format, with collision-free file names. The layout switch is
+three icons in the top bar beside Add Polar (one pane, two, four), each named
+in its tooltip: a split layout compares two selected boats; a four-pane layout
+compares up to four. These layouts only show 3D and hide the tab row and the
+left and right panel toggles; each pane's boat dropdown replaces tab
+navigation. Rotation is synchronized; hovering a point shows each boat's nearby
+point at the corresponding TWA/TWS, or no matching point when that boat has
+none. Hovering the blend's surface shows, in every pane, that boat's own blend
+cell at the same wind (the cell of its grid nearest the hovered one, within 5°
+and 1 kn), each tooltip beside its cell; a boat with no cell there shows none.
+Each pane retains independent sources and filters.
 Comparison filter/display overlays start collapsed behind **Filters and display**;
 single-view panel states are retained when switching layouts.
 
-**Open tracker link** accepts YellowBrick and Blue Water event links and creates
+**Open tracker link** accepts YellowBrick, Geovoile (from 2026-10-03; a race in
+legs is built from the leg its link shows, and Geovoile gives only names and sail
+numbers, so few certificates match by model) and Blue Water event links and creates
 one tab per boat. It imports the event track and all available local polars and
 library tracks confidently identified as the same model. Both historical tracks
 and polars may come from other boats of that identical model (user clarification,
@@ -241,16 +252,16 @@ deferred (§14).
 - **Left navigation**: collapsible as a whole (◀) and per section. Three
   sections, in this order: ORC polars (§5), Polar files (§6), Tracks (§7).
   Collapse state is remembered per user, not per project.
-- **Centre stage**: 3D (default, §10), Map (§9.1), then Compare (§11). Map
-  appears only when the project contains an imported track (including hidden
-  tracks). Removing the last track while on Map returns to 3D. Opening or
-  creating a project starts in 3D.
-- **Right panel**: the source list (§8) and the 2D polar plot (§9.2).
-  Collapsible.
+- **Centre stage**: 3D (default, §10), 2D (§9.2, since 2026-10-02),
+  Compare (§11), then Map (§9.1) last (asked 2026-10-03). Map appears only when the project contains an
+  imported track (including hidden tracks). Removing the last track while on
+  Map returns to 3D. Opening or creating a project starts in 3D.
+- **Right panel**: the source list (§8). Collapsible. (The 2D polar plot
+  was a section of it until 2026-10-02; it is a stage now.)
 - Both side panels overlay the centre stage. Opening or closing either panel
   leaves the stage viewport, canvas dimensions and camera framing unchanged.
-  Floating view controls stay in the uncovered area; panel dialogs and the
-  full-size polar plot open above the side panels.
+  Floating view controls stay in the uncovered area; panel dialogs open
+  above the side panels.
 - **Status bar**: hints, errors, and a progress line for running jobs, with
   Cancel.
 
@@ -308,6 +319,9 @@ or a failed write leaves the previous setting in place.
   preference; it never changes the blend.
 - **MCP service** (§3.7): off by default; a port (default 47392) and, while
   on, a token. The settings file is written owner-only.
+- **Catalogue schedules** (§5.4): when the ORC and the ORR catalogue are
+  downloaded by themselves, each *Manually only* (default), *On startup* or
+  *On shutdown*.
 
 ### 3.4.1 PostgreSQL track library
 
@@ -347,14 +361,14 @@ nulls and field names are not treated as values. Matching ignores case, accents
 and punctuation. Every query word must match the same vessel, but words may
 match different fields. Folded text is cached once per vessel, shared by its
 tracks, and rebuilt from existing version-1 snapshots without a new download.
-Results retain deterministic pages of 100 tracks. Each result shows
+Results come in pages of 100 tracks, the next loading on its own as the
+list is scrolled to its end (asked 2026-10-02). Each result shows
 boat, event, provider, model, sail number, date, original URL and file availability.
-Importing a result preserves the query, current page and remaining results so
-several tracks can be added without repeating the search. A successfully added
-track is removed from that search's results and count, including when revisiting
-its page. Failed imports remain available to retry. These removals are temporary
-search state; catalogue pagination keeps its original offsets to avoid skipping
-other tracks.
+Importing a result preserves the query and the pages loaded so several
+tracks can be added without repeating the search. A successfully added track
+is removed from that search's results and count. Failed imports remain
+available to retry. These removals are temporary search state; the next
+page's offset is the number of rows received, so no track is skipped.
 Import selects the participant GUID, reads SYRF LineStrings with millisecond
 timestamps and optional speed/heading columns (including `properties.detail`),
 and creates an ordinary immutable track source with undo and project persistence.
@@ -427,8 +441,14 @@ The VectorEffects i18n system is copied (D10):
   A key may carry an `@@context` suffix for words whose translation depends
   on their role (the Compare stage and the Compare action); the suffix is
   never displayed.
-- Catalogues in `ui/src/i18n/locales/<lang>/<area>.ts`. **v1 ships English,
-  French and German.** The language picker is in Settings and on the start
+- Catalogues in `ui/src/i18n/locales/<lang>/<area>.ts`. **English, French,
+  German, Spanish, Italian, Dutch, Simplified Chinese, Japanese and Arabic**
+  (the last six added 2026-10-03, machine-drafted, each with its own
+  `GLOSSARY.<lang>.md`, all awaiting a native sailor's review). Arabic sets
+  `dir="rtl"` on the page and the layout mirrors; scales — the wave range
+  sliders, numbers with units drawn over the 3D view, the comparison and the
+  split view's marks — stay left to right, as charts do in right-to-left
+  software. The language picker is in Settings and on the start
   screen; changing it relabels everything immediately, including the native
   menu, which Rust rebuilds from a translated table (`menu.rs`) on every
   language change.
@@ -515,10 +535,10 @@ the design is `docs/superpowers/specs/2026-10-01-mcp-service-design.md`.
   | Group | Tools |
   |---|---|
   | Guide | `polarexplorer_guide` |
-  | Project | `project_status`, `project_new`, `project_open`, `project_save`, `project_close`, `recent_projects` |
+  | Project | `project_status`, `project_new`, `project_open`, `race_project`, `project_save`, `project_close`, `recent_projects` |
   | Boats | `boats_list`, `boat_add`, `boat_rename`, `boat_remove`, `boat_restore` |
-  | Sources | `sources_list`, `source_set`, `source_move`, `source_remove`, `orc_search`, `orc_add`, `orr_search`, `orr_add`, `orr_refresh`, `polar_files_import` |
-  | Tracks | `track_files_inspect`, `track_files_import`, `tracker_event`, `tracker_import`, `track_set`, `track_samples`, `sample_get`, `samples_exclude` |
+  | Sources | `sources_list`, `source_set`, `source_move`, `source_remove`, `orc_search`, `orc_add`, `orr_search`, `orr_add`, `orc_refresh`, `orr_refresh`, `polar_files_import` |
+  | Tracks | `track_files_inspect`, `track_files_import`, `tracker_event`, `tracker_import`, `library_search`, `library_import`, `track_set`, `track_samples`, `sample_get`, `samples_exclude` |
   | Weather | `weather_estimate`, `weather_fetch`, `weather_cancel`, `weather_jobs` |
   | Blend | `blend_status`, `blend_set`, `blend_filters_set`, `polar_read`, `blend_cell`, `polar_edit`, `compare` |
   | Export | `export_preview`, `export_polar`, `export_all` |
@@ -526,6 +546,18 @@ the design is `docs/superpowers/specs/2026-10-01-mcp-service-design.md`.
   | History | `undo`, `redo` |
   | Escape hatch | `invoke` |
 
+- **A whole race in one call** (asked 2026-10-03). `race_project` runs the
+  interface's Open project from tracker… (YellowBrick, Geovoile or Blue
+  Water Tracks; same model or exact boat matching), confirms its preview and
+  answers the per-boat report. The guide's "A whole race" then has the
+  agent search again per boat — `orc_search`, `orr_search`,
+  `library_search`, `tracker_event` — with what it knows of each boat from
+  the race's own pages (design, builder, sail number, other races), since
+  the application matches only on the tracker's data, and tells it to
+  carry a job through, stopping only for a large download, the user's
+  unsaved work or a choice nothing settles. `library_search` and
+  `library_import` search and import the user's track library (asked
+  2026-10-03); setting the library up stays the person's, in Settings.
 - **Cells are named by value.** `blend_cell` and `polar_edit` take TWA and
   TWS values; a value not on the grid is refused with the axis listed.
 - **Long tools.** `weather_fetch` waits for the given tracks, reports MCP
@@ -533,14 +565,15 @@ the design is `docs/superpowers/specs/2026-10-01-mcp-service-design.md`.
   goes away (invariant 6); what was already fetched is kept. Source ids are
   each boat's own, so a fetch or a cancel without `boat` is the first
   boat's and leaves the others' alone. `tracker_event` downloads through
-  `pe-trackers` as the dialog does, and `orr_refresh` starts the ORR
-  catalogue's scrape of one certificate year as Settings does. These are
+  `pe-trackers` as the dialog does, and `orc_refresh` and `orr_refresh`
+  start the catalogues' scrapes as Settings does (§5.4). These are
   the person's agent asking, on the allow-listed hosts only (invariant 4).
 - **`invoke`** runs any other IPC command by name, with unknown arguments
   refused. Not reachable through it: the service's own commands, every
   settings command (each answers the whole settings file, which holds the
   PostgreSQL password, the YellowBrick keys and the service's token), the
-  PostgreSQL track library, quitting, the commands that answer packed
+  PostgreSQL track library's commands (setting it up is the person's; its
+  search and import are the curated tools above), quitting, the commands that answer packed
   bytes, those that need the application handle (their tools carry them),
   and `save_project_as` and `export_polar` (their tools hold the overwrite
   rule). A test holds the table and the exclusions equal to the registered
@@ -745,8 +778,9 @@ The ORC catalogue is **embedded in the app** (D3):
   Copernicus ERA5, WeatherBench2, ARCO-ERA5, Copernicus Marine and Natural Earth
   in all three interface languages. Every installed bundle includes the user
   guide, detailed data notices and ORC MIT notice in its documentation resources.
-- Refreshing the catalogue is a developer task and a new release, never a
-  run-time fetch (invariant 4).
+- Rebuilding the embedded catalogue is a developer task and a new release.
+  Between releases, a scrape of ORC's own service adds the current
+  certificates beside it (§5.4); searching and adding never fetch.
 
 ### 5.2 Search
 
@@ -780,7 +814,19 @@ The ORC catalogue is **embedded in the app** (D3):
   certificate's wind speeds nearest 6, 12 and 20 kn). Year built (from, to)
   leaves out a boat without a year while either is set. An empty main box
   with every field empty lists nothing; otherwise it lists what the fields
-  admit. At most 50 results are listed, with the total count.
+  admit. **Both catalogues at once** (asked 2026-10-02): the ORC and the ORR
+  catalogue (§5.5) answer the one search, each hit badged ORC or ORR, the
+  totals added; the catalogue picker is gone. The two lists are interleaved,
+  each in its own rank — the best ORC hit, the best ORR hit, the next of
+  each — so neither is buried under the other's pages (asked 2026-10-03,
+  when ORR hits sat below every ORC page loaded). Fifty results of each
+  catalogue make a page, and the next page loads on its own as the list is
+  scrolled to its end (an IntersectionObserver on the list's last row; a
+  More button where there is none), appended until both are exhausted. The
+  **Measurements** bounds under Search by field are folded until asked for,
+  each row the measurement's name, then its Min and Max boxes under those
+  headings. Crew weight is not offered as a bound (asked 2026-10-03); the
+  search command still takes it, for the MCP service.
 - Measured in M5 on the development machine (Intel i9, debug build): 188
   keystrokes over the full catalogue, median 1.2 ms, p99 2.4 ms. In M14d,
   with the per-field keys and 470 more keystrokes typed into single fields
@@ -805,6 +851,69 @@ The ORC catalogue is **embedded in the app** (D3):
   the cosine of the angle (by the cosine of 180° less the angle for a run);
   where it falls on a table angle, the table's value stays. Nothing is
   invented outside the angles ORC gives; the blend (§12) handles gaps.
+
+### 5.4 Scraping ORC certificates
+
+The embedded catalogue is as old as the build. **Settings → ORC polars**
+adds the current certificates to it from ORC's own service (D31).
+
+- **Source.** `https://data.orc.org/public/WPub.dll?action=DownRMS`, ORC
+  family, one JSON document per country for the current VPP year: the
+  service the embedded catalogue comes from by way of jieter/orc-data. It
+  serves only the current year (another year answers no certificates, in
+  which case last year's is asked for once, for the first days of January).
+  Countries are the ones the service itself lists. Only `pe-trackers`
+  contacts `data.orc.org`; a scrape is about 60 MB in a minute or two
+  (7,730 certificates from 33 countries in 84 s, October 2026), one country
+  at a time, and nothing downloaded is kept.
+- **A certificate is read as the embedded ones were**: the sail number in
+  the catalogue's one form, speeds as `3600 / allowance` to two decimals,
+  beat and run angles and VMG per wind speed, sizes and ratings, plus the
+  certificate's reference number (`RefNo`), which orc-data does not carry.
+  A certificate that cannot be a polar (a table with a row short, an
+  allowance of zero, no reference) is left out and named in the details; a
+  country that does not answer is named and the others go on.
+- **No duplicates.** Scraped certificates are kept in
+  `orc-catalogue.bin` beside the settings, in the catalogue's own format.
+  **A certificate is its reference number**: scraped again, it replaces the
+  stored one in its place, so scraping again stores nothing twice and
+  changes nothing. Two valid certificates of one boat in one year are two
+  certificates (ORC issues a crewed and a double-handed one, or two sail
+  configurations: 14 boats in October 2026); both are listed, each with its
+  number in the results. A stored certificate of the scraped year that its
+  country's list no longer names was issued again under a new number or
+  revoked, and is **withdrawn**: out of the catalogue, counted as removed.
+  A country that did not answer, or answered nothing, withdraws nothing.
+  In search, a scraped certificate that is the same certificate as an
+  embedded entry (country, sail number, name, model, year built and
+  certificate year) takes that entry's place, the scraped data standing
+  for both. **Another year's certificate of the same boat is another
+  certificate** and is listed beside it, as for ORR; other years are never
+  touched by a scrape. Sources already in a project are copies and are
+  never changed.
+- **Ids stay put.** Embedded entries keep their catalogue ids with or
+  without a scrape, scraped ones are only appended, and a withdrawn one
+  keeps its place (it is found by no search and cannot be added), so a
+  result on screen or held by an MCP client still names the same
+  certificate after a scrape. The search refreshes when one finishes.
+- **A scrape is stored whole or not at all**: cancelling, or a failure of
+  the whole job, leaves the catalogue as it was. A store that cannot be
+  read costs the scraped certificates until the next scrape, never the
+  embedded catalogue.
+- **Settings.** *Scrape ORC polars* and *Cancel download*, with the
+  countries done and the certificates read, then what was added, updated,
+  removed and left out. It continues while Settings is closed and is independent
+  of the open project. Opening Settings fetches nothing.
+- **Schedules.** Each catalogue, ORC and ORR, has *Download automatically*:
+  **Manually only** (the default), **On startup** or **On shutdown**. A
+  scheduled scrape is the person's standing request (invariant 4). It asks
+  for the current year, and is skipped when that catalogue's store was
+  written less than 24 hours ago. On startup it runs in the background. On
+  shutdown, after the unsaved-changes guard, quitting waits for it and the
+  status bar says so; asking to quit again cancels the scrape and quits as
+  soon as it has stopped, the catalogue as it was. If the project was
+  edited meanwhile, the guard asks again.
+- The MCP service's `orc_refresh` starts the same scrape (§3.7).
 
 ---
 
@@ -1139,10 +1248,13 @@ Derivation settings (per track, editable later, undoable): maximum gap
 between neighbours used for a central difference (default 3 h, 1 s–24 h). A
 neighbour further away in time than the gap is not used: a fix with one
 usable neighbour uses that one (as the first and last fixes do), and a fix
-with none gets no derived values. And whether to prefer given or derived
-values; with "derived", a fix with nothing to derive from keeps its given
-value. Changing either re-derives every sample's heading and speed, as one
-undo entry that restores the previous values exactly.
+with none gets no derived values. And whether to prefer the given or the
+derived value — **for the heading and for the speed separately** (asked
+2026-10-02: a file may give a sound course and a poor speed); with
+"derived", a fix with nothing to derive from keeps its given value.
+Changing any of them re-derives every sample's heading and speed, as one
+undo entry that restores the previous values exactly. The interface offers
+each preference only where the track gives that quantity (§7.6).
 
 ### 7.5 Environment for each sample
 
@@ -1222,8 +1334,10 @@ recommendation.
   - wind over the water = wind − current; TWS and TWA use it.
   Both raw (ground) and corrected values are stored. A project-level toggle,
   **Correct for current** above the track list, chooses which feed the
-  polar (default: corrected where current exists); it is one undo, as is
-  **Include Stokes drift** (§7.5.1), which applies to the next fetch.
+  polar (default: corrected where current exists); it is one undo. The
+  **Include Stokes drift** option is gone (asked 2026-10-02): the document
+  keeps the setting for the fetch's sake, a loaded project has it off
+  (migration 7 → 8), and no control sets it.
 
 #### 7.5.1 Current source
 
@@ -1244,8 +1358,8 @@ chain that covers its time and place (D20):
    `GLOBAL_ANALYSISFORECAST_PHY_001_024`,
    `cmems_mod_glo_phy_anfc_merged-uv_PT1H-i` (1/12°, hourly). It carries
    `uo` (circulation), `utide` (FES2014 tide), `vsdx` (Stokes drift) and
-   `utotal = uo + utide + vsdx`. The app uses `uo + utide` by default, with a
-   setting to include Stokes drift.
+   `utotal = uo + utide + vsdx`. The app uses `uo + utide`; the option to
+   include Stokes drift was removed 2026-10-02.
 3. **GlobCurrent** (`MULTIOBS_GLO_PHY_MYNRT_015_003`, the store VectorEffects
    reads), 1993 onward, 0.25°, **with tide (FES2022)**: in version 202411
    both the multi-year and near-real-time stores describe `uo` as "absolute
@@ -1301,8 +1415,6 @@ boat, retaining port/starboard sign. All comparisons use original observations,
 so another filter cannot hide a change. Wind speed/direction and heading follow
 the current-correction selection; apparent air velocity is frame invariant and
 AWA uses the selected bow heading.
-Stop detection uses ground speed with padding on both sides; tack/gybe windows
-cover the two bounding fixes plus padding before and after.
 
 **M19 extension (requested 2026-09-30).** All filters remain reversible
 overlays. Optional switches exclude samples with unknown wave data (height
@@ -1310,17 +1422,41 @@ or direction missing) and unknown current (speed or direction missing).
 Zero height/speed is known, not missing. Wave direction can also be compared
 with COG, independently of current correction (0° ahead, 180° astern).
 
-An optional tack/gybe window removes both observations bounding a change
-of tack and a configurable number of seconds before and after them. Neutral
-head-to-wind or dead-downwind observations can bridge the change; missing
-wind or gaps longer than the track's maximum derivation gap cannot. An
-optional stop threshold uses ground speed, including exact zero, with a
-configurable exclusion window before and after each stopped observation.
-The existing heading-change filter remains independent.
+**Consolidated filters (asked 2026-10-02).** The filters are grouped by
+what they read, and each of the boat's and the wind's quantities has a
+range:
 
-The timestamp filter keeps samples at multiples of a configurable interval
-in minutes or seconds from UTC midnight (60 seconds for minutes, 3600 for whole hours); it
-never moves or rounds a sample's time. Track start/end inputs accept seconds.
+- **Boat speed**: BSP from–to, and **VMG** from–to (BSP × cos TWA, so
+  positive to windward and negative downwind, in the speed unit).
+- **Boat heading**: **heading** from–to and **COG** from–to, each a compass
+  sector clockwise from its start to its end, wrapping north, both bounds or
+  neither (clearing one clears the other). The heading is through the water
+  where the current is corrected for, the course over the ground always; the
+  direction-change filter stays with them.
+- **Remove tacks and gybes**: on or off (settled with the user 2026-10-02:
+  no window). A tack or gybe is where the tack — the side the wind is on —
+  differs between a sample and the last one that had a tack; the sample on
+  either side of it is left out and no more. Head to wind or dead downwind
+  in between may bridge the change; missing wind, or a gap longer than the
+  track's maximum derivation gap, cannot.
+- **Wind, waves and current**: TWS from–to, **TWD** from–to (a compass
+  sector, through the water where corrected), TWA from–to, the change
+  filters, and the wave and current filters as before.
+
+The tack/gybe window, the stop speed and window, the timestamp interval and
+its unit, and the given-or-derived origin filters are gone (a project saved
+with any of them loads without them, migration 7 → 8). A sample without the
+value an active range reads is out, as everywhere in this section.
+
+**Provided or derived (asked 2026-10-02).** Where a track *provides* a
+quantity — headings (COG), speeds (SOG) or wind (both speed and direction)
+— its filters offer **Use: provided by the track / derived** for that
+quantity, in its group: the heading and the speed are chosen apart (§7.4),
+and the wind's choice is the supplied-or-downloaded one (§7.5). A quantity
+the track does not provide is derived and offers no choice. The separate
+"Heading and speed" section is gone, and with it the maximum-gap control
+(the setting stays at its default, 3 h, and the MCP `track_set` can still
+change it). Track start/end inputs accept seconds.
 
 The 3D view exposes **Global point filters** only when the project has track
 data. These offer the same settings without start/end times, apply after
@@ -1331,8 +1467,9 @@ projects migrate with every new option disabled.
 
 The user-requested ORR catalogue source is [RegattaMan's public ORR valid
 list](https://www.regattaman.com/valid_list_ora.php?crule=ORR&sdir=true&ssdir=true&sort=3&ssort=0).
-The app includes a captured catalogue and Settings offers a year-specific,
-user-started refresh with progress and cancellation. Only `pe-trackers` contacts
+The app includes a captured catalogue and Settings offers a year-specific
+refresh with progress and cancellation, started by hand or by the schedule
+chosen there (§5.4). Only `pe-trackers` contacts
 `www.regattaman.com`; source lookup and project imports work offline. The two
 boat-speed tables (offshore and short-course) remain separate variants; time
 allowances are never read as boat speeds. Physical measurements come from
@@ -1429,8 +1566,8 @@ Filtered-out samples stay in the project and appear dimmed in the plots when
 Reanalysis fetches run on a worker pool, show progress in the status bar
 and track list, and can be cancelled. Tracker downloads show progress and
 Cancel in their import dialog; the boat list can be searched while downloading.
-ORR catalogue refreshes show progress and cancellation in Settings, continue
-while Settings is closed, and are independent of the open project.
+ORC and ORR catalogue refreshes show progress and cancellation in Settings,
+continue while Settings is closed, and are independent of the open project.
 A tracker download never includes weather
 (D24). A cancelled or failed fetch keeps whatever samples completed
 (status "partial") and can be resumed with Fetch weather…. Jobs for tracks from the
@@ -1543,8 +1680,13 @@ mask texture, so no land triangle folds across the horizon.
 
 ### 9.2 Polar plot
 
-A classic 2D polar diagram in the right panel (and full-size as a centre stage
-overlay on demand):
+A classic 2D polar diagram, the **2D** stage (asked 2026-10-02; until then
+a section of the right panel with a full-size overlay). On the stage a
+symmetric polar's 0°–180° axis runs down the middle of the view — the
+part of the stage between the open panels — and the fan fills its right half, as a full circle's axis does; its controls are
+centred across the top; the panel form,
+kept in the code for a narrow place, puts the fan against its left edge.
+The MCP service's `view://stage` still names the stage `"plot"`.
 
 - A TWS slider (or "all") chooses the slice (D21). One value draws one curve
   per visible polar source (tracks are not polar sources) and the blend, all
@@ -1623,6 +1765,11 @@ overlay on demand):
   grid lines drawn. Every sample is a dot in its track's colour. The blend is
   an opaque surface on the output grid, in the Blend entry's colour, sent
   while the entry is shown (source index `0xFFFFFFFF` in the scene).
+- The camera looks at the origin (asked 2026-10-03): on first load, and
+  from each preset, the origin is drawn in the middle of what the panels,
+  the toolbar and the wave filters leave in sight, from far enough back
+  that the corner of the scene farthest from it is in the frame. (The
+  Compare stage's presets still look at the middle of what they show.)
 - Orbit, pan, zoom; preset cameras (top, side, isometric); an axis
   legend with the display units. Top looks down the vertical axis (in the
   tower, the classic polar diagram with every TWS stacked); side looks
@@ -1653,7 +1800,7 @@ overlay on demand):
   `ui/src/polar/scenePacket.ts`) and pinned by a shared fixture. When no sample has moved
   since the scene the view holds (an edit, an exclusion, a filter), the view
   names that scene's samples key and only the samples' flags travel
-  (0.8 MB rather than 8 MB at 200,000 samples); anything that moves samples
+  (0.8 MB rather than 11 MB at 200,000 samples); anything that moves samples
   (the environment, the derivation, corrected or ground values, a source
   shown, hidden, added, removed or moved) sends the whole scene.
 
@@ -1673,7 +1820,7 @@ machine. Four bands (settled with the user 2026-10-01, D30): **night**
 21:00 up to 05:00, **morning** 05:00 up to 12:00, **afternoon** 12:00 up to
 17:00, **evening** 17:00 up to 21:00. Rust decides the band
 (`pe_tracks::daytime`) and sends its two-bit code in bits 8–9 of each
-sample's flags, in the 3D scene (layout version 4) and the 2D dots (version
+sample's flags, in the 3D scene (layout version 5) and the 2D dots (version
 2); the interface names and colours it (four colours of the Okabe–Ito set)
 and shows the bands and their hours as a legend. A dot's tooltip names its
 band. It is a display grouping and never enters the blend. A mode, or "show filtered", with nothing to show (no sample has
@@ -1774,6 +1921,70 @@ Every source can be edited on its own (D17):
   from M14, the blend). Nothing derived is saved (invariant 2).
 
 ---
+
+### 10.5 Split Wave Angle
+
+Requested by the user 2026-10-02. In **single view only** (a pane of split
+or four-way view does not offer it), **Split Wave Angle**, beside the Box
+tool, draws the 3D view once per wave direction.
+
+- **The direction is relative to the boat**: degrees clockwise from the
+  bow, 0° on the bow, 90° on the starboard beam, 180° astern, 270° on the
+  port beam. It is the sample's wave "from" direction less the heading the
+  wave angle off the bow already uses (through the water when the project
+  corrects for current). Unlike that angle it keeps its side, so Rust sends
+  it as a column of its own, `wave bearing`, in the scene (layout version
+  5); NaN when the waves or the heading are unknown.
+- **The count** is a slider with six stops: 4, 8, 16, 18, 24 or 36
+  directions (8 to begin with). With *N* directions each is 360/*N* wide
+  and **centred** on a multiple of 360/*N*, the first on the bow, so 0° is
+  always the middle of a direction and never a boundary between two. A
+  bearing on a boundary belongs to the direction clockwise of it.
+- **From / To** chooses the sense: *From* puts a sample in the direction
+  its waves came from, *To* in the direction they went to (the bearing plus
+  180°). The copies are named for it ("From 45°", "To 225°").
+- **Each copy holds only its direction's samples**, of those the view would
+  draw anyway: the show toggles, the track, global and priority filters and
+  the wave range filters (§10.2) all still apply, and the copies split what
+  is left. Grid points, surfaces and guides are in every copy. A sample with
+  no wave direction is in no copy; the controls say how many those are.
+- **Each copy has its own blend** (asked 2026-10-02): the blend drawn in a
+  copy is made with every track binned again from that copy's samples
+  alone — after the same filters, exclusions and wave ranges — and every
+  other source as it is, since a certificate or a polar file carries no
+  wave direction. It is the ordinary blend rule over that evidence (§12.3),
+  so a copy with no sample of its direction shows the reference polars'
+  blend alone, and a copy where no source speaks has no blend. Rust answers
+  all the copies' blends in one packet (`polar_scene_split`, "PE3W": one
+  surface per copy that has a blend), cached on the blend's own key plus
+  the split, and a hovered cell of a copy's blend (`blend_cell_split`)
+  names the sources behind it *there*: the track with that direction's
+  samples and their confidence. The whole blend is not drawn in a split
+  view; it is unchanged, and so is export (invariant 2).
+- **Each copy has a big arrow** against a small boat drawn bow up: it points
+  at the boat from the copy's direction (*From*) or away from the boat
+  toward it (*To*). Round the boat, on a faint ring of the whole circle, an
+  arc shows the directions the copy holds — its 360/*N* degrees centred on
+  its direction. The copy also says its direction and how many samples it
+  holds.
+- **The copies are one view**: one canvas and one camera drawn into a grid
+  of viewports (a WebGL context per copy would pass the webview's limit at
+  36), so rotating, panning, zooming and the camera presets move them all
+  identically. The grid is the one whose copies are largest on their shorter
+  side, and it lies in the part of the stage the toolbar, the side panel,
+  the wave range filters and the docked panels leave free, following them
+  as they open and close.
+- **Hover is linked**: the dot under the pointer has its full tooltip, and
+  in every other copy the sample nearest the same wind (within 5° of TWA
+  and 1 kn of TWS) is ringed with its boat speed. Hovering a copy's blend
+  marks the same cell in every other copy that has a blend, each with its
+  own blend's speed there, so the eye reads how the waves change it. A
+  click, a lasso or a box acts in the copy it starts in, on that copy's
+  dots.
+- Axis labels are drawn in the first copy, thinned so none is written over
+  another, and not at all when the copies are narrower than 150 px.
+- It is a way of looking: it is not saved with the project, never enters
+  the blend and changes no export.
 
 ## 11. Compare
 
@@ -1886,8 +2097,8 @@ Project setting, editable in Blend settings:
 - Blend settings also hold: the statistic a newly imported track starts
   with (90th percentile by default; each track keeps its own, §12.1), the
   samples a track cell needs (5), the samples for full confidence (`n_full`,
-  30), smoothing (off), current correction (§7.5) and Stokes drift
-  (§7.5.1). **Apply** makes everything one undo entry ("Change blend
+  30), smoothing (off) and current correction (§7.5). **Apply** makes
+  everything one undo entry ("Change blend
   settings"); a new grid re-bins every track, and an edit on a node the new
   grid lacks is kept in the overlay with nothing to apply to.
 

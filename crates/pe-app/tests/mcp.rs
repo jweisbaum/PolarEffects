@@ -1091,8 +1091,19 @@ async fn a_track_file_is_inspected_imported_and_filtered() {
     .await;
     let changed = track_of(&app, id);
     assert_eq!(changed.max_gap_s, 120);
-    assert_eq!(changed.prefer, before.prefer);
+    assert_eq!(changed.prefer_heading, before.prefer_heading);
+    assert_eq!(changed.prefer_speed, before.prefer_speed);
     assert!(changed.downloaded_wind_only);
+    // Heading and speed are preferred apart.
+    call(
+        &client,
+        "track_set",
+        json!({ "source": id, "prefer_speed": "derived" }),
+    )
+    .await;
+    let split = track_of(&app, id);
+    assert_eq!(split.prefer_heading, before.prefer_heading);
+    assert_eq!(split.prefer_speed, "derived");
 
     let message = call_err(&client, "track_set", json!({ "source": id })).await;
     assert!(message.contains("nothing to change"), "{message}");
@@ -2583,4 +2594,215 @@ fn a_client_cannot_be_registered_while_the_service_is_off() {
         let refused = pe_app::mcp::clients::mcp_register_client(app.state(), client);
         assert_eq!(refused.unwrap_err().kind(), "bad-option", "{client:?}");
     }
+}
+
+/// A race built in one call (asked 2026-10-03): race_project downloads the
+/// race (here, a recorded one the session already holds, so nothing reaches
+/// a tracker), opens a tab per boat with its track and the certificates
+/// that match it, and the interface's own read shows the result.
+#[tokio::test]
+async fn race_project_opens_a_tab_per_boat_with_its_track_and_certificates() {
+    use pe_trackers::{
+        TrackerBoat, TrackerEvent,
+        event::{EventRef, PositionsFrom},
+    };
+    use std::collections::BTreeMap;
+    let root = TempRoot::new("mcp-race");
+    let app = mock_app(&root);
+    let (port, token) = serve(&app);
+    let client = client(port, &token).await;
+
+    // A boat the catalogue can match by model (with no builder to contradict
+    // it), and one it cannot.
+    let catalogue = pe_orc::catalogue().unwrap();
+    let entry = (0..catalogue.len() as u32)
+        .filter_map(|id| catalogue.entry(id))
+        .find(|e| {
+            e.model
+                .as_deref()
+                .is_some_and(|m| pe_app::boats::matching::model_key(m).is_some())
+                && e.builder.is_none()
+        })
+        .unwrap();
+    let fixes = |lat: f64| {
+        (0..12)
+            .map(|k| pe_core::track::Fix {
+                tws: None,
+                twd_from: None,
+                t: 1_790_769_600 + k * 600,
+                lat: lat + k as f64 * 0.01,
+                lon: -1.0,
+                cog: None,
+                sog: None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let boat = |id: &str, name: &str, model: Option<&str>, lat: f64| TrackerBoat {
+        id: id.into(),
+        name: name.into(),
+        model: model.map(str::to_owned),
+        details: BTreeMap::from([("mmsi".into(), format!("23{id}000000"))]),
+        sail: None,
+        division: None,
+        status: None,
+        start: None,
+        finish: None,
+        fixes: fixes(lat),
+    };
+    let event = TrackerEvent {
+        event: EventRef {
+            tracker: pe_core::track::Tracker::YellowBrick,
+            key: "mcprace".into(),
+            url: "https://boats.invalid/mcprace".into(),
+        },
+        title: "The MCP race".into(),
+        start: None,
+        stop: None,
+        positions_from: PositionsFrom::Primary,
+        leg: None,
+        boats: vec![
+            boat("1", "Matched", entry.model.as_deref(), 50.0),
+            boat("2", "Unknown", Some("Nothing Like It 99"), 51.0),
+        ],
+    };
+    app.state::<AppState>()
+        .trackers
+        .keep(std::sync::Arc::new(event), "mcprace");
+
+    let answer = call(
+        &client,
+        "race_project",
+        json!({ "tracker": "yellowbrick", "url": "mcprace" }),
+    )
+    .await;
+    let boats = answer["boats"].as_array().unwrap();
+    assert_eq!(boats.len(), 2);
+    assert!(boats[0]["polars"].as_u64().unwrap() > 0, "{answer}");
+    assert_eq!(boats[1]["polars"], 0);
+    assert_eq!(boats[0]["tracks"], 1);
+
+    // The interface's own read: the race is open, one tab per boat.
+    let state = app.state::<AppState>();
+    let tabs = pe_app::boats::list(state.inner()).unwrap();
+    assert_eq!(tabs.tabs.len(), 2);
+    assert_eq!(tabs.name, "The MCP race");
+    let first = pe_app::projects::summary(state.inner()).unwrap().unwrap();
+    assert!(
+        first.sources.iter().any(|s| s.kind == "orc"),
+        "the certificate is in the first boat"
+    );
+    assert!(
+        first.sources.iter().any(|s| s.kind == "track"),
+        "and its track"
+    );
+
+    // Refusals in words: a tracker it does not build from, a match mode it
+    // does not know, and the user's unsaved work.
+    let unknown = call_err(
+        &client,
+        "race_project",
+        json!({ "tracker": "sailwave", "url": "x" }),
+    )
+    .await;
+    assert!(unknown.contains("geovoile"), "{unknown}");
+    let mode = call_err(
+        &client,
+        "race_project",
+        json!({ "tracker": "yellowbrick", "url": "mcprace", "match_mode": "close" }),
+    )
+    .await;
+    assert!(mode.contains("exact_boat"), "{mode}");
+    call(&client, "boat_add", json!({ "name": "Unsaved" })).await;
+    let unsaved = call_err(
+        &client,
+        "race_project",
+        json!({ "tracker": "yellowbrick", "url": "mcprace" }),
+    )
+    .await;
+    assert!(unsaved.contains("discard_unsaved"), "{unsaved}");
+    client.cancel().await.expect("close");
+}
+
+/// The track library over MCP (asked 2026-10-03): with no library set up,
+/// a search says so and an import is refused in words.
+#[tokio::test]
+async fn the_track_library_answers_even_when_it_is_not_set_up() {
+    let root = TempRoot::new("mcp-library");
+    let app = mock_app(&root);
+    let (port, token) = serve(&app);
+    let client = client(port, &token).await;
+    call(&client, "project_new", json!({ "name": "Library" })).await;
+    let found = call(&client, "library_search", json!({ "query": "Ker 46" })).await;
+    assert_eq!(found["downloaded"], false);
+    assert_eq!(found["total"], 0);
+    let refused = call_err(&client, "library_import", json!({ "id": "nothing" })).await;
+    assert!(refused.contains("Settings"), "{refused}");
+    client.cancel().await.expect("close");
+}
+
+/// A Geovoile race builds the same way (asked 2026-10-03): one tab per boat
+/// with its track, from a recorded event the session holds under the key
+/// the link resolves to.
+#[tokio::test]
+async fn race_project_builds_a_geovoile_race_too() {
+    use pe_trackers::{TrackerBoat, TrackerEvent, event::PositionsFrom};
+    let root = TempRoot::new("mcp-race-geovoile");
+    let app = mock_app(&root);
+    let (port, token) = serve(&app);
+    let client = client(port, &token).await;
+    // As a person may paste it, without its scheme.
+    let link = "routedurhum.geovoile.com/2022/";
+    let reference = pe_trackers::event::client(pe_core::track::Tracker::Geovoile)
+        .unwrap()
+        .resolve(link)
+        .unwrap();
+    // Geovoile gives a boat's name and sail number, no model.
+    let boat = |id: &str, lat: f64| TrackerBoat {
+        id: id.into(),
+        name: format!("Skipper {id}"),
+        model: None,
+        details: Default::default(),
+        sail: Some(format!("FRA {id}")),
+        division: Some("Rhum Mono".into()),
+        status: None,
+        start: None,
+        finish: None,
+        fixes: (0..12)
+            .map(|k| pe_core::track::Fix {
+                tws: None,
+                twd_from: None,
+                t: 1_790_769_600 + k * 600,
+                lat: lat - k as f64 * 0.02,
+                lon: -2.0 - k as f64 * 0.02,
+                cog: None,
+                sog: None,
+            })
+            .collect(),
+    };
+    let key = reference.key.clone();
+    app.state::<AppState>().trackers.keep(
+        std::sync::Arc::new(TrackerEvent {
+            event: reference,
+            title: "Route du Rhum".into(),
+            start: None,
+            stop: None,
+            positions_from: PositionsFrom::Primary,
+            leg: None,
+            boats: vec![boat("1", 48.6), boat("2", 48.7), boat("3", 48.8)],
+        }),
+        &key,
+    );
+    let answer = call(
+        &client,
+        "race_project",
+        json!({ "tracker": "geovoile", "url": link }),
+    )
+    .await;
+    let boats = answer["boats"].as_array().unwrap();
+    assert_eq!(boats.len(), 3, "{answer}");
+    assert!(boats.iter().all(|b| b["tracks"] == 1), "{answer}");
+    let tabs = pe_app::boats::list(app.state::<AppState>().inner()).unwrap();
+    assert_eq!(tabs.tabs.len(), 3);
+    assert_eq!(tabs.name, "Route du Rhum");
+    client.cancel().await.expect("close");
 }

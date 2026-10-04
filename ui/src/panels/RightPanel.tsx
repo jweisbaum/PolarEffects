@@ -2,22 +2,19 @@ import type { ProjectSummary } from "../generated/ProjectSummary";
 import type { SpeedUnit } from "../generated/SpeedUnit";
 import { useT } from "../i18n";
 import type { PanelState } from "./layout";
-import PolarPlot from "./PolarPlot";
 import Section from "./Section";
 import SourceList from "./SourceList";
 
 /**
- * The right panel (spec.md 3.2): the source list (§8) above the 2D polar plot
- * (§9.2).
+ * The right panel (spec.md 3.2): the source list (§8). The 2D polar plot
+ * is a stage of its own (§9.2) since 2026-10-02.
  */
-export default function RightPanel({ project, onProject, panels, onToggle, onFullSizePlot, speedUnit = "kn" }: {
+export default function RightPanel({ project, onProject, panels, onToggle, speedUnit = "kn" }: {
   project: ProjectSummary;
   onProject: (project: ProjectSummary) => void;
   panels: PanelState;
   onToggle: (panel: keyof PanelState) => void;
-  /** Opens the polar plot full size, as a centre stage overlay (spec.md 9.2). */
-  onFullSizePlot: () => void;
-  /** The display speed unit (Settings), for the polar plot's text. */
+  /** The display speed unit (Settings), for the source list's text. */
   speedUnit?: SpeedUnit;
 }) {
   const t = useT();
@@ -26,10 +23,6 @@ export default function RightPanel({ project, onProject, panels, onToggle, onFul
       <Section feature="panel:sources" title={t("Sources")} tooltip={t("Every source, with its colour, visibility and weight")}
         open={panels.sources} onToggle={() => onToggle("sources")}>
         <SourceList unit={speedUnit} project={project} onProject={onProject} />
-      </Section>
-      <Section feature="panel:plot" title={t("Polar plot")} tooltip={t("Boat speed against wind angle for one wind speed")}
-        open={panels.plot} onToggle={() => onToggle("plot")}>
-        <PolarPlot project={project} variant="panel" unit={speedUnit} onFullSize={onFullSizePlot} />
       </Section>
     </div>
   );

@@ -14,8 +14,7 @@ use std::path::Path;
 
 use pe_core::command::Command;
 use pe_core::source::{
-    DirectionRange, OriginFilter, Range, SampleFilters, Source, TimeWindow, WaveDirectionFilter,
-    WaveSector,
+    DirectionRange, Range, SampleFilters, Source, TimeWindow, WaveDirectionFilter, WaveSector,
 };
 use pe_core::track::{DerivationSettings, PreferValues, Track, TrackOrigin, ValueOrigin};
 use pe_core::{SampleId, SourceId, SourceKind, TrackId};
@@ -64,10 +63,34 @@ pub struct TrackFilters {
     /// Maximum true wind direction change, degrees; null disables.
     #[serde(default)]
     pub max_wind_direction_change: Option<f64>,
-    /// `"any"`, `"given"` or `"derived"`.
-    pub heading_origin: String,
-    /// `"any"`, `"given"` or `"derived"`.
-    pub speed_origin: String,
+    /// Heading through the water kept, compass degrees clockwise from
+    /// `heading_from` to `heading_to`; both null for no bound.
+    #[serde(default)]
+    pub heading_from: Option<f64>,
+    /// See `heading_from`.
+    #[serde(default)]
+    pub heading_to: Option<f64>,
+    /// Course over the ground kept, compass degrees clockwise.
+    #[serde(default)]
+    pub cog_from: Option<f64>,
+    /// See `cog_from`.
+    #[serde(default)]
+    pub cog_to: Option<f64>,
+    /// VMG range, knots: BSP × cos TWA, negative downwind.
+    #[serde(default)]
+    pub vmg_min: Option<f64>,
+    /// See `vmg_min`.
+    #[serde(default)]
+    pub vmg_max: Option<f64>,
+    /// True wind direction kept, compass degrees clockwise.
+    #[serde(default)]
+    pub twd_from: Option<f64>,
+    /// See `twd_from`.
+    #[serde(default)]
+    pub twd_to: Option<f64>,
+    /// Leave out the sample on either side of each tack and gybe.
+    #[serde(default)]
+    pub exclude_tacks: bool,
     /// True wind speed range, knots.
     pub tws_min: Option<f64>,
     /// See `tws_min`.
@@ -107,18 +130,6 @@ pub struct TrackFilters {
     /// Require complete current data.
     #[serde(default)]
     pub exclude_unknown_current: bool,
-    /// Seconds before and after tack/gybe, null to disable.
-    #[serde(default)]
-    pub tack_gybe_padding_s: Option<i64>,
-    /// Maximum ground speed considered stopped, knots; null to disable.
-    #[serde(default)]
-    pub stop_speed_kn: Option<f64>,
-    /// Seconds before and after a stop.
-    #[serde(default)]
-    pub stop_padding_s: i64,
-    /// UTC interval in seconds, null to disable.
-    #[serde(default)]
-    pub utc_interval_s: Option<i64>,
 }
 
 const SECTORS: [(WaveSector, &str); 5] = [
@@ -137,24 +148,20 @@ fn bounds(range: Option<&Range>) -> (Option<f64>, Option<f64>) {
     range.map_or((None, None), |r| (r.min, r.max))
 }
 
-fn origin_filter_name(filter: OriginFilter) -> &'static str {
-    match filter {
-        OriginFilter::Any => "any",
-        OriginFilter::GivenOnly => "given",
-        OriginFilter::DerivedOnly => "derived",
+/// A compass sector from two bounds; none without both.
+fn sector(from: Option<f64>, to: Option<f64>) -> Result<Option<DirectionRange>> {
+    match (from, to) {
+        (Some(from), Some(to)) => Ok(Some(DirectionRange { from, to })),
+        (None, None) => Ok(None),
+        _ => Err(AppError::BadOption {
+            field: "Direction range",
+            value: "needs both its bounds".to_owned(),
+        }),
     }
 }
 
-fn origin_filter(name: &str) -> Result<OriginFilter> {
-    match name {
-        "any" => Ok(OriginFilter::Any),
-        "given" => Ok(OriginFilter::GivenOnly),
-        "derived" => Ok(OriginFilter::DerivedOnly),
-        other => Err(AppError::BadOption {
-            field: "Given or derived",
-            value: other.to_owned(),
-        }),
-    }
+fn sector_bounds(range: Option<&DirectionRange>) -> (Option<f64>, Option<f64>) {
+    range.map_or((None, None), |r| (Some(r.from), Some(r.to)))
 }
 
 impl TrackFilters {
@@ -170,8 +177,15 @@ impl TrackFilters {
             max_awa_change: filters.max_awa_change_deg,
             max_wind_speed_change: filters.max_wind_speed_change_kn,
             max_wind_direction_change: filters.max_wind_direction_change_deg,
-            heading_origin: origin_filter_name(filters.heading_origin).to_owned(),
-            speed_origin: origin_filter_name(filters.speed_origin).to_owned(),
+            heading_from: sector_bounds(filters.heading_deg.as_ref()).0,
+            heading_to: sector_bounds(filters.heading_deg.as_ref()).1,
+            cog_from: sector_bounds(filters.cog_deg.as_ref()).0,
+            cog_to: sector_bounds(filters.cog_deg.as_ref()).1,
+            vmg_min: bounds(filters.vmg_kn.as_ref()).0,
+            vmg_max: bounds(filters.vmg_kn.as_ref()).1,
+            twd_from: sector_bounds(filters.twd_deg.as_ref()).0,
+            twd_to: sector_bounds(filters.twd_deg.as_ref()).1,
+            exclude_tacks: filters.exclude_tacks,
             tws_min: bounds(filters.tws_kn.as_ref()).0,
             tws_max: bounds(filters.tws_kn.as_ref()).1,
             twa_min: bounds(filters.twa_deg.as_ref()).0,
@@ -219,10 +233,6 @@ impl TrackFilters {
             exclude_no_tide: filters.exclude_no_tide,
             exclude_unknown_wave: filters.exclude_unknown_wave,
             exclude_unknown_current: filters.exclude_unknown_current,
-            tack_gybe_padding_s: filters.tack_gybe_padding_s,
-            stop_speed_kn: filters.stop_speed_kn,
-            stop_padding_s: filters.stop_padding_s,
-            utc_interval_s: filters.utc_interval_s,
         }
     }
 
@@ -288,8 +298,11 @@ impl TrackFilters {
             max_awa_change_deg: self.max_awa_change,
             max_wind_speed_change_kn: self.max_wind_speed_change,
             max_wind_direction_change_deg: self.max_wind_direction_change,
-            heading_origin: origin_filter(&self.heading_origin)?,
-            speed_origin: origin_filter(&self.speed_origin)?,
+            heading_deg: sector(self.heading_from, self.heading_to)?,
+            cog_deg: sector(self.cog_from, self.cog_to)?,
+            vmg_kn: range(self.vmg_min, self.vmg_max),
+            twd_deg: sector(self.twd_from, self.twd_to)?,
+            exclude_tacks: self.exclude_tacks,
             tws_kn: range(self.tws_min, self.tws_max),
             twa_deg: range(self.twa_min, self.twa_max),
             wave_height_m: range(self.hs_min, self.hs_max),
@@ -298,10 +311,6 @@ impl TrackFilters {
             exclude_no_tide: self.exclude_no_tide,
             exclude_unknown_wave: self.exclude_unknown_wave,
             exclude_unknown_current: self.exclude_unknown_current,
-            tack_gybe_padding_s: self.tack_gybe_padding_s,
-            stop_speed_kn: self.stop_speed_kn,
-            stop_padding_s: self.stop_padding_s,
-            utc_interval_s: self.utc_interval_s,
         };
         filters.validate()?;
         Ok(filters)
@@ -343,12 +352,18 @@ pub struct TrackSummary {
     pub no_tide: u32,
     /// Longest gap a central difference may span, seconds.
     pub max_gap_s: i64,
-    /// `"given"` or `"derived"`.
-    pub prefer: String,
+    /// The given or the derived heading first: `"given"` or `"derived"`.
+    pub prefer_heading: String,
+    /// The given or the derived speed first: `"given"` or `"derived"`.
+    pub prefer_speed: String,
     /// Use downloaded weather even when the track supplies wind.
     pub downloaded_wind_only: bool,
     /// Fixes containing both supplied true wind speed and direction.
     pub supplied_wind: u32,
+    /// Fixes that give a heading (a course over the ground).
+    pub supplied_heading: u32,
+    /// Fixes that give a speed (over the ground).
+    pub supplied_speed: u32,
     /// The editable filters.
     pub filters: TrackFilters,
     /// Whether any environment filter (wind, waves, current) is set.
@@ -429,11 +444,10 @@ impl TrackSummary {
                     .filter(|f| f.tws.zip(f.twd_from).is_some())
                     .count(),
             ),
-            prefer: match track.derivation.prefer {
-                PreferValues::Given => "given",
-                PreferValues::Derived => "derived",
-            }
-            .to_owned(),
+            supplied_heading: count(track.fixes.iter().filter(|f| f.cog.is_some()).count()),
+            supplied_speed: count(track.fixes.iter().filter(|f| f.sog.is_some()).count()),
+            prefer_heading: prefer_name(track.derivation.prefer_heading).to_owned(),
+            prefer_speed: prefer_name(track.derivation.prefer_speed).to_owned(),
             filters: TrackFilters::of(filters),
             environment_filters: filters.wave_height_m.is_some()
                 || filters.wave_direction.is_some()
@@ -446,7 +460,9 @@ impl TrackSummary {
                 || filters.exclude_no_tide
                 || filters.exclude_unknown_wave
                 || filters.exclude_unknown_current
-                || filters.tack_gybe_padding_s.is_some(),
+                || filters.twd_deg.is_some()
+                || filters.vmg_kn.is_some()
+                || filters.exclude_tacks,
         }
     }
 }
@@ -1114,18 +1130,37 @@ pub fn track_filters_set(
     })
 }
 
+fn prefer_name(prefer: PreferValues) -> &'static str {
+    match prefer {
+        PreferValues::Given => "given",
+        PreferValues::Derived => "derived",
+    }
+}
+
+fn prefer_value(field: &'static str, name: &str) -> Result<PreferValues> {
+    match name {
+        "given" => Ok(PreferValues::Given),
+        "derived" => Ok(PreferValues::Derived),
+        other => Err(AppError::BadOption {
+            field,
+            value: other.to_owned(),
+        }),
+    }
+}
+
 /// Changes how a track derives heading and speed (spec.md 7.4), undoably.
-/// `prefer` is `"given"` or `"derived"`.
+/// `prefer_heading` and `prefer_speed` are `"given"` or `"derived"`.
 #[tauri::command]
 pub fn set_track_derivation(
     state: tauri::State<'_, AppState>,
     boat_context: Option<u64>,
     id: u64,
     max_gap_s: i64,
-    prefer: String,
+    prefer_heading: String,
+    prefer_speed: String,
 ) -> Result<ProjectSummary> {
     let state = state.scoped(boat_context);
-    track_derivation_set(&state, id, max_gap_s, &prefer)
+    track_derivation_set(&state, id, max_gap_s, &prefer_heading, &prefer_speed)
 }
 
 /// [`set_track_derivation`] without a Tauri handle.
@@ -1133,21 +1168,14 @@ pub fn track_derivation_set(
     state: &AppState,
     id: u64,
     max_gap_s: i64,
-    prefer: &str,
+    prefer_heading: &str,
+    prefer_speed: &str,
 ) -> Result<ProjectSummary> {
     let after = DerivationSettings {
         max_gap_s,
         downloaded_wind_only: false,
-        prefer: match prefer {
-            "given" => PreferValues::Given,
-            "derived" => PreferValues::Derived,
-            other => {
-                return Err(AppError::BadOption {
-                    field: "Prefer",
-                    value: other.to_owned(),
-                });
-            }
-        },
+        prefer_heading: prefer_value("Prefer heading", prefer_heading)?,
+        prefer_speed: prefer_value("Prefer speed", prefer_speed)?,
     };
     after.validate()?;
     edit::apply(state, |project| {

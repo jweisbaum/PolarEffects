@@ -249,7 +249,7 @@ impl<R: tauri::Runtime> PolarExplorer<R> {
     }
 
     #[tool(
-        description = "Searches the ORC rating-certificate catalogue built into the application (no network): `total` matches and the best `hits`, each with the `id` orc_add takes, boat name, sail number, country, model, builder, designer, year and certificate year."
+        description = "Searches the ORC rating-certificate catalogue: the one built into the application and what was scraped since (no network here): `total` matches and the best `hits`, each with the `id` orc_add takes, boat name, sail number, country, model, builder, designer, year and certificate year."
     )]
     async fn orc_search(&self, Parameters(p): Parameters<CatalogueSearchParams>) -> ToolResult {
         let filters = filters(p.filters)?;
@@ -305,6 +305,18 @@ impl<R: tauri::Runtime> PolarExplorer<R> {
             })
             .await?;
         json(&summary)
+    }
+
+    #[tool(
+        description = "Refreshes the ORC certificate catalogue from ORC's own service, data.orc.org: every country's valid certificates of the current year, about 60 MB in a minute or two, so tell the user before starting it. Certificates already held are not stored twice. Starts the download and answers at once with its progress (running, done and total countries, certificates read, added, updated, failures); read it later with invoke orc_scrape_status and stop it with invoke cancel_orc_scrape. Only needed when orc_search does not find a recent certificate: the application carries a catalogue of its own."
+    )]
+    async fn orc_refresh(&self) -> ToolResult {
+        let progress = self
+            .run("orc_refresh", move |app| {
+                crate::orc::start_orc_scrape(app.clone(), app.state())
+            })
+            .await?;
+        json(&progress)
     }
 
     #[tool(

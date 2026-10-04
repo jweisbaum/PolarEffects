@@ -9,7 +9,7 @@ import { HEADER_BYTES, SCENE_MAGIC, SCENE_VERSION } from "./scenePacket";
 /** One track source and `samples.length / 3` samples, no nodes or surfaces. */
 export function packSynthetic(samples: Float32Array): ArrayBuffer {
   const m = samples.length / 3;
-  const buffer = new ArrayBuffer(HEADER_BYTES + 16 + m * 13 * 4);
+  const buffer = new ArrayBuffer(HEADER_BYTES + 16 + m * 14 * 4);
   const view = new DataView(buffer);
   [SCENE_MAGIC, SCENE_VERSION, 1, 0, m, 0].forEach((v, i) => view.setUint32(i * 4, v, true));
   let at = HEADER_BYTES;

@@ -137,7 +137,7 @@ describe("api", () => {
   it("unpacks the 3D scene from raw bytes and names the exclusion command's arguments", async () => {
     const header = new Uint8Array(48);
     new DataView(header.buffer).setUint32(0, 0x44334550, true);
-    new DataView(header.buffer).setUint32(4, 4, true);
+    new DataView(header.buffer).setUint32(4, 5, true);
     new DataView(header.buffer).setUint32(32, 77, true);
     invoke.mockResolvedValue(header.buffer);
     const held = await api.polarScene();

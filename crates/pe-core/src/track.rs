@@ -887,22 +887,26 @@ fn tack_of(heading: f64, from: f64) -> Option<Tack> {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PreferValues {
-    /// The tracker's or file's own heading and speed, where present.
+    /// The tracker's or file's own value, where present.
     #[default]
     Given,
-    /// Always the derived ones.
+    /// Always the derived one.
     Derived,
 }
 
-/// How heading and speed are derived for a track (spec.md 7.4).
+/// How heading and speed are derived for a track (spec.md 7.4). Heading
+/// and speed are chosen apart (asked 2026-10-02): a file may give a sound
+/// course and a poor speed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DerivationSettings {
     /// Longest gap between neighbours a central difference may span, seconds.
     /// Beyond it the fix gets no derived values.
     pub max_gap_s: i64,
-    /// Given or derived values first.
-    pub prefer: PreferValues,
+    /// The given or the derived heading first.
+    pub prefer_heading: PreferValues,
+    /// The given or the derived speed first.
+    pub prefer_speed: PreferValues,
     /// Ignore supplied wind and use downloaded weather only when selected.
     pub downloaded_wind_only: bool,
 }
@@ -929,7 +933,8 @@ impl Default for DerivationSettings {
     fn default() -> Self {
         Self {
             max_gap_s: 3 * 3600,
-            prefer: PreferValues::Given,
+            prefer_heading: PreferValues::Given,
+            prefer_speed: PreferValues::Given,
             downloaded_wind_only: false,
         }
     }

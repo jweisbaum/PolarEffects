@@ -15,13 +15,18 @@ import { TEST_BLEND } from "../testBlend";
 
 const scenes = vi.hoisted(() => ({
   made: [] as FakeScene[], fail: false, pick: -1,
+  /** The copy the pointer is over, in a split view. */
+  cell: 0,
   surface: null as { surface: number; twaIndex: number; twsIndex: number } | null,
+  /** What the fake scene's `projected()` answers: (x, y) per drawn dot. */
+  projected: [] as number[],
 }));
 
 interface FakeScene {
   setView: ReturnType<typeof vi.fn>;
   setData: ReturnType<typeof vi.fn>;
   setSelection: ReturnType<typeof vi.fn>;
+  setCells: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
 }
 
@@ -42,8 +47,16 @@ vi.mock("./scene3d", async (original) => {
     resize() {}
     setGuides() {}
     setView = vi.fn();
+    setCells = vi.fn();
+    setViewCentre() {}
     render() {}
     toScreen() { return [0, 0]; }
+    // A row of copies, each 100 × 100.
+    cellAt() { return scenes.cell; }
+    cellRect(cell: number) { return { x: cell * 100, y: 0, width: 100, height: 100 }; }
+    toScreenIn(cell: number) { return [cell * 100 + 50, 50]; }
+    /** Every dot at (30 + 20 i, 40 + 10 i). */
+    projected() { return Float32Array.from(scenes.projected); }
     pick() { return scenes.pick; }
     pickSurface() { return scenes.surface; }
     lasso() { return new Uint32Array(0); }
@@ -53,11 +66,12 @@ vi.mock("./scene3d", async (original) => {
 });
 
 const api = vi.hoisted(() => ({
-  setWaveRanges: vi.fn(), blendCell: vi.fn(), polarScene: vi.fn(), setExcluded: vi.fn(), editPolar: vi.fn(), polarEditSurface: vi.fn(), setSegmentStatistic: vi.fn(),
+  setWaveRanges: vi.fn(), blendCell: vi.fn(), blendCellSplit: vi.fn(), polarScene: vi.fn(), polarSceneSplit: vi.fn(), setExcluded: vi.fn(), editPolar: vi.fn(), polarEditSurface: vi.fn(), setSegmentStatistic: vi.fn(),
 }));
 vi.mock("../ipc", () => ({ api }));
 
 const { default: PolarView, draggedSpeed } = await import("./PolarView");
+const { createFleetSync, FleetSyncProvider } = await import("../boats/synchronization");
 const { editSource } = await import("./editFocus");
 const selection = await import("../selection");
 
@@ -75,7 +89,7 @@ function packet(excluded = false): ScenePacket {
       cell: Uint32Array.from([0, 1 | (1 << 16)]), flags: Uint32Array.from([0, excluded ? FLAG_EXCLUDED : 0]),
     },
     samples: {
-      wavePeriod: new Float32Array(0), waveAngle: new Float32Array(0), waveWindAngle: new Float32Array(0),
+      wavePeriod: new Float32Array(0), waveAngle: new Float32Array(0), waveWindAngle: new Float32Array(0), waveBearing: new Float32Array(0),
       count: 0, points: new Float32Array(0), source: new Uint32Array(0), ids: new Uint32Array(0),
       hs: new Float32Array(0), current: new Float32Array(0), time: new Float32Array(0), flags: new Uint32Array(0),
     },
@@ -189,7 +203,7 @@ function withSamples(): ScenePacket {
     ...base,
     sources: [...base.sources, { id: 30, colour: "#0000ff", kind: "track" }],
     samples: {
-      wavePeriod: new Float32Array(0), waveAngle: new Float32Array(0), waveWindAngle: new Float32Array(0),
+      wavePeriod: new Float32Array(0), waveAngle: new Float32Array(0), waveWindAngle: new Float32Array(0), waveBearing: new Float32Array(0),
       count: 2, points: Float32Array.from([120, 14, 9, 150, 16, 10]), source: Uint32Array.from([1, 1]),
       ids: Uint32Array.from([5, 0, 6, 1]), hs: Float32Array.from([Number.NaN, Number.NaN]),
       current: Float32Array.from([Number.NaN, Number.NaN]), time: Float32Array.from([0, 600]),
@@ -202,6 +216,9 @@ beforeEach(() => {
   selection.resetSelection();
   editSource(null);
   api.setWaveRanges.mockReset().mockResolvedValue(project(3));
+  // No copy has a blend of its own unless a test gives it one.
+  api.polarSceneSplit.mockReset().mockResolvedValue({ count: 4, surfaces: [] });
+  api.blendCellSplit.mockReset();
   api.editPolar.mockReset().mockResolvedValue(project(3));
   api.polarEditSurface.mockReset().mockResolvedValue({
     source_id: 10, kind: "orc", twa: [52, 90], tws: [6, 12], source: [[6, 7], [7, 8]], bsp: [[6, 7], [7, 8]],
@@ -211,6 +228,7 @@ beforeEach(() => {
   scenes.made = [];
   scenes.fail = false;
   scenes.pick = -1;
+  scenes.cell = 0;
   scenes.surface = null;
   api.blendCell.mockReset();
   api.polarScene.mockReset().mockResolvedValue(packet());
@@ -467,4 +485,216 @@ it("offers disabled wave sliders when the scene has no wave measurements", async
     expect((feature(`view3d:wave-${metric}-min`)!.closest("fieldset") as HTMLFieldSetElement).disabled).toBe(true);
   }
   expect(feature("view3d:wave-ranges-reset")!.disabled).toBe(true);
+});
+
+/** Two polar nodes and four track samples: waves from 10°, 100° and 350° off the bow, and one with no waves. */
+function withWaves(): ScenePacket {
+  const base = packet();
+  return {
+    ...base,
+    sources: [...base.sources, { id: 30, colour: "#0000ff", kind: "track" }],
+    samples: {
+      count: 4, points: Float32Array.from([90, 12, 7, 91, 12.2, 6.5, 60, 8, 5, 89, 11.8, 7.4]), source: Uint32Array.from([1, 1, 1, 1]),
+      ids: Uint32Array.from([5, 0, 6, 0, 7, 0, 8, 0]), hs: Float32Array.from([1, 1.5, Number.NaN, 2]),
+      current: new Float32Array(4).fill(Number.NaN), time: Float32Array.from([0, 60, 120, 180]),
+      wavePeriod: Float32Array.from([7, 8, Number.NaN, 9]), waveAngle: Float32Array.from([10, 100, Number.NaN, 10]),
+      waveWindAngle: Float32Array.from([20, 30, Number.NaN, 40]), waveBearing: Float32Array.from([10, 100, Number.NaN, 350]),
+      flags: Uint32Array.from([0, 0, 0, 0]),
+    },
+  };
+}
+
+const lastCells = () => scenes.made[0]!.setCells.mock.calls.at(-1)![0] as { of: Int16Array; count: number } | null;
+const setValue = async (id: string, value: string, event: "input" | "change") => {
+  const input = feature(id) as unknown as HTMLInputElement;
+  await act(async () => {
+    const proto = input instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(input, value);
+    input.dispatchEvent(new Event(event, { bubbles: true }));
+  });
+};
+
+it("offers Split Wave Angle beside the tools in single view only, off until asked for", async () => {
+  api.polarScene.mockResolvedValue(withWaves());
+  await render();
+  const toggle = feature("view3d:wave-split")!;
+  expect(toggle.textContent).toBe("Split Wave Angle");
+  expect(toggle.getAttribute("aria-pressed")).toBe("false");
+  // After the Box tool, in the toolbar.
+  const order = [...q(".view3d-toolbar")!.querySelectorAll("[data-feature]")].map((el) => el.getAttribute("data-feature"));
+  expect(order.indexOf("view3d:wave-split")).toBe(order.indexOf("view3d:tool-box") + 1);
+  expect(feature("view3d:wave-split-count")).toBeNull();
+  expect(feature("view3d:wave-split-sense")).toBeNull();
+  expect(q(".wave-split-cell")).toBeNull();
+  expect(lastCells()).toBeNull();
+  // A pane of split or four-way view does not offer it.
+  await act(async () => root.render(<PolarView project={project(1)} settings={null} onProject={onProject} comparison />));
+  expect(feature("view3d:wave-split")).toBeNull();
+});
+
+it("splits the view into one copy per wave direction, each with its own samples and an arrow (spec.md 10.5)", async () => {
+  api.polarScene.mockResolvedValue(withWaves());
+  await render();
+  await act(async () => feature("view3d:wave-split")!.click());
+  expect(feature("view3d:wave-split")!.getAttribute("aria-pressed")).toBe("true");
+  // The slider's stops are the six counts; it starts at eight directions.
+  const slider = feature("view3d:wave-split-count") as unknown as HTMLInputElement;
+  expect([slider.type, slider.min, slider.max, slider.step, slider.value]).toEqual(["range", "0", "5", "1", "1"]);
+  expect(q(".wave-split-count")!.textContent).toBe("8 directions");
+  // Nodes in every copy; waves from 10° and 350° off the bow in the bow's copy,
+  // 100° in the starboard beam's (the third of eight); no waves, no copy.
+  expect(lastCells()!.count).toBe(8);
+  expect([...lastCells()!.of]).toEqual([-1, -1, 0, 2, -2, 0]);
+  // One frame per copy, each saying its direction, how many samples it holds, and pointing its arrow.
+  const cells = [...host.querySelectorAll<HTMLElement>(".wave-split-cell")];
+  expect(cells).toHaveLength(8);
+  expect(cells.map((cell) => cell.querySelector(".wave-split-name")!.textContent)).toEqual(
+    ["From 0°", "From 45°", "From 90°", "From 135°", "From 180°", "From 225°", "From 270°", "From 315°"]);
+  expect(cells.map((cell) => cell.querySelector(".wave-split-total")!.textContent)).toEqual(
+    ["2 samples", "0 samples", "1 samples", "0 samples", "0 samples", "0 samples", "0 samples", "0 samples"]);
+  expect(cells.map((cell) => cell.querySelector<SVGElement>(".wave-split-arrow")!.dataset.direction)).toEqual(
+    ["0", "45", "90", "135", "180", "225", "270", "315"]);
+  expect(cells[2]!.querySelector(".wave-split-arrow")!.getAttribute("data-sense")).toBe("from");
+  // Each copy's share of the circle, an arc round the boat: 45° of it, centred on its direction.
+  const arc = cells[2]!.querySelector(".wave-split-arc")!;
+  expect([arc.getAttribute("data-from"), arc.getAttribute("data-to")]).toEqual(["67.5", "112.5"]);
+  // The sample with no wave direction is in no copy, and the controls say so.
+  expect(q(".wave-split-none")!.textContent).toBe("1 without a wave direction");
+
+  // Four directions: bow, starboard beam, stern, port beam.
+  await setValue("view3d:wave-split-count", "0", "input");
+  expect(q(".wave-split-count")!.textContent).toBe("4 directions");
+  expect(lastCells()!.count).toBe(4);
+  expect([...lastCells()!.of]).toEqual([-1, -1, 0, 1, -2, 0]);
+  expect(host.querySelectorAll(".wave-split-cell")).toHaveLength(4);
+  expect(q(".wave-split-arc")!.getAttribute("data-from")).toBe("315");
+  // Thirty-six, the last stop.
+  await setValue("view3d:wave-split-count", "5", "input");
+  expect(lastCells()!.count).toBe(36);
+  expect(host.querySelectorAll(".wave-split-cell")).toHaveLength(36);
+
+  // To: the copies are where the waves go. From 10° off the bow they go to 190°.
+  await setValue("view3d:wave-split-count", "0", "input");
+  await setValue("view3d:wave-split-sense", "to", "change");
+  expect([...lastCells()!.of]).toEqual([-1, -1, 2, 3, -2, 2]);
+  expect(q(".wave-split-cell .wave-split-name")!.textContent).toBe("To 0°");
+  expect(q(".wave-split-arrow")!.getAttribute("data-sense")).toBe("to");
+
+  // Off again: one view.
+  await act(async () => feature("view3d:wave-split")!.click());
+  expect(lastCells()).toBeNull();
+  expect(q(".wave-split-cell")).toBeNull();
+  expect(feature("view3d:wave-split-count")).toBeNull();
+});
+
+it("keeps the wave range filters in force in every copy", async () => {
+  api.polarScene.mockResolvedValue(withWaves());
+  await render();
+  await act(async () => feature("view3d:wave-split")!.click());
+  await setValue("view3d:wave-split-count", "0", "input");
+  expect([...lastCells()!.of]).toEqual([-1, -1, 0, 1, -2, 0]);
+  // Waves of 1.2 m and more only: the 1 m sample leaves its copy, and the one with no height is not drawn at all.
+  await setValue("view3d:wave-height-min", "1.2", "input");
+  expect([...lastCells()!.of]).toEqual([-1, -1, 1, 0]);
+  expect([...host.querySelectorAll(".wave-split-total")].map((el) => el.textContent)).toEqual(["1 samples", "1 samples", "0 samples", "0 samples"]);
+  // Every sample still drawn has a direction: nothing to say.
+  expect(q(".wave-split-none")).toBeNull();
+});
+
+it("shows, for a dot hovered in one copy, the dot at the same wind in the other copies", async () => {
+  api.polarScene.mockResolvedValue(withWaves());
+  await render();
+  await act(async () => feature("view3d:wave-split")!.click());
+  await setValue("view3d:wave-split-count", "0", "input");
+  // Drawn dots: nodes 0 and 1, then samples: 2 (copy 0), 3 (copy 1), 4 (none), 5 (copy 0).
+  scenes.cell = 0;
+  scenes.pick = 2;
+  await act(async () => {
+    q("canvas")!.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 60, clientY: 70, buttons: 0 }));
+    await new Promise((r) => setTimeout(r, 30));
+  });
+  // The full tooltip where the pointer is, and a mark with its speed in the starboard copy, whose sample is 1° and 0.2 kn away.
+  expect(q('[role="tooltip"]')?.textContent).toContain("12.0 kn");
+  const marks = [...host.querySelectorAll<HTMLElement>(".wave-split-mark")];
+  expect(marks).toHaveLength(1);
+  expect(marks[0]!.dataset.cell).toBe("1");
+  expect(marks[0]!.textContent).toBe("6.5 kn");
+  expect(marks[0]!.style.left).toBe("150px");
+  // Leaving clears them.
+  await act(async () => { q("canvas")!.dispatchEvent(new PointerEvent("pointerout", { bubbles: true })); });
+  expect(q(".wave-split-mark")).toBeNull();
+});
+
+it("draws each copy's own blend, made from its direction's samples, and reads a hovered cell from it", async () => {
+  const base = withWaves();
+  api.polarScene.mockResolvedValue({
+    ...base,
+    surfaces: [...base.surfaces,
+      { source: BLEND_SOURCE, twa: Float32Array.from([88, 89]), tws: Float32Array.from([11, 12]), bsp: Float32Array.from([7, 7.4, 7.2, 7.5]) }],
+  });
+  const grid = { twa: Float32Array.from([88, 89]), tws: Float32Array.from([11, 12]) };
+  api.polarSceneSplit.mockResolvedValue({ count: 4, surfaces: [
+    { cell: 0, ...grid, bsp: Float32Array.from([6, 6.4, 6.2, 6.5]) },
+    { cell: 1, ...grid, bsp: Float32Array.from([7, 7.4, 7.2, 7.9]) },
+  ] });
+  api.blendCellSplit.mockResolvedValue({
+    twa: 90, tws: 12, bsp: 7.9, origin: "direct", corrected: false,
+    contributors: [{ source_id: 30, bsp: 7.9, weight: 0.2, share: 1 }],
+  });
+  await render();
+  const last = () => scenes.made[0]!.setData.mock.calls.at(-1)![0] as { surfaces: { cell?: number; opaque?: boolean; pickable?: boolean; color: string; grid: { bsp: Float32Array } }[] };
+  expect(last().surfaces).toHaveLength(2);
+  await act(async () => feature("view3d:wave-split")!.click());
+  await setValue("view3d:wave-split-count", "0", "input");
+  await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  expect(api.polarSceneSplit).toHaveBeenLastCalledWith({ count: 4, sense: "from" });
+  // The whole blend's surface gives way to one per copy, opaque and in the blend's colour.
+  const split = last().surfaces;
+  expect(split.map((s) => s.cell)).toEqual([undefined, 0, 1]);
+  expect(split[1]!.opaque && split[1]!.pickable).toBe(true);
+  expect(split[1]!.color).toBe(split[2]!.color);
+  expect(split[2]!.grid.bsp[3]).toBeCloseTo(7.9, 5);
+  // To asks again for the other sense.
+  await setValue("view3d:wave-split-sense", "to", "change");
+  await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  expect(api.polarSceneSplit).toHaveBeenLastCalledWith({ count: 4, sense: "to" });
+  // Hovering copy 1's blend reads that copy's cell, and marks the other copy's own speed there.
+  scenes.cell = 1;
+  scenes.surface = { surface: 2, twaIndex: 1, twsIndex: 1 };
+  await act(async () => {
+    q("canvas")!.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 160, clientY: 70, buttons: 0 }));
+    await new Promise((r) => setTimeout(r, 30));
+  });
+  expect(api.blendCellSplit).toHaveBeenCalledWith(10, 4, { count: 4, sense: "to" }, 1);
+  expect(api.blendCell).not.toHaveBeenCalled();
+  expect(q(".blend-cell-tooltip")!.textContent).toContain("7.90 kn");
+  const marks = [...host.querySelectorAll<HTMLElement>(".wave-split-mark")];
+  expect(marks.map((mark) => [mark.dataset.cell, mark.textContent])).toEqual([["0", "6.5 kn"]]);
+  // Off: the whole blend again.
+  scenes.surface = null;
+  await act(async () => feature("view3d:wave-split")!.click());
+  expect(last().surfaces.map((s) => s.cell)).toEqual([undefined, undefined]);
+});
+
+it("puts a linked pane's tooltip beside the dot that matches, not in the corner (asked 2026-10-02)", async () => {
+  // This pane holds the dots of `withSamples`; another pane of the split
+  // view, sharing the sync, hovers a point at 90° in 12 kn: the second node here.
+  api.polarScene.mockResolvedValue(withSamples());
+  // Drawn dots: node 0, node 1 (excluded, still drawn), sample 0, sample 1 — the fake scene places each.
+  scenes.projected = [30, 40, 50, 50, 70, 60, 90, 70];
+  const sync = createFleetSync();
+  await act(async () => root.render(
+    <FleetSyncProvider enabled sync={sync}>
+      <PolarView project={{ ...project(1), id: 1 }} settings={null} onProject={onProject} />
+    </FleetSyncProvider>,
+  ));
+  await act(async () => { sync.publish({ kind: "hover", boat: 2, point: { twa: 90, tws: 12 } }); });
+  const tip = q('[role="tooltip"]') as HTMLElement;
+  expect(tip.textContent).toContain("Farr 40");
+  // Beside its dot (the second drawn), as the pane's own hover is: 12 px right and down.
+  expect(tip.style.left).toBe("62px");
+  expect(tip.style.top).toBe("62px");
+  // Without a match, nothing is pointed at.
+  await act(async () => { sync.publish({ kind: "hover", boat: 2, point: { twa: 150, tws: 30 } }); });
+  expect(q('[role="tooltip"]')?.textContent).toContain("No point at matching wind conditions");
 });

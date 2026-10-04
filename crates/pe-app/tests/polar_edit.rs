@@ -386,7 +386,8 @@ fn only_the_flags_travel_when_no_sample_moved() {
     let (s, n, m) = (word(&fresh, 2) as usize, word(&fresh, 3) as usize, 13);
     let nodes_end = 12 + s * 4 + n * 6;
     assert_eq!(fresh[48..nodes_end * 4], delta[48..nodes_end * 4]);
-    let flags_at = nodes_end + m * 12;
+    // Thirteen columns of samples come before their flags (layout version 5).
+    let flags_at = nodes_end + m * 13;
     assert_eq!(
         fresh[flags_at * 4..(flags_at + m) * 4],
         delta[nodes_end * 4..(nodes_end + m) * 4]

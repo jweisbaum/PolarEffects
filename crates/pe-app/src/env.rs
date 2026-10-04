@@ -909,18 +909,9 @@ pub fn use_corrected_set(state: &AppState, on: bool) -> Result<ProjectSummary> {
 }
 
 /// Chooses whether the global merged current includes Stokes drift
-/// (undoable; applies to the next fetch).
-#[tauri::command]
-pub fn set_stokes_drift(
-    state: tauri::State<'_, AppState>,
-    boat_context: Option<u64>,
-    on: bool,
-) -> Result<ProjectSummary> {
-    let state = state.scoped(boat_context);
-    stokes_drift_set(&state, on)
-}
-
-/// [`set_stokes_drift`] without a Tauri handle.
+/// (undoable; applies to the next fetch). No control sets it any more
+/// (removed at the user's request 2026-10-02, and a loaded project has it
+/// off): the fetch's own tests drive it.
 pub fn stokes_drift_set(state: &AppState, on: bool) -> Result<ProjectSummary> {
     crate::edit::apply(state, |project| {
         let before = project.blend.include_stokes_drift;

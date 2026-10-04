@@ -19,6 +19,7 @@ import ThemePicker from "./ThemePicker";
 import DatabaseSettings from "./DatabaseSettings";
 import IntegerField from "./IntegerField";
 import McpSection from "./McpSection";
+import OrcScraper from "./OrcScraper";
 import OrrScraper from "./OrrScraper";
 
 /** The dot bands offered, knots either side of the plot's wind speed (spec.md 9.2). */
@@ -66,6 +67,7 @@ export default function SettingsDialog({ settings, onSettings, onClose }: {
       onReveal("settings:weather", show),
       onReveal("settings:network", show),
       onReveal("settings:mcp", show),
+      onReveal("settings:orc", show),
       onReveal("settings:orr", show),
       onReveal("settings:database", show),
     ];
@@ -181,7 +183,8 @@ export default function SettingsDialog({ settings, onSettings, onClose }: {
         <McpSection onError={setError} />
 
         <DatabaseSettings settings={settings} onSettings={onSettings} />
-        <OrrScraper />
+        <OrcScraper settings={settings} onSettings={onSettings} />
+        <OrrScraper settings={settings} onSettings={onSettings} />
         <div className="modal-actions">
           <button data-feature="settings:close" onClick={onClose} title={t("Close the settings (Esc)")}>{t("Close")}</button>
         </div>

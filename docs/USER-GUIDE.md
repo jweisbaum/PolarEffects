@@ -6,26 +6,31 @@ wind speeds and angles. The resulting blend can be exported for routing software
 
 ## Boat tabs and race projects
 
-A new project starts with one boat. **Add boat**, to the right of the project
-name in the top bar, opens another tab with its own sources, filters, edits,
-undo history and views. It is also available in projects opened from a tracker.
+A new project starts with one boat. **Add Polar**, to the right of the project
+name in the top bar, opens another tab (named Polar 2, Polar 3, …) with its own
+sources, filters, edits, undo history and views. It is also available in projects opened from a tracker.
 Double-click a tab or press F2 to edit its name in place; Enter keeps it and
-Escape cancels. **Delete boat…** removes the selected boat and its sources;
-**Undo delete boat** restores it while the project stays open. Keep at least one
-boat. Saving includes every remaining boat. Each boat starts with 0° at the top.
-With multiple boats, **Export all…** above the tabs writes one polar per boat
-to a folder, reporting boats with no exportable data and avoiding overwrites.
+Escape cancels. The **×** on a tab closes it: PolarExplorer asks first, then
+removes that tab and its sources. **Undo Delete Polar**, at the end of the tab
+row, restores it while the project stays open. The last tab cannot be closed. Saving includes every remaining tab. Each starts with 0° at the top.
+With more than one, **Export all…** at the bottom right of the window, beside
+the version, writes one polar per tab to a folder, reporting tabs with no
+exportable data and avoiding overwrites.
 
-**Split view** compares two boats and **Four-way view** compares four. Choose
-a boat in each pane's dropdown; the tab row is hidden. These views use 3D only. Rotation, pan, zoom and camera
+The three icons beside Add Polar choose the layout: **Single view**, **Split
+view** (two boats) and **Four-way view** (four). In the comparison layouts choose
+a boat in each pane's dropdown; the tab row and the left and right panel
+toggles are hidden. These views use 3D only. Rotation, pan, zoom and camera
 presets are linked. Hovering a dot shows the nearest visible point in the
 other panes within 5° TWA and 1 knot TWS; a pane without a corresponding point
-says so. Each pane retains its own sources and filters. Use **Filters and
+says so. Hovering the blended surface shows each pane's own blend cell at the
+same wind, so the boats' speeds can be read side by side. Each pane retains its own sources and filters. Use **Filters and
 display** to open the comparison pane’s filter controls; they start collapsed
 to leave room for the polar. Returning to Single view restores its panel layout.
 
 Choose **Open project from tracker…** on the start screen or Project menu and
-paste a YellowBrick or Blue Water race link. The app downloads the event natively,
+paste a YellowBrick, Geovoile or Blue Water race link (a Geovoile race in legs is
+built from the leg the link shows). The app downloads the event natively,
 creates one tab per boat, imports its race track, and searches the embedded ORC
 catalogue, downloaded ORR catalogue and local boat metadata for identical models.
 Historical tracks come from the GeoJSON directory configured in Settings.
@@ -72,7 +77,8 @@ should state their signing status.
 Press **F1**, use **?**, or choose **PolarExplorer Help** for the offline reference.
 Settings changes the interface and help language. The title-bar search finds
 controls by name and highlights them when selected. This guide uses English labels;
-the built-in reference provides the corresponding French and German instructions.
+the built-in reference provides the same instructions in French, German, Spanish,
+Italian, Dutch, Chinese, Japanese and Arabic. Arabic is laid out right to left.
 
 This guide and the data notices are also installed in `documentation`: on
 macOS inside `PolarExplorer.app/Contents/Resources`, on Windows beside the
@@ -83,9 +89,12 @@ downloads include the same files in `PolarExplorer-documentation.zip`.
 
 Choose **New**, enter a project name, optionally name the boat and add notes,
 then create it. The left panel imports sources; the centre switches between
-3D (the default), Map and Compare; Map appears only when tracks are imported.
-The right panel holds the source list and 2D polar plot. The Project menu sits
-between the search bar and Settings.
+3D (the default), 2D (the polar plot), Compare and Map; Map appears only when
+tracks are imported. The right panel holds the source list, each source with
+its **Weight** slider. The Project menu sits between the search bar and
+Settings. The 3D view opens with the polar's origin in the middle of the space
+the panels leave free, all of the polar in sight; the 2D view runs the polar's 0°
+axis down the middle of the stage.
 
 The left and right panels overlay the view. Use their edge arrows to hide or
 show them without resizing or reframing the map or polar. View controls remain
@@ -105,8 +114,24 @@ sharing a project. After an unclean exit, the start screen offers recovered work
 other certificate fields. **Search by field** narrows individual fields; all
 filled filters must match. Choose **Add** on a result. About shows the catalogue's
 source commit and dates. Catalogue searches work offline.
+Settings → **ORC polars** downloads this year's valid certificates from ORC's
+own service (data.orc.org), about 60 MB in a minute or two, and adds
+them to the catalogue. A certificate is never stored twice: downloading again
+updates what is there, removes what ORC no longer lists, and a certificate
+the built-in catalogue already has is listed once. A boat's certificate of
+another year is a different certificate and is listed beside it. So are two
+valid certificates of one boat in the same year (a crewed and a double-handed
+one, for instance): each result shows its certificate number.
 
-**ORR polars.** Choose ORR in **Polar catalogue** to search the bundled
+**Keeping the catalogues current.** Both Settings sections have **Download
+automatically**: *Manually only* (the default), *On startup* or *On
+shutdown*. An automatic download is skipped when that catalogue was downloaded
+less than a day ago. On shutdown PolarExplorer waits for the download before
+it quits and says so in the status bar; quit again to stop the download and
+quit at once.
+
+**ORR polars.** The search box searches the ORC and ORR catalogues together;
+each result carries an **ORC** or **ORR** badge. ORR results are the bundled
 RegattaMan certificates. Offshore and short-course tables are separate variants.
 Settings → **ORR polars** downloads a chosen certificate year, with progress
 and cancellation. Repeated scrapes update existing catalogue entries; repeated
@@ -118,10 +143,11 @@ kept in the catalogue and copied into the project when you add a polar. Builder
 and build-year filters use the certificate data. Older polar-only project
 sources stay as imported; remove and add a source again to use a refreshed copy.
 
-Both catalogues support measurement bounds for length, beam, draft,
-displacement, sail areas and crew weight. Bounds use metric units and omit
-boats without the required measurement. **Previous** and **Next** browse
-pages of 50 results.
+Under **Search by field**, **Measurements** unfolds bounds for length, beam,
+draft, displacement and sail areas: a **Min** and a **Max** box
+for each. Bounds use metric units and omit boats without the required
+measurement. Results load as you scroll: when you reach the end of the list,
+the next page appears. The track library search works the same way.
 
 **Polar files.** Import an Expedition `.txt`, Adrena `.pol` or supported CSV
 polar. Review its preview and any parser error before continuing. Original
@@ -190,8 +216,12 @@ are separate and should be backed up with their directory structure intact.
 
 ## Fetch weather for tracks
 
-Track details offer **Wind source**: use supplied true wind where speed and
-direction are both present, or downloaded weather only. CSV import can map
+When a track provides its own wind, its filters offer **Use** under **Wind,
+waves and current**: the wind the track provides (where it gives both speed
+and direction), or downloaded weather. When it provides headings or speeds,
+**Boat heading** and **Boat speed** offer the same choice between the track's
+values and ones derived from its positions; a value the track doesn't
+provide is always derived, and no choice is shown. CSV import can map
 TWS/TWD columns and a separate wind-speed unit. GeoJSON and SYRF files also
 retain supplied wind. Changing this choice preserves both data sources and
 needs no fresh download.
@@ -241,6 +271,23 @@ drag, and the blend and both plots follow. These saved, undoable ranges apply
 in addition to the other filters. Missing measurements fail an active range.
 **Reset ranges** clears these sliders without clearing other filters.
 
+**Split Wave Angle**, beside the Box tool in single view, draws the 3D view
+once for each wave direction as seen from the boat: 0° is waves on the bow, 90°
+on the starboard beam, 180° from astern and 270° on the port beam. Use the
+slider to choose 4, 8, 16, 18, 24 or 36 directions. One direction is always
+centred on the bow, so 0° is never a dividing line. Choose **From** to sort
+samples by where their waves came from, or **To** by where they were going.
+Each copy contains only the samples for its direction, shows how many there are,
+and has a large arrow showing the waves against the boat, with an arc round the
+boat marking the directions the copy covers. Each copy also draws its own blend,
+made from its direction's samples together with your polar files and
+certificates as they are, so hovering the blend in a copy shows what the boat did
+in those waves and which sources stand behind it. All other filters,
+including the wave range filters, still apply. Samples with no wave direction
+appear in no copy; the toolbar says how many. The copies rotate and zoom
+together, and hovering a sample in one copy marks the sample at the same wind in
+the others. Split and four-way view do not offer it.
+
 Track filters remove unsuitable samples from the track's polar segment.
 Their limits are shown in the units selected in Settings. **Exclude** removes
 selected samples or nodes from the blend; **Include** restores them. Filtered
@@ -254,11 +301,16 @@ AWA is calculated from boat motion and the selected true wind.
 These controls are available for individual tracks, global filters and priority
 groups. Empty thresholds disable their filter; Undo restores an edit.
 
-Track filters also offer unknown wave/current removal, tack/gybe windows,
-and stops defined by a ground-speed threshold with time padding before and
-after each event. Wave direction can be compared with COG. Timestamp filters
-accept minutes or seconds and keep exact multiples from UTC midnight; they
-never round times. Track start/end times accept seconds.
+Track filters are grouped. **Boat speed** holds the BSP range and a **VMG**
+range (speed made good to windward, negative downwind). **Boat heading**
+holds a **heading** and a **COG** range, each a compass sector from one
+direction clockwise to another (type both; clearing one clears both), the
+direction-change filter, and **Remove tacks and gybes**, which leaves out
+the sample on either side of each change of tack. **Wind, waves and
+current** holds TWS, **TWD** (also a compass sector), TWA, the change
+filters, and the wave and current filters, including unknown wave/current
+removal; wave direction can be compared with COG. Track start/end times
+accept seconds.
 
 With tracks present, the 3D view offers **Global point filters**. These layer
 over individual filters and affect the blend and every view; they have no

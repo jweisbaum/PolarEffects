@@ -56,7 +56,7 @@ export default function TrackerProjectDialog({ discardUnsaved, onOpened, onClose
     {!result && <>
       <p>{t("Create one boat tab per entry, with its race track and matching local polars and historical tracks. Names alone never qualify a match.")}</p>
       <label>{t("Tracker")} <select data-feature="boats:tracker-provider" value={tracker} disabled={busy} onChange={e => setTracker(e.target.value)}>
-        <option value="yellowbrick">{t("YellowBrick")}</option><option value="bluewater">{t("Blue Water Tracks")}</option>
+        <option value="yellowbrick">{t("YellowBrick")}</option><option value="geovoile">{t("Geovoile")}</option><option value="bluewater">{t("Blue Water Tracks")}</option>
       </select></label>
       <label>{t("Race URL")} <input autoFocus data-feature="boats:tracker-url" value={url} disabled={busy} onChange={e => setUrl(e.target.value)} type="url" /></label>
       <label>{t("Match additional data")} <select data-feature="boats:tracker-match" value={matchMode} disabled={busy} onChange={e => setMatchMode(e.target.value as BoatMatchMode)}>

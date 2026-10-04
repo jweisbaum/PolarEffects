@@ -51,7 +51,6 @@ export default function BlendSettingsDialog({ project, onProject, onClose }: {
   const asymmetric = blend.asymmetric;
   const [interpolation, setInterpolation] = useState(blend.interpolation);
   const [useCorrected, setUseCorrected] = useState(project.use_corrected);
-  const [stokes, setStokes] = useState(project.stokes_drift);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
 
@@ -76,7 +75,7 @@ export default function BlendSettingsDialog({ project, onProject, onClose }: {
     try {
       onProject(await api.setBlendSettings({
         twa: twa.values, tws: tws.values, min_samples: minSamples, n_full: nFull, smoothing,
-        default_statistic: statistic, use_corrected: useCorrected, stokes_drift: stokes, asymmetric, interpolation,
+        default_statistic: statistic, use_corrected: useCorrected, asymmetric, interpolation,
       }));
       onClose();
     } catch (failure) {
@@ -179,12 +178,6 @@ export default function BlendSettingsDialog({ project, onProject, onClose }: {
               title={t("Feed the polar from boat speed and wind through the water where a current was found")}
               onChange={(event) => setUseCorrected(event.target.checked)} />
             {t("Correct for current")}
-          </label>
-          <label className="settings-field">
-            <input type="checkbox" data-feature="blend-settings:stokes-drift" checked={stokes}
-              title={t("Add the waves' Stokes drift to the global merged current, from the next fetch")}
-              onChange={(event) => setStokes(event.target.checked)} />
-            {t("Include Stokes drift")}
           </label>
         </section>
 

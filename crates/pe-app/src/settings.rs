@@ -25,7 +25,7 @@ pub const MAX_RECENT: usize = 10;
 
 /// The interface languages the frontend carries a catalogue for (spec.md
 /// 3.5). The first is the fallback.
-pub const LANGUAGES: &[&str] = &["en", "fr", "de"];
+pub const LANGUAGES: &[&str] = &["en", "fr", "de", "es", "it", "nl", "zh", "ja", "ar"];
 
 /// The theme a new install, or an unknown theme id, gets (spec.md 3.1).
 pub const DEFAULT_THEME: &str = "harbour";
@@ -211,6 +211,9 @@ pub struct Settings {
     pub plot_tws_band_kn: f64,
     /// The MCP service (spec.md 3.7). Absent from older files: off.
     pub mcp: McpSettings,
+    /// When the ORC and ORR catalogues are scraped by themselves
+    /// (spec.md 5.4). Absent from older files: only when asked.
+    pub catalogues: crate::catalogues::CatalogueSettings,
 }
 
 impl Default for Settings {
@@ -227,6 +230,7 @@ impl Default for Settings {
             projection: MapProjection::default(),
             plot_tws_band_kn: crate::polar_plot::DEFAULT_TWS_BAND_KN,
             mcp: McpSettings::default(),
+            catalogues: crate::catalogues::CatalogueSettings::default(),
         }
     }
 }
@@ -332,6 +336,18 @@ impl Settings {
                 read_field(mcp, "enabled", &mut settings.mcp.enabled);
                 read_field(mcp, "port", &mut settings.mcp.port);
                 read_field(mcp, "token", &mut settings.mcp.token);
+            }
+            if let Some(serde_json::Value::Object(catalogues)) = object.get("catalogues") {
+                read_field(
+                    catalogues,
+                    "orc_schedule",
+                    &mut settings.catalogues.orc_schedule,
+                );
+                read_field(
+                    catalogues,
+                    "orr_schedule",
+                    &mut settings.catalogues.orr_schedule,
+                );
             }
         }
         settings.normalised()

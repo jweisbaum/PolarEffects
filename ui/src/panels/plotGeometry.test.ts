@@ -36,6 +36,19 @@ describe("project", () => {
     expect(down.y).toBeGreaterThan(layout.centerY);
   });
 
+  it("centres the 0° axis on the stage's middle line, keeping the fan clear of the edges (asked 2026-10-02)", () => {
+    // 600 wide, 400 high, 28 px kept clear: the fan may be 172 px high (half of 344)
+    // and, centred, 272 px wide; the height decides.
+    const stage = fitLayout(600, 400, 10, 28, false, true);
+    expect(stage.centerX).toBe(300);
+    expect(stage.centerY).toBe(200);
+    expect(stage.scale).toBeCloseTo(17.2);
+    // A narrow stage: the half width decides.
+    expect(fitLayout(200, 400, 10, 28, false, true).scale).toBeCloseTo(7.2);
+    // The panel keeps the fan against its left edge.
+    expect(fitLayout(600, 400, 10, 28, false).centerX).toBe(28);
+  });
+
   it("places a zero-speed point at the centre whatever the angle", () => {
     const layout = fitLayout(400, 400, 10);
     for (const twa of [0, 45, 90, 180]) {

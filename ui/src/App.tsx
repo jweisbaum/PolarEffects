@@ -16,7 +16,7 @@ import { describeError, reportFailure } from "./errors";
 import { later, lineText, reportError, shown, useHint, type Line } from "./hint";
 import { isBusy, useBusy } from "./busy";
 import { msg, setLanguage, useT } from "./i18n";
-import { api, ENV_CHANGED, ENV_PROGRESS, IpcError, QUIT_REQUESTED } from "./ipc";
+import { api, ENV_CHANGED, ENV_PROGRESS, IpcError, QUIT_REQUESTED, QUIT_WAITING } from "./ipc";
 import type { EnvJobsStatus } from "./generated/EnvJobsStatus";
 import { currentEnvJobs, envJobsBusy, setEnvJobs, useEnvJobs } from "./jobs";
 import ConfirmDialog from "./project/ConfirmDialog";
@@ -67,6 +67,8 @@ function Shell() {
   const [fleetKey, setFleetKey] = useState(0);
   const [changedBoat, setChangedBoat] = useState<ProjectSummary | null>(null);
   const [boatToolbar, setBoatToolbar] = useState<HTMLDivElement | null>(null);
+  /** The status bar's place for the fleet's Export all, beside the version. */
+  const [fleetStatus, setFleetStatus] = useState<HTMLSpanElement | null>(null);
   const activeBoat = useRef<number | undefined>(undefined);
   const updateProject = useCallback((next: ProjectSummary) => {
     setProject((current) => current && current.id === next.id && next.revision >= current.revision ? next : current);
@@ -383,6 +385,15 @@ function Shell() {
     return () => { void pending.then((off) => off?.()); };
   }, []);
 
+  // Quitting waits for a scheduled catalogue download (spec.md 5.4): say so,
+  // and that quitting again stops it, rather than a window that will not close.
+  useEffect(() => {
+    const pending = listen(QUIT_WAITING, () => {
+      setStatus(msg("Updating the catalogues before quitting. Quit again to stop and quit now."));
+    }).catch(() => null);
+    return () => { void pending.then((off) => off?.()); };
+  }, []);
+
   // Escape closes the full-size polar plot overlay, like every other overlay.
 
   // Standard shortcuts (spec.md 3.2).
@@ -504,7 +515,7 @@ function Shell() {
       </div>
 
       <FleetWorkspace key={fleetKey} project={project} settings={settings} onSettings={setSettings} onProject={updateProject}
-        toolbarHost={boatToolbar} onReplace={replaceFleetRoot} changedBoat={changedBoat} onActive={id => { activeBoat.current = id; }} />
+        toolbarHost={boatToolbar} statusHost={fleetStatus} onReplace={replaceFleetRoot} changedBoat={changedBoat} onActive={id => { activeBoat.current = id; }} />
 
       <div className="statusbar" data-feature="shell:statusbar" title={t("Hints, errors and work in progress")}>
         <BusySpinner />
@@ -513,6 +524,7 @@ function Shell() {
         <StatusHint status={status} />
         <span className="spacer" />
         {project.path !== null && <span className="muted path" title={project.path}>{project.path}</span>}
+        <span className="statusbar-actions" ref={setFleetStatus} />
         {info && <span className="muted">v{info.version}</span>}
       </div>
 

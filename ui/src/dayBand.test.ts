@@ -31,7 +31,7 @@ describe("dayBand", () => {
   });
 
   it("reads the afternoon sample of the 3D fixture and the morning and evening dots of the 2D one", () => {
-    const scene = unpackScene(bytes("./polar/fixtures/scene-v4.bin"));
+    const scene = unpackScene(bytes("./polar/fixtures/scene-v5.bin"));
     expect(DAY_BANDS[dayBand(scene.samples.flags[0]!)]!.id).toBe("afternoon");
     const dots = unpackDots(bytes("./panels/fixtures/dots-v2.bin"));
     expect([...dots.flags].map((flags) => DAY_BANDS[dayBand(flags)]!.id)).toEqual(["morning", "evening"]);

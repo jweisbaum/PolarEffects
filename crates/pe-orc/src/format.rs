@@ -181,6 +181,118 @@ impl Entry {
     }
 }
 
+impl Vpp {
+    /// The document's table in hundredths; `None` when a value is not given
+    /// to two decimals or is out of range.
+    pub fn from_document(vpp: &OrcVpp) -> Option<Self> {
+        let list = |values: &[f64]| -> Option<Vec<u16>> {
+            values.iter().copied().map(hundredths).collect()
+        };
+        Some(Self {
+            angles: list(&vpp.angles)?,
+            speeds: list(&vpp.speeds)?,
+            bsp: vpp
+                .bsp
+                .iter()
+                .map(|row| {
+                    row.iter()
+                        .map(|cell| match cell {
+                            Some(speed) => hundredths(*speed).map(Some),
+                            None => Some(None),
+                        })
+                        .collect::<Option<Vec<Option<u16>>>>()
+                })
+                .collect::<Option<Vec<Vec<Option<u16>>>>>()?,
+            beat_angle: list(&vpp.beat_angle)?,
+            beat_vmg: list(&vpp.beat_vmg)?,
+            run_angle: list(&vpp.run_angle)?,
+            run_vmg: list(&vpp.run_vmg)?,
+        })
+    }
+}
+
+impl Entry {
+    /// A record as the catalogue stores it: the inverse of [`Self::to_record`]
+    /// but for the reference number, which a [`Scraped`] keeps beside it.
+    /// `None` when its table is finer than hundredths or out of range.
+    pub fn from_record(record: &OrcRecord) -> Option<Self> {
+        let size = &record.size;
+        Some(Self {
+            sail_no: record.sail_no.clone(),
+            country: record.country.clone(),
+            name: record.name.clone(),
+            model: record.model.clone(),
+            builder: record.builder.clone(),
+            designer: record.designer.clone(),
+            year: record.year,
+            certificate_year: record.certificate_year,
+            size: [
+                size.loa,
+                size.beam,
+                size.draft,
+                size.displacement_kg,
+                size.main_area,
+                size.genoa_area,
+                size.spinnaker_area,
+                size.asym_spinnaker_area,
+                size.crew_kg,
+            ],
+            gph: record.gph,
+            osn: record.osn,
+            vpp: Vpp::from_document(&record.vpp)?,
+        })
+    }
+}
+
+/// A certificate scraped from ORC's service (spec.md 5.4), as the store on
+/// this computer keeps it: the catalogue's entry and the certificate's
+/// reference number, which the embedded catalogue does not have.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Scraped {
+    /// ORC's reference number of the certificate, e.g. `"03440004L2V"`.
+    pub ref_no: String,
+    /// The certificate.
+    pub entry: Entry,
+    /// ORC no longer lists it among its year's valid certificates: it was
+    /// replaced or revoked. It keeps its place in the store, so the
+    /// catalogue ids after it stay what they were, and is not searched.
+    pub withdrawn: bool,
+}
+
+/// The first bytes of a store of scraped certificates.
+pub const SCRAPED_MAGIC: &[u8; 7] = b"PEORCS\0";
+
+/// Writes the store of scraped certificates: the magic, the layout version,
+/// then an LZ4 block of postcard `Vec<Scraped>`.
+pub fn encode_scraped(scraped: &[Scraped]) -> Result<Vec<u8>, OrcError> {
+    let body = postcard::to_allocvec(scraped).map_err(encoding)?;
+    let mut out = Vec::with_capacity(16 + body.len() / 3);
+    out.extend_from_slice(SCRAPED_MAGIC);
+    out.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
+    out.extend_from_slice(&lz4_flex::block::compress_prepend_size(&body));
+    Ok(out)
+}
+
+/// Reads a store of scraped certificates.
+pub fn decode_scraped(bytes: &[u8]) -> Result<Vec<Scraped>, OrcError> {
+    let rest = bytes
+        .strip_prefix(SCRAPED_MAGIC.as_slice())
+        .ok_or_else(|| {
+            OrcError::Corrupt("this is not a store of scraped ORC certificates".to_owned())
+        })?;
+    let (version, body) = rest
+        .split_first_chunk::<2>()
+        .ok_or_else(|| OrcError::Corrupt("the store ends in its header".to_owned()))?;
+    let version = u16::from_le_bytes(*version);
+    if version != FORMAT_VERSION {
+        return Err(OrcError::Corrupt(format!(
+            "the store has layout version {version}; this build reads {FORMAT_VERSION}"
+        )));
+    }
+    let body = lz4_flex::block::decompress_size_prepended(body).map_err(encoding)?;
+    postcard::from_bytes(&body).map_err(encoding)
+}
+
 fn encoding(err: impl std::fmt::Display) -> OrcError {
     OrcError::Corrupt(err.to_string())
 }
@@ -322,6 +434,51 @@ mod tests {
         assert!(decode(&wrong_count).is_err());
         wrong_count[0] = b'X';
         assert!(decode_provenance(&wrong_count).is_err());
+    }
+
+    #[test]
+    fn a_record_becomes_the_entry_it_came_from() {
+        let record = entry().to_record();
+        assert_eq!(Entry::from_record(&record), Some(entry()));
+        // A speed finer than a hundredth has no place in the catalogue.
+        let mut fine = record.clone();
+        fine.vpp.bsp[0][0] = Some(7.071);
+        assert_eq!(Entry::from_record(&fine), None);
+        let mut far = record;
+        far.vpp.angles[0] = 700.0;
+        assert_eq!(Entry::from_record(&far), None);
+    }
+
+    #[test]
+    fn a_store_of_scraped_certificates_round_trips_and_refuses_damage() {
+        let scraped = vec![
+            Scraped {
+                ref_no: "03440004L2V".to_owned(),
+                entry: entry(),
+                withdrawn: false,
+            },
+            Scraped {
+                ref_no: "03440004L2W".to_owned(),
+                entry: Entry {
+                    name: "Lazy".to_owned(),
+                    ..entry()
+                },
+                withdrawn: true,
+            },
+        ];
+        let bytes = encode_scraped(&scraped).unwrap();
+        assert_eq!(decode_scraped(&bytes).unwrap(), scraped);
+        assert_eq!(
+            decode_scraped(&encode_scraped(&[]).unwrap()).unwrap(),
+            vec![]
+        );
+        for cut in 0..bytes.len() {
+            assert!(decode_scraped(&bytes[..cut]).is_err(), "cut at {cut}");
+        }
+        // The embedded catalogue's layout is not a store, nor the reverse.
+        let catalogue = encode(&Provenance::default(), &[]).unwrap();
+        assert!(decode_scraped(&catalogue).is_err());
+        assert!(decode(&bytes).is_err());
     }
 
     #[test]

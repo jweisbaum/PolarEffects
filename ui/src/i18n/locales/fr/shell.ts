@@ -12,8 +12,6 @@ const catalogue: Record<string, string> = {
   "Compare": "Comparer",
   "Show the navigation": "Afficher la navigation",
   "Hide the navigation": "Masquer la navigation",
-  "Show the sources and polar plot": "Afficher les sources et le diagramme polaire",
-  "Hide the sources and polar plot": "Masquer les sources et le diagramme polaire",
   "Hints, errors and work in progress": "Conseils, erreurs et travaux en cours",
   "Idle": "Inactif",
   "Project": "Projet",
@@ -73,7 +71,7 @@ const catalogue: Record<string, string> = {
   "Change nothing": "Ne rien changer",
   "Cancel": "Annuler",
   "Close without creating a project": "Fermer sans créer de projet",
-  "Untitled polar": "Polaire sans titre",
+  "Untitled Project": "Projet sans titre",
   "The project's name, shown in the title bar": "Le nom du projet, affiché dans la barre de titre",
   "The boat this polar is for (optional)": "Le bateau auquel cette polaire est destinée (facultatif)",
   "Optional": "Facultatif",
@@ -137,6 +135,12 @@ const catalogue: Record<string, string> = {
   "job": "tâche",
   "The environment fetch of {label} left out a current source that would not open.": "La récupération de l’environnement de {label} a écarté une source de courant qui ne s’ouvrait pas.",
   "Downloaded weather is no longer kept on disk: removing {size} an earlier version left in {path}. Projects keep every value they use.": "La météo téléchargée n’est plus gardée sur le disque : suppression de {size} laissés par une version précédente dans {path}. Les projets gardent toutes les valeurs qu’ils utilisent.",
+  "Show the sources": "Afficher les sources",
+  "Hide the sources": "Masquer les sources",
+  "2D": "2D",
+  "Show the polar plot in the centre: boat speed against wind angle, one wind speed or all.": "Afficher le diagramme polaire au centre : vitesse du bateau selon l’angle au vent, pour une vitesse de vent ou toutes.",
+  "polar plot": "diagramme polaire",
+  "The polar plot: boat speed against wind angle": "Le diagramme polaire : vitesse du bateau selon l’angle au vent",
 };
 
 export default catalogue;
