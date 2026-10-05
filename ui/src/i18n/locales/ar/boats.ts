@@ -67,6 +67,7 @@ export default {
   "Boat details": "تفاصيل القارب",
   "All classes ({count} boats)": "كل الفئات ({count} قوارب)",
   "{class} ({count} boats)": "{class} ({count} قوارب)",
-  "Choose a class, or all of them, then open the project.": "اختر فئة، أو جميعها، ثم افتح المشروع.",
+  "Choose one or more classes, then open the project.": "اختر فئة واحدة أو أكثر، ثم افتح المشروع.",
+  "Classes": "الفئات",
   "Downloading the race to find its classes…": "جارٍ تنزيل السباق للعثور على فئاته…",
 };

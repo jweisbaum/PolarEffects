@@ -550,7 +550,7 @@ fn cancelled_or_stale_tracker_projects_never_replace_current_work() {
 /// A class chosen in the dialog opens only that class's boats, one tab each
 /// (asked 2026-10-04); a class no boat sails in is refused.
 #[test]
-fn a_chosen_class_opens_only_its_boats() {
+fn chosen_classes_open_only_their_boats() {
     let root = TempRoot::new("tracker-class");
     let state = root.state();
     let in_class = |name: &str, class: &str| TrackerBoat {
@@ -569,35 +569,55 @@ fn a_chosen_class_opens_only_its_boats() {
         positions_from: PositionsFrom::Primary,
         leg: None,
         boats: vec![
-            in_class("Alpha", "IRC 1"),
-            in_class("Bravo", "IRC 2"),
+            in_class("Alpha", "IRC Overall, IRC 1"),
+            in_class("Bravo", "IRC Overall, IRC 2"),
             in_class("Charlie", "IRC 2"),
         ],
     };
-    let open = |class: Option<&str>| {
+    let open = |classes: &[&str]| {
         let client = std::sync::Arc::new(FixtureTracker {
             event: event.clone(),
             cancel: false,
             change: None,
         });
+        let classes: Vec<String> = classes.iter().map(|c| (*c).to_owned()).collect();
         boats::tracker_project::open_with_mode(
             &state,
             client,
             "ignored",
             true,
             Default::default(),
-            class,
+            &classes,
         )
     };
-    let result = open(Some("IRC 2")).unwrap();
-    let mut names: Vec<_> = result.boats.iter().map(|b| b.boat.clone()).collect();
-    names.sort();
-    assert_eq!(names, ["Bravo", "Charlie"]);
+    let names = |result: &boats::tracker_project::TrackerProjectResult| {
+        let mut names: Vec<_> = result.boats.iter().map(|b| b.boat.clone()).collect();
+        names.sort();
+        names
+    };
+    let result = open(&["IRC 2"]).unwrap();
+    assert_eq!(names(&result), ["Bravo", "Charlie"]);
+    boats::tracker_project::discard_preview(&state, result.project.id).unwrap();
+    // Several classes (asked 2026-10-05): the boats of any of them.
+    let result = open(&["IRC 1", " IRC 2 "]).unwrap();
+    assert_eq!(names(&result), ["Alpha", "Bravo", "Charlie"]);
+    boats::tracker_project::discard_preview(&state, result.project.id).unwrap();
+    // Each of a boat's groups is a class; a boat in two ticked ones is one
+    // tab (asked 2026-10-05).
+    let result = open(&["IRC Overall", "IRC 2"]).unwrap();
+    assert_eq!(names(&result), ["Alpha", "Bravo", "Charlie"]);
+    assert_eq!(result.boats.len(), 3, "one tab per boat, not one per class");
+    boats::tracker_project::discard_preview(&state, result.project.id).unwrap();
+    let result = open(&["IRC 1"]).unwrap();
+    assert_eq!(names(&result), ["Alpha"]);
     boats::tracker_project::discard_preview(&state, result.project.id).unwrap();
     // No class: every boat.
-    assert_eq!(open(None).unwrap().boats.len(), 3);
-    let refused = open(Some("Multihull")).unwrap_err();
-    assert_eq!(refused.kind(), "bad-option", "{refused}");
+    assert_eq!(open(&[]).unwrap().boats.len(), 3);
+    // A class no boat sails in is refused, alone or beside one that is.
+    for classes in [&["Multihull"][..], &["IRC 1", "Multihull"]] {
+        let refused = open(classes).unwrap_err();
+        assert_eq!(refused.kind(), "bad-option", "{refused}");
+    }
 }
 
 fn preview_race(

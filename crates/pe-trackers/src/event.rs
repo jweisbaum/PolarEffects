@@ -240,6 +240,27 @@ pub fn client(tracker: Tracker) -> Option<Box<dyn TrackerClient>> {
     }
 }
 
+/// A boat's classes from its division: YellowBrick and Blue Water Tracks
+/// join a boat's groups with ", " ("IRC Overall, IRC Class 2"), each a class
+/// of its own; Geovoile names one class, which may hold a comma. In order,
+/// without repeats.
+pub fn classes(tracker: Tracker, division: Option<&str>) -> Vec<String> {
+    let Some(division) = division else {
+        return Vec::new();
+    };
+    let parts: Vec<&str> = match tracker {
+        Tracker::Geovoile => vec![division],
+        Tracker::YellowBrick | Tracker::BlueWaterTracks => division.split(", ").collect(),
+    };
+    let mut out: Vec<String> = Vec::new();
+    for part in parts.into_iter().map(str::trim).filter(|p| !p.is_empty()) {
+        if !out.iter().any(|c| c == part) {
+            out.push(part.to_owned());
+        }
+    }
+    out
+}
+
 /// The name a tracker goes by in messages.
 pub fn name(tracker: Tracker) -> &'static str {
     match tracker {
@@ -251,6 +272,34 @@ pub fn name(tracker: Tracker) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+
+    /// YellowBrick and Blue Water join a boat's groups; each is a class of
+    /// its own (asked 2026-10-05). Geovoile's one class name stays whole.
+    #[test]
+    fn a_boats_classes_are_its_groups() {
+        assert_eq!(
+            classes(
+                Tracker::YellowBrick,
+                Some("Line Honours Monohull, IRC Overall, IRC Class 2")
+            ),
+            ["Line Honours Monohull", "IRC Overall", "IRC Class 2"]
+        );
+        assert_eq!(
+            classes(Tracker::BlueWaterTracks, Some(" Division 1 , PHS ")),
+            ["Division 1", "PHS"]
+        );
+        assert_eq!(
+            classes(Tracker::Geovoile, Some("Class40, Pro")),
+            ["Class40, Pro"]
+        );
+        assert!(classes(Tracker::YellowBrick, Some("  ")).is_empty());
+        assert!(classes(Tracker::YellowBrick, None).is_empty());
+        assert_eq!(
+            classes(Tracker::YellowBrick, Some("IRC 1, IRC 1")),
+            ["IRC 1"]
+        );
+    }
+
     use super::*;
 
     #[test]

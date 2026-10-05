@@ -166,9 +166,16 @@ missing model information; different vessels can still share the same model.
 Discovery/import reports progress, supports cancellation, avoids duplicate
 sources and reports unavailable files or unresolved model information.
 When the race has more than one class (the tracker's division), the dialog
-first downloads it, kept for the session, and offers **Class**: *All classes*
-or one class with its boat count (asked 2026-10-04); a class builds tabs for
-its boats only. MCP's `race_project` takes the same `class`.
+first downloads it, kept for the session, and offers **Classes**: a checkbox
+per class with its boat count, all ticked, and *All classes* to tick or clear
+them together (asked 2026-10-04; several at once 2026-10-05). Each of a
+boat's groups is a class of its own: YellowBrick and Blue Water Tracks join a
+boat's groups ("IRC Overall, IRC Class 2"), Geovoile names one class. The
+ticked classes build tabs for their boats only, one tab per boat however many
+of its classes are ticked; with every class ticked the whole
+race opens, boats without a class included, and with none Open is disabled.
+A class no boat sails in is refused. MCP's `race_project` takes the same
+list as `classes`.
 The opening dialog offers **Identical models** (default) or **Exact boat only**
 for both polars and historical tracks. Exact matching requires a valid matching
 MMSI or a matching qualified sail number corroborated by builder and known
@@ -353,8 +360,19 @@ whatever each tracker lists (YellowBrick's catalogue through the optional user
 key and device ID, kept only in local settings and never logged). **Only
 finished races are saved**: every boat must have a terminal status and no
 position may lie in the future; an ongoing, future or unverifiable race is
-counted as skipped, also when listed explicitly. A race already complete in
-the library is skipped unless listed. Each boat's track is written to
+counted as skipped, also when listed explicitly. **A race the library
+already holds is never fetched again** (asked 2026-10-05), listed or not:
+any search record whose race address resolves to the race's key holds it,
+whatever its files (a snapshot boat that never had positions has none). A
+Geovoile address without a leg holds the leg its record's name gives ("Leg
+2", "(2/2)"), and any leg holds the race's own address. A race the scraper
+saved beside a copy the library already held is removed, records and files,
+at the next scrape's start. Races download Blue Water Tracks first, then YellowBrick, then Geovoile
+(asked 2026-10-05), discovery in the same order. Requests start at least 1 s apart, 2 s pass
+between races, and a busy answer (5xx, 429, a dropped connection) is tried
+again after 5, 10, 20, 40, 80 and 120 s, longer when the server's
+`Retry-After` asks; races still turned away are tried once more after a
+60 s pause at the end. Errors name the tracker. Each boat's track is written to
 `individual-tracks/<race id>/vessel/provided/<participant id>.geojson`, and the
 race's `CalendarEvents`, `CompetitionUnits` (with `approximateStartLocation`
 and `approximateEndLocation`), `Vessels` rows and search records are upserted

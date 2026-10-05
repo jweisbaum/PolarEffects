@@ -122,7 +122,7 @@ export function boatApi(boatContext?: number) {
  const call = <T>(command: string, args?: Record<string, unknown>) => invokeCommand<T>(command,
    boatContext === undefined ? args : { ...args, boatContext });
  return {
-  openTrackerProject: (tracker: string, url: string, discardUnsaved = false, matchMode: import("./generated/BoatMatchMode").BoatMatchMode = "identical_model", trackerClass: string | null = null) => call<import("./generated/TrackerProjectResult").TrackerProjectResult>("open_tracker_project", { tracker, url, discardUnsaved, matchMode, class: trackerClass }),
+  openTrackerProject: (tracker: string, url: string, discardUnsaved = false, matchMode: import("./generated/BoatMatchMode").BoatMatchMode = "identical_model", classes: string[] = []) => call<import("./generated/TrackerProjectResult").TrackerProjectResult>("open_tracker_project", { tracker, url, discardUnsaved, matchMode, classes }),
   boatImportStatus: () => call<import("./generated/BoatImportProgress").BoatImportProgress>("boat_import_status"),
   cancelBoatImport: () => call<void>("cancel_boat_import"),
   confirmTrackerProject: (projectId: number) => call<ProjectSummary>("confirm_tracker_project", { projectId }),

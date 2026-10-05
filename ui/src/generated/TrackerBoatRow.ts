@@ -25,6 +25,10 @@ model: string | null,
  */
 division: string | null,
 /**
+ * Its classes: each of the groups the division joins (asked 2026-10-05).
+ */
+classes: Array<string>,
+/**
  * The tracker's status (`RACING`, `FINISHED`, `RETIRED`…).
  */
 status: string | null,

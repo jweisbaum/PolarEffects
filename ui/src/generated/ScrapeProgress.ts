@@ -25,9 +25,13 @@ total: number,
  */
 tracks: number,
 /**
- * Races skipped: unfinished, unverified, or already in the library.
+ * Races skipped as unfinished or unverified.
  */
 skipped: number,
+/**
+ * Races not fetched because the library already holds them.
+ */
+held: number,
 /**
  * Races or discoveries that failed.
  */

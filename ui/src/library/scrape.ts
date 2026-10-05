@@ -24,9 +24,14 @@ function subscribe() {
   api.libraryScrapeStatus().then(publish).catch(() => undefined);
 }
 
-/** Hands on a scrape's progress the moment a command answers it, before its first event. */
-export function scrapeStarted(progress: ScrapeProgress): void {
+/**
+ * Hands on a scrape's progress the moment a command answers it, before its
+ * first event; then reads it again, since a scrape with nothing to fetch can
+ * end before that answer arrives, and its last event would be overwritten.
+ */
+export function scrapeStarted(progress: ScrapeProgress): Promise<void> {
   publish(progress);
+  return api.libraryScrapeStatus().then(publish).catch(() => undefined);
 }
 
 /** The scrape's progress, current; null until it is first read. */

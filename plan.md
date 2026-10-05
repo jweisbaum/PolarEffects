@@ -1995,9 +1995,25 @@ boat tabs using the fleet comparison layout before testing their reveal action.
 - [x] The database connection is removed; the library's scraper is restored
   writing only GeoJSON files and `boat-metadata.json`, finished races only,
   with a status bar and cancel for a manual scrape.
-- [x] Open project from tracker offers a class; MCP `race_project` takes `class`.
+- [x] Open project from tracker offers classes, several at once, each group
+  its own class and one tab per boat (2026-10-05);
+  MCP `race_project` takes `classes`.
 
 Validation: workspace fmt, clippy and tests, UI typecheck, tests and
 performance checks, offline check and driver tests pass; UX tests 10 (scrape
 of a recorded finished race, status bar) and 14 (class selector) pass with
 screenshots inspected.
+
+### Follow-up: scrape held races never, and patiently · complete (2026-10-05)
+
+- [x] A race the library holds is never fetched again, listed or not; a
+  snapshot boat without a file no longer makes 682 races look incomplete.
+- [x] Geovoile legs: an address without a leg holds the leg its name gives,
+  and any leg holds the race; new saves record the leg's own address.
+- [x] The scraper's copies of races the snapshot already held (6 in the
+  person's library) are removed at the next scrape's start.
+- [x] Requests 1 s apart, 2 s between races, busy answers retried at 5–120 s
+  (or the server's `Retry-After`), turned-away races retried once at the end.
+- [x] Races download Blue Water first, then YellowBrick, then Geovoile.
+- [x] Errors name the tracker; the status counts "already in the library";
+  a scrape that ends before its start answers no longer shows running.

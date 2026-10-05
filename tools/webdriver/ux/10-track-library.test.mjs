@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { assert, newProject } from "./harness.mjs";
 const base = new URL("../../../crates/pe-trackers/tests/fixtures/yellowbrick/", import.meta.url);
 
+const requests = [];
 export default {
   name: "track library",
   // A recorded YellowBrick race for the scraper, served on loopback.
@@ -12,7 +13,7 @@ export default {
       ["/JSON/rmsr2024/RaceSetup", await readFile(new URL("rmsr2024-RaceSetup.json", base))],
       ["/BIN/rmsr2024/AllPositions3", await readFile(new URL("rmsr2024-AllPositions3-first3.bin", base))],
     ]);
-    const server = createServer((req, res) => { const path = req.url.split("?")[0]; const body = routes.get(path);
+    const server = createServer((req, res) => { const path = req.url.split("?")[0]; const body = routes.get(path); requests.push(path);
       setTimeout(() => { res.writeHead(body ? 200 : 404); res.end(body); }, path.startsWith("/BIN/") ? 3000 : 0); });
     await new Promise(done => server.listen(0, "127.0.0.1", done));
     return { env: { PE_DRIVER_YELLOWBRICK: `http://127.0.0.1:${server.address().port}` }, teardown: () => new Promise(done => server.close(done)) };
@@ -106,5 +107,13 @@ export default {
     assert.ok(after.tracks.length > 2, "the scraped boats are searchable");
     assert.ok(after.tables.CompetitionUnits.some(u => u.approximateStartLocation), "the race has a start");
     assert.ok((await readdir(join(geo, "individual-tracks"))).length > 0, "the tracks are files");
+    // Scraped again: the library has it, so nothing is fetched (asked 2026-10-05).
+    const fetched = requests.length;
+    await d.click('[data-feature="settings:library-scrape"]');
+    await d.waitFor(".library-scrape-status", { text: "already in the library: 1", timeoutMs: 30000 });
+    await d.waitFor(".library-scrape-status", { text: "Scrape finished", timeoutMs: 30000 });
+    assert.ok((await d.text(".library-scrape-status")).includes("Tracks: 0"));
+    assert.equal(requests.length, fetched, "no request for a race the library holds");
+    await t.shot("scrape-again-skips-held");
   },
 };

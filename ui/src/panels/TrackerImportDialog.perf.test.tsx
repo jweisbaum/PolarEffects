@@ -59,7 +59,7 @@ function fleet(): TrackerEventView {
       preview.push(-1.3 - 8 * Math.sin(Math.PI * s) + 0.01 * k, 50.7 + 0.8 * Math.sin(Math.PI * s) - 0.01 * k);
     }
     return {
-      id: String(k + 1), name: `Boat ${k + 1}`, sail: `GBR ${1000 + k}`, model: "JPK 1080", division: `IRC ${k % 5}`,
+      id: String(k + 1), name: `Boat ${k + 1}`, sail: `GBR ${1000 + k}`, model: "JPK 1080", division: `IRC ${k % 5}`, classes: [`IRC ${k % 5}`],
       status: "FINISHED", fixes: 1609, first: 1_753_531_200, last: 1_753_963_200, preview,
     };
   });

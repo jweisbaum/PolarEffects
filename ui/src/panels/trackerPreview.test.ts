@@ -6,7 +6,7 @@ import { boatStatusText, filterBoats } from "./trackerImport";
 import { coastPath, frameOf, linePath, toView, VIEW_H, VIEW_W } from "./trackerPreview";
 
 const row = (id: string, name: string, sail: string | null, division: string | null): TrackerBoatRow => ({
-  id, name, sail, model: null, division, status: null, fixes: 1, first: null, last: null, preview: [],
+  id, name, sail, model: null, division, classes: division ? [division] : [], status: null, fixes: 1, first: null, last: null, preview: [],
 });
 
 describe("filterBoats", () => {

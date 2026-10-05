@@ -205,7 +205,7 @@ pub async fn open_tracker_project(
     url: String,
     discard_unsaved: bool,
     match_mode: Option<BoatMatchMode>,
-    class: Option<String>,
+    classes: Option<Vec<String>>,
 ) -> Result<TrackerProjectResult> {
     let tracker = match tracker.as_str() {
         "yellowbrick" => Tracker::YellowBrick,
@@ -227,7 +227,7 @@ pub async fn open_tracker_project(
             &url,
             discard_unsaved,
             match_mode.unwrap_or_default(),
-            class.as_deref(),
+            &classes.unwrap_or_default(),
         )
     })
     .await
@@ -253,25 +253,47 @@ pub fn open_with(
         url,
         discard_unsaved,
         BoatMatchMode::default(),
-        None,
+        &[],
     )
 }
 
-/// The race with only the boats of `class` (the tracker's division), or
-/// whole for none (asked 2026-10-04). A class no boat sails in is refused.
-fn of_class(event: Arc<TrackerEvent>, class: Option<&str>) -> Result<Arc<TrackerEvent>> {
-    let Some(class) = class.map(str::trim).filter(|c| !c.is_empty()) else {
+/// The race with only the boats of `classes`, or whole for none (asked
+/// 2026-10-04; several 2026-10-05). Each of a boat's groups is a class
+/// (`pe_trackers::event::classes`), and a boat in several chosen ones stays
+/// one boat, so one tab. A class no boat sails in is refused, so a mistyped
+/// one is not silently dropped.
+fn of_classes(event: Arc<TrackerEvent>, classes: &[String]) -> Result<Arc<TrackerEvent>> {
+    let wanted: std::collections::BTreeSet<&str> = classes
+        .iter()
+        .map(|c| c.trim())
+        .filter(|c| !c.is_empty())
+        .collect();
+    if wanted.is_empty() {
         return Ok(event);
-    };
-    let mut only = (*event).clone();
-    only.boats
-        .retain(|b| b.division.as_deref().map(str::trim) == Some(class));
-    if only.boats.is_empty() {
+    }
+    let tracker = event.event.tracker;
+    let class_sets: Vec<Vec<String>> = event
+        .boats
+        .iter()
+        .map(|b| pe_trackers::event::classes(tracker, b.division.as_deref()))
+        .collect();
+    if let Some(missing) = wanted
+        .iter()
+        .find(|c| !class_sets.iter().flatten().any(|k| k == **c))
+    {
         return Err(AppError::BadOption {
             field: "Class",
-            value: class.to_owned(),
+            value: (*missing).to_owned(),
         });
     }
+    let mut only = (*event).clone();
+    only.boats = event
+        .boats
+        .iter()
+        .zip(&class_sets)
+        .filter(|(_, sets)| sets.iter().any(|c| wanted.contains(c.as_str())))
+        .map(|(b, _)| b.clone())
+        .collect();
     Ok(Arc::new(only))
 }
 
@@ -281,7 +303,7 @@ pub fn open_with_mode(
     url: &str,
     discard_unsaved: bool,
     match_mode: BoatMatchMode,
-    class: Option<&str>,
+    classes: &[String],
 ) -> Result<TrackerProjectResult> {
     let (previous, settings) = state.with_session(|s| {
         s.refuse_to_discard(discard_unsaved)?;
@@ -309,7 +331,7 @@ pub fn open_with_mode(
             event
         };
         check(&cancel)?;
-        let event = of_class(event, class)?;
+        let event = of_classes(event, classes)?;
         let (document, reports, warnings) = build_with_mode(state, &event, &cancel, match_mode)?;
         check(&cancel)?;
         state.with_session(|session| {

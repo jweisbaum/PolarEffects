@@ -67,6 +67,7 @@ export default {
   "Boat details": "Dati della barca",
   "All classes ({count} boats)": "Tutte le classi ({count} barche)",
   "{class} ({count} boats)": "{class} ({count} barche)",
-  "Choose a class, or all of them, then open the project.": "Scegli una classe, o tutte, poi apri il progetto.",
+  "Choose one or more classes, then open the project.": "Scegli una o più classi, poi apri il progetto.",
+  "Classes": "Classi",
   "Downloading the race to find its classes…": "Download della regata per trovarne le classi…",
 };

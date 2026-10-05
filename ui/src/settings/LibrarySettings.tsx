@@ -46,7 +46,7 @@ export default function LibrarySettings({ settings, onSettings }: { settings: Ap
     <label className="settings-field">{t("YellowBrick device ID (UDID)")}<input data-feature="settings:library-yb-device-id" title={t("YellowBrick device ID (UDID)")} type="password" autoComplete="off" value={draft.yellowbrick_device_id} disabled={running} onChange={e => change({ yellowbrick_device_id: e.target.value })} /></label>
     <p className="muted">{t("YellowBrick credentials list races from its catalogue; only races listed as free are associated with the account. Leave both empty to scrape the races the library already holds and those listed below.")}</p>
     <label className="library-urls">{t("Race URLs (optional, one per line)")}<textarea data-feature="settings:library-urls" title={t("Leave empty to discover races")} value={draft.scrape_urls} disabled={running} onChange={e => change({ scrape_urls: e.target.value })} /></label>
-    <p className="muted">{t("Scraping saves each finished race's tracks in the GeoJSON directory and its boats in the boat metadata, so the Tracks panel finds them. Races already complete in the library are skipped unless listed above.")}</p>
+    <p className="muted">{t("Scraping saves each finished race's tracks in the GeoJSON directory and its boats in the boat metadata, so the Tracks panel finds them. A race already in the library is never scraped again, even when listed above.")}</p>
     <p className="muted">{t("Shutdown scraping keeps the app open until it finishes or you cancel it.")}</p>
 
     <div className="settings-buttons">
@@ -55,11 +55,12 @@ export default function LibrarySettings({ settings, onSettings }: { settings: Ap
       <button data-feature="settings:library-cancel" title={t("Cancel the scrape; races already saved stay in the library")} disabled={!running} onClick={() => void api.cancelLibraryScrape().catch(setFailure)}>{t("Cancel scrape")}</button>
       {saved && <span role="status">{t("Library settings saved")}</span>}
     </div>
-    {status && (status.running || status.done > 0 || status.error || status.cancelled) && <div role="status" className="library-scrape-status">
+    {/* A scrape whose races were all held looked at none, yet has a result to show. */}
+    {status && (status.running || status.manual || status.done > 0 || status.held > 0 || status.error || status.cancelled) && <div role="status" className="library-scrape-status">
       {status.running && <progress max={Math.max(1, status.total)} value={status.total ? status.done : undefined} />}
       <p>{status.cancelled ? t("Scrape cancelled") : status.running ? t("Scraping races…") : status.error ? t("Scrape failed") : t("Scrape finished")}</p>
       {status.current && <p className="library-current">{status.current}</p>}
-      <p>{t("Tracks: {tracks}; skipped races: {skipped}; failures: {failed}", { tracks: status.tracks, skipped: status.skipped, failed: status.failed })}</p>
+      <p>{t("Tracks: {tracks}; already in the library: {held}; unfinished races: {skipped}; failures: {failed}", { tracks: status.tracks, held: status.held, skipped: status.skipped, failed: status.failed })}</p>
       {(status.error || status.failures.length > 0) && <details><summary data-feature="settings:library-details">{t("Scrape details")}</summary>
         {status.error && <p className="modal-error">{status.error}</p>}{status.failures.map((s, i) => <p key={i}>{s}</p>)}</details>}
     </div>}

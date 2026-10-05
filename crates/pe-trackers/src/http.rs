@@ -6,10 +6,15 @@
 //! pausing 0.5, 1 and 2 s, and anything else fails at once. The two network
 //! crates never depend on each other (CLAUDE.md dependency direction), so
 //! the small classification is written again here rather than shared.
+//!
+//! The library scraper asks for more patience (`with_retries`,
+//! `with_backoff`, `with_spacing`): it reads hundreds of races in a row, and
+//! YellowBrick answers a burst with 503s. A `Retry-After` the server sends
+//! lengthens a pause, never shortens it.
 
 use std::io::Read;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use reqwest::StatusCode;
@@ -28,6 +33,9 @@ pub const RETRIES: u32 = 3;
 
 /// The wait before the first retry; each later one waits twice as long.
 pub const FIRST_BACKOFF: Duration = Duration::from_millis(500);
+
+/// The longest single pause, whatever the doubling or `Retry-After` says.
+pub const MAX_PAUSE: Duration = Duration::from_secs(120);
 
 /// How often a pause or a body read looks at the cancel flag.
 const PAUSE_SLICE: Duration = Duration::from_millis(50);
@@ -79,7 +87,8 @@ fn chain(err: &dyn std::error::Error) -> String {
 
 /// One failed attempt.
 enum Failure {
-    Transient(String),
+    /// Worth asking again; with the wait the server asked for, if any.
+    Transient(String, Option<Duration>),
     /// A failure worth reporting at once. `status` is the response's status
     /// when there was one (so [`TrackerError::Http`] can carry it), absent
     /// for a failure with no response (a refused redirect, an oversized
@@ -101,6 +110,11 @@ pub struct Fetcher {
     /// event's detached downloads stop without cancelling the download.
     stops: Vec<Arc<AtomicBool>>,
     backoff: Duration,
+    retries: u32,
+    /// The least time between two requests' starts, and when the last one
+    /// started: shared by the clones a spawned GET runs on.
+    spacing: Duration,
+    last: Arc<Mutex<Option<Instant>>>,
     tracker: &'static str,
 }
 
@@ -116,8 +130,33 @@ impl Fetcher {
             cancel,
             stops: Vec::new(),
             backoff: FIRST_BACKOFF,
+            retries: RETRIES,
+            spacing: Duration::ZERO,
+            last: Arc::default(),
             tracker,
         })
+    }
+
+    /// The same fetcher trying a transient failure again `retries` times.
+    pub fn with_retries(mut self, retries: u32) -> Self {
+        self.retries = retries;
+        self
+    }
+
+    /// The same fetcher starting no request sooner than `spacing` after the
+    /// one before, so a long scrape does not burst.
+    pub fn with_spacing(mut self, spacing: Duration) -> Self {
+        self.spacing = spacing;
+        self
+    }
+
+    /// The same fetcher (its cancel, pauses and spacing) naming `tracker`
+    /// in its errors.
+    pub fn for_tracker(&self, tracker: &'static str) -> Self {
+        Self {
+            tracker,
+            ..self.clone()
+        }
     }
 
     /// The same fetcher with a different first retry pause (tests use a
@@ -168,6 +207,33 @@ impl Fetcher {
         self.read(url, Some(timeout), progress)
     }
 
+    /// Waits `pause`, in slices, so a cancel ends the wait at once.
+    fn pause(&self, pause: Duration) -> Result<()> {
+        let until = Instant::now() + pause;
+        while Instant::now() < until {
+            self.check()?;
+            std::thread::sleep(PAUSE_SLICE.min(until - Instant::now()));
+        }
+        Ok(())
+    }
+
+    /// Waits until `spacing` has passed since the last request started, and
+    /// marks this one's start.
+    fn space(&self) -> Result<()> {
+        if self.spacing.is_zero() {
+            return Ok(());
+        }
+        let mut last = self
+            .last
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(at) = *last {
+            self.pause((at + self.spacing).saturating_duration_since(Instant::now()))?;
+        }
+        *last = Some(Instant::now());
+        Ok(())
+    }
+
     fn read(
         &self,
         url: &str,
@@ -178,23 +244,19 @@ impl Fetcher {
         let mut tries = 0;
         loop {
             self.check()?;
+            self.space()?;
             match self.attempt(url, timeout, progress) {
                 Ok(bytes) => return Ok(bytes),
                 Err(Failure::Cancelled) => return Err(TrackerError::Cancelled),
-                Err(Failure::Transient(_)) if tries < RETRIES => {
+                Err(Failure::Transient(_, asked)) if tries < self.retries => {
                     tries += 1;
-                    // Paused in slices, so a cancel ends the wait at once.
-                    let until = Instant::now() + pause;
-                    while Instant::now() < until {
-                        self.check()?;
-                        std::thread::sleep(PAUSE_SLICE.min(until - Instant::now()));
-                    }
+                    self.pause(pause.max(asked.unwrap_or_default()).min(MAX_PAUSE))?;
                     pause = pause.saturating_mul(2);
                 }
-                Err(Failure::Transient(why)) => {
+                Err(Failure::Transient(why, _)) => {
                     return Err(TrackerError::Unavailable {
                         tracker: self.tracker,
-                        why: format!("{why} (tried {} times)", RETRIES + 1),
+                        why: format!("{why} (tried {} times)", self.retries + 1),
                     });
                 }
                 Err(Failure::Permanent {
@@ -232,7 +294,7 @@ impl Fetcher {
         let response = request.send().map_err(|e| {
             let why = format!("{} could not be reached: {}", self.tracker, chain(&e));
             if transient_error(&e) {
-                Failure::Transient(why)
+                Failure::Transient(why, None)
             } else {
                 Failure::Permanent { status: None, why }
             }
@@ -241,10 +303,10 @@ impl Fetcher {
         match classify(status) {
             Answer::Ok => {}
             Answer::Transient => {
-                return Err(Failure::Transient(format!(
-                    "{} answered {status} for {url}",
-                    self.tracker
-                )));
+                return Err(Failure::Transient(
+                    format!("{} answered {status} for {url}", self.tracker),
+                    retry_after(response.headers()),
+                ));
             }
             Answer::Permanent => {
                 return Err(Failure::Permanent {
@@ -283,7 +345,10 @@ impl Fetcher {
                 return Err(Failure::Cancelled);
             }
             let n = reader.read(&mut piece).map_err(|e| {
-                Failure::Transient(format!("{}'s answer was cut short: {e}", self.tracker))
+                Failure::Transient(
+                    format!("{}'s answer was cut short: {e}", self.tracker),
+                    None,
+                )
             })?;
             if n == 0 {
                 break;
@@ -315,10 +380,13 @@ impl Fetcher {
             .take(MAX_BODY_BYTES + 1)
             .read_to_end(&mut out)
             .map_err(|e| {
-                Failure::Transient(format!(
-                    "{}'s compressed answer for {url} did not inflate: {e}",
-                    self.tracker
-                ))
+                Failure::Transient(
+                    format!(
+                        "{}'s compressed answer for {url} did not inflate: {e}",
+                        self.tracker
+                    ),
+                    None,
+                )
             })?;
         if out.len() as u64 > MAX_BODY_BYTES {
             return Err(Failure::Permanent {
@@ -369,6 +437,19 @@ impl Fetcher {
             stop,
         })
     }
+}
+
+/// The wait a busy server asks for in whole seconds (`Retry-After: 30`); an
+/// HTTP date or anything unreadable is no request.
+fn retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
+    let seconds = headers
+        .get(reqwest::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse::<u64>()
+        .ok()?;
+    Some(Duration::from_secs(seconds))
 }
 
 /// The first allocation for inflating a `compressed`-byte gzip body: four
@@ -723,6 +804,59 @@ mod tests {
         assert!(matches!(err, TrackerError::Network(_)), "{err:?}");
         assert!(err.to_string().contains("not an allowed host"), "{err}");
         assert_eq!(server.join().expect("server"), 3, "no retry of the refusal");
+    }
+
+    /// A scrape's fetcher tries as often as it is told, and a 503's
+    /// `Retry-After` lengthens the pause it follows.
+    #[test]
+    fn retries_follow_the_setting_and_retry_after() {
+        let (url, server) = serve(vec![reply("503 Service Unavailable", ""); 6]);
+        let err = fetcher()
+            .with_retries(5)
+            .get(&url, &mut |_, _| {})
+            .expect_err("gives up");
+        assert!(err.to_string().contains("tried 6 times"), "{err}");
+        assert_eq!(server.join().expect("server"), 6);
+        let busy = "HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+        let (url, server) = serve(vec![busy.to_owned(), reply("200 OK", "ok")]);
+        let started = Instant::now();
+        assert_eq!(fetcher().get(&url, &mut |_, _| {}).expect("read"), b"ok");
+        assert!(
+            started.elapsed() >= Duration::from_secs(1),
+            "waited as asked"
+        );
+        assert_eq!(server.join().expect("server"), 2);
+    }
+
+    /// Requests start no closer together than the spacing, across clones.
+    #[test]
+    fn requests_are_spaced() {
+        let (url, server) = serve(vec![reply("200 OK", "a"); 3]);
+        let fetcher = fetcher().with_spacing(Duration::from_millis(300));
+        let other = fetcher.for_tracker("Other");
+        let started = Instant::now();
+        fetcher.get(&url, &mut |_, _| {}).expect("first");
+        other.get(&url, &mut |_, _| {}).expect("second");
+        fetcher.get(&url, &mut |_, _| {}).expect("third");
+        assert!(
+            started.elapsed() >= Duration::from_millis(600),
+            "{:?}",
+            started.elapsed()
+        );
+        assert_eq!(server.join().expect("server"), 3);
+    }
+
+    #[test]
+    fn retry_after_reads_seconds_only() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        assert_eq!(retry_after(&headers), None);
+        headers.insert(reqwest::header::RETRY_AFTER, "30".parse().expect("value"));
+        assert_eq!(retry_after(&headers), Some(Duration::from_secs(30)));
+        headers.insert(
+            reqwest::header::RETRY_AFTER,
+            "Wed, 21 Oct 2015 07:28:00 GMT".parse().expect("value"),
+        );
+        assert_eq!(retry_after(&headers), None);
     }
 
     /// A cancel ends a retry pause (here 30 s) at once.

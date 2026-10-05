@@ -3,11 +3,15 @@ import { createServer } from "node:http";
 import { assert } from "./harness.mjs";
 const base = new URL("../../../crates/pe-trackers/tests/fixtures/yellowbrick/", import.meta.url);
 let fixture;
-// The race has two classes, so the dialog asks for one before it opens
-// (asked 2026-10-04); "" is all of them.
+// The race has two classes, so the dialog asks which before it opens
+// (asked 2026-10-04; several at once 2026-10-05). Every class starts ticked;
+// "" keeps them all; a name, or a list of names, ticks those alone.
 async function chooseClass(d, value) {
   await d.waitFor('[data-feature="boats:tracker-class"]', { timeoutMs: 60000 });
-  await d.run(`var s=document.querySelector('[data-feature="boats:tracker-class"]'); s.value=${JSON.stringify(value)}; s.dispatchEvent(new Event('change',{bubbles:true})); done(true);`);
+  if (value) {
+    await d.click('[data-feature="boats:tracker-classes-all"]');
+    for (const name of [value].flat()) await d.click(`[data-feature="boats:tracker-class"][value=${JSON.stringify(name)}]`);
+  }
   await d.click('[data-feature="boats:tracker-open"]');
 }
 export default {
@@ -34,8 +38,10 @@ export default {
     await d.type('[data-feature="boats:tracker-url"]',"https://yb.tl/rmsr2024");
     await d.click('[data-feature="boats:tracker-open"]');
     await d.waitFor('[data-feature="boats:tracker-class"]',{timeoutMs:60000});
-    const classes=await d.run(`done(Array.from(document.querySelectorAll('[data-feature="boats:tracker-class"] option')).map(o=>o.textContent));`);
-    assert.equal(classes.length,3,`all classes and each of two: ${classes}`); assert.equal(classes[0],"All classes (2 boats)");
+    const classes=await d.run(`done(Array.from(document.querySelectorAll('[data-feature="boats:tracker-class"]')).map(b=>[b.checked,b.closest("label").textContent]));`);
+    // Each of a boat's YellowBrick groups is a class of its own (asked 2026-10-05).
+    assert.ok(classes.length>2,`each group: ${JSON.stringify(classes)}`); assert.ok(classes.some(([,l])=>l==="IRC Overall (2 boats)"),JSON.stringify(classes)); assert.ok(classes.every(([on])=>on),"every class starts ticked");
+    assert.equal(await d.text('label:has([data-feature="boats:tracker-classes-all"])'),"All classes (2 boats)");
     await t.shot("class-selector");
     await chooseClass(d,"");
     await d.waitFor('.boat-import-report tbody tr',{timeoutMs:60000});
@@ -96,11 +102,25 @@ export default {
     await d.type('[data-feature="boats:tracker-url"]',"https://yb.tl/rmsr2024");
     await d.click('[data-feature="boats:tracker-open"]');
     await d.waitFor('[data-feature="boats:tracker-class"]',{timeoutMs:60000});
-    const one=await d.run(`done(document.querySelectorAll('[data-feature="boats:tracker-class"] option')[1].value);`);
+    const one=await d.run(`done(document.querySelectorAll('[data-feature="boats:tracker-class"]')[0].value);`);
     await chooseClass(d,one);
     await d.waitFor('.boat-import-report tbody tr',{timeoutMs:60000});
     assert.equal(await d.count('.boat-import-report tbody tr'),1,`only the boats of ${one}`);
     await t.shot("one-class-report");
+    await d.click('[data-feature="boats:tracker-cancel"]');
+    await d.waitGone('.tracker-project');
+    // Two groups both boats are in: still one tab per boat.
+    await d.click('[data-feature="shell:project-menu"]');
+    await d.click('[data-feature="project:tracker"]');
+    await d.waitFor('[role="dialog"][aria-label="Unsaved changes"] button.danger');
+    await d.click('[role="dialog"][aria-label="Unsaved changes"] button.danger');
+    await d.waitFor('[data-feature="boats:tracker-url"]');
+    await d.type('[data-feature="boats:tracker-url"]',"https://yb.tl/rmsr2024");
+    await d.click('[data-feature="boats:tracker-open"]');
+    await chooseClass(d,["IRC Overall","Line Honours Monohull"]);
+    await d.waitFor('.boat-import-report tbody tr',{timeoutMs:60000});
+    assert.equal(await d.count('.boat-import-report tbody tr'),2,"a boat in two ticked classes is one tab");
+    await t.shot("overlapping-classes-report");
     await d.click('[data-feature="boats:tracker-cancel"]');
     await d.waitGone('.tracker-project');
   }

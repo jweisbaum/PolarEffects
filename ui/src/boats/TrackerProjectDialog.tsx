@@ -25,10 +25,11 @@ export default function TrackerProjectDialog({ discardUnsaved, onOpened, onClose
   // to find them; null before (asked 2026-10-04).
   const [classes, setClasses] = useState<[string, number][] | null>(null);
   const [boatCount, setBoatCount] = useState(0);
-  const [chosenClass, setChosenClass] = useState("");
+  // The classes ticked; all of them at first (several at once, asked 2026-10-05).
+  const [chosen, setChosen] = useState<string[]>([]);
   const [finding, setFinding] = useState(false);
   // Another race, another set of classes.
-  useEffect(() => { setClasses(null); setChosenClass(""); }, [tracker, url]);
+  useEffect(() => { setClasses(null); setChosen([]); }, [tracker, url]);
   useEffect(() => {
     if (!busy) return;
     let live = true;
@@ -36,9 +37,10 @@ export default function TrackerProjectDialog({ discardUnsaved, onOpened, onClose
     poll(); const timer = window.setInterval(poll, 300);
     return () => { live = false; window.clearInterval(timer); };
   }, [busy]);
-  const build = async (trackerClass: string | null) => {
+  // No classes is the whole race, boats without a class included.
+  const build = async (only: string[]) => {
     setBusy(true); setCancelling(false); setError(null);
-    try { setResult(await api.openTrackerProject(tracker, url.trim(), discardUnsaved, matchMode, trackerClass)); }
+    try { setResult(await api.openTrackerProject(tracker, url.trim(), discardUnsaved, matchMode, only)); }
     catch (e) { setError(e); }
     finally { setBusy(false); }
   };
@@ -46,22 +48,22 @@ export default function TrackerProjectDialog({ discardUnsaved, onOpened, onClose
   // downloads nothing more) and offers its classes; a race of one class or
   // none opens at once.
   const open = async () => {
-    if (classes !== null) return build(chosenClass || null);
+    if (classes !== null) return build(chosen.length === classes.length ? [] : classes.map(([name]) => name).filter(name => chosen.includes(name)));
     setFinding(true); setCancelling(false); setError(null);
     let found: [string, number][] = [];
     try {
       const race = await api.trackerEvent(tracker as "yellowbrick" | "geovoile" | "bluewater", url.trim());
       const counts = new Map<string, number>();
-      for (const boat of race.boats) {
-        const name = boat.division?.trim();
-        if (name) counts.set(name, (counts.get(name) ?? 0) + 1);
-      }
+      // Each of a boat's groups is a class (asked 2026-10-05); a boat in
+      // several ticked ones still opens as one tab.
+      for (const boat of race.boats) for (const name of boat.classes) counts.set(name, (counts.get(name) ?? 0) + 1);
       found = [...counts.entries()].sort(([a], [b]) => a.localeCompare(b));
       setBoatCount(race.boats.length);
       setClasses(found);
+      setChosen(found.map(([name]) => name));
     } catch (e) { setError(e); return; }
     finally { setFinding(false); }
-    if (found.length <= 1) await build(null);
+    if (found.length <= 1) await build([]);
   };
   const close = async () => {
     if (busy || settling) return;
@@ -89,11 +91,14 @@ export default function TrackerProjectDialog({ discardUnsaved, onOpened, onClose
       </select></label>
       <label>{t("Race URL")} <input autoFocus data-feature="boats:tracker-url" value={url} disabled={busy || finding} onChange={e => setUrl(e.target.value)} type="url" /></label>
       {classes !== null && classes.length > 1 && <>
-        <label>{t("Class")} <select data-feature="boats:tracker-class" value={chosenClass} disabled={busy} onChange={e => setChosenClass(e.target.value)}>
-          <option value="">{t("All classes ({count} boats)", { count: boatCount })}</option>
-          {classes.map(([name, count]) => <option key={name} value={name}>{t("{class} ({count} boats)", { class: name, count })}</option>)}
-        </select></label>
-        <p className="muted">{t("Choose a class, or all of them, then open the project.")}</p>
+        <fieldset className="tracker-classes" disabled={busy}>
+          <legend>{t("Classes")}</legend>
+          <label><input type="checkbox" data-feature="boats:tracker-classes-all" checked={chosen.length === classes.length}
+            onChange={e => setChosen(e.target.checked ? classes.map(([name]) => name) : [])} />{t("All classes ({count} boats)", { count: boatCount })}</label>
+          {classes.map(([name, count]) => <label key={name}><input type="checkbox" data-feature="boats:tracker-class" value={name} checked={chosen.includes(name)}
+            onChange={e => setChosen(old => e.target.checked ? [...old, name] : old.filter(c => c !== name))} />{t("{class} ({count} boats)", { class: name, count })}</label>)}
+        </fieldset>
+        <p className="muted">{t("Choose one or more classes, then open the project.")}</p>
       </>}
       <label>{t("Match additional data")} <select data-feature="boats:tracker-match" value={matchMode} disabled={busy} onChange={e => setMatchMode(e.target.value as BoatMatchMode)}>
         <option value="identical_model">{t("Identical models")}</option><option value="exact_boat">{t("Exact boat only")}</option>
@@ -122,7 +127,7 @@ export default function TrackerProjectDialog({ discardUnsaved, onOpened, onClose
           <button autoFocus data-feature="boats:tracker-cancel" disabled={settling} onClick={() => void close()}>{t("Cancel")}</button>
           <button className="primary" data-feature="boats:tracker-close" disabled={settling} onClick={() => void confirm()}>{t("Open project")}</button>
         </> : <button data-feature="boats:tracker-close" disabled={settling} onClick={() => void close()}>{t("Cancel")}</button>}
-      {!result && <button className="primary" data-feature="boats:tracker-open" disabled={busy || finding || !url.trim()} onClick={() => void open()}>{t("Open tracker project")}</button>}
+      {!result && <button className="primary" data-feature="boats:tracker-open" disabled={busy || finding || !url.trim() || (classes !== null && classes.length > 1 && chosen.length === 0)} onClick={() => void open()}>{t("Open tracker project")}</button>}
     </div>
   </section></div>;
 }

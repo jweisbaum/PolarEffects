@@ -35,7 +35,10 @@ creates one tab per boat, imports its race track, and searches the embedded ORC
 catalogue, downloaded ORR catalogue and local boat metadata for identical models.
 Historical tracks come from the GeoJSON directory configured in Settings.
 When the race has several classes, the first click downloads it and offers
-**Class**: open all classes, or only the boats of one.
+**Classes**: each group the tracker puts boats in (IRC Overall, IRC Class 2,
+Line Honours…) is listed on its own, and a boat in several ticked groups still
+gets one tab. Every class starts ticked; untick the ones you do not want, or
+use **All classes** to clear them and tick only those you do.
 Choose **Exact boat only** to limit both polars and historical tracks to that
 individual boat. This requires matching MMSI or a sail number corroborated by
 builder and length; the name or model alone is insufficient. Conflicting
@@ -174,7 +177,10 @@ to *On startup* or *On shutdown*. Only finished YellowBrick, Geovoile and Blue
 Water races are saved; ongoing and future races are skipped. List race links,
 one per line, to scrape only those; leave the list empty to rescrape the
 library's races and discover new ones (a YellowBrick user key and device ID
-add its catalogue). A manual scrape shows its progress in the status bar,
+add its catalogue). A race already in the library is never downloaded again,
+even when listed; the status counts it as "already in the library". The
+scraper paces itself and waits out a busy tracker, so a long scrape is slow
+on purpose. A manual scrape shows its progress in the status bar,
 where **Cancel scrape** stops it; races already saved stay. The
 metadata covers vessels from YellowBrick, Geovoile, Blue Water, old Geovoile,
 Regadata and America's Cup.

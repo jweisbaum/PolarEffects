@@ -67,6 +67,7 @@ export default {
   "Boat details": "艇の詳細",
   "All classes ({count} boats)": "すべてのクラス（{count} 艇）",
   "{class} ({count} boats)": "{class}（{count} 艇）",
-  "Choose a class, or all of them, then open the project.": "クラスを1つ、またはすべてを選んでからプロジェクトを開きます。",
+  "Choose one or more classes, then open the project.": "1つ以上のクラスを選んでからプロジェクトを開きます。",
+  "Classes": "クラス",
   "Downloading the race to find its classes…": "クラスを調べるためにレースをダウンロードしています…",
 };

@@ -218,6 +218,8 @@ pub struct TrackerBoatRow {
     pub model: Option<String>,
     /// Division.
     pub division: Option<String>,
+    /// Its classes: each of the groups the division joins (asked 2026-10-05).
+    pub classes: Vec<String>,
     /// The tracker's status (`RACING`, `FINISHED`, `RETIRED`…).
     pub status: Option<String>,
     /// Positions.
@@ -333,6 +335,10 @@ impl TrackerEventView {
                     sail: b.sail.clone(),
                     model: b.model.clone(),
                     division: b.division.clone(),
+                    classes: pe_trackers::event::classes(
+                        event.event.tracker,
+                        b.division.as_deref(),
+                    ),
                     status: b.status.clone(),
                     fixes: count(b.fixes.len()),
                     first: b.fixes.first().map(|f| f.t),

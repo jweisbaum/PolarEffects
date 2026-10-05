@@ -164,7 +164,7 @@ pub const TABLE: &[(&str, Handler)] = &[
     command!(delete_boat, crate::boats::delete_boat, { project_id: u64, boat_id: u64 }),
     command!(restore_boat, crate::boats::restore_boat, { project_id: u64 }),
     command!(async export_all_polars, crate::boats::export_all_polars, { directory: String, format: String }),
-    command!(async open_tracker_project, crate::boats::tracker_project::open_tracker_project, { tracker: String, url: String, discard_unsaved: bool, match_mode: Option<crate::boats::tracker_project::BoatMatchMode>, class: Option<String> }),
+    command!(async open_tracker_project, crate::boats::tracker_project::open_tracker_project, { tracker: String, url: String, discard_unsaved: bool, match_mode: Option<crate::boats::tracker_project::BoatMatchMode>, classes: Option<Vec<String>> }),
     command!(confirm_tracker_project, crate::boats::tracker_project::confirm_tracker_project, { project_id: u64 }),
     command!(discard_tracker_project, crate::boats::tracker_project::discard_tracker_project, { project_id: u64 }),
     command!(

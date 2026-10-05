@@ -18,7 +18,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(&args[1])?)?;
-    let db = &settings["database"];
+    // The track library's settings; an older file keeps them under `database`.
+    let db = if settings["library"].is_object() {
+        &settings["library"]
+    } else {
+        &settings["database"]
+    };
     let credentials = Credentials {
         user_key: db["yellowbrick_user_key"]
             .as_str()

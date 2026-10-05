@@ -23,6 +23,6 @@ const features: Feature[] = [
   { id: "boats:export-confirm", label: msg("Choose export folder…"), description: exporting, keywords: ["boat", "export"], topic: "blend", landing: "boats:add" },
   { id: "start:tracker", label: msg("Open project from tracker…"), description: tracker, keywords: ["YellowBrick", "Blue Water"], topic: "projects" },
   { id: "project:tracker", label: msg("Open project from tracker…"), description: tracker, keywords: ["YellowBrick", "Blue Water"], topic: "projects", reveal: ["menu:project"] },
-  ...["provider", "url", "match", "details", "class", "open", "cancel", "close", "warnings"].map(id => ({ id: `boats:tracker-${id}`, label: msg("Open tracker project"), description: tracker, keywords: ["YellowBrick", "Blue Water", "class", "division"], topic: "projects", reveal: ["menu:project"], landing: "project:tracker" })),
+  ...["provider", "url", "match", "details", "class", "classes-all", "open", "cancel", "close", "warnings"].map(id => ({ id: `boats:tracker-${id}`, label: msg("Open tracker project"), description: tracker, keywords: ["YellowBrick", "Blue Water", "class", "division"], topic: "projects", reveal: ["menu:project"], landing: "project:tracker" })),
 ];
 export default features;

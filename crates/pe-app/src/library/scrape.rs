@@ -19,7 +19,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::Path,
     sync::{
         Arc, Mutex,
@@ -37,6 +37,20 @@ pub const PROGRESS: &str = "library://scrape";
 /// be hundreds of megabytes, so it is not rewritten after every race.
 const SAVE_EVERY: usize = 10;
 
+/// How often a busy answer is tried again, and the first pause; each later
+/// pause doubles, up to two minutes.
+const SCRAPE_RETRIES: u32 = 6;
+const SCRAPE_BACKOFF: Duration = Duration::from_secs(5);
+
+/// The least time between two requests' starts.
+const REQUEST_SPACING: Duration = Duration::from_secs(1);
+
+/// The pause between two races.
+const RACE_PAUSE: Duration = Duration::from_secs(2);
+
+/// The wait before the races a busy tracker turned away are tried again.
+const BUSY_COOL_OFF: Duration = Duration::from_secs(60);
+
 /// What a scrape is doing, or did last.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
 pub struct ScrapeProgress {
@@ -50,8 +64,10 @@ pub struct ScrapeProgress {
     pub total: u32,
     /// Boat tracks saved.
     pub tracks: u32,
-    /// Races skipped: unfinished, unverified, or already in the library.
+    /// Races skipped as unfinished or unverified.
     pub skipped: u32,
+    /// Races not fetched because the library already holds them.
+    pub held: u32,
     /// Races or discoveries that failed.
     pub failed: u32,
     /// What it is on now.
@@ -205,11 +221,55 @@ fn guid(key: &str) -> String {
 }
 
 fn competition_id(event: &pe_trackers::EventRef) -> String {
-    let source = pe_trackers::library::source(event.tracker);
-    guid(&format!(
-        "polarexplorer/library/{source}/{}/race",
-        queue_key(event)
-    ))
+    key_competition_id(
+        pe_trackers::library::source(event.tracker),
+        &queue_key(event),
+    )
+}
+
+fn key_competition_id(source: &str, key: &str) -> String {
+    guid(&format!("polarexplorer/library/{source}/{key}/race"))
+}
+
+/// The leg a race's name gives: "Défi Azimut 2019 - Leg 2" (the snapshot's
+/// names) or "Défi Azimut (2/2)" (Geovoile's own).
+fn leg_from_name(name: &str) -> Option<u32> {
+    let lower = name.to_lowercase();
+    if let Some(at) = lower.rfind("leg ") {
+        let digits: String = lower[at + 4..]
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        if let Ok(n) = digits.parse() {
+            return Some(n);
+        }
+    }
+    let open = name.rfind('(')?;
+    let (n, _) = name[open + 1..].split_once('/')?;
+    n.trim().parse().ok()
+}
+
+/// The race keys a search record stands for. A Geovoile race in legs is
+/// read as its legs (`…?leg=2`), but an address without one shows a leg too,
+/// which the record's name says; and any leg stands for the race's own
+/// address, so holding one leg holds the race (asked 2026-10-05).
+fn keys_of(source: &str, url: &str, name: &str) -> Vec<String> {
+    let Ok(e) = pe_trackers::library::resolve_source(source, url) else {
+        return Vec::new();
+    };
+    let key = queue_key(&e);
+    let mut keys = vec![key.clone()];
+    if e.tracker == pe_core::track::Tracker::Geovoile {
+        match key.split_once("?leg=") {
+            Some((base, _)) => keys.push(base.to_owned()),
+            None => {
+                if let Some(leg) = leg_from_name(name) {
+                    keys.push(format!("{key}?leg={leg}"));
+                }
+            }
+        }
+    }
+    keys
 }
 
 fn scrape<R: tauri::Runtime>(
@@ -219,13 +279,23 @@ fn scrape<R: tauri::Runtime>(
 ) -> Result<()> {
     let state = app.state::<AppState>();
     let timeout = state.with_session(|s| Ok(s.settings.network.timeout_s))?;
+    // Patient with a tracker that answers a burst with 503s (asked
+    // 2026-10-05): requests a second apart, and a busy answer tried again
+    // after 5, 10, 20, 40, 80 and 120 s, longer when the server asks.
     let fetcher = pe_trackers::Fetcher::new(
-        "SYRF",
+        "The track library",
         Duration::from_secs(u64::from(timeout)),
         Arc::clone(cancel),
-    )?;
+    )?
+    .with_retries(SCRAPE_RETRIES)
+    .with_backoff(SCRAPE_BACKOFF)
+    .with_spacing(REQUEST_SPACING);
     update(app, |p| p.current = "Reading the boat metadata".into());
     let mut metadata = super::catalogue::read_metadata(&state, settings)?;
+    let root = Path::new(&settings.geojson_directory);
+    std::fs::create_dir_all(root).doing("create", root.display())?;
+    let mut unsaved = usize::from(drop_duplicates(&mut metadata, root) > 0);
+    let mut held = held(&metadata);
     let mut urls = BTreeMap::new();
     let mut yellowbrick_races = BTreeMap::new();
     let explicit: Vec<_> = settings
@@ -234,27 +304,12 @@ fn scrape<R: tauri::Runtime>(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .collect();
-    let limited = !explicit.is_empty();
-    if limited {
-        for u in explicit {
-            let e = pe_trackers::library::resolve(u)?;
-            urls.insert(queue_key(&e), (u.to_owned(), e));
-        }
-    } else {
-        // Races the library already knows, then what each tracker lists.
-        for u in known_urls(&metadata) {
-            if let Ok(e) = pe_trackers::library::resolve(&u) {
-                urls.insert(queue_key(&e), (u, e));
-            }
-        }
-        for tracker in [
-            pe_core::track::Tracker::YellowBrick,
-            pe_core::track::Tracker::Geovoile,
-            pe_core::track::Tracker::BlueWaterTracks,
-        ] {
+    if explicit.is_empty() {
+        for tracker in DOWNLOAD_ORDER {
             check(cancel)?;
-            let source = pe_trackers::library::source(tracker);
-            update(app, |p| p.current = format!("Discovering {source}"));
+            let name = pe_trackers::event::name(tracker);
+            let fetcher = fetcher.for_tracker(name);
+            update(app, |p| p.current = format!("Discovering {name}"));
             let discovered: Result<Vec<String>> = if tracker == pe_core::track::Tracker::YellowBrick
             {
                 discover_yellowbrick(app, settings, &metadata, &fetcher, &mut yellowbrick_races)
@@ -269,17 +324,40 @@ fn scrape<R: tauri::Runtime>(
                         }
                     }
                 }
-                Err(e) => failure(app, &format!("{source} discovery"), &e.to_string()),
+                Err(e) => failure(app, &format!("{name} discovery"), &e.to_string()),
             }
         }
+    } else {
+        for u in explicit {
+            let e = pe_trackers::library::resolve(u)?;
+            urls.insert(queue_key(&e), (u.to_owned(), e));
+        }
     }
-    let root = Path::new(&settings.geojson_directory);
-    std::fs::create_dir_all(root).doing("create", root.display())?;
+    // A race the library holds is never fetched again (asked 2026-10-05).
     let mut queue: Vec<_> = urls.into_values().collect();
+    in_download_order(&mut queue);
+    let before = queue.len();
+    queue.retain(|(_, e)| !held.contains(&queue_key(e)));
+    let already = (before - queue.len()) as u32;
+    update(app, |p| p.held += already);
     let mut cursor = 0;
-    let mut unsaved = 0;
+    // Races a busy tracker turned away, tried once more at the end.
+    let mut later = Vec::new();
+    let mut second_round = false;
     let outcome: Result<()> = (|| {
-        while cursor < queue.len() {
+        loop {
+            if cursor == queue.len() {
+                if second_round || later.is_empty() {
+                    break;
+                }
+                second_round = true;
+                let n = later.len();
+                update(app, |p| {
+                    p.current = format!("Waiting before trying {n} busy races again");
+                });
+                pause(cancel, BUSY_COOL_OFF)?;
+                queue.append(&mut later);
+            }
             check(cancel)?;
             let (original, event) = queue[cursor].clone();
             update(app, |p| {
@@ -287,19 +365,27 @@ fn scrape<R: tauri::Runtime>(
                 p.done = cursor as u32;
                 p.total = queue.len() as u32;
             });
+            let key = queue_key(&event);
             let result: Result<()> = (|| {
-                if !limited && complete(&metadata, settings, &event) {
-                    update(app, |p| p.skipped += 1);
+                // A Geovoile leg queued during this scrape may be held by now.
+                if held.contains(&key) {
+                    update(app, |p| p.held += 1);
                     return Ok(());
                 }
                 let client = crate::trackers::client_of(event.tracker)?;
-                let catalogue = yellowbrick_races
-                    .get(&queue_key(&event))
-                    .and_then(Option::as_ref);
+                let fetcher = fetcher.for_tracker(pe_trackers::event::name(event.tracker));
+                let catalogue = yellowbrick_races.get(&key).and_then(Option::as_ref);
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_or(0, |d| d.as_secs() as i64);
-                let fetched = client.fetch_for_scrape(&event, &fetcher, &mut |_| {}, now)?;
+                let fetched = match client.fetch_for_scrape(&event, &fetcher, &mut |_| {}, now) {
+                    Ok(fetched) => fetched,
+                    Err(pe_trackers::TrackerError::Unavailable { .. }) if !second_round => {
+                        later.push((original.clone(), event.clone()));
+                        return Ok(());
+                    }
+                    Err(e) => return Err(e.into()),
+                };
                 use pe_trackers::library::completion::ScrapeFetch;
                 let legs = match &fetched {
                     ScrapeFetch::Finished(event) => event.leg,
@@ -313,9 +399,14 @@ fn scrape<R: tauri::Runtime>(
                             site.url().split('?').next().unwrap_or_default()
                         );
                         let e = client.resolve(&url)?;
+                        let leg_key = queue_key(&e);
+                        if held.contains(&leg_key) {
+                            continue;
+                        }
                         if !queue
                             .iter()
-                            .any(|(_, old)| old.key == e.key && old.tracker == e.tracker)
+                            .chain(later.iter())
+                            .any(|(_, old)| queue_key(old) == leg_key)
                         {
                             queue.push((url, e));
                         }
@@ -325,7 +416,31 @@ fn scrape<R: tauri::Runtime>(
                     update(app, |p| p.skipped += 1);
                     return Ok(());
                 };
-                let count = save_race(&mut metadata, root, &event, &original, catalogue)?;
+                // An address without a leg showed one: the library has it already?
+                let shown = queue_key(&event.event);
+                if shown != key && held.contains(&shown) {
+                    update(app, |p| p.held += 1);
+                    return Ok(());
+                }
+                // Recorded under the leg it is, so the next scrape knows it.
+                let recorded = match event.leg {
+                    Some((leg, _)) if shown != key => format!(
+                        "{}?leg={leg}",
+                        pe_trackers::geovoile::site(&original)?
+                            .url()
+                            .split('?')
+                            .next()
+                            .unwrap_or_default()
+                    ),
+                    _ => original.clone(),
+                };
+                let count = save_race(&mut metadata, root, &event, &recorded, catalogue)?;
+                held.extend(keys_of(
+                    pe_trackers::library::source(event.event.tracker),
+                    &recorded,
+                    &event.title,
+                ));
+                held.insert(key.clone());
                 update(app, |p| p.tracks += count as u32);
                 unsaved += 1;
                 if unsaved >= SAVE_EVERY {
@@ -340,6 +455,10 @@ fn scrape<R: tauri::Runtime>(
                 failure(app, &original, &e.to_string());
             }
             cursor += 1;
+            // A breath between races, so a long scrape never bursts.
+            if cursor < queue.len() {
+                pause(cancel, RACE_PAUSE)?;
+            }
         }
         Ok(())
     })();
@@ -355,21 +474,26 @@ fn scrape<R: tauri::Runtime>(
     outcome
 }
 
-/// The race addresses the library's records name, for the trackers it scrapes.
-fn known_urls(metadata: &Metadata) -> Vec<String> {
-    let mut out: Vec<String> = metadata
-        .tracks
-        .iter()
-        .filter(|t| matches!(t.source.as_str(), "YELLOWBRICK" | "GEOVOILE" | "BLUEWATER"))
-        .filter_map(|t| {
-            pe_trackers::library::resolve_source(&t.source, &t.original_url)
-                .ok()
-                .map(|e| e.url)
-        })
-        .collect();
-    out.sort();
-    out.dedup();
-    out
+/// The trackers in the order their races download (asked 2026-10-05).
+const DOWNLOAD_ORDER: [pe_core::track::Tracker; 3] = [
+    pe_core::track::Tracker::BlueWaterTracks,
+    pe_core::track::Tracker::YellowBrick,
+    pe_core::track::Tracker::Geovoile,
+];
+
+/// Puts the queue in [`DOWNLOAD_ORDER`], each tracker's races keeping theirs.
+fn in_download_order(queue: &mut [(String, pe_trackers::EventRef)]) {
+    queue.sort_by_key(|(_, e)| DOWNLOAD_ORDER.iter().position(|t| *t == e.tracker));
+}
+
+/// Waits `time`, ending at once on cancel.
+fn pause(cancel: &AtomicBool, time: Duration) -> Result<()> {
+    let until = std::time::Instant::now() + time;
+    while std::time::Instant::now() < until {
+        check(cancel)?;
+        std::thread::sleep(Duration::from_millis(50).min(until - std::time::Instant::now()));
+    }
+    Ok(())
 }
 
 /// YellowBrick catalogue races the library already holds codes for: by
@@ -403,31 +527,66 @@ fn yellowbrick_codes(metadata: &Metadata) -> BTreeMap<String, Vec<String>> {
     codes
 }
 
-/// Whether the library already holds this race whole: a completed race with
-/// every boat's file present needs no network at all.
-fn complete(
-    metadata: &Metadata,
-    settings: &LibrarySettings,
-    event: &pe_trackers::EventRef,
-) -> bool {
-    let source = pe_trackers::library::source(event.tracker);
-    let mine = competition_id(event);
-    let hits: Vec<&BoatTrackHit> = metadata
+/// The races the library holds, by queue key: every search record's race
+/// address, the snapshot's and the scraper's own alike.
+fn held(metadata: &Metadata) -> BTreeSet<String> {
+    let races: BTreeSet<(&str, &str, &str)> = metadata
         .tracks
         .iter()
-        .filter(|t| {
-            t.competition_id == mine
-                || (t.source == source
-                    && pe_trackers::library::resolve_source(source, &t.original_url)
-                        .is_ok_and(|e| queue_key(&e) == queue_key(event)))
+        .map(|t| {
+            (
+                t.source.as_str(),
+                t.original_url.as_str(),
+                t.event_name.as_str(),
+            )
         })
         .collect();
-    !hits.is_empty()
-        && hits.iter().all(|t| {
-            !t.storage_key.is_empty()
-                && safe_file(Path::new(&settings.geojson_directory), &t.storage_key)
-                    .is_ok_and(|p| p.is_file())
-        })
+    races
+        .into_iter()
+        .flat_map(|(source, url, name)| keys_of(source, url, name))
+        .collect()
+}
+
+/// Removes the scraper's own copy of a race the library also holds from
+/// elsewhere (a SYRF snapshot): the records, and the track files it wrote.
+/// Answers how many races it removed.
+fn drop_duplicates(metadata: &mut Metadata, root: &Path) -> usize {
+    let mut races: BTreeMap<String, (BTreeSet<String>, String)> = BTreeMap::new();
+    for t in &metadata.tracks {
+        for key in keys_of(&t.source, &t.original_url, &t.event_name) {
+            races
+                .entry(key.clone())
+                .or_insert_with(|| (BTreeSet::new(), key_competition_id(&t.source, &key)))
+                .0
+                .insert(t.competition_id.clone());
+        }
+    }
+    let ours: BTreeSet<String> = races
+        .into_values()
+        .filter(|(ids, mine)| ids.len() > 1 && ids.contains(mine))
+        .map(|(_, mine)| mine)
+        .collect();
+    if ours.is_empty() {
+        return 0;
+    }
+    for t in metadata
+        .tracks
+        .iter()
+        .filter(|t| ours.contains(&t.competition_id))
+    {
+        if let Ok(path) = safe_file(root, &t.storage_key) {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+    metadata
+        .tracks
+        .retain(|t| !ours.contains(&t.competition_id));
+    let units = metadata
+        .tables
+        .entry("CompetitionUnits".to_owned())
+        .or_default();
+    units.retain(|u| !u["id"].as_str().is_some_and(|id| ours.contains(id)));
+    ours.len()
 }
 
 /// A storage key under `root`, never through traversal or a symlink out of it.

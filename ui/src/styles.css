@@ -1294,6 +1294,10 @@ button.source-label:hover { border-color: var(--border); background: var(--raise
 .tracker-project input { flex: 1; min-width: 200px; }
 /* A class named at length shrinks with the dialog rather than leaving it. */
 .tracker-project > label select { flex: 0 1 auto; min-width: 0; max-width: 100%; }
+/* Several classes at once: a list that scrolls rather than grows. */
+.tracker-project .tracker-classes { margin: 14px 0; padding: 8px 12px; max-height: 220px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; }
+.tracker-project .tracker-classes label { display: flex; gap: 8px; align-items: center; margin: 4px 0; }
+.tracker-project .tracker-classes input { flex: none; min-width: 0; }
 .tracker-project progress { width: 100%; }
 .boat-import-report { max-height: 40vh; overflow: auto; }
 .boat-import-report table { width: 100%; border-collapse: collapse; }
