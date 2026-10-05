@@ -22,7 +22,7 @@ use pe_core::{SampleId, TrackId};
 
 pub use derive::{NormaliseReport, derive, normalise};
 pub use error::{Reason, TrackFileError};
-pub use filter::{boat_speed, filtered_out, polar_point};
+pub use filter::{boat_speed, filtered_out, polar_point, through_water};
 
 /// The most fixes one file may hold: a year of ten-second fixes.
 pub const MAX_FIXES: usize = 5_000_000;

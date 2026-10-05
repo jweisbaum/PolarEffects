@@ -1,9 +1,22 @@
-import { mkdir, writeFile, readFile } from "node:fs/promises";
+import { mkdir, writeFile, readFile, readdir } from "node:fs/promises";
+import { createServer } from "node:http";
 import { join } from "node:path";
 import { assert, newProject } from "./harness.mjs";
+const base = new URL("../../../crates/pe-trackers/tests/fixtures/yellowbrick/", import.meta.url);
 
 export default {
-  name: "database boat library",
+  name: "track library",
+  // A recorded YellowBrick race for the scraper, served on loopback.
+  async setup() {
+    const routes = new Map([
+      ["/JSON/rmsr2024/RaceSetup", await readFile(new URL("rmsr2024-RaceSetup.json", base))],
+      ["/BIN/rmsr2024/AllPositions3", await readFile(new URL("rmsr2024-AllPositions3-first3.bin", base))],
+    ]);
+    const server = createServer((req, res) => { const path = req.url.split("?")[0]; const body = routes.get(path);
+      setTimeout(() => { res.writeHead(body ? 200 : 404); res.end(body); }, path.startsWith("/BIN/") ? 3000 : 0); });
+    await new Promise(done => server.listen(0, "127.0.0.1", done));
+    return { env: { PE_DRIVER_YELLOWBRICK: `http://127.0.0.1:${server.address().port}` }, teardown: () => new Promise(done => server.close(done)) };
+  },
   async run(t) {
     const d = t.driver;
     const geo = join(d.automationRoot, "geojson");
@@ -15,41 +28,27 @@ export default {
     await writeFile(join(metadata, "boat-metadata.json"), JSON.stringify({ version: 1, tables: { Vessels: [vessel] }, tracks: [hit, second] }));
     await writeFile(join(geo, "race.geojson"), JSON.stringify({ type: "Feature", properties: { vesselParticipantId: "participant", competitionUnitId: "race", detail: { lon: 0, lat: 1, elevation: 2, time: 3, sog: 4, cog: 5 } }, geometry: { type: "LineString", coordinates: [[-122, 35, 0, 1753531200000, 7, 270], [-122.05, 35, 0, 1753531800000, 8, 270], [-122.1, 35, 0, 1753532400000, 9, 270]] } }));
     await writeFile(join(geo, "race2.geojson"), (await readFile(join(geo, "race.geojson"), "utf8")).replaceAll('"participant"', '"participant2"').replaceAll('"race"', '"race2"'));
-    await newProject(d, "Database tracks");
+    await newProject(d, "Library tracks");
     await d.click('[data-feature="shell:settings"]');
-    await d.waitFor('[data-feature="settings:db-host"]');
-    assert.ok((await d.text('.database-settings')).includes('Only finished races are scraped. Ongoing, future and unverified races are skipped.'));
-    await d.run(`document.querySelector('[data-feature="settings:db-schedule"]').scrollIntoView({block: "center"}); done(true);`);
-    await t.shot("finished-races-policy");
-    await d.type('[data-feature="settings:yb-user-key"]', "fixture-user-key");
-    await d.type('[data-feature="settings:yb-device-id"]', "fixture-device-id");
-    assert.equal(await d.run(`done(document.querySelector('[data-feature="settings:yb-user-key"]').type);`), "password");
-    assert.equal(await d.run(`done(document.querySelector('[data-feature="settings:yb-device-id"]').type);`), "password");
-    await d.run(`document.querySelector('[data-feature="settings:yb-user-key"]').scrollIntoView({block: "center"}); done(true);`);
-    await t.shot("yellowbrick-credentials");
-    await d.type('[data-feature="settings:db-geojson"]', geo);
-    await d.type('[data-feature="settings:db-metadata"]', metadata);
-    await d.type('[data-feature="settings:db-host"]', "127.0.0.1");
-    await d.type('[data-feature="settings:db-port"]', "1");
-    await d.click('[data-feature="settings:db-test"]');
-    await d.waitFor(".database-connection.failed", { timeoutMs: 15000 });
-    await t.shot("connection-failure");
-    // Optional read-only local connection check for the developer's integration run.
-    if (process.env.PE_TEST_SYRF_DB) {
-      await d.type('[data-feature="settings:db-port"]', "5432");
-      await d.type('[data-feature="settings:db-name"]', process.env.PE_TEST_SYRF_DB);
-      await d.click('[data-feature="settings:db-test"]');
-      await d.waitFor(".database-connection.ok", { timeoutMs: 15000 });
-      await t.shot("connection-success");
+    // Scraping is back, into files only (asked 2026-10-04): nothing about a database.
+    await d.waitFor('[data-feature="settings:library-geojson"]');
+    for (const gone of ["settings:db-host", "settings:db-test", "settings:db-scrape", "settings:db-export", "settings:db-download"]) {
+      assert.equal(await d.exists(`[data-feature="${gone}"]`), false, `${gone} is gone`);
     }
-    await d.click('[data-feature="settings:db-save"]');
-    await d.waitFor(".database-settings", { text: "Database settings saved" });
+    for (const control of ["settings:library-schedule", "settings:library-yb-user-key", "settings:library-yb-device-id", "settings:library-urls", "settings:library-scrape"]) {
+      assert.ok(await d.exists(`[data-feature="${control}"]`), `${control} is there`);
+    }
+    assert.ok((await d.text('.library-settings')).includes("Only finished races are scraped."));
+    await d.type('[data-feature="settings:library-geojson"]', geo);
+    await d.type('[data-feature="settings:library-metadata"]', metadata);
+    await d.run(`document.querySelector('[data-feature="settings:library-save"]').scrollIntoView({block: "center"}); done(true);`);
+    await d.click('[data-feature="settings:library-save"]');
+    await d.waitFor(".library-settings", { text: "Library settings saved" });
+    await t.shot("library-settings");
     const saved = JSON.parse(await readFile(join(d.automationRoot, "config", "settings.json"), "utf8"));
-    assert.equal(saved.database.geojson_directory, geo);
-    assert.equal(saved.database.metadata_directory, metadata);
-    assert.equal(saved.database.scrape_schedule, "on_demand");
-    assert.equal(saved.database.yellowbrick_user_key, "fixture-user-key");
-    assert.equal(saved.database.yellowbrick_device_id, "fixture-device-id");
+    assert.equal(saved.library.geojson_directory, geo);
+    assert.equal(saved.library.metadata_directory, metadata);
+    assert.equal(saved.database, undefined, "no database settings are written");
     await d.click('[data-feature="settings:close"]');
     await d.type('[data-feature="tracks:boat-search"]', "lurl");
     await d.waitFor(".boat-track-results li", { text: "Lurline" });
@@ -89,5 +88,23 @@ export default {
     await d.key("Escape");
     await d.waitGone('[role="dialog"]');
     assert.equal(await d.count('[data-feature="tracks:select"]:checked'), 2, "cancelling the download keeps the selection");
+    await d.click('[data-feature="shell:settings"]');
+    await d.waitFor('[data-feature="settings:library-urls"]');
+    await d.run(`document.querySelector('[data-feature="settings:library-urls"]').scrollIntoView({block: "center"}); done(true);`);
+    // A manual scrape of one finished race: the status bar follows it, and
+    // the race lands in the folders and the metadata.
+    await d.type('[data-feature="settings:library-urls"]', "https://yb.tl/rmsr2024");
+    await d.click('[data-feature="settings:library-scrape"]');
+    // The fixture server holds the positions back, so the scrape is seen running.
+    await d.waitFor('[data-feature="shell:scrape-status"]', { timeoutMs: 15000 });
+    await t.shot("scrape-status-bar");
+    await d.waitFor(".library-scrape-status", { text: "Scrape finished", timeoutMs: 60000 });
+    await t.shot("scrape-finished");
+    const status = await d.text(".library-scrape-status");
+    assert.ok(/Tracks: [1-9]/.test(status), `tracks were saved: ${status}`);
+    const after = JSON.parse(await readFile(join(metadata, "boat-metadata.json"), "utf8"));
+    assert.ok(after.tracks.length > 2, "the scraped boats are searchable");
+    assert.ok(after.tables.CompetitionUnits.some(u => u.approximateStartLocation), "the race has a start");
+    assert.ok((await readdir(join(geo, "individual-tracks"))).length > 0, "the tracks are files");
   },
 };

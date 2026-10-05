@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { TEST_BLEND } from "../testBlend";
-const api = vi.hoisted(() => ({ openTrackerProject: vi.fn(), boatImportStatus: vi.fn(), cancelBoatImport: vi.fn(), confirmTrackerProject: vi.fn(), discardTrackerProject: vi.fn() }));
+const api = vi.hoisted(() => ({ openTrackerProject: vi.fn(), trackerEvent: vi.fn(), cancelTrackerEvent: vi.fn(), boatImportStatus: vi.fn(), cancelBoatImport: vi.fn(), confirmTrackerProject: vi.fn(), discardTrackerProject: vi.fn() }));
 vi.mock("../ipc", () => ({ api }));
 const { default: TrackerProjectDialog } = await import("./TrackerProjectDialog");
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -17,6 +17,7 @@ beforeEach(async () => {
   api.openTrackerProject.mockResolvedValue({ project: { id: 1, name: "Race", boat_name: "Alpha", boat_notes: "", revision: 1, path: null, dirty: true, sources: [], can_undo: false, can_redo: false, undo_label: null, redo_label: null, use_corrected: true, stokes_drift: false, blend: TEST_BLEND },
     boats: [{ boat: "Alpha", model: "j109", polars: 2, tracks: 1, missing_tracks: 0, warnings: [],
       details: { model: "J/109", mmsi: "123456789", builder: "J Boats", loa: "10.9 m", sailNumber: "GBR1234", CustomField: "Original value", empty: "" } }], warnings: [] });
+  api.trackerEvent.mockResolvedValue({ boats: [{ division: "J/109" }, { division: "J/109" }] });
   api.confirmTrackerProject.mockResolvedValue({ id: 1, name: "Race" });
   api.discardTrackerProject.mockResolvedValue(undefined);
   host = document.createElement("div"); document.body.append(host); root = createRoot(host);
@@ -36,7 +37,7 @@ it("passes the exact-boat choice and displays original boat details in the repor
   expect(mode.value).toBe("identical_model");
   await act(async () => { mode.value = "exact_boat"; mode.dispatchEvent(new Event("change", { bubbles: true })); });
   await showBoats();
-  expect(api.openTrackerProject).toHaveBeenCalledWith("yellowbrick", "https://boats.invalid/race", true, "exact_boat");
+  expect(api.openTrackerProject).toHaveBeenCalledWith("yellowbrick", "https://boats.invalid/race", true, "exact_boat", null);
   const report = host.querySelector('.boat-import-report')!.textContent;
   for (const value of ["J/109", "123456789", "J Boats", "10.9 m", "GBR1234", "CustomField", "Original value"]) expect(report).toContain(value);
   expect(host.querySelectorAll('details .tracker-boat-details dt')).toHaveLength(6);
@@ -69,4 +70,17 @@ it("keeps the boat list open when confirmation fails, so it can still be cancell
   await act(async () => host.querySelector<HTMLButtonElement>('[data-feature="boats:tracker-cancel"]')!.click());
   expect(api.discardTrackerProject).toHaveBeenCalledWith(1);
   expect(closed).toHaveBeenCalledOnce();
+});
+
+it("offers a race's classes and opens only the chosen one", async () => {
+  // Asked 2026-10-04: a class selector in the tracker project flow.
+  api.trackerEvent.mockResolvedValue({ boats: [{ division: "IRC 1" }, { division: "Class40" }, { division: "IRC 1" }, { division: null }] });
+  await showBoats();
+  expect(api.openTrackerProject).not.toHaveBeenCalled();
+  const pick = host.querySelector<HTMLSelectElement>('[data-feature="boats:tracker-class"]')!;
+  expect([...pick.options].map(o => [o.value, o.textContent])).toEqual([["", "All classes (4 boats)"], ["Class40", "Class40 (1 boats)"], ["IRC 1", "IRC 1 (2 boats)"]]);
+  await act(async () => { pick.value = "IRC 1"; pick.dispatchEvent(new Event("change", { bubbles: true })); });
+  await act(async () => host.querySelector<HTMLButtonElement>('[data-feature="boats:tracker-open"]')!.click());
+  expect(api.trackerEvent).toHaveBeenCalledOnce();
+  expect(api.openTrackerProject).toHaveBeenCalledWith("yellowbrick", "https://boats.invalid/race", true, "identical_model", "IRC 1");
 });

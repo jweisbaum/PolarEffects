@@ -259,12 +259,12 @@ impl<R: tauri::Runtime> PolarExplorer<R> {
     }
 
     #[tool(
-        description = "Searches the user's track library (the SYRF database set up in Settings) for tracks of earlier races: by boat name, sail number, model or class, builder or event. Answers `total` and up to 100 hits, each with its `id`, boat, sail number, model, event, dates and whether its file is available; `downloaded: false` means the library has not been set up, so there is nothing to search. Read-only and local."
+        description = "Searches the user's track library (a SYRF boat metadata file and GeoJSON folder chosen in Settings) for tracks of earlier races: by boat name, sail number, model or class, builder or event. Answers `total` and up to 100 hits, each with its `id`, boat, sail number, model, event, dates and whether its file is available; `downloaded: false` means there is no metadata file, so there is nothing to search. Read-only and local."
     )]
     async fn library_search(&self, Parameters(p): Parameters<LibrarySearchParams>) -> ToolResult {
         let found = self
             .run("library_search", move |app| {
-                crate::database::catalogue::search(
+                crate::library::catalogue::search(
                     app.state::<AppState>().inner(),
                     &p.query,
                     p.offset,
@@ -280,7 +280,7 @@ impl<R: tauri::Runtime> PolarExplorer<R> {
     async fn library_import(&self, Parameters(p): Parameters<LibraryImportParams>) -> ToolResult {
         let result = self
             .write("library_import", false, move |app| {
-                crate::database::catalogue::import_database_track(app.state(), p.boat, p.id)
+                crate::library::catalogue::import_database_track(app.state(), p.boat, p.id)
             })
             .await?;
         json(&result)

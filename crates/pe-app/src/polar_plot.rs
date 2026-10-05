@@ -28,7 +28,9 @@
 //! f32 [M × 3]  TWA °, TWS kn, BSP kn
 //! u32 [M]      source index
 //! u32 [M × 2]  sample id, lo then hi
-//! u32 [M]      flags: bit 0 excluded, bit 1 filtered out; bits 8–9 the
+//! u32 [M]      flags: bit 0 excluded, bit 1 filtered out, bit 3 placed
+//!              through the water (corrected for current; otherwise the
+//!              speed is the track's own, over the ground); bits 8–9 the
 //!              band of the local solar day (0 night, 1 morning,
 //!              2 afternoon, 3 evening; spec.md 9.2, `pe_tracks::daytime`)
 //! ```
@@ -66,6 +68,9 @@ pub const DOTS_VERSION: u32 = 2;
 pub const DOT_EXCLUDED: u32 = 1;
 /// Dot flag: taken out by the track's filters.
 pub const DOT_FILTERED: u32 = 2;
+/// Dot flag: its speed is through the water (corrected for current), not
+/// the track's own over the ground.
+pub const DOT_THROUGH_WATER: u32 = 8;
 /// Where a dot's flags hold its day band's two-bit code.
 pub const DOT_BAND_SHIFT: u32 = 8;
 
@@ -113,6 +118,8 @@ pub struct PolarSampleDot {
     pub filtered: bool,
     /// Excluded from the blend by hand.
     pub excluded: bool,
+    /// Placed through the water: `bsp` is corrected for current.
+    pub through_water: bool,
     /// The band of the local solar day it was sailed in.
     pub band: DayBand,
 }
@@ -262,6 +269,7 @@ pub fn dots_of(
                 bsp,
                 filtered: *filtered,
                 excluded: excluded.binary_search(&sample.id).is_ok(),
+                through_water: pe_tracks::through_water(sample, project.blend.use_corrected),
                 band: pe_tracks::daytime::day_band(sample.t, sample.lon),
             });
         }
@@ -305,6 +313,11 @@ pub fn pack_dots(dots: &[PolarSampleDot]) -> Vec<u8> {
     for dot in dots {
         u((if dot.excluded { DOT_EXCLUDED } else { 0 })
             | (if dot.filtered { DOT_FILTERED } else { 0 })
+            | (if dot.through_water {
+                DOT_THROUGH_WATER
+            } else {
+                0
+            })
             | (dot.band.code() << DOT_BAND_SHIFT));
     }
     out
@@ -743,7 +756,8 @@ mod tests {
         assert_eq!(result.tws_max, None);
     }
 
-    /// Two dots of two tracks, one filtered and one excluded.
+    /// Two dots of two tracks, one filtered (and placed through the water)
+    /// and one excluded.
     fn fixture_dots() -> Vec<PolarSampleDot> {
         vec![
             PolarSampleDot {
@@ -754,6 +768,7 @@ mod tests {
                 bsp: 6.25,
                 filtered: false,
                 excluded: true,
+                through_water: false,
                 band: DayBand::Morning,
             },
             PolarSampleDot {
@@ -764,6 +779,7 @@ mod tests {
                 bsp: 8.0,
                 filtered: true,
                 excluded: false,
+                through_water: true,
                 band: DayBand::Evening,
             },
         ]
@@ -784,7 +800,8 @@ mod tests {
         );
         assert_eq!(
             (14..22).map(word).collect::<Vec<_>>(),
-            // Flags: the band in bits 8–9, morning = 1 and evening = 3.
+            // Flags: the band in bits 8–9, morning = 1 and evening = 3;
+            // through the water is bit 3.
             [
                 0,
                 1,
@@ -793,7 +810,7 @@ mod tests {
                 12,
                 1,
                 DOT_EXCLUDED | (1 << 8),
-                DOT_FILTERED | (3 << 8)
+                DOT_FILTERED | 8 | (3 << 8)
             ]
         );
         let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))

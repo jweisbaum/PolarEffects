@@ -49,6 +49,10 @@ const features: Feature[] = [
     keywords: ["MCP", msg("AI"), msg("agent"), msg("connected")], topic: "settings", landing: "shell:statusbar" },
   { id: "shell:cancel-fetch", label: msg("Cancel the fetch"), description: msg("While wind, waves and current are being fetched, stop every fetch; the samples already fetched are kept."),
     keywords: [msg("stop"), msg("reanalysis"), msg("job"), msg("progress")], topic: "environment", landing: "shell:statusbar" },
+  { id: "shell:scrape-status", label: msg("Scrape progress"), description: msg("While a scrape you started runs, how far through the races it is."),
+    keywords: [msg("scrape"), msg("progress"), msg("library")], topic: "settings", landing: "shell:statusbar" },
+  { id: "shell:cancel-scrape", label: msg("Cancel scrape"), description: msg("Cancel the scrape; races already saved stay in the library"),
+    keywords: [msg("stop"), msg("scrape"), msg("library")], topic: "settings", landing: "shell:statusbar" },
 ];
 
 export default features;

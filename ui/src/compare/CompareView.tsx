@@ -114,6 +114,8 @@ export default function CompareView({ project, settings }: {
     made.setBackground(cssColour("--inset", "#1f2c3c"));
     made.enableControls(element, draw);
     const resize = () => {
+      // Hidden with its stage (kept mounted): keep the size it had.
+      if (element.clientWidth === 0 || element.clientHeight === 0) return;
       made.resize(element.clientWidth, element.clientHeight);
       draw();
     };

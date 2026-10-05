@@ -211,7 +211,7 @@ const catalogue: Record<string, string> = {
   "The true wind speed the plot slices at": "図の断面とする真風速",
   "The true wind speed the polar plot slices at.": "ポーラー図の断面とする真風速です。",
   "{tws} {unit}": "{tws} {unit}",
-  "TWA {twa}°, TWS {tws} {unit}, BSP {bsp} {unit}": "TWA {twa}°、TWS {tws} {unit}、BSP {bsp} {unit}",
+  "TWA {twa}°, TWS {tws} {unit}, {speed} {value} {unit}": "TWA {twa}°、TWS {tws} {unit}、{speed} {value} {unit}",
   "No source has data at this wind speed.": "この風速のデータを持つソースはありません。",
   "all": "すべて",
   "wind speed": "風速",

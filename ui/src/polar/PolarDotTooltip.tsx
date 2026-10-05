@@ -4,7 +4,7 @@ import type { SourceSummary } from "../generated/SourceSummary";
 import { useT } from "../i18n";
 import { utc } from "../map/hover";
 import { waveUnit } from "../panels/filterUnits";
-import { FLAG_EXCLUDED, FLAG_FILTERED, type ScenePacket } from "./scenePacket";
+import { FLAG_EXCLUDED, FLAG_FILTERED, FLAG_THROUGH_WATER, type ScenePacket } from "./scenePacket";
 import { SPEED_FACTOR, SPEED_SYMBOL } from "./view3d";
 
 /** Read the displayed packet, so a hover always describes the dot being drawn. */
@@ -26,7 +26,9 @@ export default function PolarDotTooltip({ packet, index, sources, units, x, y }:
   const rows = [
     ["TWA", number(Math.min(twa, 360 - twa), "°", 1, 0)],
     ["TWS", speed(data.points[k * 3 + 1]!)],
-    ["BSP", speed(data.points[k * 3 + 2]!)],
+    // A polar's own boat speed; a track sample's speed over the ground, or
+    // through the water where it was corrected for current (asked 2026-10-04).
+    [node ? "BSP" : flags & FLAG_THROUGH_WATER ? "STW" : "SOG", speed(data.points[k * 3 + 2]!)],
   ];
   if (!node) rows.push(
     [t("Time"), utc(packet.timeOrigin + packet.samples.time[k]!)],

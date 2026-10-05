@@ -165,6 +165,10 @@ Conflicting MMSIs also reject an individual-vessel identity match used to fill
 missing model information; different vessels can still share the same model.
 Discovery/import reports progress, supports cancellation, avoids duplicate
 sources and reports unavailable files or unresolved model information.
+When the race has more than one class (the tracker's division), the dialog
+first downloads it, kept for the session, and offers **Class**: *All classes*
+or one class with its boat count (asked 2026-10-04); a class builds tabs for
+its boats only. MCP's `race_project` takes the same `class`.
 The opening dialog offers **Identical models** (default) or **Exact boat only**
 for both polars and historical tracks. Exact matching requires a valid matching
 MMSI or a matching qualified sail number corroborated by builder and known
@@ -256,6 +260,12 @@ deferred (§14).
   Compare (§11), then Map (§9.1) last (asked 2026-10-03). Map appears only when the project contains an
   imported track (including hidden tracks). Removing the last track while on
   Map returns to 3D. Opening or creating a project starts in 3D.
+  A stage once shown stays as it was left while another is on show:
+  coming back to it finds the same camera, toggles, tool, selection,
+  slider and plot settings, without loading it again (asked 2026-10-04).
+  A hidden stage does no work for edits made meanwhile; when shown again
+  it reads the project once. (Switching boat tabs still opens a boat's
+  stages afresh.)
 - **Right panel**: the source list (§8). Collapsible. (The 2D polar plot
   was a section of it until 2026-10-02; it is a stage now.)
 - Both side panels overlay the centre stage. Opening or closing either panel
@@ -323,36 +333,50 @@ or a failed write leaves the previous setting in place.
   downloaded by themselves, each *Manually only* (default), *On startup* or
   *On shutdown*.
 
-### 3.4.1 PostgreSQL track library
+### 3.4.1 SYRF track library
 
-Settings includes a PostgreSQL host, port, database, user, masked password,
-and optional certificate-verified TLS. **Test connection** checks login and
-read access to the relevant schema on a blocking worker, showing green
-success or red failure with diagnostics. Database settings are applied with
-**Save database settings**; Download, Scrape and Export also save them first.
-Passwords belong only to the local settings, never project files, metadata or
-connection logs. Defaults are localhost:5432, postgres, syrfbackendprod, no
-password, and on-demand scraping. There is no automatic connection on launch
-unless startup scraping was explicitly selected.
+The track library is two folders the person chooses in Settings → **Track
+library** and saves with **Save library settings**: a folder of
+individual-track GeoJSON files, and the folder holding `boat-metadata.json`
+(empty for the application's config directory, `boat-metadata/`). No database
+is involved (asked 2026-10-04): PolarExplorer connects to none, and what it
+scrapes goes only into these two folders. An older settings file's `database`
+section still gives the folders and the scraper fields; its connection fields
+are dropped.
 
-The GeoJSON directory is the root containing the database's relative storage
-keys. On the development machine the verified root is
+**Scraping** (restored 2026-10-04) fills the library from YellowBrick, Geovoile
+and Blue Water Tracks through `pe-trackers`. It runs when the person presses
+**Scrape tracks now**, or on startup or shutdown once they choose that schedule
+(*Only on demand* is the default). The race URLs field, one per line, limits a
+scrape to those races; empty, it rescrapes the races the library knows and
+whatever each tracker lists (YellowBrick's catalogue through the optional user
+key and device ID, kept only in local settings and never logged). **Only
+finished races are saved**: every boat must have a terminal status and no
+position may lie in the future; an ongoing, future or unverifiable race is
+counted as skipped, also when listed explicitly. A race already complete in
+the library is skipped unless listed. Each boat's track is written to
+`individual-tracks/<race id>/vessel/provided/<participant id>.geojson`, and the
+race's `CalendarEvents`, `CompetitionUnits` (with `approximateStartLocation`
+and `approximateEndLocation`), `Vessels` rows and search records are upserted
+into `boat-metadata.json` under ids derived from the race and boat, so a
+second scrape replaces its own records. The metadata is written atomically
+every ten races and at the end, so a cancelled scrape keeps what it saved.
+Progress (`library://scrape`) shows in Settings and, for a manual scrape, in
+the status bar with **Cancel scrape**; a shutdown scrape keeps the app open
+until it finishes or is cancelled.
+
+The GeoJSON directory is the root of the metadata's relative storage keys. On
+the development machine the verified root is
 `/Volumes/Disk_Three/s3/syrf-tracks-individual-production`, containing
 `individual-tracks/<competition GUID>/vessel/provided/<participant GUID>.geojson`.
 The earlier `syrftracksgeojson` directory contains race collections from a
-nonmatching database snapshot; it is also supported when GUIDs match.
-Directory changes never move or delete existing tracks. Storage keys cannot
-escape the selected directory through traversal or symlinks.
+nonmatching database snapshot; it is also supported when GUIDs match. Storage
+keys cannot escape the selected directory through traversal or symlinks.
 
-**Download boat metadata** reads one repeatable PostgreSQL snapshot and
-atomically replaces `boat-metadata.json` in the chosen metadata directory
-(default: the application's config directory, `boat-metadata/`). It includes
-full Vessels, VesselParticipants, VesselParticipantEvents, CalendarEvents,
-Courses and CourseUnsequencedUntimedGeometries rows, plus CompetitionUnits,
-VesselParticipantGroups and VesselParticipantTrackJsons needed to connect
-boats to files. Every branch is limited to YellowBrick, Geovoile, Blue Water,
-old Geovoile, Regadata and America's Cup (including 2021); soft-deleted vessels
-are excluded. Other database sources are never searchable.
+`boat-metadata.json` (version 1) holds SYRF table rows and one search record
+per track, limited to YellowBrick, Geovoile, Blue Water, old Geovoile, Regadata
+and America's Cup (including 2021). A file of another version is refused with a
+message.
 
 The Tracks panel searches values in every field of the full local Vessels rows,
 including name, model, class, make, builder, sail number, IDs, measurements and
@@ -360,7 +384,7 @@ custom fields. Text, numbers, booleans and nested JSON values are searchable;
 nulls and field names are not treated as values. Matching ignores case, accents
 and punctuation. Every query word must match the same vessel, but words may
 match different fields. Folded text is cached once per vessel, shared by its
-tracks, and rebuilt from existing version-1 snapshots without a new download.
+tracks, and built when the metadata file is first read.
 Results come in pages of 100 tracks, the next loading on its own as the
 list is scrolled to its end (asked 2026-10-02). Each result shows
 boat, event, provider, model, sail number, date, original URL and file availability.
@@ -374,63 +398,6 @@ timestamps and optional speed/heading columns (including `properties.detail`),
 and creates an ordinary immutable track source with undo and project persistence.
 Project identity and duplicates are checked under the import commit lock.
 Weather remains a separate per-track or selected-tracks action (§7.5).
-
-**Scrape tracks now** runs native Rust YellowBrick, Geovoile and Blue Water
-clients and course decoders. Schedule options are on demand, startup or
-shutdown; no Python, Node, browser, Docker, libpq or downloaded executable is
-used for scraping in any build. An optional list of explicit race URLs refreshes
-those events. Otherwise discovery uses public provider listings and original
-URLs already in the database, skipping completed races whose registered files
-exist. Every scrape mode, including explicitly entered URLs, imports only
-finished races. A published terminal result is required for every participant;
-an actual finish timestamp can supply that result despite a stale Racing flag.
-Future dates, missing results and ongoing races are skipped, counted in job
-progress, and produce no track files or race rows. Old last fixes and planned
-end times alone do not establish completion. YellowBrick setup and Geovoile
-reports are checked before requesting their track files. Geovoile legs are
-checked independently even when the current leg is unfinished. Blue Water's
-API combines metadata and positions in one response; it must be read to check
-completion, but is discarded without ingestion when completion is unverified.
-YellowBrick discovery reads `App/Races?version=3`, then the configured
-user key/device ID's `App/MyRaces?version=4` for actual race codes. Missing
-products explicitly listed as free are associated via the mobile API before
-MyRaces is read again. Paid and unknown-price products are never associated.
-Parent and child codes and repeated base URLs are parsed and deduplicated;
-codes containing ampersands, dots and encoded spaces are supported.
-Numeric catalogue IDs and product IDs are never guessed to be tracker codes.
-Without credentials, exact catalogue IDs can reuse known database URLs.
-`yellowbrick-races.json` in the metadata directory records catalogue IDs,
-titles, dates and resolved URLs, including unresolved entries. Job details
-report unresolved counts instead of claiming that an empty URL list is success.
-Credentials stay in local Settings, never source code, metadata, exports or
-diagnostics. Association progress is cancellable; three consecutive failures
-stop further associations. Catalogue IDs preserve parent calendar identity
-across newly discovered child races. Geovoile's separate legs are fetched independently.
-
-Ingestion serializes app writers with a PostgreSQL transaction advisory lock,
-reuses existing provider/race and boat/participant identities, and assigns
-stable UUIDs to new records. Calendar events, competition units, participant
-groups, vessels, participants, courses, available course geometries and track
-storage references are updated. SYRF individual-track Features are published
-atomically before their database references; interrupted transactions can leave
-complete unreferenced files, reused on retry. Original URLs and existing derived
-storage references are retained. These three providers do not publish SYRF mark
-crossing/rounding events: existing VesselParticipantEvents are preserved, not
-invented from track endpoints. No remote-service analysis engine is invoked.
-
-Jobs report progress, contextual failures and cancellation in Settings. Completed
-races survive cancellation, and their metadata is refreshed. Shutdown waits for
-writers and any selected shutdown scrape, keeping cancellation available, and
-rechecks the project if edits occurred while waiting. The last job result is
-saved in the config directory and visible after reopening the app.
-
-**Export entire database…** writes a complete plain SQL dump through installed
-PostgreSQL `pg_dump` (auto-detected on macOS, Linux or Windows, or explicitly
-configured). It exports all database tables and schema, including PostGIS,
-without source ownership or privilege grants. It does not embed connection
-passwords and needs no source password on restore. Authentication to the target
-PostgreSQL server remains that server's policy. Export runs off the UI thread,
-can be cancelled, and publishes the selected output only on success.
 
 ### 3.5 Language, help and tooltips
 
@@ -571,9 +538,8 @@ the design is `docs/superpowers/specs/2026-10-01-mcp-service-design.md`.
 - **`invoke`** runs any other IPC command by name, with unknown arguments
   refused. Not reachable through it: the service's own commands, every
   settings command (each answers the whole settings file, which holds the
-  PostgreSQL password, the YellowBrick keys and the service's token), the
-  PostgreSQL track library's commands (setting it up is the person's; its
-  search and import are the curated tools above), quitting, the commands that answer packed
+  service's token), the track library's commands (choosing its folders is the
+  person's; its search and import are the curated tools above), quitting, the commands that answer packed
   bytes, those that need the application handle (their tools carry them),
   and `save_project_as` and `export_polar` (their tools hold the overwrite
   rule). A test holds the table and the exclusions equal to the registered
@@ -1666,7 +1632,8 @@ mask texture, so no land triangle folds across the horizon.
   Filtered-out fixes are
   drawn dimmed (excluded ones less so). A track crossing the antimeridian is
   one continuous line: longitudes are unwrapped along each track.
-- Hovering a fix shows time (UTC), BSP and heading (each marked given or
+- Hovering a fix shows time (UTC), SOG (the track's own speed, over the
+  ground; asked 2026-10-04) and heading (each marked given or
   derived), TWS, TWA, Hs and current, in the display units; a value not yet
   known shows as a dash.
 - Selecting samples in a polar view highlights them on the map, and a box
@@ -1698,9 +1665,11 @@ The MCP service's `view://stage` still names the stage `"plot"`.
   the source's overlay as the blend reads it: its edits written in and its
   excluded nodes empty (§10.3, §10.4, §12.3); dots are
   for every sample whose TWS is within ±1 kn (configurable in Settings,
-  §3.4) of the slice, in their track's colour, excluded ones hollow and
-  selected ones ringed. A sample without wind has no place in the polar and
-  is not drawn. A "Filtered" toggle adds the filtered-out samples, dimmed.
+  §3.4) of the slice, in their track's colour, selected ones ringed. A
+  sample without wind has no place in the polar and is not drawn. A
+  "Filtered" toggle adds the filtered-out samples, dimmed; an "Excluded"
+  toggle adds the excluded ones, hollow, which are otherwise hidden. Rust
+  sends excluded dots either way, so the toggle asks it for nothing.
 - Dots travel from Rust as one packed binary buffer (layout in
   `pe-app/src/polar_plot.rs` and `ui/src/panels/dotPacket.ts`, pinned by a
   shared fixture), not JSON: "all" draws every sample with wind, and 50
@@ -1715,9 +1684,11 @@ The MCP service's `view://stage` still names the stage `"plot"`.
   slice, or in "all" one curve per output-grid wind speed that has a value
   off the 0° row. Those wind speeds join the slider's range. Hovering it
   shows "Blend". A hidden blend is not drawn.
-- Hover shows the source, TWA, TWS and BSP. Hovering a point of the blend
-  that is an output-grid cell (its angle and wind speed both on the grid)
-  shows the cell as the 3D view does (§10.1): its value, where the value
+- Hover shows the source, TWA, TWS and BSP; a dot's speed is labelled SOG,
+  or STW where it was corrected for current (§7.5), since a track sample's
+  speed is not a polar's boat speed (asked 2026-10-04). Hovering a point of
+  the blend that is an output-grid cell (its angle and wind speed both on
+  the grid) shows the cell as the 3D view does (§10.1): its value, where the value
   came from, and each source behind it with its speed and its share of the
   weight. A blend point between cells keeps the plain text.
 - **Measure** turns the pointer into a ruler. While it is on, a dashed
@@ -1745,6 +1716,9 @@ The MCP service's `view://stage` still names the stage `"plot"`.
   display speed unit (§3.4): rings at round values of that unit, placed at
   their speed in knots. Everything arrives in knots and is converted only
   where it is drawn as text (M17b). So does the 3D drag readout (§10.4).
+- The rings reach the fastest curve, blend point or dot drawn: excluding
+  an outlier brings them back to the data left, and ticking "Excluded"
+  takes them out to it again.
 - Full size opens the same plot as a large overlay on the current stage,
   including projects without tracks. Its own button, Escape, or switching
   stage closes it (M19b supersedes the Map-only overlay in D21).
@@ -1775,6 +1749,12 @@ The MCP service's `view://stage` still names the stage `"plot"`.
   tower, the classic polar diagram with every TWS stacked); side looks
   across it, so each TWS is a level; the axes carry tick labels in the
   display speed unit.
+- The axes span the points drawn: an excluded or filtered-out point only
+  while its toggle shows it, no sample a wave range hides, and none of the
+  blend's zero-speed row at 0° (which runs to the output grid's top wind
+  speed). When that box grows or shrinks, the camera follows, scaled about
+  the origin: it keeps the angle it looks from, and the data keeps its room
+  on screen.
 - Asymmetric angle ticks read 0–180° on each half, as in the 2D plot; the
   Cartesian axis reads 0–180–0°. The geometry, stored grid and editable cell
   identities retain their full-circle angles.
@@ -1857,10 +1837,12 @@ The right-side controls and polar editor reserve space above the wave sliders.
   sample id).
 - Only dots that are drawn are counted in the selection info and acted on
   by Exclude, Include and "show on map": a selected dot that a toggle hides
-  (samples off, or a filtered sample while "show filtered" is off) takes no
-  part.
-- **Exclude** removes the selection from the blend. Excluded sample dots are
-  drawn hollow; excluded ORC or file nodes are drawn as crosses. **Include**
+  (samples off, a filtered sample while "show filtered" is off, an
+  excluded one while "Excluded points" is off) takes no part.
+- **Exclude** removes the selection from the blend. Excluded points are
+  then hidden (asked 2026-10-04) until "Excluded points" under Show is
+  ticked, which draws excluded sample dots hollow and excluded ORC or file
+  nodes as crosses, so they can be selected and included. **Include**
   restores them. Both are undoable.
 - For polar sources, excluding a node stores an exclusion in the overlay; the
   node's cell is then empty for that source in the blend. The surface still
@@ -2234,7 +2216,9 @@ UTC and interpolates linearly between them; currents are always hourly.
 See the decisions log in `plan.md` §5.
 
 
-3D dots show source, TWA, TWS and BSP on hover. Track dots additionally show UTC
+3D dots show source, TWA, TWS and speed on hover: BSP for a polar node, SOG
+for a track sample, or STW where its speed was corrected for current (a flag
+in the scene, bit 3; asked 2026-10-04). Track dots additionally show UTC
 time, the time of day (§10.2), wave height, angle and period, current speed, and
 excluded/filtered status.
 Hover follows visible dot picking and clears during navigation or selection.

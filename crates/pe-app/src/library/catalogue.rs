@@ -1,4 +1,4 @@
-use super::{DatabaseSettings, check, connect};
+use super::LibrarySettings;
 use crate::{
     commands::AppState,
     error::{AppError, Context, Result},
@@ -9,20 +9,10 @@ use serde_json::Value;
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
-    sync::{Arc, atomic::AtomicBool},
+    sync::Arc,
 };
 use ts_rs::TS;
 
-pub(super) const SOURCES: &[&str] = &[
-    "YELLOWBRICK",
-    "GEOVOILE",
-    "BLUEWATER",
-    "OLDGEOVOILE",
-    "GEOVOILEOLD",
-    "REGADATA",
-    "AMERICASCUP",
-    "AMERICASCUP2021",
-];
 pub(super) fn text(row: &Value, field: &str) -> String {
     row[field].as_str().unwrap_or_default().to_owned()
 }
@@ -52,18 +42,63 @@ pub struct BoatTrackSearch {
     pub hits: Vec<BoatTrackHit>,
     pub downloaded: bool,
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub(super) struct Metadata {
     pub version: u32,
+    #[serde(default)]
     pub tables: BTreeMap<String, Vec<Value>>,
+    #[serde(default)]
     pub tracks: Vec<BoatTrackHit>,
+}
+
+/// The metadata file as it is, for the scraper to add races to; an empty
+/// version-1 file when there is none yet.
+///
+/// # Errors
+/// A file that does not read, or of another version.
+pub(super) fn read_metadata(state: &AppState, settings: &LibrarySettings) -> Result<Metadata> {
+    let path = settings.metadata_path(state);
+    if !path.is_file() {
+        return Ok(Metadata {
+            version: 1,
+            ..Default::default()
+        });
+    }
+    let metadata: Metadata =
+        serde_json::from_slice(&std::fs::read(&path).doing("read", path.display())?)
+            .doing("read", "boat metadata")?;
+    if metadata.version != 1 {
+        return Err(AppError::Internal(
+            "This boat metadata file is of a version PolarExplorer does not read".into(),
+        ));
+    }
+    Ok(metadata)
+}
+
+/// Writes the metadata whole, atomically, and has the next search read it again.
+///
+/// # Errors
+/// The folder or the file not being written.
+pub(super) fn write_metadata(
+    state: &AppState,
+    settings: &LibrarySettings,
+    metadata: &Metadata,
+) -> Result<()> {
+    let path = settings.metadata_path(state);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).doing("create", parent.display())?;
+    }
+    let bytes = serde_json::to_vec(metadata).doing("encode", "boat metadata")?;
+    pe_core::io::write_atomic(&path, &bytes)?;
+    *state.library.lock()? = None;
+    Ok(())
 }
 
 /// Derived only in memory, so existing version-1 downloads gain full vessel
 /// search without rewriting or downloading their metadata. Tracks of the same
 /// vessel share one folded string; typing never reprocesses the full JSON rows.
 #[derive(Debug)]
-pub(super) struct Catalogue {
+pub struct Catalogue {
     metadata: Metadata,
     search_text: Vec<Arc<str>>,
 }
@@ -119,99 +154,6 @@ fn searchable_values(value: &Value, out: &mut String) {
     }
 }
 
-/// One repeatable snapshot, limited at every relationship to the requested sources.
-/// Temporary keys keep the million-row source database from becoming a local copy.
-pub(super) fn download(
-    state: &AppState,
-    settings: &DatabaseSettings,
-    cancel: &AtomicBool,
-) -> Result<usize> {
-    check(cancel)?;
-    let mut client = connect(settings)?;
-    let mut tx = client
-        .build_transaction()
-        .isolation_level(postgres::IsolationLevel::RepeatableRead)
-        .start()
-        .doing("snapshot", "boat metadata")?;
-    tx.execute("CREATE TEMP TABLE pe_events ON COMMIT DROP AS SELECT id FROM public.\"CalendarEvents\" WHERE upper(regexp_replace(source, '[^a-zA-Z0-9]', '', 'g')) = ANY($1)", &[&SOURCES]).doing("select", "supported events")?;
-    tx.batch_execute(r#"
-      CREATE TEMP TABLE pe_units ON COMMIT DROP AS SELECT c.id, c."vesselParticipantGroupId", c."courseId" FROM public."CompetitionUnits" c JOIN pe_events e ON e.id=c."calendarEventId";
-      CREATE INDEX ON pe_units(id); CREATE INDEX ON pe_units("vesselParticipantGroupId");
-      CREATE TEMP TABLE pe_vessels ON COMMIT DROP AS SELECT id FROM public."Vessels" WHERE upper(regexp_replace(source, '[^a-zA-Z0-9]', '', 'g')) IN ('YELLOWBRICK','GEOVOILE','BLUEWATER','OLDGEOVOILE','GEOVOILEOLD','REGADATA','AMERICASCUP','AMERICASCUP2021') AND "deletedAt" IS NULL;
-      CREATE INDEX ON pe_vessels(id);
-      CREATE TEMP TABLE pe_participants ON COMMIT DROP AS SELECT p.id FROM public."VesselParticipants" p JOIN pe_vessels v ON v.id=p."vesselId";
-      CREATE INDEX ON pe_participants(id);
-    "#).doing("select", "supported vessels")?;
-    let filters = [
-        ("Vessels", "r.id IN (SELECT id FROM pe_vessels)"),
-        (
-            "VesselParticipants",
-            "r.id IN (SELECT id FROM pe_participants)",
-        ),
-        ("CalendarEvents", "r.id IN (SELECT id FROM pe_events)"),
-        ("CompetitionUnits", "r.id IN (SELECT id FROM pe_units)"),
-        (
-            "VesselParticipantGroups",
-            "r.id IN (SELECT \"vesselParticipantGroupId\" FROM pe_units)",
-        ),
-        (
-            "VesselParticipantEvents",
-            "r.\"competitionUnitId\" IN (SELECT id FROM pe_units) AND r.\"vesselParticipantId\" IN (SELECT id FROM pe_participants)",
-        ),
-        (
-            "VesselParticipantTrackJsons",
-            "r.\"competitionUnitId\" IN (SELECT id FROM pe_units) AND r.\"vesselParticipantId\" IN (SELECT id FROM pe_participants)",
-        ),
-        (
-            "Courses",
-            "r.id IN (SELECT \"courseId\" FROM pe_units) OR r.\"calendarEventId\" IN (SELECT id FROM pe_events)",
-        ),
-        (
-            "CourseUnsequencedUntimedGeometries",
-            "r.\"courseId\" IN (SELECT id FROM public.\"Courses\" WHERE id IN (SELECT \"courseId\" FROM pe_units) OR \"calendarEventId\" IN (SELECT id FROM pe_events))",
-        ),
-    ];
-    let mut tables = BTreeMap::new();
-    for (i, (table, filter)) in filters.iter().enumerate() {
-        check(cancel)?;
-        state.database.update(|s| {
-            s.current = (*table).into();
-            s.done = i as u32;
-            s.total = filters.len() as u32;
-        });
-        let rows = tx
-            .query(
-                &format!(
-                    "SELECT row_to_json(r) FROM public.\"{table}\" r WHERE {filter} ORDER BY r.id"
-                ),
-                &[],
-            )
-            .doing("download metadata from", table)?;
-        tables.insert(
-            (*table).to_owned(),
-            rows.into_iter().map(|r| r.get::<_, Value>(0)).collect(),
-        );
-    }
-    tx.commit().doing("finish", "metadata snapshot")?;
-    let tracks = index(&tables);
-    let count = tracks.len();
-    let metadata = Metadata {
-        version: 1,
-        tables,
-        tracks,
-    };
-    let path = settings.metadata_path(state);
-    std::fs::create_dir_all(
-        path.parent()
-            .ok_or_else(|| AppError::Internal("Invalid metadata directory".into()))?,
-    )
-    .doing("create", path.display())?;
-    let bytes = serde_json::to_vec(&metadata).doing("encode", "boat metadata")?;
-    check(cancel)?;
-    pe_core::io::write_atomic(&path, &bytes)?;
-    state.database.lock()?.catalogue = Some((path, Arc::new(Catalogue::new(metadata))));
-    Ok(count)
-}
 fn rows<'a>(tables: &'a BTreeMap<String, Vec<Value>>, name: &str) -> &'a [Value] {
     tables.get(name).map(Vec::as_slice).unwrap_or_default()
 }
@@ -221,105 +163,10 @@ fn by_id<'a>(tables: &'a BTreeMap<String, Vec<Value>>, name: &str) -> BTreeMap<S
         .map(|v| (text(v, "id"), v))
         .collect()
 }
-fn index(tables: &BTreeMap<String, Vec<Value>>) -> Vec<BoatTrackHit> {
-    let vessels = by_id(tables, "Vessels");
-    let participants = by_id(tables, "VesselParticipants");
-    let events = by_id(tables, "CalendarEvents");
-    let units = by_id(tables, "CompetitionUnits");
-    let mut pairs = BTreeMap::new();
-    let mut groups: BTreeMap<String, Vec<&Value>> = BTreeMap::new();
-    for p in participants.values() {
-        let group = text(p, "vesselParticipantGroupId");
-        if !group.is_empty() {
-            groups.entry(group).or_default().push(p);
-        }
-    }
-    for (id, c) in &units {
-        if let Some(ps) = groups.get(&text(c, "vesselParticipantGroupId")) {
-            for p in ps {
-                pairs.insert((id.clone(), text(p, "id")), String::new());
-            }
-        }
-    }
-    for r in rows(tables, "VesselParticipantTrackJsons") {
-        pairs.insert(
-            (text(r, "competitionUnitId"), text(r, "vesselParticipantId")),
-            text(r, "providedStorageKey"),
-        );
-    }
-    for r in rows(tables, "VesselParticipantEvents") {
-        pairs
-            .entry((text(r, "competitionUnitId"), text(r, "vesselParticipantId")))
-            .or_default();
-    }
-    let mut found = Vec::new();
-    for ((cid, pid), key) in pairs {
-        let Some(c) = units.get(&cid) else { continue };
-        let Some(p) = participants.get(&pid) else {
-            continue;
-        };
-        let Some(v) = vessels.get(&text(p, "vesselId")) else {
-            continue;
-        };
-        let Some(e) = events.get(&text(c, "calendarEventId")) else {
-            continue;
-        };
-        let source: String = text(e, "source")
-            .chars()
-            .filter(char::is_ascii_alphanumeric)
-            .collect::<String>()
-            .to_ascii_uppercase();
-        if !SOURCES.contains(&source.to_ascii_uppercase().as_str()) {
-            continue;
-        }
-        found.push(BoatTrackHit {
-            id: format!("{cid}/{pid}"),
-            vessel_id: text(v, "id"),
-            participant_id: pid,
-            competition_id: cid,
-            boat_name: text(v, "publicName"),
-            sail_number: text(v, "sailNumber"),
-            model: text(v, "model"),
-            source,
-            event_name: if text(c, "name").is_empty() {
-                text(e, "name")
-            } else {
-                text(c, "name")
-            },
-            original_url: {
-                let raw = if text(c, "scrapedUrl").is_empty() {
-                    text(e, "externalUrl")
-                } else {
-                    text(c, "scrapedUrl")
-                };
-                if raw.contains("://") {
-                    raw
-                } else {
-                    pe_trackers::library::resolve_source(&text(e, "source"), &raw)
-                        .map(|r| r.url)
-                        .unwrap_or(raw)
-                }
-            },
-            start: c["startTime"].as_str().map(str::to_owned),
-            end: c["endTime"].as_str().map(str::to_owned),
-            tracker_boat_id: text(v, "vesselId"),
-            storage_key: key,
-            file_available: false,
-        });
-    }
-    found.sort_by(|a, b| {
-        a.boat_name
-            .to_lowercase()
-            .cmp(&b.boat_name.to_lowercase())
-            .then_with(|| b.start.cmp(&a.start))
-            .then_with(|| a.id.cmp(&b.id))
-    });
-    found
-}
-fn load(state: &AppState, settings: &DatabaseSettings) -> Result<Option<Arc<Catalogue>>> {
+fn load(state: &AppState, settings: &LibrarySettings) -> Result<Option<Arc<Catalogue>>> {
     let path = settings.metadata_path(state);
-    let mut store = state.database.lock()?;
-    if let Some((held, records)) = &store.catalogue
+    let mut store = state.library.lock()?;
+    if let Some((held, records)) = &*store
         && *held == path
     {
         return Ok(Some(Arc::clone(records)));
@@ -332,14 +179,14 @@ fn load(state: &AppState, settings: &DatabaseSettings) -> Result<Option<Arc<Cata
             .doing("read", "boat metadata")?;
     if metadata.version != 1 {
         return Err(AppError::Internal(
-            "Unsupported boat metadata version; download it again".into(),
+            "This boat metadata file is of a version PolarExplorer does not read".into(),
         ));
     }
     let metadata = Arc::new(Catalogue::new(metadata));
-    store.catalogue = Some((path, Arc::clone(&metadata)));
+    *store = Some((path, Arc::clone(&metadata)));
     Ok(Some(metadata))
 }
-/// Never let a database storage key escape the selected directory, including through symlinks.
+/// Never let a storage key escape the selected directory, including through symlinks.
 fn file_path(directory: &str, hit: &BoatTrackHit) -> Option<PathBuf> {
     let root = Path::new(directory).canonicalize().ok()?;
     if directory.is_empty() {
@@ -434,7 +281,7 @@ pub fn import(state: &AppState, id: &str) -> Result<TrackImportResult> {
     crate::tracks::add_tracks_to_project(state, vec![pending], vec![], Some(project_id))
 }
 
-pub(crate) fn read_hit(settings: &DatabaseSettings, hit: &BoatTrackHit) -> Result<Pending> {
+pub(crate) fn read_hit(settings: &LibrarySettings, hit: &BoatTrackHit) -> Result<Pending> {
     let path = file_path(&settings.geojson_directory, hit).ok_or_else(|| {
         AppError::Internal(format!(
             "GeoJSON file missing: {}/{}.geojson",

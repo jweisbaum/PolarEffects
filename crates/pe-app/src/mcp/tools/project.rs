@@ -41,6 +41,10 @@ pub struct RaceProjectParams {
     /// MMSI or name and model).
     #[serde(default)]
     pub match_mode: Option<String>,
+    /// Only the boats of this class (the tracker's division, as
+    /// `tracker_event` lists it), e.g. "IRC 2"; omit for every boat.
+    #[serde(default)]
+    pub class: Option<String>,
     /// Replace the open project even if it has unsaved changes. Refused
     /// without it; pass true only when the user said to discard them.
     #[serde(default)]
@@ -177,13 +181,20 @@ impl<R: tauri::Runtime> PolarExplorer<R> {
         };
         self.note("race_project");
         let app = self.app.clone();
-        let (url, discard) = (p.url, p.discard_unsaved);
+        let (url, discard, class) = (p.url, p.discard_unsaved, p.class);
         // The download and matching run as the interface's do, off the
         // async thread; the preview they leave is confirmed below.
         let mut built = tokio::task::spawn_blocking(move || {
             let state = app.state::<AppState>();
             let client = crate::trackers::client_of(tracker)?.into();
-            tracker_project::open_with_mode(state.inner(), client, &url, discard, mode)
+            tracker_project::open_with_mode(
+                state.inner(),
+                client,
+                &url,
+                discard,
+                mode,
+                class.as_deref(),
+            )
         });
         let preview = tokio::select! {
             joined = &mut built => joined.map_err(|error| {

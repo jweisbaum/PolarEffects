@@ -81,10 +81,11 @@ Their event data and any files you import remain subject to the rights and
 terms of their respective providers. PolarExplorer' application licence does
 not grant rights to third-party event data.
 
-The optional SYRF library uses the user's PostgreSQL database and local
-GeoJSON files. Its schema and native scraper mapping follow
-[syrf-schema](https://github.com/sailing-yacht-research-foundation/syrf-schema),
-[tracker-scraper](https://github.com/sailing-yacht-research-foundation/tracker-scraper)
+The optional SYRF track library is a boat metadata file and a folder of
+individual-track GeoJSON files, chosen in Settings, that are searched and
+imported from. The scraper fills them with finished races only; PolarExplorer
+connects to no database. Their formats follow
+[syrf-schema](https://github.com/sailing-yacht-research-foundation/syrf-schema)
 and the individual-track formatter in
 [raw-data-server](https://github.com/sailing-yacht-research-foundation/raw-data-server).
 Original race URLs and source identifiers accompany searchable tracks.
@@ -93,5 +94,4 @@ it does not run the upstream Node or browser scrapers. YellowBrick catalogue
 discovery uses configured, user-authorized mobile credentials to resolve race
 codes and associate only products explicitly listed as free. Credentials are
 local settings, never bundled into builds, logged or included in metadata.
-The metadata snapshot is limited to the selected provider families. Full SQL
-export covers all database records, and is separate from the GeoJSON files.
+The metadata is limited to the selected provider families.

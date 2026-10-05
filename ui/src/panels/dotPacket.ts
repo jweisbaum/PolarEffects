@@ -20,7 +20,9 @@
  * f32 [M × 3]  TWA °, TWS kn, BSP kn
  * u32 [M]      source index
  * u32 [M × 2]  sample id, lo then hi
- * u32 [M]      flags: bit 0 excluded, bit 1 filtered out; bits 8–9 the
+ * u32 [M]      flags: bit 0 excluded, bit 1 filtered out, bit 3 placed
+ *              through the water (corrected for current; otherwise the
+ *              speed is the track's own, over the ground); bits 8–9 the
  *              band of the local solar day (`../dayBand.ts`; spec.md 9.2)
  * ```
  */
@@ -28,6 +30,7 @@
 export const DOTS_MAGIC = 0x44324550;
 export const DOTS_VERSION = 2;
 export const DOT_EXCLUDED = 1;
+export const DOT_THROUGH_WATER = 8;
 export const DOT_FILTERED = 2;
 
 export interface DotPacket {
@@ -89,4 +92,28 @@ export function dotSampleId(dots: DotPacket, k: number): number {
 /** A dot's source id. */
 export function dotSourceId(dots: DotPacket, k: number): number {
   return dots.sources[dots.source[k]!]!;
+}
+
+/**
+ * `dots` without the excluded ones: the plot hides them unless "Excluded"
+ * is ticked (asked 2026-10-04). The same packet when none is excluded.
+ */
+export function withoutExcluded(dots: DotPacket): DotPacket {
+  let kept = 0;
+  for (let k = 0; k < dots.count; k++) if (!(dots.flags[k]! & DOT_EXCLUDED)) kept++;
+  if (kept === dots.count) return dots;
+  const out: DotPacket = {
+    count: kept, sources: dots.sources, points: new Float32Array(kept * 3), source: new Uint32Array(kept),
+    ids: new Uint32Array(kept * 2), flags: new Uint32Array(kept),
+  };
+  let n = 0;
+  for (let k = 0; k < dots.count; k++) {
+    if (dots.flags[k]! & DOT_EXCLUDED) continue;
+    out.points.set(dots.points.subarray(k * 3, k * 3 + 3), n * 3);
+    out.source[n] = dots.source[k]!;
+    out.ids.set(dots.ids.subarray(k * 2, k * 2 + 2), n * 2);
+    out.flags[n] = dots.flags[k]!;
+    n++;
+  }
+  return out;
 }

@@ -29,6 +29,17 @@ pub fn polar_point(sample: &Sample, use_corrected: bool) -> Option<(f64, f64, f6
     corrected.or_else(|| Some((sample.twa?, sample.wind_speed()?, sample.speed?)))
 }
 
+/// Whether [`polar_point`] places `sample` through the water: the project
+/// corrects for current and a correction was found for it. Otherwise its
+/// speed is the track's own, over the ground, which is what a view labels
+/// it (SOG; asked 2026-10-04).
+pub fn through_water(sample: &Sample, use_corrected: bool) -> bool {
+    use_corrected
+        && sample.twa_corrected.is_some()
+        && sample.tws_corrected.is_some()
+        && sample.bsp_corrected.is_some()
+}
+
 /// The boat speed a sample counts with, knots.
 pub fn boat_speed(sample: &Sample, use_corrected: bool) -> Option<f64> {
     let corrected = if use_corrected {
@@ -652,6 +663,8 @@ mod tests {
         assert_eq!(filtered_out(&t, &filters, true), [false, true]);
         assert_eq!(polar_point(&t.samples[0], true), Some((50.0, 10.0, 6.0)));
         assert_eq!(polar_point(&t.samples[1], true), None);
+        // Over the ground until a correction is found (asked 2026-10-04).
+        assert!(!through_water(&t.samples[0], true));
 
         // Corrected values win when asked for and present.
         t.samples[0].twa_corrected = Some(55.0);
@@ -659,6 +672,13 @@ mod tests {
         t.samples[0].bsp_corrected = Some(6.5);
         assert_eq!(polar_point(&t.samples[0], true), Some((55.0, 11.0, 6.5)));
         assert_eq!(polar_point(&t.samples[0], false), Some((50.0, 10.0, 6.0)));
+        // Through the water exactly when polar_point reads the corrections.
+        assert!(through_water(&t.samples[0], true));
+        assert!(!through_water(&t.samples[0], false));
+        t.samples[0].bsp_corrected = None;
+        assert!(!through_water(&t.samples[0], true));
+        assert_eq!(polar_point(&t.samples[0], true), Some((50.0, 10.0, 6.0)));
+        t.samples[0].bsp_corrected = Some(6.5);
 
         // Waves: 100° off the bow is the beam; compass ranges wrap north.
         t.samples[0].wave_angle = Some(100.0);

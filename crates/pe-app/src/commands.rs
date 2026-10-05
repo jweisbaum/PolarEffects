@@ -53,8 +53,8 @@ pub struct AppServices {
     pub orc: crate::orc::OrcCatalogue,
     /// The scheduled catalogue scrapes' part in quitting (spec.md 5.4).
     pub catalogue_shutdown: crate::catalogues::Shutdown,
-    /// Database background job and local metadata cache.
-    pub database: crate::database::DatabaseState,
+    /// The read-only track library's metadata, as last read.
+    pub library: crate::library::LibraryState,
     pub boat_import: crate::boats::tracker_project::BoatImportJob,
     /// Whether this session has looked for an earlier version's on-disk
     /// chunk cache to remove (`settings::remove_legacy_cache`).
@@ -67,8 +67,6 @@ impl AppState {
     /// State over `paths`, with the settings read from disk.
     pub fn new(paths: AppPaths) -> Self {
         let session = Session::load(&paths.settings_file());
-        let database =
-            crate::database::DatabaseState::load(&paths.config_dir.join("database-last-job.json"));
         Self {
             shared: std::sync::Arc::new(AppServices {
                 paths,
@@ -81,7 +79,7 @@ impl AppState {
                 orr: crate::orr::OrrCatalogue::default(),
                 orc: crate::orc::OrcCatalogue::default(),
                 catalogue_shutdown: crate::catalogues::Shutdown::default(),
-                database,
+                library: Default::default(),
                 boat_import: Default::default(),
                 legacy_cache_checked: std::sync::atomic::AtomicBool::new(false),
                 legacy_cache_pending: std::sync::Mutex::new(None),

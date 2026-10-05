@@ -52,7 +52,9 @@
  * ```
  *
  * Flags: bit 0 excluded (spec.md 10.3), bit 1 filtered out (spec.md 7.6),
- * bit 2 edited (a node whose cell holds an override, spec.md 10.4). Bits
+ * bit 2 edited (a node whose cell holds an override, spec.md 10.4), bit 3 a
+ * sample placed through the water (corrected for current; otherwise its
+ * speed is the track's own, over the ground). Bits
  * 8–9 of a sample's flags are its band of the local solar day
  * (`../dayBand.ts`; spec.md 10.2).
  *
@@ -67,6 +69,7 @@ export const HEADER_BYTES = 48;
 export const BLEND_SOURCE = 0xffffffff;
 export const FLAG_EXCLUDED = 1;
 export const FLAG_FILTERED = 2;
+export const FLAG_THROUGH_WATER = 8;
 export const FLAG_EDITED = 4;
 export const SAMPLES_FULL = 0;
 export const SAMPLES_FLAGS_ONLY = 1;

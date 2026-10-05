@@ -38,13 +38,10 @@ tauri-plugin-dialog = "2.7.3"
 # End-to-end automation, never in a shipped build.
 tauri-plugin-webdriver-automation = { version = "0.1.3", optional = true }
 
-# Native PostgreSQL protocol and platform-verified TLS; no libpq or sidecar.
-postgres = { version = "0.19", features = ["with-serde_json-1"] }
-tokio-postgres-rustls = { version = "0.14", default-features = false, features = ["ring"] }
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
-rustls-platform-verifier = "0.7"
+# Calendar dates: the scrape schedules, scraped races' times and the MCP guide's today.
 chrono = { version = "0.4", default-features = false, features = ["std"] }
-uuid = { version = "1", features = ["v5", "v4"] }
+# Stable ids for scraped races and boats, so a re-scrape replaces its own records.
+uuid = { version = "1", features = ["v5"] }
 
 # The MCP service (spec.md 3.7, D29). Pure Rust, always compiled in; the
 # listener exists only while the setting is on (invariant 4's one inbound
@@ -105,6 +102,10 @@ tempfile = "3"
 sha2 = "0.10.9"
 # The GRIB export's tests decode what it wrote with the test-only reader.
 pe-grib = { workspace = true, features = ["testing"] }
+# The loopback MCP client needs a crypto provider installed (CLAUDE.md).
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+# Unique temporary directories for the track library's tests.
+uuid = { version = "1", features = ["v4", "v5"] }
 
 [lints]
 workspace = true

@@ -1985,3 +1985,19 @@ unsaved three-boat project, then confirms normal opening still works; screenshot
 were inspected. Native tests preserve saved bytes, unsaved edits, boat history
 and recovery, and reject stale confirmation. The help walkthrough now hides
 boat tabs using the fleet comparison layout before testing their reveal action.
+
+### Follow-up: plot scales, stage memory, file-only track library, class selector · complete (2026-10-04)
+
+- [x] 2D and 3D axes fit the shown dots: excluded and filtered points stop
+  stretching them; **Excluded points** shows excluded dots and rescales.
+- [x] Dot tooltips read SOG (STW for current-corrected dots); polar nodes keep BSP.
+- [x] Map, Compare, 2D and 3D stay mounted, so a stage comes back as it was left.
+- [x] The database connection is removed; the library's scraper is restored
+  writing only GeoJSON files and `boat-metadata.json`, finished races only,
+  with a status bar and cancel for a manual scrape.
+- [x] Open project from tracker offers a class; MCP `race_project` takes `class`.
+
+Validation: workspace fmt, clippy and tests, UI typecheck, tests and
+performance checks, offline check and driver tests pass; UX tests 10 (scrape
+of a recorded finished race, status bar) and 14 (class selector) pass with
+screenshots inspected.

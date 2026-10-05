@@ -211,7 +211,7 @@ const catalogue: Record<string, string> = {
   "The true wind speed the plot slices at": "图表切片所在的真风速",
   "The true wind speed the polar plot slices at.": "极曲线图切片所在的真风速。",
   "{tws} {unit}": "{tws} {unit}",
-  "TWA {twa}°, TWS {tws} {unit}, BSP {bsp} {unit}": "TWA {twa}°，TWS {tws} {unit}，BSP {bsp} {unit}",
+  "TWA {twa}°, TWS {tws} {unit}, {speed} {value} {unit}": "TWA {twa}°，TWS {tws} {unit}，{speed} {value} {unit}",
   "No source has data at this wind speed.": "没有来源在此风速下有数据。",
   "all": "全部",
   "wind speed": "风速",

@@ -101,7 +101,7 @@ export default {
     await d.waitFor(".polar-plot-stage canvas", { visible: true });
     await t.shot("asymmetric-2d-angle-labels");
     await d.click(f("stage:3d"));
-    await d.waitGone(".polar-plot-stage");
+    await d.waitGone(".stage-slot:not([hidden]) .polar-plot-stage"); // kept mounted, hidden (asked 2026-10-04)
 
     await d.click(f("sources:blend-edit"));
     await d.waitFor(".blend-correction .view3d-edit-table-wrap input");

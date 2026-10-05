@@ -158,6 +158,13 @@ const catalogue: Record<string, string> = {
   "waves": "olas",
   "direction": "dirección",
   "copies": "copias",
+  "Excluded points": "Puntos excluidos",
+  "Samples and polar points you excluded, drawn hollow or crossed": "Puntos y nodos de polar que ha excluido, dibujados huecos o en cruz",
+  "Nothing is excluded": "No hay nada excluido",
+  "Show excluded points": "Mostrar puntos excluidos",
+  "Show the samples and polar points you excluded.": "Mostrar los puntos y nodos de polar que ha excluido.",
+  "excluded": "excluidos",
+  "outliers": "valores atípicos",
 };
 
 export default catalogue;

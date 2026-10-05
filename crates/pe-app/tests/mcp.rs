@@ -2122,17 +2122,16 @@ async fn invoke_refuses_an_unknown_argument_command_or_an_excluded_one() {
     let message = call_err(&client, "invoke", json!({ "command": "format_disk" })).await;
     assert!(message.contains("unknown command format_disk"), "{message}");
 
-    // The settings hold the database password and this service's token; the
+    // The settings hold this service's token and the library's folders; the
     // service cannot be reconfigured from inside itself; quitting is the
     // person's.
     for command in [
         "app_settings",
         "set_theme",
-        "set_database_settings",
+        "set_library_settings",
         "mcp_set",
         "mcp_rotate_token",
         "quit_app",
-        "start_database_job",
     ] {
         let message = call_err(&client, "invoke", json!({ "command": command, "args": {} })).await;
         assert!(

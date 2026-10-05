@@ -66,6 +66,10 @@ const catalogue: Record<string, string> = {
   "Tracker boat ID": "追踪器船只 ID",
   "Original URL": "原始网址",
   "Boat details": "船只详情",
+  "All classes ({count} boats)": "所有级别（{count} 艘船）",
+  "{class} ({count} boats)": "{class}（{count} 艘船）",
+  "Choose a class, or all of them, then open the project.": "选择一个级别或全部级别，然后打开项目。",
+  "Downloading the race to find its classes…": "正在下载比赛以查找其级别…",
 };
 
 export default catalogue;

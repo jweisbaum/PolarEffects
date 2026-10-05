@@ -205,6 +205,7 @@ pub async fn open_tracker_project(
     url: String,
     discard_unsaved: bool,
     match_mode: Option<BoatMatchMode>,
+    class: Option<String>,
 ) -> Result<TrackerProjectResult> {
     let tracker = match tracker.as_str() {
         "yellowbrick" => Tracker::YellowBrick,
@@ -226,6 +227,7 @@ pub async fn open_tracker_project(
             &url,
             discard_unsaved,
             match_mode.unwrap_or_default(),
+            class.as_deref(),
         )
     })
     .await
@@ -251,7 +253,26 @@ pub fn open_with(
         url,
         discard_unsaved,
         BoatMatchMode::default(),
+        None,
     )
+}
+
+/// The race with only the boats of `class` (the tracker's division), or
+/// whole for none (asked 2026-10-04). A class no boat sails in is refused.
+fn of_class(event: Arc<TrackerEvent>, class: Option<&str>) -> Result<Arc<TrackerEvent>> {
+    let Some(class) = class.map(str::trim).filter(|c| !c.is_empty()) else {
+        return Ok(event);
+    };
+    let mut only = (*event).clone();
+    only.boats
+        .retain(|b| b.division.as_deref().map(str::trim) == Some(class));
+    if only.boats.is_empty() {
+        return Err(AppError::BadOption {
+            field: "Class",
+            value: class.to_owned(),
+        });
+    }
+    Ok(Arc::new(only))
 }
 
 pub fn open_with_mode(
@@ -260,6 +281,7 @@ pub fn open_with_mode(
     url: &str,
     discard_unsaved: bool,
     match_mode: BoatMatchMode,
+    class: Option<&str>,
 ) -> Result<TrackerProjectResult> {
     let (previous, settings) = state.with_session(|s| {
         s.refuse_to_discard(discard_unsaved)?;
@@ -287,6 +309,7 @@ pub fn open_with_mode(
             event
         };
         check(&cancel)?;
+        let event = of_class(event, class)?;
         let (document, reports, warnings) = build_with_mode(state, &event, &cancel, match_mode)?;
         check(&cancel)?;
         state.with_session(|session| {
@@ -366,14 +389,14 @@ pub fn build_with_mode(
             Arc::new(Vec::new())
         }
     };
-    let vessels = match crate::database::catalogue::matching_vessels(state) {
+    let vessels = match crate::library::catalogue::matching_vessels(state) {
         Ok(v) => v,
         Err(e) => {
             warnings.push(e.to_string());
             Vec::new()
         }
     };
-    let settings = crate::database::settings(state)?;
+    let settings = crate::library::settings(state)?;
     state.boat_import.update(|p| {
         p.phase = "matching".into();
         p.total = event.boats.len() as u32;
@@ -549,7 +572,7 @@ pub fn build_with_mode(
                 if seen.contains(&key) {
                     continue;
                 }
-                match crate::database::catalogue::read_hit(&settings, hit) {
+                match crate::library::catalogue::read_hit(&settings, hit) {
                     Ok(track) => {
                         seen.insert(key);
                         pending.push(track);

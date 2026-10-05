@@ -185,8 +185,10 @@ impl Default for McpSettings {
 #[ts(export_to = "AppSettings.ts", rename = "AppSettings")]
 #[serde(default)]
 pub struct Settings {
-    /// Local SYRF database, metadata and scraper preferences.
-    pub database: crate::database::DatabaseSettings,
+    /// Where the read-only SYRF track library's files are. `load` reads an
+    /// older file's `database` section for it too, whose other fields (a
+    /// database connection, the scraper's) are gone (asked 2026-10-04).
+    pub library: crate::library::LibrarySettings,
     /// Most recently opened or saved projects, newest first.
     #[ts(type = "Array<string>")]
     pub recent_projects: Vec<PathBuf>,
@@ -219,7 +221,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            database: crate::database::DatabaseSettings::default(),
+            library: crate::library::LibrarySettings::default(),
             recent_projects: Vec::new(),
             autosave: AutosaveMode::default(),
             language: LANGUAGES[0].to_owned(),
@@ -272,40 +274,35 @@ impl Settings {
             .and_then(|text| serde_json::from_str(&text).ok());
         let mut settings = Self::default();
         if let Some(serde_json::Value::Object(object)) = value {
-            if let Some(serde_json::Value::Object(db)) = object.get("database") {
-                read_field(db, "host", &mut settings.database.host);
-                read_field(db, "port", &mut settings.database.port);
-                read_field(db, "name", &mut settings.database.name);
-                read_field(db, "user", &mut settings.database.user);
-                read_field(db, "password", &mut settings.database.password);
-                read_field(db, "tls", &mut settings.database.tls);
+            if let Some(serde_json::Value::Object(library)) =
+                object.get("library").or_else(|| object.get("database"))
+            {
                 read_field(
-                    db,
+                    library,
                     "geojson_directory",
-                    &mut settings.database.geojson_directory,
+                    &mut settings.library.geojson_directory,
                 );
                 read_field(
-                    db,
+                    library,
                     "metadata_directory",
-                    &mut settings.database.metadata_directory,
+                    &mut settings.library.metadata_directory,
                 );
                 read_field(
-                    db,
+                    library,
                     "scrape_schedule",
-                    &mut settings.database.scrape_schedule,
+                    &mut settings.library.scrape_schedule,
                 );
-                read_field(db, "scrape_urls", &mut settings.database.scrape_urls);
+                read_field(library, "scrape_urls", &mut settings.library.scrape_urls);
                 read_field(
-                    db,
+                    library,
                     "yellowbrick_user_key",
-                    &mut settings.database.yellowbrick_user_key,
+                    &mut settings.library.yellowbrick_user_key,
                 );
                 read_field(
-                    db,
+                    library,
                     "yellowbrick_device_id",
-                    &mut settings.database.yellowbrick_device_id,
+                    &mut settings.library.yellowbrick_device_id,
                 );
-                read_field(db, "pg_dump", &mut settings.database.pg_dump);
             }
             read_field(&object, "recent_projects", &mut settings.recent_projects);
             read_field(&object, "autosave", &mut settings.autosave);

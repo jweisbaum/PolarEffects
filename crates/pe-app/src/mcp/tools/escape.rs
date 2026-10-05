@@ -23,7 +23,7 @@ pub struct InvokeParams {
 #[tool_router(router = tool_router_escape, vis = "pub(crate)")]
 impl<R: tauri::Runtime> PolarExplorer<R> {
     #[tool(
-        description = "Runs any other application command by name with JSON arguments — the escape hatch for what no other tool covers (rename_project, set_blend_colour, set_blend_visible, set_segment_statistic, set_use_corrected, set_stokes_drift, recovered_projects, orr_catalogue_info …). Writes are undoable and the interface follows. An argument the command does not declare is refused. Settings, the track database and quitting are not reachable."
+        description = "Runs any other application command by name with JSON arguments — the escape hatch for what no other tool covers (rename_project, set_blend_colour, set_blend_visible, set_segment_statistic, set_use_corrected, set_stokes_drift, recovered_projects, orr_catalogue_info …). Writes are undoable and the interface follows. An argument the command does not declare is refused. Settings, the track library and quitting are not reachable."
     )]
     async fn invoke(&self, Parameters(p): Parameters<InvokeParams>) -> ToolResult {
         // A command with no arguments takes an empty `Args {}`, which

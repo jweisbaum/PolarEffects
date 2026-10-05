@@ -289,6 +289,9 @@ select, input, textarea {
   border-left: 1px solid var(--border);
 }
 .centre-stage { position: relative; z-index: 0; flex: 1; min-width: 0; background: var(--bg); }
+/* Each stage kept mounted in its own slot; the hidden ones take no room. */
+.stage-slot { position: absolute; inset: 0; }
+.stage-slot[hidden] { display: none; }
 /* The stage keeps the full workspace viewport. Panels paint above it without
    creating stacking contexts that would trap their fixed-position dialogs. */
 
@@ -476,7 +479,7 @@ button.source-label:hover { border-color: var(--border); background: var(--raise
 /* The 2D polar plot (spec.md 9.2) */
 .polar-plot { display: flex; flex-direction: column; gap: 6px; min-height: 0; }
 .polar-plot-controls { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.polar-plot-all, .polar-plot-filtered, .polar-plot-colour { display: flex; align-items: center; gap: 3px; font-size: 11px; white-space: nowrap; }
+.polar-plot-all, .polar-plot-filtered, .polar-plot-excluded, .polar-plot-colour { display: flex; align-items: center; gap: 3px; font-size: 11px; white-space: nowrap; }
 /* The four bands of the local solar day, each beside its colour (spec.md 9.2, 10.2). */
 .day-bands { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: 11px; color: var(--muted); }
 .day-bands li { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
@@ -1184,15 +1187,14 @@ button.source-label:hover { border-color: var(--border); background: var(--raise
 .blend-settings .settings-buttons label { display: flex; align-items: center; gap: 6px; }
 
 /* PostgreSQL library controls and local boat search. */
-.database-settings input:not([type="checkbox"]), .database-settings textarea { min-width: 0; width: 100%; }
-.database-settings .settings-field { display: grid; grid-template-columns: minmax(10rem, 1fr) minmax(12rem, 2fr); }
-.database-settings .settings-buttons { flex-wrap: wrap; gap: .5rem; margin: .75rem 0; }
-.database-connection { font-weight: 600; }
-.database-connection.ok { color: #47c979; }
-.database-connection.failed { color: var(--error); }
-.database-urls { display: grid; gap: .4rem; margin: .75rem 0; }
-.database-urls textarea { min-height: 5rem; resize: vertical; }
-.database-current, .database-settings details { overflow-wrap: anywhere; }
+.library-settings input:not([type="checkbox"]), .library-settings textarea { min-width: 0; width: 100%; }
+.library-settings .settings-field { display: grid; grid-template-columns: minmax(10rem, 1fr) minmax(12rem, 2fr); }
+.library-settings .settings-buttons { flex-wrap: wrap; gap: .5rem; margin: .75rem 0; }
+.library-urls { display: grid; gap: .4rem; margin: .75rem 0; }
+.library-urls textarea { min-height: 5rem; resize: vertical; }
+.library-current, .library-settings details { overflow-wrap: anywhere; }
+/* The race in hand is an address: kept to the status bar's room. */
+.library-scrape-current { max-width: 22rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: bottom; }
 .boat-track-search { margin: .7rem 0; }
 .boat-track-search label { display: grid; gap: .35rem; }
 .boat-track-search input { width: 100%; min-width: 0; }
@@ -1200,7 +1202,7 @@ button.source-label:hover { border-color: var(--border); background: var(--raise
 .boat-track-results li { display: grid; gap: .3rem; padding: .6rem; margin-bottom: .4rem; border: 1px solid var(--border-subtle); border-radius: .3rem; }
 .boat-track-results small { color: var(--muted); overflow-wrap: anywhere; }
 
-.database-settings input[type="checkbox"] { justify-self: start; }
+.library-settings input[type="checkbox"] { justify-self: start; }
 
 /* Bottom-centred wave constraints: one shared rail and two native handles. */
 .wave-display-ranges {
@@ -1290,6 +1292,8 @@ button.source-label:hover { border-color: var(--border); background: var(--raise
 .tracker-project.has-report { width: min(1000px, calc(100vw - 48px)); max-width: 1000px; }
 .tracker-project > label { display: flex; gap: 12px; align-items: center; margin: 14px 0; }
 .tracker-project input { flex: 1; min-width: 200px; }
+/* A class named at length shrinks with the dialog rather than leaving it. */
+.tracker-project > label select { flex: 0 1 auto; min-width: 0; max-width: 100%; }
 .tracker-project progress { width: 100%; }
 .boat-import-report { max-height: 40vh; overflow: auto; }
 .boat-import-report table { width: 100%; border-collapse: collapse; }

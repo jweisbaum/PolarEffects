@@ -119,6 +119,6 @@ export default {
     await d.click('.polar-plot-stage [data-feature="plot:measure"]');
     await d.waitGone(".polar-plot-measure");
     await d.click(f("stage:3d"));
-    await d.waitGone(".polar-plot-stage");
+    await d.waitGone(".stage-slot:not([hidden]) .polar-plot-stage"); // kept mounted, hidden (asked 2026-10-04)
   },
 };

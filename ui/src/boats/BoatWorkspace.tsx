@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { ProjectSummary } from "../generated/ProjectSummary";
 import type { AppSettings } from "../generated/AppSettings";
 import { msg, useT } from "../i18n";
@@ -25,6 +25,21 @@ export default function BoatWorkspace({ project, settings, onSettings: setSettin
   const [requestedStage, setStage] = useState<Stage>("3d");
   const hasTracks = project.sources.some(source => source.kind === "track");
   const stage = split || (requestedStage === "map" && !hasTracks) ? "3d" : requestedStage;
+  // A stage once shown stays mounted, hidden, so coming back to it finds it
+  // as it was left: camera, toggles, tool, selection, slider (asked
+  // 2026-10-04). A hidden stage is handed the project as it last saw it,
+  // so an edit made meanwhile costs it nothing until it is shown again and
+  // catches up once.
+  const visited = useRef(new Set<Stage>());
+  const seen = useRef<Partial<Record<Stage, ProjectSummary>>>({});
+  if (visible) {
+    visited.current.add(stage);
+    seen.current[stage] = project;
+  }
+  const slot = (name: Stage, view: (shown: ProjectSummary) => ReactNode) =>
+    visible && visited.current.has(name) && (
+      <div className="stage-slot" hidden={stage !== name}>{view(stage === name ? project : seen.current[name] ?? project)}</div>
+    );
   const [singlePanels, setSinglePanels] = useState<PanelState>(loadPanels);
   const [comparisonPanels, setComparisonPanels] = useState<PanelState>(() => ({ ...loadPanels(), left: false, right: false }));
   const panels = split ? comparisonPanels : singlePanels;
@@ -69,11 +84,11 @@ export default function BoatWorkspace({ project, settings, onSettings: setSettin
         "--dock-right": panels.right ? "var(--sidebar-right)" : "0px",
       } as CSSProperties}>
         <main className="centre-stage" aria-label={t("Stage")}>
-          {visible && stage === "map" && <MapView project={project} settings={settings} onSettings={setSettings} />}
-          {visible && stage === "3d" && <PolarView project={project} settings={settings} onProject={updateProject} compact={split && !comparisonControls} comparison={split} />}
-          {visible && stage === "2d" && <PolarPlot project={project} variant="stage" unit={settings?.units.speed ?? "kn"} />}
+          {slot("map", shown => <MapView project={shown} settings={settings} onSettings={setSettings} />)}
+          {slot("3d", shown => <PolarView project={shown} settings={settings} onProject={updateProject} compact={split && !comparisonControls} comparison={split} />)}
+          {slot("2d", shown => <PolarPlot project={shown} variant="stage" unit={settings?.units.speed ?? "kn"} hidden={stage !== "2d"} />)}
           {/* Keyed by project: nothing of one project's comparison (its answer, its framing, a hovered cell) shows under another's names. */}
-          {visible && stage === "compare" && <CompareView key={project.id} project={project} settings={settings} />}
+          {slot("compare", shown => <CompareView key={shown.id} project={shown} settings={settings} />)}
         </main>
         {panels.left && <aside className="sidebar left"><LeftNav project={project} onProject={updateProject} panels={panels} onToggle={toggle}
           {...(settings ? { units: settings.units } : {})} /></aside>}

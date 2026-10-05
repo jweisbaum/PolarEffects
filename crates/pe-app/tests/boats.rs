@@ -388,8 +388,8 @@ fn historical_tracks_use_full_vessel_model_fields_and_deduplicate_races() {
     let state = root.state();
     let path = state
         .with_session(|s| {
-            s.settings.database.geojson_directory = root.0.to_string_lossy().into_owned();
-            Ok(s.settings.database.metadata_path(&state))
+            s.settings.library.geojson_directory = root.0.to_string_lossy().into_owned();
+            Ok(s.settings.library.metadata_path(&state))
         })
         .unwrap();
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -545,6 +545,59 @@ fn cancelled_or_stale_tracker_projects_never_replace_current_work() {
     let opened = boats::tracker_project::confirm(&state, result.project.id).unwrap();
     assert_eq!(opened.id, result.project.id);
     assert_eq!(boats::list(&state).unwrap().tabs.len(), 1);
+}
+
+/// A class chosen in the dialog opens only that class's boats, one tab each
+/// (asked 2026-10-04); a class no boat sails in is refused.
+#[test]
+fn a_chosen_class_opens_only_its_boats() {
+    let root = TempRoot::new("tracker-class");
+    let state = root.state();
+    let in_class = |name: &str, class: &str| TrackerBoat {
+        division: Some(class.into()),
+        ..boat(name, None)
+    };
+    let event = TrackerEvent {
+        event: EventRef {
+            tracker: Tracker::YellowBrick,
+            key: "classes".into(),
+            url: "https://boats.invalid/classes".into(),
+        },
+        title: "Race with classes".into(),
+        start: None,
+        stop: None,
+        positions_from: PositionsFrom::Primary,
+        leg: None,
+        boats: vec![
+            in_class("Alpha", "IRC 1"),
+            in_class("Bravo", "IRC 2"),
+            in_class("Charlie", "IRC 2"),
+        ],
+    };
+    let open = |class: Option<&str>| {
+        let client = std::sync::Arc::new(FixtureTracker {
+            event: event.clone(),
+            cancel: false,
+            change: None,
+        });
+        boats::tracker_project::open_with_mode(
+            &state,
+            client,
+            "ignored",
+            true,
+            Default::default(),
+            class,
+        )
+    };
+    let result = open(Some("IRC 2")).unwrap();
+    let mut names: Vec<_> = result.boats.iter().map(|b| b.boat.clone()).collect();
+    names.sort();
+    assert_eq!(names, ["Bravo", "Charlie"]);
+    boats::tracker_project::discard_preview(&state, result.project.id).unwrap();
+    // No class: every boat.
+    assert_eq!(open(None).unwrap().boats.len(), 3);
+    let refused = open(Some("Multihull")).unwrap_err();
+    assert_eq!(refused.kind(), "bad-option", "{refused}");
 }
 
 fn preview_race(

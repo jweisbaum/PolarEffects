@@ -102,8 +102,8 @@ pub const EXCLUDED: &[&str] = &[
     "deliver_capture",
     "refuse_capture",
     // The person's preferences. Every one of these answers the whole
-    // settings file, which holds the PostgreSQL password, the YellowBrick
-    // keys and this service's own token: none of that is a client's to read.
+    // settings file, which holds this service's own token: that is no
+    // client's to read.
     // `set_language` also relabels the native menu from the handle, and
     // `remove_old_chunk_cache` deletes a folder on disk.
     "app_settings",
@@ -118,18 +118,16 @@ pub const EXCLUDED: &[&str] = &[
     "set_catalogue_schedule",
     "legacy_cache_notice",
     "remove_old_chunk_cache",
-    // The PostgreSQL track library: saved credentials, a scraper and
-    // `pg_dump`. Setting it up stays something only the person at the
-    // keyboard does (spec.md 3.7). Searching and importing what it holds
-    // are the curated tools library_search and library_import (asked
-    // 2026-10-03).
-    "test_database_connection",
-    "set_database_settings",
+    // The track library: where its files are, and scraping races into it
+    // with the person's YellowBrick credentials, are only the person's at
+    // the keyboard (spec.md 3.7). Searching and importing what it holds are
+    // the curated tools library_search and library_import (asked 2026-10-03).
+    "set_library_settings",
+    "start_library_scrape",
+    "library_scrape_status",
+    "cancel_library_scrape",
     "search_database_boats",
     "import_database_track",
-    "database_job_status",
-    "start_database_job",
-    "cancel_database_job",
     // Quitting is the person's, and goes through their unsaved-changes guard.
     "quit_app",
     // Answered with packed bytes for a canvas, not JSON: `polar_read`,
@@ -166,7 +164,7 @@ pub const TABLE: &[(&str, Handler)] = &[
     command!(delete_boat, crate::boats::delete_boat, { project_id: u64, boat_id: u64 }),
     command!(restore_boat, crate::boats::restore_boat, { project_id: u64 }),
     command!(async export_all_polars, crate::boats::export_all_polars, { directory: String, format: String }),
-    command!(async open_tracker_project, crate::boats::tracker_project::open_tracker_project, { tracker: String, url: String, discard_unsaved: bool, match_mode: Option<crate::boats::tracker_project::BoatMatchMode> }),
+    command!(async open_tracker_project, crate::boats::tracker_project::open_tracker_project, { tracker: String, url: String, discard_unsaved: bool, match_mode: Option<crate::boats::tracker_project::BoatMatchMode>, class: Option<String> }),
     command!(confirm_tracker_project, crate::boats::tracker_project::confirm_tracker_project, { project_id: u64 }),
     command!(discard_tracker_project, crate::boats::tracker_project::discard_tracker_project, { project_id: u64 }),
     command!(

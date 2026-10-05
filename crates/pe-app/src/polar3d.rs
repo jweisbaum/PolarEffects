@@ -56,7 +56,9 @@
 //! ```
 //!
 //! Flags: bit 0 excluded (spec.md 10.3), bit 1 filtered out (spec.md 7.6),
-//! bit 2 edited (a node whose cell holds an override, spec.md 10.4). Bits
+//! bit 2 edited (a node whose cell holds an override, spec.md 10.4), bit 3 a
+//! sample placed through the water (corrected for current; otherwise its
+//! speed is the track's own, over the ground). Bits
 //! 8–9 of a sample's flags are its band of the local solar day (spec.md
 //! 10.2; `pe_tracks::daytime`): 0 night, 1 morning, 2 afternoon, 3 evening.
 //! It rides in the flags so the flags-only scene carries it at no cost.
@@ -111,6 +113,9 @@ pub const FLAG_EXCLUDED: u32 = 1;
 pub const FLAG_FILTERED: u32 = 2;
 /// Flag: a node whose cell holds an edit.
 pub const FLAG_EDITED: u32 = 4;
+/// Flag: a sample placed through the water (corrected for current); its
+/// speed is otherwise the track's own, over the ground.
+pub const FLAG_THROUGH_WATER: u32 = 8;
 /// Where a sample's flags hold its day band's two-bit code.
 pub const FLAG_BAND_SHIFT: u32 = 8;
 /// Samples mode: the whole samples section.
@@ -192,6 +197,8 @@ pub struct SceneSample {
     pub excluded: bool,
     /// Removed by the sample filters.
     pub filtered: bool,
+    /// Placed through the water: `bsp` is corrected for current.
+    pub through_water: bool,
     /// The band of the local solar day it was sailed in.
     pub band: DayBand,
 }
@@ -308,6 +315,10 @@ pub fn scene_with(
                         time: 0.0,
                         excluded,
                         filtered: *filtered,
+                        through_water: pe_tracks::through_water(
+                            sample,
+                            project.blend.use_corrected,
+                        ),
                         band,
                     }
                 } else {
@@ -346,6 +357,10 @@ pub fn scene_with(
                         time: 0.0,
                         excluded,
                         filtered: *filtered,
+                        through_water: pe_tracks::through_water(
+                            sample,
+                            project.blend.use_corrected,
+                        ),
                         band,
                     }
                 });
@@ -471,7 +486,13 @@ fn flags(excluded: bool, filtered: bool, edited: bool) -> u32 {
 }
 
 fn sample_flags(sample: &SceneSample) -> u32 {
-    flags(sample.excluded, sample.filtered, false) | (sample.band.code() << FLAG_BAND_SHIFT)
+    flags(sample.excluded, sample.filtered, false)
+        | (if sample.through_water {
+            FLAG_THROUGH_WATER
+        } else {
+            0
+        })
+        | (sample.band.code() << FLAG_BAND_SHIFT)
 }
 
 /// Packs a scene into the wire layout in the module documentation.
@@ -966,6 +987,7 @@ mod tests {
                 time: 600.0,
                 excluded: true,
                 filtered: true,
+                through_water: true,
                 band: DayBand::Afternoon,
             }],
             surfaces: vec![
@@ -1041,7 +1063,10 @@ mod tests {
         assert_eq!(float(&bytes, 38), 1.5);
         assert!(float(&bytes, 39).is_nan());
         assert_eq!(float(&bytes, 40), 600.0);
-        assert_eq!(word(&bytes, 45), FLAG_EXCLUDED | FLAG_FILTERED | (2 << 8));
+        assert_eq!(
+            word(&bytes, 45),
+            FLAG_EXCLUDED | FLAG_FILTERED | 8 | (2 << 8)
+        );
         assert_eq!(float(&bytes, 41), 8.5);
         assert_eq!(float(&bytes, 42), 30.0);
         assert_eq!(float(&bytes, 43), 15.0);
@@ -1104,7 +1129,10 @@ mod tests {
         let bytes = pack(&scene);
         assert_eq!(bytes.len(), (59 - 9) * 4);
         assert_eq!(word(&bytes, 10), SAMPLES_FLAGS_ONLY);
-        assert_eq!(word(&bytes, 32), FLAG_EXCLUDED | FLAG_FILTERED | (2 << 8));
+        assert_eq!(
+            word(&bytes, 32),
+            FLAG_EXCLUDED | FLAG_FILTERED | 8 | (2 << 8)
+        );
         assert_eq!(word(&bytes, 33), 0, "the first surface's source");
     }
 

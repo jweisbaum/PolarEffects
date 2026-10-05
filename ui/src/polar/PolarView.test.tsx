@@ -47,6 +47,7 @@ vi.mock("./scene3d", async (original) => {
     resize() {}
     setGuides() {}
     setView = vi.fn();
+    getView() { return { position: [0, 0, 40] as [number, number, number], target: [0, 0, 0] as [number, number, number] }; }
     setCells = vi.fn();
     setViewCentre() {}
     render() {}
@@ -282,10 +283,18 @@ it("selects the clicked dot, summarises it and excludes it through Rust", async 
   expect(api.setExcluded).toHaveBeenCalledWith([{ source_id: 10, twa_index: 1, tws_index: 1 }], [], true);
   expect(onProject).toHaveBeenCalledWith(project(2));
 
-  // The refetched scene has the node excluded; the selection survives it and
-  // Include becomes possible.
+  // The refetched scene has the node excluded, and an excluded point is
+  // hidden (asked 2026-10-04): it leaves the selection with the view.
   api.polarScene.mockResolvedValue(packet(true));
   await render(2);
+  expect(q(".view3d-selection h3")!.textContent).toBe("Nothing selected");
+  const showExcluded = feature("view3d:show-excluded") as unknown as HTMLInputElement;
+  expect(showExcluded.checked).toBe(false);
+  expect(showExcluded.disabled).toBe(false);
+  // Shown again, it can be picked and included.
+  await act(async () => showExcluded.click());
+  expect(scenes.made[0]!.setData.mock.calls.at(-1)![0].samples.length / 3).toBe(packet(true).nodes.count + packet(true).samples.count);
+  await clickCanvas();
   expect(q(".view3d-selection h3")!.textContent).toBe("1 selected");
   expect((feature("view3d:include") as HTMLButtonElement).disabled).toBe(false);
   expect((feature("view3d:exclude") as HTMLButtonElement).disabled).toBe(true);

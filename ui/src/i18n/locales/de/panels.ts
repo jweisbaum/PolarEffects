@@ -219,7 +219,7 @@ const catalogue: Record<string, string> = {
   "The true wind speed the plot slices at": "Die wahre Windgeschwindigkeit, für die das Diagramm gezeichnet wird",
   "The true wind speed the polar plot slices at.": "Die wahre Windgeschwindigkeit, für die das Polardiagramm gezeichnet wird.",
   "{tws} {unit}": "{tws} {unit}",
-  "TWA {twa}°, TWS {tws} {unit}, BSP {bsp} {unit}": "TWA {twa}°, TWS {tws} {unit}, BSP {bsp} {unit}",
+  "TWA {twa}°, TWS {tws} {unit}, {speed} {value} {unit}": "TWA {twa}°, TWS {tws} {unit}, {speed} {value} {unit}",
   "No source has data at this wind speed.": "Keine Quelle hat Daten bei dieser Windgeschwindigkeit.",
   "all": "alle",
   "wind speed": "Windgeschwindigkeit",

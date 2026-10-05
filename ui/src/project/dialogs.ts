@@ -117,7 +117,3 @@ export async function pickExportDirectory(): Promise<string | null> {
   const chosen = await whileChoosing(msg("Choosing where to export"), () => open({ directory: true, multiple: false, title: t("Export all polars") }));
   return typeof chosen === "string" ? chosen : null;
 }
-export async function pickDatabaseExport(): Promise<string | null> {
-  const chosen = await whileChoosing(msg("Choosing where to export the database"), () => save({ defaultPath: "syrfbackendprod.sql", filters: [{ name: t("SQL database export"), extensions: ["sql"] }] }));
-  return typeof chosen === "string" ? chosen : null;
-}

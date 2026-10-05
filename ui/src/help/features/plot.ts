@@ -14,6 +14,8 @@ const features: Feature[] = [
     keywords: ["TWS", msg("slider"), msg("wind speed")], topic: "sources", reveal: inPanel },
   { id: "plot:show-filtered", label: msg("Show filtered samples in the plot"), description: msg("Also draw the samples the filters take out, dimmed."),
     keywords: [msg("filters"), msg("dots"), msg("dimmed")], topic: "sources", reveal: inPanel },
+  { id: "plot:show-excluded", label: msg("Show excluded samples in the plot"), description: msg("Also draw the samples you excluded, hollow."),
+    keywords: [msg("excluded"), msg("outliers"), msg("dots")], topic: "sources", reveal: inPanel },
   { id: "plot:colour", label: msg("Colour plot dots by"), description: msg("Colour the plot's sample dots by their track or by the time of day they were sailed at."),
     keywords: [msg("colour"), msg("night"), msg("morning"), msg("time of day")], topic: "sources", reveal: inPanel },
   { id: "plot:measure", label: msg("Measure on the polar plot"),

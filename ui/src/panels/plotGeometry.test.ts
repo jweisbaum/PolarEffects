@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { PolarCurve } from "../generated/PolarCurve";
-import type { DotPacket } from "./dotPacket";
+import { DOT_EXCLUDED, DOT_FILTERED, DOT_THROUGH_WATER, withoutExcluded, type DotPacket } from "./dotPacket";
 import { DAY_BANDS } from "../dayBand";
 import {
   axisLabels, crossings, curveSpeedAt, dotFill, fitLayout, labelsOverlap, maxBoatSpeed, measureBetween, nearestCrossing, nearestPoint,
@@ -9,9 +9,9 @@ import {
 } from "./plotGeometry";
 
 /** One dot of one source, as the packet carries it. */
-const dot = (sourceId: number, twa: number, tws: number, bsp: number): DotPacket => ({
+const dot = (sourceId: number, twa: number, tws: number, bsp: number, flags = 0): DotPacket => ({
   count: 1, sources: [sourceId], points: Float32Array.from([twa, tws, bsp]), source: Uint32Array.from([0]),
-  ids: Uint32Array.from([1, 0]), flags: Uint32Array.from([0]),
+  ids: Uint32Array.from([1, 0]), flags: Uint32Array.from([flags]),
 });
 
 const curve = (label: string, colour: string, tws: number, points: [number, number][]): PolarCurve => ({
@@ -96,6 +96,25 @@ describe("maxBoatSpeed", () => {
     expect(maxBoatSpeed(curves, dots)).toBe(12);
     expect(maxBoatSpeed([], null)).toBe(0);
   });
+
+  it("drops excluded dots unless they are shown (asked 2026-10-04)", () => {
+    const three: DotPacket = {
+      count: 3, sources: [7], points: Float32Array.from([40, 10, 5, 90, 10, 30, 120, 10, 6]),
+      source: Uint32Array.from([0, 0, 0]), ids: Uint32Array.from([1, 0, 2, 0, 3, 0]),
+      flags: Uint32Array.from([0, DOT_EXCLUDED, DOT_FILTERED]),
+    };
+    const kept = withoutExcluded(three);
+    expect(kept.count).toBe(2);
+    expect([...kept.points]).toEqual([40, 10, 5, 120, 10, 6]);
+    expect([...kept.ids]).toEqual([1, 0, 3, 0]);
+    expect([...kept.flags]).toEqual([0, DOT_FILTERED]);
+    expect(kept.sources).toEqual([7]);
+    // The rings reach the fastest dot shown: 30 kn with the excluded one, 6 without.
+    expect(maxBoatSpeed([], three)).toBe(30);
+    expect(maxBoatSpeed([], kept)).toBe(6);
+    // Nothing excluded: the same packet back.
+    expect(withoutExcluded(kept)).toBe(kept);
+  });
 });
 
 describe("nearestPoint", () => {
@@ -120,7 +139,16 @@ describe("nearestPoint", () => {
     const styles = new Map([[7, { label: "Track", colour: "#e15759" }]]);
     const { x, y } = project(40, 6, layout);
     const hit = nearestPoint([], dots, styles, x, y, layout, 5);
-    expect(hit).toEqual({ label: "Track", colour: "#e15759", twa: 40, tws: 10, bsp: 6, blend: false, x, y });
+    expect(hit).toEqual({ label: "Track", colour: "#e15759", twa: 40, tws: 10, bsp: 6, speed: "SOG", blend: false, x, y });
+  });
+
+  it("calls a dot's speed SOG, or STW where it was corrected for current, and a curve's BSP (asked 2026-10-04)", () => {
+    const styles = new Map([[7, { label: "Track", colour: "#e15759" }]]);
+    const { x, y } = project(40, 6, layout);
+    expect(nearestPoint([], dot(7, 40, 10, 6), styles, x, y, layout, 5)?.speed).toBe("SOG");
+    expect(nearestPoint([], dot(7, 40, 10, 6, DOT_THROUGH_WATER), styles, x, y, layout, 5)?.speed).toBe("STW");
+    const curves = [curve("A", "#111", 10, [[40, 6]])];
+    expect(nearestPoint(curves, null, styles, x, y, layout, 5)?.speed).toBe("BSP");
   });
 
   it("ignores a dot whose source is not in the lookup", () => {

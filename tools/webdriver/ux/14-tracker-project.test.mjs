@@ -3,6 +3,13 @@ import { createServer } from "node:http";
 import { assert } from "./harness.mjs";
 const base = new URL("../../../crates/pe-trackers/tests/fixtures/yellowbrick/", import.meta.url);
 let fixture;
+// The race has two classes, so the dialog asks for one before it opens
+// (asked 2026-10-04); "" is all of them.
+async function chooseClass(d, value) {
+  await d.waitFor('[data-feature="boats:tracker-class"]', { timeoutMs: 60000 });
+  await d.run(`var s=document.querySelector('[data-feature="boats:tracker-class"]'); s.value=${JSON.stringify(value)}; s.dispatchEvent(new Event('change',{bubbles:true})); done(true);`);
+  await d.click('[data-feature="boats:tracker-open"]');
+}
 export default {
   name: "tracker creates model-matched boat tabs",
   async setup() {
@@ -26,6 +33,11 @@ export default {
     await d.waitFor('[data-feature="boats:tracker-url"]');
     await d.type('[data-feature="boats:tracker-url"]',"https://yb.tl/rmsr2024");
     await d.click('[data-feature="boats:tracker-open"]');
+    await d.waitFor('[data-feature="boats:tracker-class"]',{timeoutMs:60000});
+    const classes=await d.run(`done(Array.from(document.querySelectorAll('[data-feature="boats:tracker-class"] option')).map(o=>o.textContent));`);
+    assert.equal(classes.length,3,`all classes and each of two: ${classes}`); assert.equal(classes[0],"All classes (2 boats)");
+    await t.shot("class-selector");
+    await chooseClass(d,"");
     await d.waitFor('.boat-import-report tbody tr',{timeoutMs:60000});
     const report=await d.run(`done(Array.from(document.querySelectorAll('.boat-import-report tbody tr')).map(r=>Array.from(r.cells).map(c=>c.textContent)));`);
     assert.equal(report.length,2); assert.ok(Number(report[0][2])>0,"explicit identical model adds polars");
@@ -42,6 +54,7 @@ export default {
     await d.waitFor('[data-feature="boats:tracker-url"]');
     await d.type('[data-feature="boats:tracker-url"]',"https://yb.tl/rmsr2024");
     await d.click('[data-feature="boats:tracker-open"]');
+    await chooseClass(d,"");
     await d.waitFor('.boat-import-report tbody tr',{timeoutMs:60000});
     await d.click('[data-feature="boats:tracker-close"]');
     await d.waitFor('.boat-tab:nth-child(2) [role="tab"]'); assert.equal(await d.count('.boat-tabs [role="tab"]'),2);
@@ -62,6 +75,7 @@ export default {
     await d.type('[data-feature="boats:tracker-url"]',"https://yb.tl/rmsr2024");
     await t.shot("exact-boat-option");
     await d.click('[data-feature="boats:tracker-open"]');
+    await chooseClass(d,"");
     await d.waitFor('.boat-import-report tbody tr',{timeoutMs:60000});
     const exact=await d.run(`done(Array.from(document.querySelectorAll('.boat-import-report tbody tr')).map(r=>Array.from(r.cells).map(c=>c.textContent)));`);
     assert.equal(exact.length,2); assert.equal(Number(exact[0][2]),0,"the model alone never adds polars in exact-boat mode");
@@ -73,5 +87,21 @@ export default {
     assert.deepEqual(await d.invoke("project_summary"), previous, "cancel preserves the current project");
     assert.equal(await d.count('.boat-tabs [role="tab"]'),3,"cancel retains the added boat");
     await t.shot("cancel-keeps-current-project");
+    // One class opens only its boats.
+    await d.click('[data-feature="shell:project-menu"]');
+    await d.click('[data-feature="project:tracker"]');
+    await d.waitFor('[role="dialog"][aria-label="Unsaved changes"] button.danger');
+    await d.click('[role="dialog"][aria-label="Unsaved changes"] button.danger');
+    await d.waitFor('[data-feature="boats:tracker-url"]');
+    await d.type('[data-feature="boats:tracker-url"]',"https://yb.tl/rmsr2024");
+    await d.click('[data-feature="boats:tracker-open"]');
+    await d.waitFor('[data-feature="boats:tracker-class"]',{timeoutMs:60000});
+    const one=await d.run(`done(document.querySelectorAll('[data-feature="boats:tracker-class"] option')[1].value);`);
+    await chooseClass(d,one);
+    await d.waitFor('.boat-import-report tbody tr',{timeoutMs:60000});
+    assert.equal(await d.count('.boat-import-report tbody tr'),1,`only the boats of ${one}`);
+    await t.shot("one-class-report");
+    await d.click('[data-feature="boats:tracker-cancel"]');
+    await d.waitGone('.tracker-project');
   }
 };

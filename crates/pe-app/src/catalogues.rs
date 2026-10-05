@@ -17,9 +17,22 @@ use tauri::{Emitter, Manager};
 use ts_rs::TS;
 
 use crate::commands::AppState;
-use crate::database::ScrapeSchedule;
 use crate::error::{AppError, Result};
 use crate::settings::Settings;
+
+/// When a catalogue is scraped by itself: only when asked, or at startup or
+/// shutdown once the person has chosen that (spec.md 5.4).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum ScrapeSchedule {
+    /// Only when asked.
+    #[default]
+    OnDemand,
+    /// When the application starts.
+    Startup,
+    /// When the application quits.
+    Shutdown,
+}
 
 /// How long after a catalogue was written a scheduled scrape leaves it be.
 pub const FRESH: Duration = Duration::from_secs(24 * 60 * 60);
@@ -183,9 +196,9 @@ pub fn shutdown<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> bool {
 }
 
 /// Whether quitting has to wait for scheduled work: the track library's
-/// shutdown scrape, then the catalogues'.
+/// scrape, then the catalogues'.
 pub fn work_before_exit<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> bool {
-    crate::database::shutdown(app) || shutdown(app)
+    crate::library::shutdown(app) || shutdown(app)
 }
 
 /// Chooses when a catalogue (`"orc"` or `"orr"`) is scraped by itself.

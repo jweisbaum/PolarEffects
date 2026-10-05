@@ -69,7 +69,7 @@ export default function BoatTrackSearch({ onImport }: { onImport: (result: Track
   return <div className="boat-track-search">
     <label>{t("Search tracks by vessel details")}<input type="search" data-feature="tracks:boat-search" title={t("Search all vessel fields, including name, model, class, make and builder")} placeholder={t("Name, model, class, make, builder…")} value={query} onChange={e => setQuery(e.target.value)} /></label>
     {loading && <p role="status">{t("Searching boat tracks…")}</p>}
-    {result && !result.downloaded && <p>{t("Download boat metadata in Settings to search local tracks.")}</p>}
+    {result && !result.downloaded && <p>{t("Scrape races, or choose the track library's folders, in Settings to search local tracks.")}</p>}
     {result?.downloaded && <>
       <p role="status">{remaining === 1 ? t("1 matching track") : t("{count} matching tracks", { count: remaining })}</p>
       <ul className="boat-track-results">{result.hits.filter(hit => !removed?.has(hit.id)).map(hit => <li key={hit.id}>

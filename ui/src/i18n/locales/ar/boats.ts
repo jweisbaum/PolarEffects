@@ -65,4 +65,8 @@ export default {
   "Tracker boat ID": "معرّف القارب في جهاز التتبع",
   "Original URL": "عنوان URL الأصلي",
   "Boat details": "تفاصيل القارب",
+  "All classes ({count} boats)": "كل الفئات ({count} قوارب)",
+  "{class} ({count} boats)": "{class} ({count} قوارب)",
+  "Choose a class, or all of them, then open the project.": "اختر فئة، أو جميعها، ثم افتح المشروع.",
+  "Downloading the race to find its classes…": "جارٍ تنزيل السباق للعثور على فئاته…",
 };

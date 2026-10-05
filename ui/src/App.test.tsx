@@ -230,7 +230,9 @@ async function mount() {
   await settle();
 }
 const q = <T extends Element = HTMLElement>(selector: string) => document.querySelector<T>(selector);
-const feature = (id: string) => q(`[data-feature="${id}"]`);
+// What is on screen: a stage kept mounted while another shows is hidden.
+const feature = (id: string) =>
+  [...document.querySelectorAll<HTMLElement>(`[data-feature="${id}"]`)].find((el) => !el.closest("[hidden]")) ?? null;
 const click = async (element: Element | null) => {
   expect(element).not.toBeNull();
   await act(async () => (element as HTMLElement).click());
@@ -253,7 +255,7 @@ beforeEach(() => {
   legacyNotice = null;
   compareAnswer = "fixture";
   settings = {
-    database: { host: "localhost", port: 5432, name: "syrfbackendprod", user: "postgres", password: "", tls: false, geojson_directory: "", metadata_directory: "", scrape_schedule: "on_demand", scrape_urls: "", yellowbrick_user_key: "", yellowbrick_device_id: "", pg_dump: "" },
+    library: { geojson_directory: "", metadata_directory: "", scrape_schedule: "on_demand", scrape_urls: "", yellowbrick_user_key: "", yellowbrick_device_id: "" },
     recent_projects: [], autosave: "recovery", language: "en", theme: "harbour",
     units: { speed: "kn", wave_height: "m", distance: "nm" },
     weather_memory_mb: 256, network: { concurrency: 8, timeout_s: 60 },
@@ -415,6 +417,45 @@ describe("the project window", () => {
     expect(calls.some(([command]) => command === "compare_polars")).toBe(true);
     await click(feature("stage:map"));
     expect(feature("map:projection")).not.toBeNull();
+  });
+
+  it("comes back to a stage as it was left, without loading it again (asked 2026-10-04)", async () => {
+    project = summary(false, "/p.wpsproj", [TRACKED]);
+    await mount();
+    await click(feature("stage:3d"));
+    const surfaces = feature("view3d:show-surfaces") as unknown as HTMLInputElement;
+    expect(surfaces.checked).toBe(true);
+    await click(surfaces);
+    const scenes = () => calls.filter(([c]) => c === "polar_scene").length;
+    const fetched = scenes();
+    await click(feature("stage:2d"));
+    const colour = feature("plot:colour") as unknown as HTMLSelectElement;
+    await act(async () => {
+      colour.value = "timeOfDay";
+      colour.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(colour.value).toBe("timeOfDay");
+    for (const away of ["stage:map", "stage:compare"]) {
+      await click(feature(away));
+      expect(feature("view3d:layout"), away).toBeNull();
+      await click(feature("stage:3d"));
+      // The same view, as it was: the box still unticked, nothing fetched again.
+      expect(feature("view3d:show-surfaces")).toBe(surfaces);
+      expect(surfaces.checked, away).toBe(false);
+      expect(scenes(), away).toBe(fetched);
+      await click(feature("stage:2d"));
+      expect((feature("plot:colour") as unknown as HTMLSelectElement).value, away).toBe("timeOfDay");
+    }
+    // An edit made while the 3D view is hidden costs it nothing until it is
+    // shown again, and then it catches up once.
+    await click(feature("stage:compare"));
+    const changed = events.get("document://changed") as unknown as (e: { payload: unknown }) => void;
+    await act(async () => changed({ payload: { project: { ...project!, revision: project!.revision + 1 }, opened: false } }));
+    await settle();
+    expect(scenes()).toBe(fetched);
+    await click(feature("stage:3d"));
+    expect(scenes()).toBe(fetched + 1);
+    expect(surfaces.checked).toBe(false);
   });
 });
 

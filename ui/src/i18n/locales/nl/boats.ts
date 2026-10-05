@@ -65,4 +65,8 @@ export default {
   "Tracker boat ID": "Boot-ID in de tracker",
   "Original URL": "Oorspronkelijke URL",
   "Boat details": "Bootgegevens",
+  "All classes ({count} boats)": "Alle klassen ({count} boten)",
+  "{class} ({count} boats)": "{class} ({count} boten)",
+  "Choose a class, or all of them, then open the project.": "Kies een klasse, of alle, en open dan het project.",
+  "Downloading the race to find its classes…": "De race wordt gedownload om de klassen te vinden…",
 };

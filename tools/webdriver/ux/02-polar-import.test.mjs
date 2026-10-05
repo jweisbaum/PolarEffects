@@ -43,7 +43,7 @@ export default {
     assert.ok(halves.right > halves.left * 3, `the fan is to the right of the centre line: ${JSON.stringify(halves)}`);
     await t.shot("plot-stage-without-tracks");
     await d.click('[data-feature="stage:3d"]');
-    await d.waitGone(".polar-plot-stage");
+    await d.waitGone(".stage-slot:not([hidden]) .polar-plot-stage"); // kept mounted, hidden (asked 2026-10-04)
 
     await d.click('[data-feature="stage:3d"]');
     await d.waitFor("canvas.view3d-canvas", { visible: true });

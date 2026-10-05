@@ -11,7 +11,7 @@
 
 import type { PolarCurve } from "../generated/PolarCurve";
 import { DAY_BANDS, dayBand } from "../dayBand";
-import { dotSourceId, type DotPacket } from "./dotPacket";
+import { DOT_THROUGH_WATER, dotSourceId, type DotPacket } from "./dotPacket";
 
 const RAD = Math.PI / 180;
 
@@ -52,6 +52,8 @@ export function project(twa: number, bsp: number, layout: PlotLayout): { x: numb
 export function maxBoatSpeed(curves: readonly PolarCurve[], dots: DotPacket | null): number {
   let max = 0;
   for (const curve of curves) for (const point of curve.points) if (point.bsp > max) max = point.bsp;
+  // Only the dots drawn are given: excluded and filtered-out ones only
+  // while shown, so the scale follows the checkboxes (asked 2026-10-04).
   if (dots) for (let k = 0; k < dots.count; k++) if (dots.points[k * 3 + 2]! > max) max = dots.points[k * 3 + 2]!;
   return max;
 }
@@ -171,12 +173,21 @@ export function dotFill(dots: DotPacket, k: number, mode: DotColourMode, bySourc
 }
 
 /** What hovering one point on the plot shows (spec.md 9.2). */
+/** The abbreviation a point's speed is shown with. */
+export type SpeedKind = "BSP" | "SOG" | "STW";
+
 export interface Hover {
   label: string;
   colour: string;
   twa: number;
   tws: number;
   bsp: number;
+  /**
+   * What `bsp` is: a curve's boat speed, or a track sample's speed over the
+   * ground (SOG), or through the water where it was corrected for current
+   * (STW). A dot is labelled by its own (asked 2026-10-04).
+   */
+  speed: SpeedKind;
   /** Whether the point is on the blend's curve rather than a source's or a dot. */
   blend: boolean;
   /** Canvas position, for the tooltip and the highlighted dot. */
@@ -205,23 +216,26 @@ export function nearestPoint(
 ): Hover | null {
   let best: Hover | null = null;
   let bestDistance = maxDistance;
-  const consider = (label: string, colour: string, twa: number, tws: number, bsp: number, blend = false) => {
+  const consider = (label: string, colour: string, twa: number, tws: number, bsp: number, speed: SpeedKind, blend = false) => {
     const { x, y } = project(twa, bsp, layout);
     const distance = Math.hypot(x - px, y - py);
     if (distance <= bestDistance) {
       bestDistance = distance;
-      best = { label, colour, twa, tws, bsp, blend, x, y };
+      best = { label, colour, twa, tws, bsp, speed, blend, x, y };
     }
   };
   for (const curve of curves) {
     // The blend's curves are the ones with no source (`PolarCurve.source_id`).
     const blend = curve.source_id === null;
-    for (const point of curve.points) consider(curve.label, curve.colour, point.twa, curve.tws, point.bsp, blend);
+    for (const point of curve.points) consider(curve.label, curve.colour, point.twa, curve.tws, point.bsp, "BSP", blend);
   }
   if (dots) {
     for (let k = 0; k < dots.count; k++) {
       const style = sourcesById.get(dotSourceId(dots, k));
-      if (style) consider(style.label, style.colour, dots.points[k * 3]!, dots.points[k * 3 + 1]!, dots.points[k * 3 + 2]!);
+      if (style) {
+        consider(style.label, style.colour, dots.points[k * 3]!, dots.points[k * 3 + 1]!, dots.points[k * 3 + 2]!,
+          dots.flags[k]! & DOT_THROUGH_WATER ? "STW" : "SOG");
+      }
     }
   }
   return best;

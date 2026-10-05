@@ -157,6 +157,13 @@ const catalogue: Record<string, string> = {
   "waves": "الأمواج",
   "direction": "الاتجاه",
   "copies": "النسخ",
+  "Excluded points": "النقاط المستبعَدة",
+  "Samples and polar points you excluded, drawn hollow or crossed": "النقاط وعُقد المنحنى القطبي التي استبعدتها، مرسومة مجوّفة أو علامات ×",
+  "Nothing is excluded": "لا شيء مستبعَد",
+  "Show excluded points": "إظهار النقاط المستبعَدة",
+  "Show the samples and polar points you excluded.": "إظهار النقاط وعُقد المنحنى القطبي التي استبعدتها.",
+  "excluded": "مستبعَد",
+  "outliers": "القيم الشاذة",
 };
 
 export default catalogue;

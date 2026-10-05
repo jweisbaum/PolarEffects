@@ -2,12 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import { dayBandRgb } from "../dayBand";
 import { place } from "./geometry3d";
+import { NO_WAVE_RANGES } from "./waveRanges";
 import { BLEND_SOURCE, FLAG_EDITED, FLAG_EXCLUDED, FLAG_FILTERED, type ScenePacket } from "./scenePacket";
-import { SHAPE_CROSS, SHAPE_DISC, SHAPE_RING, SHAPE_SQUARE } from "./scene3d";
+import { SHAPE_CROSS, SHAPE_DISC, SHAPE_RING, SHAPE_SQUARE, type View } from "./scene3d";
 import {
   availableModes, buildDots, buildGuides, buildSurfaces, combine, DEFAULT_TOGGLES, drawnOnly, editCells, exclusionTargets,
-  FADED_OPACITY, focusIndex, hasFiltered, keysOf, nearestIndex, nodesAtCells, presetView, ramp, resolveKeys, sampleIdsOf, sceneBounds, summarise,
-  sampleDots, surfaceGrid, ticks,
+  FADED_OPACITY, focusIndex, hasFiltered, keysOf, nearestIndex, nodesAtCells, presetView, ramp, rescaleView, type Bounds, resolveKeys, sampleIdsOf, sceneBounds, summarise,
+  hasExcluded, mergeDots, nodeDots, sampleDots, surfaceGrid, ticks, type Toggles,
 } from "./view3d";
 
 /**
@@ -15,6 +16,9 @@ import {
  * second excluded, and two samples, the first excluded and filtered, with
  * Hs on the second only.
  */
+/** Every dot drawn, the excluded ones too: what they look like when shown. */
+const WITH_EXCLUDED: Toggles = { ...DEFAULT_TOGGLES, excluded: true };
+
 function packet(): ScenePacket {
   return {
     timeOrigin: 0,
@@ -52,7 +56,7 @@ function packet(): ScenePacket {
 
 describe("the dots drawn (spec.md 10.2, 10.3)", () => {
   it("draws nodes then unfiltered samples by default, crosses for excluded nodes", () => {
-    const dots = buildDots(packet(), DEFAULT_TOGGLES, "source");
+    const dots = buildDots(packet(), WITH_EXCLUDED, "source");
     // The filtered sample is hidden until "show filtered".
     expect([...dots.refs]).toEqual([0, 1, 2, 4]);
     expect([...dots.shapes]).toEqual([SHAPE_DISC, SHAPE_CROSS, SHAPE_DISC, SHAPE_DISC]);
@@ -62,7 +66,7 @@ describe("the dots drawn (spec.md 10.2, 10.3)", () => {
   });
 
   it("shows filtered samples dimmed and excluded samples hollow when asked", () => {
-    const dots = buildDots(packet(), { ...DEFAULT_TOGGLES, filtered: true, nodes: false }, "source");
+    const dots = buildDots(packet(), { ...WITH_EXCLUDED, filtered: true, nodes: false }, "source");
     expect([...dots.refs]).toEqual([3, 4]);
     expect(dots.shapes[0]).toBe(SHAPE_RING);
     // Blue dimmed toward grey: 0.35 × 1 + 0.65 × 0.5.
@@ -71,12 +75,12 @@ describe("the dots drawn (spec.md 10.2, 10.3)", () => {
   });
 
   it("hides what its toggle turns off", () => {
-    expect(buildDots(packet(), { ...DEFAULT_TOGGLES, samples: false }, "source").refs.length).toBe(3);
-    expect(buildDots(packet(), { ...DEFAULT_TOGGLES, samples: false, nodes: false }, "source").refs.length).toBe(0);
+    expect(buildDots(packet(), { ...WITH_EXCLUDED, samples: false }, "source").refs.length).toBe(3);
+    expect(buildDots(packet(), { ...WITH_EXCLUDED, samples: false, nodes: false }, "source").refs.length).toBe(0);
   });
 
   it("colours samples along the ramp by a value, grey where it is missing, nodes by source", () => {
-    const dots = buildDots(packet(), { ...DEFAULT_TOGGLES, filtered: true }, "hs");
+    const dots = buildDots(packet(), { ...WITH_EXCLUDED, filtered: true }, "hs");
     // Sample 1 (Hs 2) is the only value: the middle of the ramp.
     expect([...dots.colors.subarray(12, 15)].map((v) => Number(v.toFixed(3)))).toEqual(ramp(0.5).map((v) => Number(v.toFixed(3))));
     // Sample 0 has no Hs: grey, dimmed because it is filtered (grey stays grey).
@@ -85,7 +89,7 @@ describe("the dots drawn (spec.md 10.2, 10.3)", () => {
   });
 
   it("colours samples by their band of the local solar day, nodes by source (spec.md 10.2)", () => {
-    const dots = buildDots(packet(), { ...DEFAULT_TOGGLES, filtered: true }, "timeOfDay");
+    const dots = buildDots(packet(), { ...WITH_EXCLUDED, filtered: true }, "timeOfDay");
     expect([...dots.refs]).toEqual([0, 1, 2, 3, 4]);
     // Sample 1: afternoon, undimmed.
     expect([...dots.colors.subarray(12, 15)]).toEqual([...Float32Array.from(dayBandRgb(2))]);
@@ -258,10 +262,84 @@ describe("cameras and guides (spec.md 10.1)", () => {
     expect(presetView("top", bounds).target).not.toEqual([0, 0, 0]);
   });
 
+  it("follows a box that shrinks or grows, keeping the angle it looks from (asked 2026-10-04)", () => {
+    const wide = { min: [-30, -30, 0], max: [30, 30, 35] } as Bounds;
+    const narrow = { min: [-6, -6, 0], max: [6, 6, 10] } as Bounds;
+    const view = { position: [40, -60, 80], target: [1, 2, 3] } as View;
+    const moved = rescaleView(view, wide, narrow);
+    const k = Math.hypot(6, 6, 10) / Math.hypot(30, 30, 35);
+    moved.position.forEach((v, a) => expect(v).toBeCloseTo(view.position[a]! * k, 9));
+    moved.target.forEach((v, a) => expect(v).toBeCloseTo(view.target[a]! * k, 9));
+    // Back again is where it started; the same box leaves it alone.
+    rescaleView(moved, narrow, wide).position.forEach((v, a) => expect(v).toBeCloseTo(view.position[a]!, 9));
+    expect(rescaleView(view, wide, wide)).toBe(view);
+  });
+
+  it("hides excluded dots, samples and polar points alike, unless asked to show them (asked 2026-10-04)", () => {
+    const p = packet();
+    // The fixture's second node and first sample are excluded.
+    const refs = (toggles: Toggles) => [...mergeDots(nodeDots(p, toggles), sampleDots(p, toggles, "source")).refs];
+    expect(refs({ ...DEFAULT_TOGGLES, filtered: true })).toEqual([0, 2, 4]);
+    expect(refs({ ...DEFAULT_TOGGLES, filtered: true, excluded: true })).toEqual([0, 1, 2, 3, 4]);
+    expect(DEFAULT_TOGGLES.excluded).toBe(false);
+    expect(hasExcluded(p)).toBe(true);
+    const none = packet();
+    none.nodes.flags = Uint32Array.from([0, 0, 0]);
+    none.samples.flags = Uint32Array.from([0, 0]);
+    expect(hasExcluded(none)).toBe(false);
+  });
+
   it("bounds every dot, and the origin", () => {
     const bounds = sceneBounds(packet(), "cartesian");
     expect(bounds.min).toEqual([0, 0, 0]);
     expect(bounds.max).toEqual(place(150, 16, 10, "cartesian"));
+  });
+
+  it("leaves excluded, filtered-out and wave-range-hidden points out of the scales (asked 2026-10-04)", () => {
+    // One outlier sample at 25 kn TWS and 30 kn BSP, well past everything else.
+    const withOutlier = (flags: number, hs = Number.NaN): ScenePacket => {
+      const p = packet();
+      const s = p.samples;
+      p.samples = {
+        ...s, count: 3,
+        points: Float32Array.from([...s.points, 100, 25, 30]),
+        source: Uint32Array.from([...s.source, 2]),
+        ids: Uint32Array.from([...s.ids, 7, 0]),
+        hs: Float32Array.from([...s.hs, hs]),
+        current: Float32Array.from([...s.current, Number.NaN]),
+        time: Float32Array.from([...s.time, 1200]),
+        flags: Uint32Array.from([...s.flags, flags]),
+      };
+      return p;
+    };
+    // Neither the excluded nor the filtered-out sample of the fixture, nor
+    // its excluded node (90°, 12 kn, 8 kn), widens the box any more.
+    const without = place(150, 16, 10, "cartesian");
+    const outlier = place(100, 25, 30, "cartesian");
+    const kept = without.map((v, a) => Math.max(v, outlier[a]!));
+    expect(sceneBounds(withOutlier(0), "cartesian").max).toEqual(kept);
+    expect(sceneBounds(withOutlier(FLAG_EXCLUDED), "cartesian").max).toEqual(without);
+    expect(sceneBounds(withOutlier(FLAG_FILTERED), "cartesian").max).toEqual(without);
+    // Shown, they count again: "Excluded" and "Filtered" ticked (asked 2026-10-04).
+    const shown = { excluded: true, filtered: false };
+    expect(sceneBounds(withOutlier(FLAG_EXCLUDED), "cartesian", NO_WAVE_RANGES, shown).max).toEqual(kept);
+    expect(sceneBounds(withOutlier(FLAG_FILTERED), "cartesian", NO_WAVE_RANGES, shown).max).toEqual(without);
+    expect(sceneBounds(withOutlier(FLAG_FILTERED), "cartesian", NO_WAVE_RANGES, { excluded: false, filtered: true }).max).toEqual(kept);
+    // Hidden by a wave range: its 3 m waves are above the 2.5 m kept.
+    const ranges = { ...NO_WAVE_RANGES, hs: { min: 0, max: 2.5 } };
+    expect(sceneBounds(withOutlier(0, 3), "cartesian", ranges).max).toEqual(without);
+    expect(sceneBounds(withOutlier(0, 2), "cartesian", ranges).max).toEqual(kept);
+  });
+
+  it("does not let the blend's zero row at 0° stretch the wind scale (asked 2026-10-04)", () => {
+    const p = packet();
+    // The output grid runs to 30 kn of wind, but only 0° (a speed of 0,
+    // head to wind) has a value there.
+    p.surfaces.push({
+      source: BLEND_SOURCE, twa: Float32Array.from([0, 90]), tws: Float32Array.from([10, 30]),
+      bsp: Float32Array.from([0, 0, 7, Number.NaN]),
+    });
+    expect(sceneBounds(p, "cartesian").max).toEqual(place(150, 16, 10, "cartesian"));
   });
 
   it("bounds the blend surface too, which has no nodes of its own", () => {
@@ -326,19 +404,19 @@ describe("edit mode (spec.md 10.4)", () => {
   });
 
   it("draws edited nodes as squares, an excluded one still as a cross", () => {
-    const dots = buildDots(editing(), DEFAULT_TOGGLES, "source");
+    const dots = buildDots(editing(), WITH_EXCLUDED, "source");
     expect([...dots.shapes.subarray(0, 4)]).toEqual([SHAPE_SQUARE, SHAPE_CROSS, SHAPE_DISC, SHAPE_SQUARE]);
   });
 
   it("dims the other sources' dots, or leaves them out", () => {
-    const faded = buildDots(editing(), DEFAULT_TOGGLES, "source", { index: 0, hideOthers: false });
+    const faded = buildDots(editing(), WITH_EXCLUDED, "source", { index: 0, hideOthers: false });
     expect([...faded.refs]).toEqual([0, 1, 2, 3, 5]);
     expect([...faded.colors.subarray(0, 3)]).toEqual([1, 0, 0]);
     // The polar file's node (drawn third) is dimmed twice toward grey.
     const dimmed = [...faded.colors.subarray(6, 9)];
     expect(dimmed[1]).toBeLessThan(0.6);
     expect(dimmed[0]).toBeGreaterThan(0.3);
-    const hidden = buildDots(editing(), DEFAULT_TOGGLES, "source", { index: 2, hideOthers: true });
+    const hidden = buildDots(editing(), WITH_EXCLUDED, "source", { index: 2, hideOthers: true });
     expect([...hidden.refs]).toEqual([3, 5]);
   });
 

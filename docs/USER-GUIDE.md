@@ -34,6 +34,8 @@ built from the leg the link shows). The app downloads the event natively,
 creates one tab per boat, imports its race track, and searches the embedded ORC
 catalogue, downloaded ORR catalogue and local boat metadata for identical models.
 Historical tracks come from the GeoJSON directory configured in Settings.
+When the race has several classes, the first click downloads it and offers
+**Class**: open all classes, or only the boats of one.
 Choose **Exact boat only** to limit both polars and historical tracks to that
 individual boat. This requires matching MMSI or a sail number corroborated by
 builder and length; the name or model alone is insufficient. Conflicting
@@ -162,20 +164,25 @@ Tracks event URL into the tracker import dialog. Select boats as the list
 arrives, then import once their positions are available. This imports tracks
 only. Weather is a separate, explicit action.
 
-**Tracks from the SYRF database.** In Settings → **PostgreSQL track library**,
-enter the connection details and use **Test connection**. Success appears in
-green; a failed test shows an error. Choose the GeoJSON root and a boat metadata
-directory, then **Download boat metadata**. The local snapshot contains vessels
-and related records from YellowBrick, Geovoile, Blue Water, old Geovoile,
-Regadata and America's Cup. Once downloaded, searching and importing work
-without a database connection. On this machine the matching GeoJSON root is
-`/Volumes/Disk_Three/s3/syrf-tracks-individual-production`.
+**Tracks from a SYRF track library.** In Settings → **Track library**, choose
+the folder of individual-track GeoJSON files and the folder holding
+`boat-metadata.json` (empty for the application's own), then **Save library
+settings**. Nothing goes to a database.
+
+To fill the library, press **Scrape tracks now**, or set **Run track scraper**
+to *On startup* or *On shutdown*. Only finished YellowBrick, Geovoile and Blue
+Water races are saved; ongoing and future races are skipped. List race links,
+one per line, to scrape only those; leave the list empty to rescrape the
+library's races and discover new ones (a YellowBrick user key and device ID
+add its catalogue). A manual scrape shows its progress in the status bar,
+where **Cancel scrape** stops it; races already saved stay. The
+metadata covers vessels from YellowBrick, Geovoile, Blue Water, old Geovoile,
+Regadata and America's Cup.
 
 Use **Search tracks by vessel details** in the Tracks panel. Search by any
 vessel field: name, model, class, make, builder, sail number, measurements or
 other saved values. Combine terms from different fields to narrow results;
-all terms must match the same vessel. Case and accents are ignored. Existing
-metadata downloads already contain these fields and need no refresh.
+all terms must match the same vessel. Case and accents are ignored.
 Results show the race,
 date, source and whether its GeoJSON file is available. Import a result, then
 use its ordinary **Fetch weather…** button to prepare polar samples.
@@ -183,36 +190,6 @@ Your query, remaining results and current page stay open after each import,
 so you can add several tracks from the same search. Successfully imported
 tracks disappear from that search's results; failed imports stay available
 to retry.
-
-**Maintain the library.** Settings → **Scrape tracks now** runs the native
-YellowBrick, Geovoile and Blue Water scrapers. Choose **Only on demand**,
-**On startup** or **On shutdown** for scheduling. Shutdown waits for the job;
-open Settings to see progress or cancel it. All modes, including explicit race
-URLs, scrape only races with confirmed terminal results for every participant.
-Ongoing, future and unverified races are counted as skipped. An old last position
-does not prove completion. YellowBrick and Geovoile are checked before downloading
-track files. Blue Water returns metadata and tracks together, so its response is
-read to check completion and discarded if unfinished. Scraping saves database relations,
-individual GeoJSON tracks and a refreshed metadata snapshot. Existing race and
-participant identities are reused. Completed races with available files are
-skipped unless explicitly requested using **Race URLs**. Entering URLs limits
-the run to those events and their Geovoile legs. Enter a **YellowBrick user key**
-and **YellowBrick device ID (UDID)** in Settings to resolve codes from the
-version 3 race catalogue. The scraper associates only races listed as free,
-then reads version 4 MyRaces for their URLs, including child races. With both
-fields empty, it uses known database mappings; explicit race URLs also work.
-The metadata directory's `yellowbrick-races.json` records the complete catalogue
-and resolved URLs. Unresolved races are listed there and counted in job details.
-Scrapers preserve existing mark-crossing events; these providers
-do not supply new SYRF mark-crossing records.
-
-**Back up the database.** **Export entire database…** writes SQL for every
-database table and its schema. PostgreSQL's `pg_dump` client must be installed;
-set its executable path if it is not detected. The export excludes source
-ownership and access grants, so restoring does not require the source password.
-The destination PostgreSQL server still controls its own authentication and
-must have the required extensions, including PostGIS, installed. GeoJSON files
-are separate and should be backed up with their directory structure intact.
 
 ## Fetch weather for tracks
 
@@ -399,7 +376,7 @@ again.
 - **ChatGPT** is not offered: it reaches MCP servers only over the public
   internet, and this service answers only on this computer.
 
-A client cannot read or change Settings, use the track database or quit the
+A client cannot read or change Settings, set the track library's folders or quit the
 application. It can start the downloads you can start (a tracker's race,
 weather for a track, a year of the ORR catalogue); ask it to say so first
 if that matters to you. It can also read the files you could open here: a

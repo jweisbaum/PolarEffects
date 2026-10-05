@@ -211,7 +211,7 @@ const catalogue: Record<string, string> = {
   "The true wind speed the plot slices at": "سرعة الريح الحقيقية التي يُقطع عندها المخطط",
   "The true wind speed the polar plot slices at.": "سرعة الريح الحقيقية التي يُقطع عندها المخطط القطبي.",
   "{tws} {unit}": "{tws} {unit}",
-  "TWA {twa}°, TWS {tws} {unit}, BSP {bsp} {unit}": "TWA {twa}°، TWS {tws} {unit}، BSP {bsp} {unit}",
+  "TWA {twa}°, TWS {tws} {unit}, {speed} {value} {unit}": "TWA {twa}°، TWS {tws} {unit}، {speed} {value} {unit}",
   "No source has data at this wind speed.": "لا توجد بيانات لأي مصدر عند سرعة الريح هذه.",
   "all": "الكل",
   "wind speed": "سرعة الريح",

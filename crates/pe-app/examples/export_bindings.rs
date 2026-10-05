@@ -48,9 +48,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cfg = Config::new()
         .with_out_dir(&out_dir)
         .with_large_int("number");
-    pe_app::database::DatabaseSettings::export_all(&cfg)?;
-    pe_app::database::DatabaseProgress::export_all(&cfg)?;
-    pe_app::database::BoatTrackSearch::export_all(&cfg)?;
+    pe_app::library::LibrarySettings::export_all(&cfg)?;
+    pe_app::library::ScrapeProgress::export_all(&cfg)?;
+    pe_app::library::BoatTrackSearch::export_all(&cfg)?;
     AppInfo::export_all(&cfg)?;
     AppErrorPayload::export_all(&cfg)?;
     ProjectSummary::export_all(&cfg)?;

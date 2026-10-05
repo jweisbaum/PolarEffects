@@ -157,6 +157,13 @@ const catalogue: Record<string, string> = {
   "waves": "浪",
   "direction": "方向",
   "copies": "副本",
+  "Excluded points": "被排除的点",
+  "Samples and polar points you excluded, drawn hollow or crossed": "你排除的样本点和极曲线节点，以空心或叉号绘制",
+  "Nothing is excluded": "没有被排除的内容",
+  "Show excluded points": "显示被排除的点",
+  "Show the samples and polar points you excluded.": "显示你排除的样本点和极曲线节点。",
+  "excluded": "排除",
+  "outliers": "异常值",
 };
 
 export default catalogue;

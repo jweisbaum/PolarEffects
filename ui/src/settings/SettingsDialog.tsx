@@ -16,7 +16,7 @@ import LanguagePicker from "../i18n/LanguagePicker";
 import { describeError } from "../errors";
 import { api } from "../ipc";
 import ThemePicker from "./ThemePicker";
-import DatabaseSettings from "./DatabaseSettings";
+import LibrarySettings from "./LibrarySettings";
 import IntegerField from "./IntegerField";
 import McpSection from "./McpSection";
 import OrcScraper from "./OrcScraper";
@@ -69,7 +69,7 @@ export default function SettingsDialog({ settings, onSettings, onClose }: {
       onReveal("settings:mcp", show),
       onReveal("settings:orc", show),
       onReveal("settings:orr", show),
-      onReveal("settings:database", show),
+      onReveal("settings:library", show),
     ];
     return () => { for (const off of offs) off(); };
   }, []);
@@ -182,7 +182,7 @@ export default function SettingsDialog({ settings, onSettings, onClose }: {
 
         <McpSection onError={setError} />
 
-        <DatabaseSettings settings={settings} onSettings={onSettings} />
+        <LibrarySettings settings={settings} onSettings={onSettings} />
         <OrcScraper settings={settings} onSettings={onSettings} />
         <OrrScraper settings={settings} onSettings={onSettings} />
         <div className="modal-actions">

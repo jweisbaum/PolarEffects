@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
-  BLEND_SOURCE, FLAG_EDITED, FLAG_EXCLUDED, FLAG_FILTERED, HEADER_BYTES, sampleId, ScenePacketError, unpackScene,
+  BLEND_SOURCE, FLAG_EDITED, FLAG_EXCLUDED, FLAG_FILTERED, FLAG_THROUGH_WATER, HEADER_BYTES, sampleId, ScenePacketError, unpackScene,
   unpackSplit,
 } from "./scenePacket";
 
@@ -47,7 +47,7 @@ describe("unpackScene", () => {
     expect(Number.isNaN(scene.samples.current[0])).toBe(true);
     expect(scene.samples.time[0]).toBe(600);
     // Bits 8–9 hold the day band: afternoon (2).
-    expect(scene.samples.flags[0]).toBe(FLAG_EXCLUDED | FLAG_FILTERED | (2 << 8));
+    expect(scene.samples.flags[0]).toBe(FLAG_EXCLUDED | FLAG_FILTERED | FLAG_THROUGH_WATER | (2 << 8));
 
     expect(scene.surfaces).toHaveLength(2);
     const [first, blend] = scene.surfaces;
@@ -91,7 +91,7 @@ describe("unpackScene", () => {
     const changed = { ...held, samples: { ...held.samples, flags: Uint32Array.from([0]) } };
     const delta = unpackScene(fixture("scene-v5-flags.bin"), changed);
     expect(delta.samples.points).toBe(held.samples.points);
-    expect([...delta.samples.flags]).toEqual([FLAG_EXCLUDED | FLAG_FILTERED | (2 << 8)]);
+    expect([...delta.samples.flags]).toEqual([FLAG_EXCLUDED | FLAG_FILTERED | FLAG_THROUGH_WATER | (2 << 8)]);
     // Flags that did not change keep the very samples held.
     expect(unpackScene(fixture("scene-v5-flags.bin"), held).samples).toBe(held.samples);
     expect(delta.surfaces).toHaveLength(2);

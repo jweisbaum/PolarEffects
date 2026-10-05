@@ -10,11 +10,11 @@ const sample: SampleDetails = {
 };
 
 describe("the map's hover", () => {
-  it("shows time, BSP and heading, and dashes for the environment not fetched yet", () => {
+  it("shows time, SOG and heading, and dashes for the environment not fetched yet", () => {
     const lines = hoverLines(sample, { speed: "kn", wave_height: "m", distance: "nm" });
     expect(lines.map((l) => [l.label, l.value])).toEqual([
       ["Time", "2025-07-26 12:00:00 UTC"],
-      ["BSP", "6.0 kn (given)"],
+      ["SOG", "6.0 kn (given)"],
       ["Heading", "92° (derived)"],
       ["TWS", "–"], ["TWA", "–"], ["Hs", "–"], ["Current", "–"],
     ]);

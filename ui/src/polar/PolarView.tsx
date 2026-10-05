@@ -33,9 +33,9 @@ import {
 import { emptyScene, ScenePacketError, type ScenePacket, type SplitPacket } from "./scenePacket";
 import {
   availableModes, buildGuides, buildSurfaces, combine, DEFAULT_TOGGLES, drawnOnly, editCells, emptyKeys,
-  exclusionTargets, modeValues, focusIndex, hasFiltered, keysOf, mergeDots, nearestIndex, nodeDots, nodesAtCells, sampleDots, presetView, range, resolveKeys, sampleIdsOf, sceneBounds,
+  exclusionTargets, modeValues, focusIndex, hasExcluded, hasFiltered, keysOf, mergeDots, nearestIndex, nodeDots, nodesAtCells, sampleDots, presetView, range, rescaleView, resolveKeys, sampleIdsOf, sceneBounds,
   SPEED_FACTOR, SPEED_SYMBOL, summarise, type CameraPreset, type ColourMode, type Focus, type GuideLabel, type SelectionKeys,
-  type Toggles,
+  type Bounds, type Toggles,
 } from "./view3d";
 
 type Tool = "rotate" | "lasso" | "box" | "drag";
@@ -206,6 +206,8 @@ export default function PolarView({ project, settings, onProject, compact = fals
   const gesture = useRef<{ x: number; y: number; path: number[] } | null>(null);
   const request = useRef(0);
   const fitted = useRef(false);
+  /** The box the camera was last framed for, so a new one can be followed. */
+  const framedFor = useRef<Bounds | null>(null);
   const selectionKeys = useRef<SelectionKeys>(emptyKeys());
   const shared = useSampleSelection();
 
@@ -331,6 +333,8 @@ export default function PolarView({ project, settings, onProject, compact = fals
     made.enableControls(element, draw, () => syncRef.current?.publish({ kind: "camera", boat: project.id, view: made.getView(), layout: linkedLayout.current }));
     made.setView(syncRef.current?.camera?.view ?? presetView("top", sceneBounds(emptyScene(), "tower"), made.camera.fov, "origin"));
     const resize = () => {
+      // Hidden with its stage (kept mounted): keep the size it had.
+      if (element.clientWidth === 0 || element.clientHeight === 0) return;
       made.resize(element.clientWidth, element.clientHeight);
       draw();
     };
@@ -355,7 +359,7 @@ export default function PolarView({ project, settings, onProject, compact = fals
   }, [draw, paint]);
 
   // A new project is framed afresh when its first dots arrive.
-  useEffect(() => { fitted.current = false; }, [project.id]);
+  useEffect(() => { fitted.current = false; framedFor.current = null; }, [project.id]);
 
   // Refetches on every document change (`revision` moves with every command,
   // undo and redo included) and on switching project.
@@ -413,9 +417,15 @@ export default function PolarView({ project, settings, onProject, compact = fals
     // Only a new shared selection re-selects; a refetch keeps its own.
   }, [shared.version]);
 
-  const bounds = useMemo(() => sceneBounds(packet, layout), [packet, layout]);
+  // The axes follow what is shown: excluded and filtered-out points count
+  // while their checkbox is ticked (asked 2026-10-04).
+  const bounds = useMemo(
+    () => sceneBounds(packet, layout, waveRanges, toggles),
+    [packet, layout, waveRanges, toggles.excluded, toggles.filtered],
+  );
   const modes = useMemo(() => availableModes(packet), [packet]);
   const filteredExist = useMemo(() => hasFiltered(packet), [packet]);
+  const excludedExist = useMemo(() => hasExcluded(packet), [packet]);
   // A mode whose data has gone (the tracks were removed) falls back to source colours.
   const shownMode: ColourMode = modes[mode] ? mode : "source";
   const focused = useMemo(() => focusIndex(packet, focus), [packet, focus]);
@@ -610,6 +620,12 @@ export default function PolarView({ project, settings, onProject, compact = fals
       }
       current.setView(view);
       fitted.current = true;
+      framedFor.current = bounds;
+    } else if (fitted.current && framedFor.current && framedFor.current !== bounds) {
+      // An outlier excluded or filtered out, or one let back in: the camera
+      // follows the box, keeping its angle (asked 2026-10-04).
+      current.setView(rescaleView(current.getView(), framedFor.current, bounds));
+      framedFor.current = bounds;
     }
     draw();
   }, [dots, packet, layout, surfaces, bounds, unit, draw, project.blend.asymmetric]);
@@ -670,7 +686,9 @@ export default function PolarView({ project, settings, onProject, compact = fals
   const chooseLayout = (next: Layout) => {
     setLayout(next);
     const current = scene.current;
-    if (current) current.setView(presetView("iso", sceneBounds(packet, next), current.camera.fov, "origin"));
+    const nextBounds = sceneBounds(packet, next, waveRanges, toggles);
+    if (current) current.setView(presetView("iso", nextBounds, current.camera.fov, "origin"));
+    framedFor.current = nextBounds;
     if (current) sync?.publish({ kind: "camera", boat: project.id, view: current.getView(), layout: next });
   };
 
@@ -851,6 +869,7 @@ export default function PolarView({ project, settings, onProject, compact = fals
     : `${value.toFixed(1)}${shownMode === "wavePeriod" ? " s" : shownMode === "waveAngle" || shownMode === "waveWindAngle" ? "°" : ""}`;
   const unavailableModeTip = msg("Colouring by wave height, current or time needs track samples with their wind, which arrives with the environment fetch");
   const noFilteredTip = msg("No sample with wind is filtered out");
+  const noExcludedTip = msg("Nothing is excluded");
   const empty = packet.nodes.count === 0 && packet.samples.count === 0;
 
   return (
@@ -1004,6 +1023,11 @@ export default function PolarView({ project, settings, onProject, compact = fals
             <input type="checkbox" data-feature="view3d:show-filtered" checked={toggles.filtered} disabled={!filteredExist}
               onChange={(event) => setToggles({ ...toggles, filtered: event.target.checked })} />
             {t("Filtered samples")}
+          </label>
+          <label title={excludedExist ? t("Samples and polar points you excluded, drawn hollow or crossed") : t(noExcludedTip)}>
+            <input type="checkbox" data-feature="view3d:show-excluded" checked={toggles.excluded} disabled={!excludedExist && !toggles.excluded}
+              onChange={(event) => setToggles({ ...toggles, excluded: event.target.checked })} />
+            {t("Excluded points")}
           </label>
           <label className="view3d-colour">
             {t("Colour")}

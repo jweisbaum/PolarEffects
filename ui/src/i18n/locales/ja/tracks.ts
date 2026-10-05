@@ -443,6 +443,10 @@ const catalogue: Record<string, string> = {
   "Keep samples whose course over the ground runs from this compass direction clockwise to the next. Both empty for any": "対地針路がこのコンパス方位から時計回りに次の値までのサンプル点を残します。両方空欄ならすべて",
   "TWD from (°)": "TWD 開始（°）",
   "Keep samples whose true wind comes from this compass direction clockwise to the next. Both empty for any": "真風がこのコンパス方位から時計回りに次の値までの方向から吹くサンプル点を残します。両方空欄ならすべて",
+  "Excluded": "除外済み",
+  "Also draw the samples you excluded, hollow": "除外したサンプル点も中抜きで描きます",
+  "Show excluded samples in the plot": "除外したサンプル点を図に表示",
+  "Also draw the samples you excluded, hollow.": "除外したサンプル点も中抜きで描きます。",
 };
 
 export default catalogue;

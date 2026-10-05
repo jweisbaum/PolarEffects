@@ -157,6 +157,13 @@ const catalogue: Record<string, string> = {
   "waves": "波",
   "direction": "方向",
   "copies": "コピー",
+  "Excluded points": "除外した点",
+  "Samples and polar points you excluded, drawn hollow or crossed": "除外したサンプル点とポーラーの格子点を中抜きまたは × 印で表示",
+  "Nothing is excluded": "除外したものはありません",
+  "Show excluded points": "除外した点を表示",
+  "Show the samples and polar points you excluded.": "除外したサンプル点とポーラーの格子点を表示します。",
+  "excluded": "除外",
+  "outliers": "外れ値",
 };
 
 export default catalogue;

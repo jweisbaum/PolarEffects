@@ -10,11 +10,13 @@ import { TEST_BLEND } from "../testBlend";
 
 const polarPlotCall = vi.fn();
 const blendCellCall = vi.fn();
+const dotsCall = vi.fn();
 vi.mock("../ipc", async () => {
   const { emptyDots } = await import("./dotPacket");
   return {
     api: {
-      polarPlot: (tws: number | null) => polarPlotCall(tws), polarPlotDots: async () => emptyDots(),
+      polarPlot: (tws: number | null) => polarPlotCall(tws),
+      polarPlotDots: async (tws: number | null, filtered: boolean) => (await dotsCall(tws, filtered)) ?? emptyDots(),
       blendCell: (twaIndex: number, twsIndex: number) => blendCellCall(twaIndex, twsIndex),
     },
   };
@@ -51,6 +53,7 @@ async function render(...args: Parameters<typeof PolarPlot>) {
 beforeEach(() => {
   blendCellCall.mockReset();
   polarPlotCall.mockReset();
+  dotsCall.mockReset();
   polarPlotCall.mockResolvedValue(result());
   host = document.createElement("div");
   document.body.append(host);
@@ -293,4 +296,26 @@ it("shows measurements in the display speed unit", async () => {
 it("offers no measuring while the plot has nothing drawn", async () => {
   await render({ project: project(), variant: "panel" });
   expect(measureButton().disabled).toBe(true);
+});
+
+it("hides excluded dots behind a checkbox of their own, without asking Rust again (asked 2026-10-04)", async () => {
+  const track = source({ id: 9, kind: "track" });
+  const withFlags = (flags: number[]) => ({
+    count: flags.length, sources: [9], points: Float32Array.from(flags.flatMap((_, k) => [90, 10, 5 + k])),
+    source: new Uint32Array(flags.length), ids: Uint32Array.from(flags.flatMap((_, k) => [k, 0])), flags: Uint32Array.from(flags),
+  });
+  dotsCall.mockResolvedValue(withFlags([0, 1]));
+  await render({ project: project({ sources: [track] }), variant: "stage" });
+  const box = host.querySelector('[data-feature="plot:show-excluded"]') as HTMLInputElement;
+  expect(box.checked).toBe(false);
+  expect(box.disabled).toBe(false);
+  const asked = dotsCall.mock.calls.length;
+  await act(async () => box.click());
+  expect(box.checked).toBe(true);
+  expect(dotsCall.mock.calls.length).toBe(asked);
+  // Nothing excluded: nothing to show.
+  await act(async () => box.click());
+  dotsCall.mockResolvedValue(withFlags([0, 0]));
+  await render({ project: project({ sources: [track], revision: 2 }), variant: "stage" });
+  expect((host.querySelector('[data-feature="plot:show-excluded"]') as HTMLInputElement).disabled).toBe(true);
 });

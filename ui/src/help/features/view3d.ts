@@ -53,6 +53,8 @@ const features: Feature[] = [
     keywords: [msg("mesh"), msg("polar")], topic, reveal: onStage },
   { id: "view3d:show-filtered", label: msg("Show filtered samples"), description: msg("Show the samples the filters remove, dimmed."),
     keywords: [msg("filters"), msg("dimmed")], topic, reveal: onStage },
+  { id: "view3d:show-excluded", label: msg("Show excluded points"), description: msg("Show the samples and polar points you excluded."),
+    keywords: [msg("excluded"), msg("outliers")], topic, reveal: onStage },
   { id: "view3d:colour", label: msg("Colour dots by"), description: msg("Colour the dots by source, wave height, period or angle, current speed, UTC time or time of day."),
     keywords: [msg("colour"), "Hs", msg("current"), msg("time"), msg("night"), msg("morning"), msg("time of day")], topic, reveal: onStage },
   { id: "view3d:exclude", label: msg("Exclude from the blend"), description: msg("Remove the selected dots from the blend. Undo puts them back."),

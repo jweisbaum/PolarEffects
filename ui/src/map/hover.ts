@@ -1,5 +1,5 @@
 /**
- * What hovering a fix on the map shows (spec.md 9.1): time, BSP, heading,
+ * What hovering a fix on the map shows (spec.md 9.1): time, SOG, heading,
  * TWS, TWA, Hs and current, in the display units. A value the sample does
  * not have yet (wind, waves and current arrive with the environment) shows
  * as a dash, never as a guess.
@@ -47,7 +47,9 @@ export function hoverLines(d: SampleDetails, units: Units): HoverLine[] {
     : t("{speed} toward {direction}", { speed: speed(d.current_speed, units), direction: angle(d.current_toward) });
   return [
     { label: t("Time"), value: utc(d.t) },
-    { label: "BSP", value: withOrigin(speed(d.bsp, units), d.speed_origin) },
+    // The track's own speed, over the ground (asked 2026-10-04): the map
+    // shows the position as sailed, never corrected for current.
+    { label: "SOG", value: withOrigin(speed(d.bsp, units), d.speed_origin) },
     { label: t("Heading"), value: withOrigin(angle(d.heading), d.heading_origin) },
     { label: "TWS", value: speed(d.tws, units) },
     { label: "TWA", value: angle(d.twa) },

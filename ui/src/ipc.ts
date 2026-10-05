@@ -5,8 +5,8 @@
  * `npm run bindings` and must never be hand-edited. This module is the only
  * place `invoke` is called, so every IPC failure is normalised into one type.
  */
-import type { DatabaseSettings } from "./generated/DatabaseSettings";
-import type { DatabaseProgress } from "./generated/DatabaseProgress";
+import type { LibrarySettings } from "./generated/LibrarySettings";
+import type { ScrapeProgress } from "./generated/ScrapeProgress";
 import type { BoatTrackSearch } from "./generated/BoatTrackSearch";
 
 import { invoke } from "@tauri-apps/api/core";
@@ -122,7 +122,7 @@ export function boatApi(boatContext?: number) {
  const call = <T>(command: string, args?: Record<string, unknown>) => invokeCommand<T>(command,
    boatContext === undefined ? args : { ...args, boatContext });
  return {
-  openTrackerProject: (tracker: string, url: string, discardUnsaved = false, matchMode: import("./generated/BoatMatchMode").BoatMatchMode = "identical_model") => call<import("./generated/TrackerProjectResult").TrackerProjectResult>("open_tracker_project", { tracker, url, discardUnsaved, matchMode }),
+  openTrackerProject: (tracker: string, url: string, discardUnsaved = false, matchMode: import("./generated/BoatMatchMode").BoatMatchMode = "identical_model", trackerClass: string | null = null) => call<import("./generated/TrackerProjectResult").TrackerProjectResult>("open_tracker_project", { tracker, url, discardUnsaved, matchMode, class: trackerClass }),
   boatImportStatus: () => call<import("./generated/BoatImportProgress").BoatImportProgress>("boat_import_status"),
   cancelBoatImport: () => call<void>("cancel_boat_import"),
   confirmTrackerProject: (projectId: number) => call<ProjectSummary>("confirm_tracker_project", { projectId }),
@@ -420,11 +420,10 @@ export function boatApi(boatContext?: number) {
   // Settings (spec.md 3.4). Each returns the settings as saved.
 
   /** The settings. */
-  testDatabaseConnection: (settings: DatabaseSettings) => call<string>("test_database_connection", { settings }),
-  setDatabaseSettings: (settings: DatabaseSettings) => call<AppSettings>("set_database_settings", { settings }),
-  databaseJobStatus: () => call<DatabaseProgress>("database_job_status"),
-  startDatabaseJob: (operation: string, path: string | null = null) => call<DatabaseProgress>("start_database_job", { operation, path }),
-  cancelDatabaseJob: () => call<void>("cancel_database_job"),
+  setLibrarySettings: (settings: LibrarySettings) => call<AppSettings>("set_library_settings", { settings }),
+  startLibraryScrape: () => call<ScrapeProgress>("start_library_scrape"),
+  libraryScrapeStatus: () => call<ScrapeProgress>("library_scrape_status"),
+  cancelLibraryScrape: () => call<void>("cancel_library_scrape"),
   searchDatabaseBoats: (query: string, offset = 0) => call<BoatTrackSearch>("search_database_boats", { query, offset }),
   importDatabaseTrack: (id: string) => call<TrackImportResult>("import_database_track", { id }),
   appSettings: () => call<AppSettings>("app_settings"),
@@ -488,6 +487,8 @@ export function boatApi(boatContext?: number) {
 export const api = boatApi();
 
 /** The event carrying the environment fetch queue as it changes. */
+/** A track library scrape's progress (`library::scrape::PROGRESS`). */
+export const LIBRARY_SCRAPE = "library://scrape";
 export const ENV_PROGRESS = "env://progress";
 /** The event saying a fetch wrote into the open project. */
 export const ENV_CHANGED = "env://changed";

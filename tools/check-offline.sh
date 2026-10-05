@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Enforces invariant 4: nothing is fetched that the user did not ask for, and
-# HTTP is limited to two crates; pe-app additionally connects to the user-configured PostgreSQL server,
-# and holds the MCP service's loopback listener (D29), whose server crates layer 2 admits and nothing else.
+# HTTP is limited to two crates; pe-app holds the MCP service's loopback
+# listener (D29), whose server crates layer 2 admits and nothing else. No crate
+# connects to a database (the SYRF library is read-only files, asked 2026-10-04).
 #
 # Adapted from VectorEffects. Four layers, each checking what it can check:
 #
@@ -73,7 +74,7 @@ hits=$(grep -rnE 'https?://' ui/src ui/index.html 2>/dev/null \
 # that creeps into another crate is caught -- which is the whole point of
 # naming the exceptions here.
 hits=$(find crates -name '*.rs' -not -path 'crates/pe-env/*' -not -path 'crates/pe-trackers/*' \
-  -not -path 'crates/pe-app/src/database/tests.rs' \
+  -not -path 'crates/pe-app/src/library/tests.rs' -not -path 'crates/pe-app/src/library/scrape/tests.rs' \
   -exec grep -nHE 'https?://' {} + 2>/dev/null \
   | grep -vE "$COMMENT" | grep -vE "$ALLOW" || true)
 [ -n "$hits" ] && report "absolute URL in rust source" "$hits"
@@ -149,10 +150,10 @@ hits=$(awk -v crates="^[[:space:]]*($NET_CRATES|rmcp)[[:space:]]*=" \
   }' crates/pe-app/Cargo.toml)
 [ -n "$hits" ] && report "network client dependency in pe-app (only the MCP service's server crates are admitted)" "$hits"
 
-# PostgreSQL is explicitly configured by the user and belongs only in pe-app.
-hits=$(find crates -name Cargo.toml -not -path 'crates/pe-app/*' \
-  -exec grep -nHE '^[[:space:]]*(postgres|tokio-postgres)[[:space:]]*=' {} + 2>/dev/null || true)
-[ -n "$hits" ] && report "PostgreSQL dependency outside pe-app" "$hits"
+# No database client anywhere: the track library is read from files.
+hits=$(find crates tools -name Cargo.toml \
+  -exec grep -nHE '^[[:space:]]*(postgres|tokio-postgres|tokio-postgres-rustls|sqlx|diesel)[[:space:]]*=' {} + 2>/dev/null || true)
+[ -n "$hits" ] && report "database client dependency" "$hits"
 
 # C libraries the Windows ARM64 and cross-compiled builds cannot rely on
 # (spec.md 1.3, CLAUDE.md): rustls with ring instead of OpenSSL or native-tls,
@@ -186,6 +187,6 @@ elif echo "$csp" | grep -qE "\*|https://" ; then
 fi
 
 if [ "$fail" -eq 0 ]; then
-  echo "offline check passed: HTTP only in pe-env/pe-trackers, configured PostgreSQL only in pe-app, CSP is 'self'-only"
+  echo "offline check passed: HTTP only in pe-env/pe-trackers, no database client, CSP is 'self'-only"
 fi
 exit "$fail"

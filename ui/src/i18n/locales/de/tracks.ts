@@ -448,6 +448,10 @@ const catalogue: Record<string, string> = {
   "Keep samples whose course over the ground runs from this compass direction clockwise to the next. Both empty for any": "Punkte behalten, deren Kurs über Grund von dieser Kompassrichtung im Uhrzeigersinn bis zur nächsten geht. Beide leer für alle",
   "TWD from (°)": "TWD von (°)",
   "Keep samples whose true wind comes from this compass direction clockwise to the next. Both empty for any": "Punkte behalten, deren wahrer Wind aus dieser Kompassrichtung im Uhrzeigersinn bis zur nächsten kommt. Beide leer für alle",
+  "Excluded": "Ausgeschlossene",
+  "Also draw the samples you excluded, hollow": "Auch die Punkte, die Sie ausgeschlossen haben, hohl zeichnen",
+  "Show excluded samples in the plot": "Ausgeschlossene Punkte im Diagramm zeigen",
+  "Also draw the samples you excluded, hollow.": "Auch die Punkte, die Sie ausgeschlossen haben, hohl zeichnen.",
 };
 
 export default catalogue;

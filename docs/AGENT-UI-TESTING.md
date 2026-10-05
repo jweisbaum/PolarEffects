@@ -127,7 +127,7 @@ dragging the selected middle section with native blend updates before release,
 combined height/angle/period bounds, missing measurements, updated native sample
 counts and reset alongside other analysis filters. `12-live-analysis` imports an
 offline instrument CSV, switches supplied/downloaded wind, checks every change
-filter without blurring inputs, and hovers a rendered dot to inspect its details. `10-database-library` imports two local search results
+filter without blurring inputs, and hovers a rendered dot to inspect its details. `10-track-library` sets the read-only library's two folders, then imports two local search results
 consecutively and checks that the query remains visible while each successfully
 imported result is removed and the remaining count decreases.
 It also selects both imported tracks with Select all and opens their shared

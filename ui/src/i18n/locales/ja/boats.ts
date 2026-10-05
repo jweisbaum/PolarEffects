@@ -65,4 +65,8 @@ export default {
   "Tracker boat ID": "トラッカーの艇 ID",
   "Original URL": "元の URL",
   "Boat details": "艇の詳細",
+  "All classes ({count} boats)": "すべてのクラス（{count} 艇）",
+  "{class} ({count} boats)": "{class}（{count} 艇）",
+  "Choose a class, or all of them, then open the project.": "クラスを1つ、またはすべてを選んでからプロジェクトを開きます。",
+  "Downloading the race to find its classes…": "クラスを調べるためにレースをダウンロードしています…",
 };

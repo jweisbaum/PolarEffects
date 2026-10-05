@@ -16,7 +16,7 @@ import BlendCellTooltip from "../polar/BlendCellTooltip";
 import { SPEED_FACTOR, SPEED_SYMBOL } from "../polar/view3d";
 import { useSampleSelection } from "../selection";
 import { onThemeChange } from "../settings/themes";
-import { DOT_EXCLUDED, DOT_FILTERED, dotSampleId, emptyDots, type DotPacket } from "./dotPacket";
+import { DOT_EXCLUDED, DOT_FILTERED, dotSampleId, emptyDots, withoutExcluded, type DotPacket } from "./dotPacket";
 import {
   ANGLE_TICKS, FULL_ANGLE_TICKS, axisLabels, crossings, dotFill, fitLayout, maxBoatSpeed, measureBetween, nearestCrossing, nearestPoint,
   project as projectPoint, speedTicks, unproject,
@@ -260,8 +260,10 @@ function draw(canvas: HTMLCanvasElement, result: PolarPlotResult | null, dots: D
  * command, including undo and redo, and by a source's colour, visibility,
  * weight or label — and whenever the chosen wind speed changes.
  */
-export default function PolarPlot({ project, variant, unit = "kn" }: {
+export default function PolarPlot({ project, variant, unit = "kn", hidden = false }: {
   project: ProjectSummary;
+  /** Kept mounted while another stage shows: it answers no key then. */
+  hidden?: boolean;
   /** The display speed unit (Settings); every value arrives and is kept in knots. */
   unit?: SpeedUnit;
   /**
@@ -276,7 +278,7 @@ export default function PolarPlot({ project, variant, unit = "kn" }: {
   const wrap = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const [result, setResult] = useState<PolarPlotResult | null>(null);
-  const [dots, setDots] = useState<DotPacket>(emptyDots);
+  const [received, setDots] = useState<DotPacket>(emptyDots);
   const [tws, setTws] = useState<number | null>(null);
   const [hover, setHover] = useState<Hover | null>(null);
   // The blend cell behind a hovered blend point (spec.md 9.2). `blendAsked`
@@ -285,6 +287,9 @@ export default function PolarPlot({ project, variant, unit = "kn" }: {
   const [blendCell, setBlendCell] = useState<BlendCell | null>(null);
   const blendAsked = useRef("");
   const [showFiltered, setShowFiltered] = useState(false);
+  // Excluded dots are hidden unless asked for (asked 2026-10-04); Rust
+  // sends them either way, so ticking the box asks it for nothing.
+  const [showExcluded, setShowExcluded] = useState(false);
   const [dotColour, setDotColour] = useState<DotColourMode>("source");
   // The Measure tool (spec.md 9.2): on or off, where the pointer is, and
   // the pinned point A. View state only; nothing of it is saved.
@@ -293,6 +298,12 @@ export default function PolarPlot({ project, variant, unit = "kn" }: {
   const [pin, setPin] = useState<PolarPoint | null>(null);
   const request = useRef(0);
   const selection = useSampleSelection();
+
+  const dots = useMemo(() => (showExcluded ? received : withoutExcluded(received)), [received, showExcluded]);
+  const excludedExist = useMemo(() => {
+    for (let k = 0; k < received.count; k++) if (received.flags[k]! & DOT_EXCLUDED) return true;
+    return false;
+  }, [received]);
 
   const visibleCount = useMemo(
     () => project.sources.filter((source) => source.visible).length,
@@ -428,7 +439,7 @@ export default function PolarPlot({ project, variant, unit = "kn" }: {
   // Escape lets the pinned point go, before anything else hears it (the
   // full-size overlay closes on Escape): one press unpins, the next closes.
   useEffect(() => {
-    if (!measure || !pin) return;
+    if (!measure || !pin || hidden) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.stopImmediatePropagation();
@@ -437,7 +448,7 @@ export default function PolarPlot({ project, variant, unit = "kn" }: {
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [measure, pin]);
+  }, [measure, pin, hidden]);
 
   const domainMin = result?.tws_min ?? null;
   const domainMax = result?.tws_max ?? null;
@@ -476,6 +487,12 @@ export default function PolarPlot({ project, variant, unit = "kn" }: {
           <input type="checkbox" data-feature="plot:show-filtered" checked={showFiltered} disabled={!tracksShown}
             onChange={(event) => setShowFiltered(event.target.checked)} />
           {t("Filtered")}
+        </label>
+        <label className="polar-plot-excluded"
+          title={excludedExist ? t("Also draw the samples you excluded, hollow") : t("Nothing is excluded")}>
+          <input type="checkbox" data-feature="plot:show-excluded" checked={showExcluded} disabled={!excludedExist && !showExcluded}
+            onChange={(event) => setShowExcluded(event.target.checked)} />
+          {t("Excluded")}
         </label>
         <label className="polar-plot-colour">
           {t("Colour")}
@@ -548,9 +565,9 @@ export default function PolarPlot({ project, variant, unit = "kn" }: {
           {hover && !blendCell && (
             <div role="tooltip" className="polar-plot-tooltip" style={{ left: hover.x + 10, top: hover.y + 10 }}>
               <strong style={{ color: hover.colour }}>{hover.label}</strong>
-              <div>{t("TWA {twa}°, TWS {tws} {unit}, BSP {bsp} {unit}", {
+              <div>{t("TWA {twa}°, TWS {tws} {unit}, {speed} {value} {unit}", {
                 twa: Math.min(hover.twa, 360 - hover.twa).toFixed(0), tws: (hover.tws * SPEED_FACTOR[unit]).toFixed(1),
-                bsp: (hover.bsp * SPEED_FACTOR[unit]).toFixed(2), unit: SPEED_SYMBOL[unit],
+                speed: hover.speed, value: (hover.bsp * SPEED_FACTOR[unit]).toFixed(2), unit: SPEED_SYMBOL[unit],
               })}</div>
             </div>
           )}

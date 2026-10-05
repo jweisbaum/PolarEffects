@@ -85,6 +85,9 @@ export default function MapView({ project, settings, onSettings }: {
   const paint = useCallback(() => {
     const element = canvas.current;
     if (!element || !renderer.current) return;
+    // Hidden with its stage (kept mounted): nothing to draw, and a 1 × 1
+    // view would be no size to keep for when it shows again.
+    if (element.clientWidth === 0 || element.clientHeight === 0) return;
     const ratio = window.devicePixelRatio || 1;
     const width = Math.max(1, element.clientWidth);
     const height = Math.max(1, element.clientHeight);

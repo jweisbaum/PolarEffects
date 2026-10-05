@@ -19,6 +19,7 @@ import { msg, setLanguage, useT } from "./i18n";
 import { api, ENV_CHANGED, ENV_PROGRESS, IpcError, QUIT_REQUESTED, QUIT_WAITING } from "./ipc";
 import type { EnvJobsStatus } from "./generated/EnvJobsStatus";
 import { currentEnvJobs, envJobsBusy, setEnvJobs, useEnvJobs } from "./jobs";
+import { useLibraryScrape } from "./library/scrape";
 import ConfirmDialog from "./project/ConfirmDialog";
 import { formatBytes } from "./panels/trackImport";
 import { pickProjectToOpen, pickProjectToSave } from "./project/dialogs";
@@ -520,6 +521,7 @@ function Shell() {
       <div className="statusbar" data-feature="shell:statusbar" title={t("Hints, errors and work in progress")}>
         <BusySpinner />
         <EnvJobsIndicator />
+        <ScrapeIndicator />
         <McpBadge activity={mcpActivity} />
         <StatusHint status={status} />
         <span className="spacer" />
@@ -571,6 +573,31 @@ function EnvJobsIndicator() {
       <button className="small" data-feature="shell:cancel-fetch" title={t("Stop every fetch; samples already fetched are kept")}
         onClick={() => { api.cancelEnvFetch(null).catch(reportFailure); }}>
         {t("Cancel fetch")}
+      </button>
+    </span>
+  );
+}
+
+/**
+ * The status bar while a track library scrape the person started runs
+ * (asked 2026-10-04): how far through the races it is, the one in hand, and
+ * Cancel. Nothing for a scheduled scrape, nor once it is over.
+ */
+function ScrapeIndicator() {
+  const t = useT();
+  const scrape = useLibraryScrape();
+  if (scrape === null || !scrape.running || !scrape.manual) return null;
+  const fraction = scrape.total > 0 ? scrape.done / scrape.total : 0;
+  return (
+    <span className="env-jobs library-scrape" role="status" aria-live="polite" data-feature="shell:scrape-status" title={scrape.current}>
+      <span className="env-jobs-bar" aria-hidden="true"><span style={{ width: `${Math.round(fraction * 100)}%` }} /></span>
+      {scrape.total > 0
+        ? t("Scraping races: {done} of {total}, {tracks} tracks", { done: scrape.done, total: scrape.total, tracks: scrape.tracks })
+        : t("Scraping races: finding races…")}
+      {scrape.current && <span className="muted library-scrape-current">{" "}{scrape.current}</span>}
+      <button className="small" data-feature="shell:cancel-scrape" title={t("Cancel the scrape; races already saved stay in the library")}
+        onClick={() => { api.cancelLibraryScrape().catch(reportFailure); }}>
+        {t("Cancel scrape")}
       </button>
     </span>
   );

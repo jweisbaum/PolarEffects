@@ -13,12 +13,12 @@ pub mod boats;
 pub mod catalogues;
 pub mod commands;
 pub mod compare;
-pub mod database;
 pub mod derived;
 pub mod edit;
 pub mod env;
 pub mod error;
 pub mod grib;
+pub mod library;
 pub mod map_tracks;
 pub mod mcp;
 pub mod menu;
@@ -69,7 +69,8 @@ pub fn run() -> anyhow::Result<()> {
             app.set_menu(menu::build(app.handle(), &language)?)?;
             autosave::start(app.handle().clone());
             env::start(app.handle().clone());
-            database::on_startup(app.handle().clone());
+            // The track library's startup scrape, only if the person chose it.
+            library::on_startup(app.handle().clone());
             // The catalogues' startup schedule, only if the person chose it
             // (spec.md 5.4).
             catalogues::on_startup(app.handle().clone());
@@ -116,13 +117,12 @@ pub fn run() -> anyhow::Result<()> {
             boats::tracker_project::boat_import_status,
             boats::tracker_project::cancel_boat_import,
             commands::app_info,
-            database::test_database_connection,
-            database::set_database_settings,
-            database::catalogue::search_database_boats,
-            database::catalogue::import_database_track,
-            database::jobs::database_job_status,
-            database::jobs::start_database_job,
-            database::jobs::cancel_database_job,
+            library::set_library_settings,
+            library::scrape::start_library_scrape,
+            library::scrape::library_scrape_status,
+            library::scrape::cancel_library_scrape,
+            library::catalogue::search_database_boats,
+            library::catalogue::import_database_track,
             basemap::basemap,
             projects::new_project,
             projects::open_project,

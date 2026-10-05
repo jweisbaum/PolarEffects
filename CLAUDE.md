@@ -51,11 +51,10 @@ stop and raise it rather than working around it.
    hosts only. A catalogue scrape runs when the person starts it, or at
    startup or shutdown once they have chosen that schedule for it in
    Settings, and then at most once a day (spec §5.4).
-   `pe-app` may additionally connect to the PostgreSQL host explicitly saved
-   in Settings, for the user-requested SYRF library. Library HTTP discovery
-   remains in `pe-trackers`; startup/shutdown scraping runs only after the
-   user selects that schedule. Whole-database export invokes installed
-   `pg_dump` only; scraping never uses a sidecar.
+   No crate connects to a database: the SYRF track library is files the
+   person points Settings at (asked 2026-10-04). Its race scraper, through
+   `pe-trackers`, saves finished races only, into those files, when the
+   person starts it or on the startup or shutdown schedule they chose.
    `npm run check:offline` enforces this. The ORC catalogue is bundled at
    build time; what a scrape adds is kept beside it on this computer, and
    searching or adding a certificate never fetches.
@@ -346,9 +345,6 @@ and, in CI, ecCodes.
 - Blue Water Tracks answers an unknown slug with HTTP 200, `race` an empty
   array rather than an object; check for that, not only for a 404.
 - Never bundle credentials, device ids or cookies from reference repositories.
-  YellowBrick catalogue discovery may use credentials explicitly authorized by
-  the user and saved in local Settings. Only products listed as free may be
-  associated; authenticated request URLs and credentials must not enter logs.
 
 ---
 

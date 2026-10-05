@@ -65,4 +65,8 @@ export default {
   "Tracker boat ID": "Identifiant du bateau dans le suivi",
   "Original URL": "URL d’origine",
   "Boat details": "Informations du bateau",
+  "All classes ({count} boats)": "Toutes les classes ({count} bateaux)",
+  "{class} ({count} boats)": "{class} ({count} bateaux)",
+  "Choose a class, or all of them, then open the project.": "Choisissez une classe, ou toutes, puis ouvrez le projet.",
+  "Downloading the race to find its classes…": "Téléchargement de la course pour trouver ses classes…",
 };

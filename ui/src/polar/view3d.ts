@@ -26,9 +26,11 @@ export interface Toggles {
   surfaces: boolean;
   /** Samples removed by the filters, drawn dimmed. */
   filtered: boolean;
+  /** Samples and polar points the person excluded; hidden unless asked for (asked 2026-10-04). */
+  excluded: boolean;
 }
 
-export const DEFAULT_TOGGLES: Toggles = { samples: true, nodes: true, surfaces: true, filtered: false };
+export const DEFAULT_TOGGLES: Toggles = { samples: true, nodes: true, surfaces: true, filtered: false, excluded: false };
 
 /**
  * Edit mode (spec.md 10.4): the source being edited, by its index in the
@@ -120,6 +122,14 @@ export function availableModes(packet: ScenePacket): Record<ColourMode, boolean>
   };
 }
 
+/** Whether any sample or polar point is excluded, so "show excluded" has something to show. */
+export function hasExcluded(packet: ScenePacket): boolean {
+  for (const set of [packet.nodes, packet.samples]) {
+    for (let k = 0; k < set.count; k++) if (set.flags[k]! & FLAG_EXCLUDED) return true;
+  }
+  return false;
+}
+
 /** Whether any sample is filtered out, so "show filtered" has something to show. */
 export function hasFiltered(packet: ScenePacket): boolean {
   for (let k = 0; k < packet.samples.count; k++) if (packet.samples.flags[k]! & FLAG_FILTERED) return true;
@@ -188,12 +198,16 @@ function dotsOf(packet: ScenePacket, toggles: Toggles, mode: ColourMode, focus: 
   const hidden = (source: number) => focused && focus.hideOthers && source !== focus.index;
   let n = 0;
   if (which === "nodes" && toggles.nodes) {
-    for (let k = 0; k < nodes.count; k++) if (!hidden(nodes.source[k]!)) refs[n++] = k;
+    for (let k = 0; k < nodes.count; k++) {
+      if ((nodes.flags[k]! & FLAG_EXCLUDED) && !toggles.excluded) continue;
+      if (!hidden(nodes.source[k]!)) refs[n++] = k;
+    }
   }
   if (which === "samples" && toggles.samples) {
     const inWaveRange = waveRangePredicate(samples, waveRanges);
     for (let k = 0; k < samples.count; k++) {
       if ((samples.flags[k]! & FLAG_FILTERED) && !toggles.filtered) continue;
+      if ((samples.flags[k]! & FLAG_EXCLUDED) && !toggles.excluded) continue;
       if (hidden(samples.source[k]!) || !inWaveRange(k)) continue;
       refs[n++] = nodes.count + k;
     }
@@ -338,8 +352,18 @@ export interface Bounds {
   max: [number, number, number];
 }
 
-/** The model-space box round every dot and surface, or a default polar-sized one when there are none. */
-export function sceneBounds(packet: ScenePacket, layout: Layout): Bounds {
+/**
+ * The model-space box round every dot and surface that counts, or a default
+ * polar-sized one when there are none. A point not drawn does not stretch
+ * the scales: an excluded one unless "Excluded" is ticked, a filtered-out
+ * one unless "Filtered" is, a sample a wave range hides. Excluding an
+ * outlier brings the axes back to the data that is left, and showing it
+ * again takes them out to it (asked 2026-10-04).
+ */
+export function sceneBounds(
+  packet: ScenePacket, layout: Layout, waveRanges: WaveRanges = NO_WAVE_RANGES,
+  shown: Pick<Toggles, "excluded" | "filtered"> = { excluded: false, filtered: false },
+): Bounds {
   const min: [number, number, number] = [Infinity, Infinity, Infinity];
   const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
   const add = (twa: number, tws: number, bsp: number) => {
@@ -347,15 +371,27 @@ export function sceneBounds(packet: ScenePacket, layout: Layout): Bounds {
     const p = place(twa, tws, bsp, layout);
     for (let a = 0; a < 3; a++) { min[a] = Math.min(min[a]!, p[a]!); max[a] = Math.max(max[a]!, p[a]!); }
   };
+  const inWaveRange = waveRangePredicate(packet.samples, waveRanges);
   for (const set of [packet.nodes, packet.samples]) {
-    for (let k = 0; k < set.count; k++) add(set.points[k * 3]!, set.points[k * 3 + 1]!, set.points[k * 3 + 2]!);
+    for (let k = 0; k < set.count; k++) {
+      if ((set.flags[k]! & FLAG_EXCLUDED) && !shown.excluded) continue;
+      if ((set.flags[k]! & FLAG_FILTERED) && !shown.filtered) continue;
+      if (set === packet.samples && !inWaveRange(k)) continue;
+      add(set.points[k * 3]!, set.points[k * 3 + 1]!, set.points[k * 3 + 2]!);
+    }
   }
-  // The blend has no nodes of its own; its surface belongs in the view.
+  // The blend has no nodes of its own; its surface belongs in the view. A
+  // speed of 0 is its row at 0°, head to wind, across the whole output
+  // grid: it would stretch the wind scale to the grid's top wind speed
+  // whatever the data, and the origin is in the box anyway.
   for (const surface of packet.surfaces) {
     if (surface.source !== BLEND_SOURCE) continue;
     const nj = surface.tws.length;
     surface.twa.forEach((twa, i) => {
-      surface.tws.forEach((tws, j) => add(twa, tws, surface.bsp[i * nj + j]!));
+      surface.tws.forEach((tws, j) => {
+        const bsp = surface.bsp[i * nj + j]!;
+        if (bsp > 0) add(twa, tws, bsp);
+      });
     });
   }
   if (!Number.isFinite(min[0])) {
@@ -366,6 +402,26 @@ export function sceneBounds(packet: ScenePacket, layout: Layout): Bounds {
   // The origin belongs in the view: speeds and wind start at zero.
   add(0, 0, 0);
   return { min, max };
+}
+
+/** How far from the origin `bounds` reach: what a camera looking at the origin frames. */
+function reachOf(bounds: Bounds): number {
+  return Math.hypot(...[0, 1, 2].map((a) => Math.max(Math.abs(bounds.min[a]!), Math.abs(bounds.max[a]!))));
+}
+
+/**
+ * `view` for a scene whose box went from `from` to `to`: target and camera
+ * scaled about the origin, where every polar starts, so the camera keeps
+ * the angle it looks from and the data the room it had on screen. Excluding
+ * an outlier zooms in on what is left (asked 2026-10-04) without undoing
+ * the person's own rotation and zoom, as a preset would.
+ */
+export function rescaleView(view: View, from: Bounds, to: Bounds): View {
+  const before = reachOf(from), after = reachOf(to);
+  if (!(before > 0) || !(after > 0) || Math.abs(after / before - 1) < 1e-3) return view;
+  const k = after / before;
+  const scale = (p: readonly [number, number, number]) => p.map((v) => v * k) as [number, number, number];
+  return { position: scale(view.position), target: scale(view.target) };
 }
 
 export type CameraPreset = "top" | "side" | "iso";
@@ -386,7 +442,7 @@ export function presetView(preset: CameraPreset, bounds: Bounds, fov = 40, look:
     ? [0, 0, 0]
     : [0, 1, 2].map((a) => (bounds.min[a]! + bounds.max[a]!) / 2) as [number, number, number];
   const radius = Math.max(1, look === "origin"
-    ? Math.hypot(...[0, 1, 2].map((a) => Math.max(Math.abs(bounds.min[a]!), Math.abs(bounds.max[a]!))))
+    ? reachOf(bounds)
     : Math.hypot(...[0, 1, 2].map((a) => bounds.max[a]! - bounds.min[a]!)) / 2);
   const distance = (radius / Math.tan(((fov / 2) * Math.PI) / 180)) * 1.1;
   // `up` is +z; straight down would leave the view's roll undefined, so the

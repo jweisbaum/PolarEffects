@@ -83,7 +83,7 @@ export default {
     await t.shot("plot-stage");
     assert.equal(await d.exists("canvas.map-canvas"), false);
     await d.click('[data-feature="stage:3d"]');
-    await d.waitGone(".polar-plot-stage");
+    await d.waitGone(".stage-slot:not([hidden]) .polar-plot-stage"); // kept mounted, hidden (asked 2026-10-04)
 
     await d.open(t.path("tools/webdriver/fixtures/analysis.wpsproj"));
     await d.waitFor('[data-feature="stage:map"]');

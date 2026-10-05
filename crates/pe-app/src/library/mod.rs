@@ -1,0 +1,158 @@
+//! The local SYRF track library (asked 2026-10-04): a boat metadata file
+//! and a folder of individual-track GeoJSON, searched and imported from, and
+//! filled by scraping YellowBrick, Geovoile and Blue Water races. Nothing
+//! here connects to a database: a scraped race is its track files and its
+//! records in the metadata file.
+pub mod catalogue;
+pub mod scrape;
+#[cfg(test)]
+mod tests;
+
+pub use catalogue::{BoatTrackHit, BoatTrackSearch, import_database_track, search_database_boats};
+pub use scrape::{
+    ScrapeProgress, cancel_library_scrape, library_scrape_status, on_startup, shutdown,
+    start_library_scrape,
+};
+
+use crate::{
+    commands::AppState,
+    error::{AppError, Result},
+    settings::Settings,
+};
+use serde::{Deserialize, Serialize};
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
+use ts_rs::TS;
+
+/// Where the library's two files live, and how races are scraped into them.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct LibrarySettings {
+    /// The folder of individual-track GeoJSON files the metadata names.
+    pub geojson_directory: String,
+    /// The folder holding `boat-metadata.json`; empty for the application's own.
+    pub metadata_directory: String,
+    /// When races are scraped by themselves: on demand, at startup or at shutdown.
+    pub scrape_schedule: crate::catalogues::ScrapeSchedule,
+    /// Race addresses to scrape, one per line; empty discovers public races.
+    pub scrape_urls: String,
+    /// YellowBrick's app user key, to list its catalogue; local only, never logged.
+    pub yellowbrick_user_key: String,
+    /// YellowBrick's app device id (UDID), with the key; local only, never logged.
+    pub yellowbrick_device_id: String,
+}
+
+impl std::fmt::Debug for LibrarySettings {
+    // The YellowBrick key and device id never reach a log.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LibrarySettings")
+            .field("geojson_directory", &self.geojson_directory)
+            .field("metadata_directory", &self.metadata_directory)
+            .field("scrape_schedule", &self.scrape_schedule)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Default for LibrarySettings {
+    fn default() -> Self {
+        let local = PathBuf::from("/Volumes/Disk_Three/s3/syrf-tracks-individual-production");
+        Self {
+            geojson_directory: if local.is_dir() {
+                local.to_string_lossy().into_owned()
+            } else {
+                String::new()
+            },
+            metadata_directory: String::new(),
+            scrape_schedule: crate::catalogues::ScrapeSchedule::OnDemand,
+            scrape_urls: String::new(),
+            yellowbrick_user_key: String::new(),
+            yellowbrick_device_id: String::new(),
+        }
+    }
+}
+
+impl LibrarySettings {
+    /// Refuses a relative folder: the library is read from absolute paths only.
+    ///
+    /// # Errors
+    /// [`AppError::Internal`] naming the problem.
+    pub fn validate(&self) -> Result<()> {
+        if self.yellowbrick_user_key.trim().is_empty()
+            != self.yellowbrick_device_id.trim().is_empty()
+        {
+            return Err(AppError::Internal(
+                "Enter both the YellowBrick user key and device ID, or leave both empty".into(),
+            ));
+        }
+        for path in [&self.geojson_directory, &self.metadata_directory] {
+            if !path.is_empty() && !std::path::Path::new(path).is_absolute() {
+                return Err(AppError::Internal(
+                    "Choose an absolute directory path".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Where `boat-metadata.json` is read from.
+    pub fn metadata_path(&self, state: &AppState) -> PathBuf {
+        if self.metadata_directory.is_empty() {
+            state.paths.config_dir.join("boat-metadata")
+        } else {
+            PathBuf::from(&self.metadata_directory)
+        }
+        .join("boat-metadata.json")
+    }
+}
+
+/// The catalogue read from the metadata at this path.
+type Cached = Option<(PathBuf, Arc<catalogue::Catalogue>)>;
+
+/// The metadata read last, by the path it was read from, and the scrape.
+#[derive(Default)]
+pub struct LibraryState {
+    catalogue: Mutex<Cached>,
+    /// The scrape: its progress, and how to cancel it.
+    pub(crate) scrape: scrape::ScrapeState,
+}
+
+impl std::fmt::Debug for LibraryState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LibraryState").finish_non_exhaustive()
+    }
+}
+
+impl LibraryState {
+    pub(crate) fn lock(&self) -> Result<std::sync::MutexGuard<'_, Cached>> {
+        self.catalogue
+            .lock()
+            .map_err(|_| AppError::Internal("The track library's lock was poisoned".into()))
+    }
+}
+
+/// Saves the library's two folders.
+#[tauri::command]
+pub fn set_library_settings(
+    state: tauri::State<'_, AppState>,
+    settings: LibrarySettings,
+) -> Result<Settings> {
+    set(&state, settings)
+}
+
+/// [`set_library_settings`], for callers without Tauri state.
+///
+/// # Errors
+/// A relative folder, or the settings file not being written.
+pub fn set(state: &AppState, settings: LibrarySettings) -> Result<Settings> {
+    settings.validate()?;
+    crate::settings::update(state, |s| {
+        s.library = settings;
+        Ok(())
+    })
+}
+
+pub(crate) fn settings(state: &AppState) -> Result<LibrarySettings> {
+    state.with_session(|s| Ok(s.settings.library.clone()))
+}

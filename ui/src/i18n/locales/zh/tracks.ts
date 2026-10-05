@@ -443,6 +443,10 @@ const catalogue: Record<string, string> = {
   "Keep samples whose course over the ground runs from this compass direction clockwise to the next. Both empty for any": "保留对地航向在从此罗经方位按顺时针至下一个值范围内的样本点。两者都留空表示任意",
   "TWD from (°)": "TWD 从 (°)",
   "Keep samples whose true wind comes from this compass direction clockwise to the next. Both empty for any": "保留真风来向在从此罗经方位按顺时针至下一个值范围内的样本点。两者都留空表示任意",
+  "Excluded": "已排除",
+  "Also draw the samples you excluded, hollow": "同时以空心方式绘制你排除的样本点",
+  "Show excluded samples in the plot": "在图表中显示被排除的样本点",
+  "Also draw the samples you excluded, hollow.": "同时以空心方式绘制你排除的样本点。",
 };
 
 export default catalogue;
