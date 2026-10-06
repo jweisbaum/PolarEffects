@@ -255,7 +255,8 @@ beforeEach(() => {
   legacyNotice = null;
   compareAnswer = "fixture";
   settings = {
-    library: { geojson_directory: "", metadata_directory: "", scrape_schedule: "on_demand", scrape_urls: "", yellowbrick_user_key: "", yellowbrick_device_id: "" },
+    library: { geojson_directory: "", metadata_directory: "", scrape_schedule: "on_demand", scrape_urls: "", yellowbrick_user_key: "", yellowbrick_device_id: "",
+      database: { host: "localhost", port: 5432, name: "syrfbackendprod", user: "postgres", password: "", tls: false } },
     recent_projects: [], autosave: "recovery", language: "en", theme: "harbour",
     units: { speed: "kn", wave_height: "m", distance: "nm" },
     weather_memory_mb: 256, network: { concurrency: 8, timeout_s: 60 },

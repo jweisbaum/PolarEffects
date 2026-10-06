@@ -5,7 +5,7 @@
  * always what is on disk.
  */
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { AppSettings } from "../generated/AppSettings";
 import type { AutosaveMode } from "../generated/AutosaveMode";
@@ -40,16 +40,27 @@ export default function SettingsDialog({ settings, onSettings, onClose }: {
     change.then(onSettings).catch(report);
   };
 
+  /**
+   * The track library edits a draft (its folders are typed a character at a
+   * time, and its YellowBrick fields go in pairs), so closing saves that
+   * draft first; a draft Rust refuses keeps the dialog open with the reason.
+   */
+  const flushLibrary = useRef<(() => Promise<void>) | null>(null);
+  const close = useCallback(() => {
+    setError(null);
+    (flushLibrary.current?.() ?? Promise.resolve()).then(onClose, report);
+  }, [onClose]);
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        onClose();
+        close();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [close]);
 
   /**
    * The search's second reveal step (spec.md 3.6): `settings:` opened the
@@ -77,7 +88,7 @@ export default function SettingsDialog({ settings, onSettings, onClose }: {
   const units = (change: Partial<Units>) => save(api.setUnits({ ...settings.units, ...change }));
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className="modal-backdrop" onClick={close}>
       <div className="modal settings" role="dialog" aria-label={t("Settings")} onClick={(event) => event.stopPropagation()}>
         <h2>{t("Settings")}</h2>
         {error !== null && <p className="modal-error" role="alert" title={describeError(error).detail}>{describeError(error).text}</p>}
@@ -182,11 +193,11 @@ export default function SettingsDialog({ settings, onSettings, onClose }: {
 
         <McpSection onError={setError} />
 
-        <LibrarySettings settings={settings} onSettings={onSettings} />
+        <LibrarySettings settings={settings} onSettings={onSettings} flush={flushLibrary} />
         <OrcScraper settings={settings} onSettings={onSettings} />
         <OrrScraper settings={settings} onSettings={onSettings} />
         <div className="modal-actions">
-          <button data-feature="settings:close" onClick={onClose} title={t("Close the settings (Esc)")}>{t("Close")}</button>
+          <button data-feature="settings:close" onClick={close} title={t("Close the settings (Esc)")}>{t("Close")}</button>
         </div>
       </div>
     </div>

@@ -185,9 +185,9 @@ impl Default for McpSettings {
 #[ts(export_to = "AppSettings.ts", rename = "AppSettings")]
 #[serde(default)]
 pub struct Settings {
-    /// Where the read-only SYRF track library's files are. `load` reads an
-    /// older file's `database` section for it too, whose other fields (a
-    /// database connection, the scraper's) are gone (asked 2026-10-04).
+    /// Where the SYRF track library's files are, and the database its
+    /// metadata download reads. `load` reads an older file's `database`
+    /// section for it too, connection fields included.
     pub library: crate::library::LibrarySettings,
     /// Most recently opened or saved projects, newest first.
     #[ts(type = "Array<string>")]
@@ -303,6 +303,20 @@ impl Settings {
                     "yellowbrick_device_id",
                     &mut settings.library.yellowbrick_device_id,
                 );
+                // Before 2026-10-04 the connection was the `database`
+                // section's own fields; since 2026-10-06 it is `library`'s
+                // `database`.
+                let connection = match library.get("database") {
+                    Some(serde_json::Value::Object(c)) => c,
+                    _ => library,
+                };
+                let slot = &mut settings.library.database;
+                read_field(connection, "host", &mut slot.host);
+                read_field(connection, "port", &mut slot.port);
+                read_field(connection, "name", &mut slot.name);
+                read_field(connection, "user", &mut slot.user);
+                read_field(connection, "password", &mut slot.password);
+                read_field(connection, "tls", &mut slot.tls);
             }
             read_field(&object, "recent_projects", &mut settings.recent_projects);
             read_field(&object, "autosave", &mut settings.autosave);

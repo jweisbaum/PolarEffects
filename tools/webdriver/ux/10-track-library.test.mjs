@@ -40,7 +40,29 @@ export default {
       assert.ok(await d.exists(`[data-feature="${control}"]`), `${control} is there`);
     }
     assert.ok((await d.text('.library-settings')).includes("Only finished races are scraped."));
+    // The SYRF database's read-only metadata download (asked 2026-10-06).
+    // Pointed at a closed port, so no test ever reaches a real database.
+    for (const control of ["settings:library-db-host", "settings:library-db-port", "settings:library-db-name", "settings:library-db-user",
+      "settings:library-db-password", "settings:library-db-tls", "settings:library-db-test", "settings:library-db-download", "settings:library-db-cancel"]) {
+      assert.ok(await d.exists(`[data-feature="${control}"]`), `${control} is there`);
+    }
+    assert.ok((await d.text('.library-settings')).includes("Nothing is written to the database"));
+    await d.type('[data-feature="settings:library-db-host"]', "127.0.0.1");
+    await d.type('[data-feature="settings:library-db-port"]', "1");
+    await d.run(`document.querySelector('[data-feature="settings:library-db-test"]').scrollIntoView({block: "center"}); done(true);`);
+    await d.click('[data-feature="settings:library-db-test"]');
+    await d.waitFor(".database-connection.failed", { text: "Connection failed" });
+    assert.ok((await d.text('.library-settings [role="alert"]')).includes("PostgreSQL connection failed"));
+    await t.shot("library-database");
+    // Closing Settings saves what was typed, without the Save button (asked 2026-10-06).
     await d.type('[data-feature="settings:library-geojson"]', geo);
+    await d.click('[data-feature="settings:close"]');
+    await d.waitGone('[data-feature="settings:library-geojson"]');
+    const closed = JSON.parse(await readFile(join(d.automationRoot, "config", "settings.json"), "utf8"));
+    assert.equal(closed.library.geojson_directory, geo, "closing saved the GeoJSON folder");
+    await d.click('[data-feature="shell:settings"]');
+    await d.waitFor('[data-feature="settings:library-geojson"]');
+    assert.equal(await d.run(`done(document.querySelector('[data-feature="settings:library-geojson"]').value);`), geo);
     await d.type('[data-feature="settings:library-metadata"]', metadata);
     await d.run(`document.querySelector('[data-feature="settings:library-save"]').scrollIntoView({block: "center"}); done(true);`);
     await d.click('[data-feature="settings:library-save"]');
@@ -49,7 +71,9 @@ export default {
     const saved = JSON.parse(await readFile(join(d.automationRoot, "config", "settings.json"), "utf8"));
     assert.equal(saved.library.geojson_directory, geo);
     assert.equal(saved.library.metadata_directory, metadata);
-    assert.equal(saved.database, undefined, "no database settings are written");
+    assert.equal(saved.database, undefined, "the connection is kept under library, not a database section");
+    assert.equal(saved.library.database.host, "127.0.0.1");
+    assert.equal(saved.library.database.port, 1);
     await d.click('[data-feature="settings:close"]');
     await d.type('[data-feature="tracks:boat-search"]', "lurl");
     await d.waitFor(".boat-track-results li", { text: "Lurline" });

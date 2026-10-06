@@ -43,6 +43,14 @@ chrono = { version = "0.4", default-features = false, features = ["std"] }
 # Stable ids for scraped races and boats, so a re-scrape replaces its own records.
 uuid = { version = "1", features = ["v5"] }
 
+# The SYRF database's read-only metadata download (asked 2026-10-06): the
+# native PostgreSQL protocol and platform-verified TLS; no libpq, no sidecar.
+# Only `library::database` connects, only when the person presses the button.
+postgres = { version = "0.19", features = ["with-serde_json-1"] }
+tokio-postgres-rustls = { version = "0.14", default-features = false, features = ["ring"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-platform-verifier = "0.7"
+
 # The MCP service (spec.md 3.7, D29). Pure Rust, always compiled in; the
 # listener exists only while the setting is on (invariant 4's one inbound
 # exception). As VectorEffects' `ve-app`.
@@ -102,8 +110,6 @@ tempfile = "3"
 sha2 = "0.10.9"
 # The GRIB export's tests decode what it wrote with the test-only reader.
 pe-grib = { workspace = true, features = ["testing"] }
-# The loopback MCP client needs a crypto provider installed (CLAUDE.md).
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 # Unique temporary directories for the track library's tests.
 uuid = { version = "1", features = ["v4", "v5"] }
 

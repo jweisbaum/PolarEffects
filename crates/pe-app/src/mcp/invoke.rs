@@ -126,6 +126,12 @@ pub const EXCLUDED: &[&str] = &[
     "start_library_scrape",
     "library_scrape_status",
     "cancel_library_scrape",
+    // The SYRF database's read-only metadata download signs in with the
+    // person's PostgreSQL password, so it too is the person's at the keyboard.
+    "test_database_connection",
+    "start_metadata_download",
+    "metadata_download_status",
+    "cancel_metadata_download",
     "search_database_boats",
     "import_database_track",
     // Quitting is the person's, and goes through their unsaved-changes guard.

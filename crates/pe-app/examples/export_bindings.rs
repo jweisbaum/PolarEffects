@@ -50,6 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_large_int("number");
     pe_app::library::LibrarySettings::export_all(&cfg)?;
     pe_app::library::ScrapeProgress::export_all(&cfg)?;
+    pe_app::library::database::MetadataProgress::export_all(&cfg)?;
     pe_app::library::BoatTrackSearch::export_all(&cfg)?;
     AppInfo::export_all(&cfg)?;
     AppErrorPayload::export_all(&cfg)?;

@@ -51,10 +51,15 @@ stop and raise it rather than working around it.
    hosts only. A catalogue scrape runs when the person starts it, or at
    startup or shutdown once they have chosen that schedule for it in
    Settings, and then at most once a day (spec §5.4).
-   No crate connects to a database: the SYRF track library is files the
-   person points Settings at (asked 2026-10-04). Its race scraper, through
-   `pe-trackers`, saves finished races only, into those files, when the
-   person starts it or on the startup or shutdown schedule they chose.
+   The SYRF track library is files the person points Settings at (asked
+   2026-10-04). Its race scraper, through `pe-trackers`, saves finished
+   races only, into those files, when the person starts it or on the
+   startup or shutdown schedule they chose. The one database connection
+   (D34, asked 2026-10-06) is `pe-app`'s `library::database`: it reads the
+   person's SYRF PostgreSQL server into `boat-metadata.json` only when they
+   press **Download boat metadata**. It has no schedule, and its session and
+   transaction are read-only on the server's side. It never writes, and no
+   other crate has a database client.
    `npm run check:offline` enforces this. The ORC catalogue is bundled at
    build time; what a scrape adds is kept beside it on this computer, and
    searching or adding a certificate never fetches.
@@ -120,6 +125,8 @@ crates/
   pe-grib/      GRIB2 writer (fixed-layout message template, as in
                 VectorEffects' ve-grib), regional grids
   pe-app/       Tauri shell: IPC commands, state, jobs, autosave, settings;
+                `src/library/` the SYRF track library (scraper, search,
+                the read-only database metadata download);
                 `src/mcp/` the MCP service (listener, tools, client
                 registration, the Claude Desktop bridge)
 ui/             React + TypeScript + Vite front end

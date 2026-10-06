@@ -83,8 +83,9 @@ not grant rights to third-party event data.
 
 The optional SYRF track library is a boat metadata file and a folder of
 individual-track GeoJSON files, chosen in Settings, that are searched and
-imported from. The scraper fills them with finished races only; PolarExplorer
-connects to no database. Their formats follow
+imported from. The scraper fills them with finished races only. The boat
+metadata can also be downloaded, read-only and only on request, from a SYRF
+PostgreSQL database the user names in Settings; nothing is written to it. Their formats follow
 [syrf-schema](https://github.com/sailing-yacht-research-foundation/syrf-schema)
 and the individual-track formatter in
 [raw-data-server](https://github.com/sailing-yacht-research-foundation/raw-data-server).

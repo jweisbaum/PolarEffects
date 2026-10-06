@@ -1203,6 +1203,9 @@ button.source-label:hover { border-color: var(--border); background: var(--raise
 .boat-track-results small { color: var(--muted); overflow-wrap: anywhere; }
 
 .library-settings input[type="checkbox"] { justify-self: start; }
+.database-connection { font-weight: 600; }
+.database-connection.ok { color: #47c979; }
+.database-connection.failed { color: var(--error); }
 
 /* Bottom-centred wave constraints: one shared rail and two native handles. */
 .wave-display-ranges {

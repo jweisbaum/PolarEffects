@@ -170,7 +170,12 @@ only. Weather is a separate, explicit action.
 **Tracks from a SYRF track library.** In Settings → **Track library**, choose
 the folder of individual-track GeoJSON files and the folder holding
 `boat-metadata.json` (empty for the application's own), then **Save library
-settings**. Nothing goes to a database.
+settings** or just close Settings. Nothing is ever written to a database.
+
+To fill the metadata from a SYRF PostgreSQL database, enter its host, port,
+name, user and password under **SYRF database (read only)**. Press **Test
+connection**, then **Download boat metadata**. The download only reads,
+runs only when you press the button, and keeps the races you scraped.
 
 To fill the library, press **Scrape tracks now**, or set **Run track scraper**
 to *On startup* or *On shutdown*. Only finished YellowBrick, Geovoile and Blue

@@ -343,13 +343,43 @@ or a failed write leaves the previous setting in place.
 ### 3.4.1 SYRF track library
 
 The track library is two folders the person chooses in Settings → **Track
-library** and saves with **Save library settings**: a folder of
+library** and saves with **Save library settings**, or by closing Settings
+(asked 2026-10-06; a draft Rust refuses keeps the dialog open with the
+reason): a folder of
 individual-track GeoJSON files, and the folder holding `boat-metadata.json`
-(empty for the application's config directory, `boat-metadata/`). No database
-is involved (asked 2026-10-04): PolarExplorer connects to none, and what it
-scrapes goes only into these two folders. An older settings file's `database`
-section still gives the folders and the scraper fields; its connection fields
-are dropped.
+(empty for the application's config directory, `boat-metadata/`). What it
+scrapes goes only into these two folders (asked 2026-10-04). An older
+settings file's `database` section still gives the folders, the scraper
+fields and the connection.
+
+**Downloading metadata from the SYRF database** (restored read-only
+2026-10-06, D34). Under **SYRF database (read only)** the person gives the
+PostgreSQL host, port, database, user, password and whether TLS is required
+with a verified certificate (default `localhost:5432`, `syrfbackendprod`,
+`postgres`, no TLS). **Test connection** signs in, checks that the session
+is read-only and that every table below can be read, and reads no rows.
+**Download boat metadata** saves the settings and runs only when pressed.
+It has no schedule, cannot run while a scrape does, and can be cancelled.
+The session is opened with `default_transaction_read_only` on, and all
+reads happen in one `READ ONLY, REPEATABLE READ` transaction, so the server
+refuses any write, including a temporary table. The subsets are therefore
+common table expressions. Rows come from `Vessels` (not deleted),
+`VesselParticipants`, `CalendarEvents`, `CompetitionUnits`,
+`VesselParticipantGroups`, `VesselParticipantEvents`,
+`VesselParticipantTrackJsons`, `Courses` and
+`CourseUnsequencedUntimedGeometries`. Each table is limited to the
+supported sources below, read as `row_to_json` and ordered by id. One
+search record is built per boat in each race's group, carrying the track
+file's storage key when the database names one. The result is **merged**
+into `boat-metadata.json`, which is written once at the end; a cancelled
+or failed download leaves the file as it was. The database's rows and
+records replace those of the previous download. What scraping saved stays
+(told apart by its derived event ids), except a scraped race that the
+database also holds, which is removed with its files, as at a scrape's
+start. Progress (`library://metadata`) shows in Settings with the
+database's track count and the scraped tracks kept. The password stays in
+the local settings file and is never logged; MCP clients cannot reach these
+commands.
 
 **Scraping** (restored 2026-10-04) fills the library from YellowBrick, Geovoile
 and Blue Water Tracks through `pe-trackers`. It runs when the person presses

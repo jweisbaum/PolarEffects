@@ -7,6 +7,7 @@
  */
 import type { LibrarySettings } from "./generated/LibrarySettings";
 import type { ScrapeProgress } from "./generated/ScrapeProgress";
+import type { MetadataProgress } from "./generated/MetadataProgress";
 import type { BoatTrackSearch } from "./generated/BoatTrackSearch";
 
 import { invoke } from "@tauri-apps/api/core";
@@ -424,6 +425,12 @@ export function boatApi(boatContext?: number) {
   startLibraryScrape: () => call<ScrapeProgress>("start_library_scrape"),
   libraryScrapeStatus: () => call<ScrapeProgress>("library_scrape_status"),
   cancelLibraryScrape: () => call<void>("cancel_library_scrape"),
+  /** Signs in read-only and checks the tables; answers the database's name. Reads no rows. */
+  testDatabaseConnection: (connection: import("./generated/DatabaseConnection").DatabaseConnection) => call<string>("test_database_connection", { connection }),
+  /** Reads the SYRF database's boat metadata, read-only, into `boat-metadata.json`. */
+  startMetadataDownload: () => call<MetadataProgress>("start_metadata_download"),
+  metadataDownloadStatus: () => call<MetadataProgress>("metadata_download_status"),
+  cancelMetadataDownload: () => call<void>("cancel_metadata_download"),
   searchDatabaseBoats: (query: string, offset = 0) => call<BoatTrackSearch>("search_database_boats", { query, offset }),
   importDatabaseTrack: (id: string) => call<TrackImportResult>("import_database_track", { id }),
   appSettings: () => call<AppSettings>("app_settings"),
@@ -489,6 +496,8 @@ export const api = boatApi();
 /** The event carrying the environment fetch queue as it changes. */
 /** A track library scrape's progress (`library::scrape::PROGRESS`). */
 export const LIBRARY_SCRAPE = "library://scrape";
+/** The SYRF database metadata download's progress (`library::database::PROGRESS`). */
+export const LIBRARY_METADATA = "library://metadata";
 export const ENV_PROGRESS = "env://progress";
 /** The event saying a fetch wrote into the open project. */
 export const ENV_CHANGED = "env://changed";

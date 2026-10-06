@@ -1,9 +1,11 @@
 //! The local SYRF track library (asked 2026-10-04): a boat metadata file
 //! and a folder of individual-track GeoJSON, searched and imported from, and
-//! filled by scraping YellowBrick, Geovoile and Blue Water races. Nothing
-//! here connects to a database: a scraped race is its track files and its
-//! records in the metadata file.
+//! filled by scraping YellowBrick, Geovoile and Blue Water races. A scraped
+//! race is its track files and its records in the metadata file. The one
+//! database connection is `database`'s read-only metadata download, made
+//! only when the person asks for it (asked 2026-10-06).
 pub mod catalogue;
+pub mod database;
 pub mod scrape;
 #[cfg(test)]
 mod tests;
@@ -42,6 +44,8 @@ pub struct LibrarySettings {
     pub yellowbrick_user_key: String,
     /// YellowBrick's app device id (UDID), with the key; local only, never logged.
     pub yellowbrick_device_id: String,
+    /// The SYRF PostgreSQL database the metadata download reads, read-only.
+    pub database: database::DatabaseConnection,
 }
 
 impl std::fmt::Debug for LibrarySettings {
@@ -51,6 +55,7 @@ impl std::fmt::Debug for LibrarySettings {
             .field("geojson_directory", &self.geojson_directory)
             .field("metadata_directory", &self.metadata_directory)
             .field("scrape_schedule", &self.scrape_schedule)
+            .field("database", &self.database)
             .finish_non_exhaustive()
     }
 }
@@ -69,6 +74,7 @@ impl Default for LibrarySettings {
             scrape_urls: String::new(),
             yellowbrick_user_key: String::new(),
             yellowbrick_device_id: String::new(),
+            database: database::DatabaseConnection::default(),
         }
     }
 }
@@ -116,6 +122,8 @@ pub struct LibraryState {
     catalogue: Mutex<Cached>,
     /// The scrape: its progress, and how to cancel it.
     pub(crate) scrape: scrape::ScrapeState,
+    /// The metadata download: its progress, and how to cancel it.
+    pub(crate) download: database::DownloadState,
 }
 
 impl std::fmt::Debug for LibraryState {
@@ -147,6 +155,11 @@ pub fn set_library_settings(
 /// A relative folder, or the settings file not being written.
 pub fn set(state: &AppState, settings: LibrarySettings) -> Result<Settings> {
     settings.validate()?;
+    if state.library.download.running() {
+        return Err(AppError::Internal(
+            "Wait for the metadata download to finish before changing the library settings".into(),
+        ));
+    }
     crate::settings::update(state, |s| {
         s.library = settings;
         Ok(())

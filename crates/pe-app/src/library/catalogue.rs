@@ -163,6 +163,104 @@ fn by_id<'a>(tables: &'a BTreeMap<String, Vec<Value>>, name: &str) -> BTreeMap<S
         .map(|v| (text(v, "id"), v))
         .collect()
 }
+/// One search record per boat in each race of the database's rows: every
+/// boat of a race's group, with its track file's key when the database names
+/// one, sorted by boat name and then newest first.
+pub(super) fn index(tables: &BTreeMap<String, Vec<Value>>) -> Vec<BoatTrackHit> {
+    let vessels = by_id(tables, "Vessels");
+    let participants = by_id(tables, "VesselParticipants");
+    let events = by_id(tables, "CalendarEvents");
+    let units = by_id(tables, "CompetitionUnits");
+    let mut pairs = BTreeMap::new();
+    let mut groups: BTreeMap<String, Vec<&Value>> = BTreeMap::new();
+    for p in participants.values() {
+        let group = text(p, "vesselParticipantGroupId");
+        if !group.is_empty() {
+            groups.entry(group).or_default().push(p);
+        }
+    }
+    for (id, c) in &units {
+        if let Some(ps) = groups.get(&text(c, "vesselParticipantGroupId")) {
+            for p in ps {
+                pairs.insert((id.clone(), text(p, "id")), String::new());
+            }
+        }
+    }
+    for r in rows(tables, "VesselParticipantTrackJsons") {
+        pairs.insert(
+            (text(r, "competitionUnitId"), text(r, "vesselParticipantId")),
+            text(r, "providedStorageKey"),
+        );
+    }
+    for r in rows(tables, "VesselParticipantEvents") {
+        pairs
+            .entry((text(r, "competitionUnitId"), text(r, "vesselParticipantId")))
+            .or_default();
+    }
+    let mut found = Vec::new();
+    for ((cid, pid), key) in pairs {
+        let Some(c) = units.get(&cid) else { continue };
+        let Some(p) = participants.get(&pid) else {
+            continue;
+        };
+        let Some(v) = vessels.get(&text(p, "vesselId")) else {
+            continue;
+        };
+        let Some(e) = events.get(&text(c, "calendarEventId")) else {
+            continue;
+        };
+        let source: String = text(e, "source")
+            .chars()
+            .filter(char::is_ascii_alphanumeric)
+            .collect::<String>()
+            .to_ascii_uppercase();
+        if !super::database::SOURCES.contains(&source.to_ascii_uppercase().as_str()) {
+            continue;
+        }
+        found.push(BoatTrackHit {
+            id: format!("{cid}/{pid}"),
+            vessel_id: text(v, "id"),
+            participant_id: pid,
+            competition_id: cid,
+            boat_name: text(v, "publicName"),
+            sail_number: text(v, "sailNumber"),
+            model: text(v, "model"),
+            source,
+            event_name: if text(c, "name").is_empty() {
+                text(e, "name")
+            } else {
+                text(c, "name")
+            },
+            original_url: {
+                let raw = if text(c, "scrapedUrl").is_empty() {
+                    text(e, "externalUrl")
+                } else {
+                    text(c, "scrapedUrl")
+                };
+                if raw.contains("://") {
+                    raw
+                } else {
+                    pe_trackers::library::resolve_source(&text(e, "source"), &raw)
+                        .map(|r| r.url)
+                        .unwrap_or(raw)
+                }
+            },
+            start: c["startTime"].as_str().map(str::to_owned),
+            end: c["endTime"].as_str().map(str::to_owned),
+            tracker_boat_id: text(v, "vesselId"),
+            storage_key: key,
+            file_available: false,
+        });
+    }
+    found.sort_by(|a, b| {
+        a.boat_name
+            .to_lowercase()
+            .cmp(&b.boat_name.to_lowercase())
+            .then_with(|| b.start.cmp(&a.start))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    found
+}
 fn load(state: &AppState, settings: &LibrarySettings) -> Result<Option<Arc<Catalogue>>> {
     let path = settings.metadata_path(state);
     let mut store = state.library.lock()?;

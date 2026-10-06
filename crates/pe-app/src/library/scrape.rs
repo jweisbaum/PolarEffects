@@ -101,7 +101,7 @@ impl ScrapeState {
             .map_err(|_| AppError::Internal("The scrape's lock was poisoned".into()))
     }
 
-    fn running(&self) -> bool {
+    pub(crate) fn running(&self) -> bool {
         self.lock().is_ok_and(|s| s.progress.running)
     }
 }
@@ -146,6 +146,11 @@ fn start<R: tauri::Runtime>(app: tauri::AppHandle<R>, manual: bool) -> Result<Sc
     if settings.geojson_directory.is_empty() {
         return Err(AppError::Internal(
             "Choose a GeoJSON directory before scraping".into(),
+        ));
+    }
+    if state.library.download.running() {
+        return Err(AppError::Internal(
+            "Wait for the metadata download to finish before scraping".into(),
         ));
     }
     let cancel = Arc::new(AtomicBool::new(false));
@@ -225,6 +230,12 @@ fn competition_id(event: &pe_trackers::EventRef) -> String {
         pe_trackers::library::source(event.tracker),
         &queue_key(event),
     )
+}
+
+/// The event id the scraper gives a race's event: from its source and its
+/// catalogue key, so the metadata download can tell scraped records apart.
+pub(super) fn event_id(source: &str, event_key: &str) -> String {
+    guid(&format!("polarexplorer/library/{source}/{event_key}/event"))
 }
 
 fn key_competition_id(source: &str, key: &str) -> String {
@@ -550,7 +561,7 @@ fn held(metadata: &Metadata) -> BTreeSet<String> {
 /// Removes the scraper's own copy of a race the library also holds from
 /// elsewhere (a SYRF snapshot): the records, and the track files it wrote.
 /// Answers how many races it removed.
-fn drop_duplicates(metadata: &mut Metadata, root: &Path) -> usize {
+pub(super) fn drop_duplicates(metadata: &mut Metadata, root: &Path) -> usize {
     let mut races: BTreeMap<String, (BTreeSet<String>, String)> = BTreeMap::new();
     for t in &metadata.tracks {
         for key in keys_of(&t.source, &t.original_url, &t.event_name) {
@@ -669,7 +680,7 @@ fn save_race(
         .next()
         .unwrap_or(&event.event.key);
     let event_key = catalogue.map_or(family, |r| r.id.as_str());
-    let eid = guid(&format!("polarexplorer/library/{source}/{event_key}/event"));
+    let eid = event_id(source, event_key);
     let event_name = catalogue.map_or_else(|| event.title.clone(), |r| r.title.clone());
     upsert(
         metadata,

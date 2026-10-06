@@ -12,9 +12,9 @@ import type { Units } from "./Units";
  */
 export type AppSettings = {
 /**
- * Where the read-only SYRF track library's files are. `load` reads an
- * older file's `database` section for it too, whose other fields (a
- * database connection, the scraper's) are gone (asked 2026-10-04).
+ * Where the SYRF track library's files are, and the database its
+ * metadata download reads. `load` reads an older file's `database`
+ * section for it too, connection fields included.
  */
 library: LibrarySettings,
 /**

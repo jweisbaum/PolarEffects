@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Enforces invariant 4: nothing is fetched that the user did not ask for, and
 # HTTP is limited to two crates; pe-app holds the MCP service's loopback
-# listener (D29), whose server crates layer 2 admits and nothing else. No crate
-# connects to a database (the SYRF library is read-only files, asked 2026-10-04).
+# listener (D29), whose server crates layer 2 admits and nothing else. pe-app
+# alone may read the person's SYRF PostgreSQL database, read-only and only when
+# asked (asked 2026-10-06); no other crate has a database client.
 #
 # Adapted from VectorEffects. Four layers, each checking what it can check:
 #
@@ -150,10 +151,12 @@ hits=$(awk -v crates="^[[:space:]]*($NET_CRATES|rmcp)[[:space:]]*=" \
   }' crates/pe-app/Cargo.toml)
 [ -n "$hits" ] && report "network client dependency in pe-app (only the MCP service's server crates are admitted)" "$hits"
 
-# No database client anywhere: the track library is read from files.
-hits=$(find crates tools -name Cargo.toml \
+# A database client only in pe-app, and only the synchronous PostgreSQL one its
+# read-only metadata download uses (library::database, asked 2026-10-06).
+hits=$(find crates tools -name Cargo.toml -not -path 'crates/pe-app/*' \
   -exec grep -nHE '^[[:space:]]*(postgres|tokio-postgres|tokio-postgres-rustls|sqlx|diesel)[[:space:]]*=' {} + 2>/dev/null || true)
-[ -n "$hits" ] && report "database client dependency" "$hits"
+hits="$hits$(grep -nHE '^[[:space:]]*(tokio-postgres|sqlx|diesel)[[:space:]]*=' crates/pe-app/Cargo.toml 2>/dev/null || true)"
+[ -n "$hits" ] && report "database client dependency (only pe-app's postgres is admitted)" "$hits"
 
 # C libraries the Windows ARM64 and cross-compiled builds cannot rely on
 # (spec.md 1.3, CLAUDE.md): rustls with ring instead of OpenSSL or native-tls,
@@ -187,6 +190,6 @@ elif echo "$csp" | grep -qE "\*|https://" ; then
 fi
 
 if [ "$fail" -eq 0 ]; then
-  echo "offline check passed: HTTP only in pe-env/pe-trackers, no database client, CSP is 'self'-only"
+  echo "offline check passed: HTTP only in pe-env/pe-trackers, the read-only PostgreSQL client only in pe-app, CSP is 'self'-only"
 fi
 exit "$fail"
