@@ -13,7 +13,6 @@ export default {
   "Search all vessel fields, including name, model, class, make and builder": "名前、艇種、クラス、メーカー、ビルダーなど、艇のすべての項目を検索します",
   "Name, model, class, make, builder…": "名前、艇種、クラス、メーカー、ビルダー…",
   "Searching boat tracks…": "艇の航跡を検索中…",
-  "Scrape races, or choose the track library's folders, in Settings to search local tracks.": "ローカルの航跡を検索するには、設定でレースを取得するか、航跡ライブラリのフォルダを選んでください。",
   "{count} matching tracks": "一致する航跡 {count} 件",
   "GeoJSON file missing from the configured directory": "設定したディレクトリに GeoJSON ファイルがありません",
   "Import this boat track; weather can be fetched afterwards": "この艇の航跡を読み込みます。気象データは後から取得できます",

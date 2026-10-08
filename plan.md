@@ -6,6 +6,263 @@ How PolarExplorer gets built, in order. `spec.md` says what it does;
 `CLAUDE.md` says how to work in the code. Update a milestone's status in the
 same commit that finishes it.
 
+**2026-10-08: v0.3.7 release preflight — complete.**
+The workspace, npm manifests/lockfile, Cargo lockfile and Tauri configuration
+all name 0.3.7. The production frontend build, release-version guard, ten
+driver/tooling tests, four macOS signing-configuration tests and four release
+asset tests pass. The feature validation below covers this release's source.
+The tagged Release builds workflow produces and checks all five platforms;
+local preflight does not claim a fresh cross-platform install/signing review.
+
+**2026-10-08: Deferred tracker downloads and conditional vessel search — complete.**
+Open requests only YellowBrick/Geovoile boat metadata. Import tracks downloads
+positions and imports the choices, retaining choices for retry and preventing
+late answers after cancellation from importing. Blue Water Tracks waits for the
+first Import tracks to download its combined response, then shows its picker
+(as confirmed by the user). Cached events still open without a request.
+The vessel-search heading, input and results are hidden when the configured
+metadata file is absent, with presence refreshed after settings changes,
+metadata jobs and window focus. Help and all eight translations follow the flow.
+Validation: 871 Rust tests pass, as do clippy, formatting, typecheck and the
+offline check. All 526 UI tests pass across the full suite and focused reruns
+(the translation cleanup and new metadata-directory regression were rechecked).
+All five performance checks pass; the tracker fixture was updated to count the
+selected preview line separately after Import tracks. For 444 boats, listing
+took 338 ms, the map update 104 ms, ticking 6 ms and searching 43 ms.
+Desktop tracker import, position-failure/retry and track-library checks pass
+with local fixtures. Request counts prove no position request before Import,
+cache reuse and metadata-only refresh. Screenshots of the deferred picker,
+download progress, retained retry selection, hidden search and visible search
+with configured metadata were inspected. The test applications were closed.
+
+**2026-10-08: Named storage providers and anonymous S3 — complete.**
+Settings now names S3, R2 and Tigris in every language, and Help uses the same
+provider names. S3 metadata and chunk-range reads use unsigned requests and
+ignore AWS environment variables and legacy credential files. R2 and Tigris
+keep their existing signing credentials. Offline desktop error tests now use
+an invalid cache path so public S3 cannot turn them into live downloads.
+The 25 Whirlwind tests pass, including unsigned metadata and both range forms.
+A live anonymous sample at 48N, 5W, 2000-01-03 12:30Z returned wind, waves and
+current in 2.16 s (11 requests, 1,363,360 bytes); a repeat made no requests.
+Validation: all 867 Rust tests, 520 UI tests, five UI performance checks,
+clippy, formatting, typecheck, translations/Help and the offline check pass.
+The UI selection timing test exceeded its budget during compilation and passed
+on a focused rerun. Local HTTP fixtures required running outside the sandbox.
+Desktop source-selection and track-library checks pass. The weather check also
+passes after adjusting its expected status for the earlier cache-validation
+failure (no weather was fetched, and retry stays available). Provider labels,
+persistence and the weather settings screenshots were inspected.
+
+**2026-10-07: Bulk Whirlwind weather — complete.**
+Selected Whirlwind tracks now share one chunk-planning and download pipeline:
+up to 128 compatible queued tracks, 10,000 samples per batch, and 72 hours of
+lookahead per track. Time-ordered batches include different races and dates;
+overlapping tracks fetch and decode each required inner chunk once per batch.
+The existing 64-request cap applies to the whole pipeline. Each shard's chunks
+start when its index arrives, without waiting for unrelated indexes. Decoding
+has a separate CPU limit (up to eight workers), and decoded float16 bytes share
+the existing bounded RAM cache with compressed chunks and indexes. Hourly
+stencils are planned once for all seven parameters.
+
+Disk-cache I/O and checksums run concurrently; reservations include temporary
+files in the size cap, and clearing/changing the limit waits for active I/O.
+Per-track progress, cancellation, partial results, source provenance and boat
+tab identity remain independent. Shared reads that fail for one chunk retry
+per-track subsets; archive/credential/cache failures stop the cohort without
+repeating the failure once per boat. UI refreshes are coalesced per batch.
+Open Data keeps its existing runner.
+
+Fixture verification: 50 routes needed exactly eight shard indexes and twelve
+inner chunks, with no duplicate ranges. Re-reading all fifty routes made no
+network requests or additional decodes. On this run the cold batch took 176 ms
+and the fifty warm reads took 12 ms. Job regressions cover overlapping routes,
+sample limits, disjoint dates, cancellation/resume, failures and equal source
+IDs in different tabs. All 866 Rust tests, 520 UI tests, five UI performance
+checks, clippy, formatting, typecheck and the offline check pass. The selection
+timing test and performance suite needed reruns after concurrent builds stopped;
+their thresholds were unchanged.
+
+The desktop test imported Astarte / Harvest Moon 2021, Azure / Pacific Cup 2022
+and Towhee / Newport Bermuda 2022, selected all three, and fetched hourly R2
+weather together. All three were active simultaneously and reached ready in
+17.439 s, with 388/395, 509/559 and 1249/1249 samples containing wind. A forced
+refetch of every sample took 217 ms from the warm cache and preserved those
+counts. Cold and warm screenshots show plotted samples and were inspected.
+An earlier desktop launch waited out its build timeout, and the first live
+attempt failed an R2 shard request after retries; a direct range read and the
+fresh desktop retry succeeded. The job-error regression also verifies that
+such an archive failure empties the queue without per-boat retry loops.
+
+**2026-10-07: Cal 40 search matches and empty weather status — complete.**
+Investigated the reported R2 fetch with no dots. The blank boat tab contained
+land-event tracks returned by "cal 40": "cal" matched names such as Pascal,
+while "40" matched a timestamp or ID. Their completed fetches had no usable
+wind. The same R2 reader successfully fetched three actual Cal 40 sailing
+tracks through library import and the Fetch weather button: Astarte / Harvest
+Moon 2021 (388/395 samples with wind, 11.9 s), Azure / Pacific Cup 2022
+(509/559, 13.3 s), and Towhee / Newport Bermuda 2022 (1249/1249, 6.2 s).
+All three displayed dots; screenshots were inspected.
+
+Complete-query matches within one vessel value now precede incidental
+matches across fields, preserving all searchable fields and catalogue order
+within each tier. The existing on-disk index remains compatible. Completed
+weather with no plottable samples says "no points to plot" in all languages;
+weather status has its own wrapping line and refetch remains available.
+Validation: 855 Rust tests and 520 UI tests pass, plus final library/track
+regressions, formatting, clippy, typecheck and offline checks. All five UI
+timing checks pass after rerunning two that exceeded their budgets during
+compilation. Prepared real-library searches take 0.53–7.74 ms (previously
+0.46–9.90 ms); the actual "cal 40" query now returns Astarte and Azure first.
+Desktop checks verified ranking and the empty-weather status using an isolated
+copy of the affected project; the visible sidebar screenshots were inspected.
+
+**2026-10-07: Start weather directly — complete.**
+Removed the download-size modal and its UI estimate request. Single-track
+and selected-track actions immediately queue hourly weather. Ready tracks
+still refetch all samples; partial tracks resume. Pending starts reject
+duplicate clicks, failed starts preserve selection for retry, and existing
+job progress and cancellation remain. Updated Help and all translations.
+Validation: all 854 Rust and 519 UI tests, typecheck, clippy, formatting,
+five performance checks and the offline check pass. The weather, track-library
+and data-source desktop checks pass; a live R2 route fetched all 12 positions
+from one click with no estimate modal and displayed Weather: ready.
+Screenshots of the completed route, selected-track fetch and retry state
+were inspected.
+
+**2026-10-07: R2, Tigris and combined Whirlwind chunks — complete.**
+Added Source 2 (Cloudflare R2) and Source 3 (Tigris), using the supplied
+embedded S3 credentials as explicitly requested. Both use the confirmed
+`whirlwind-hindsight/hindsight` bucket/prefix. The R2 management token is
+unnecessary and is not embedded. Signed GETs use the selected endpoint and
+region; credentials stay outside IPC, settings, project files and logs.
+All Whirlwind sources now use the R2 example's single `data` array: 72 hours ×
+7 named parameters × 40 × 40 cells per Zstandard float16 inner chunk.
+Separate wave-array reads are gone. Each requested inner chunk is downloaded
+once, including requests for different weather components. The existing
+bounded cache and clear controls remain; endpoint, shard ETag and byte range
+separate cache entries. Provider switching replaces a route's prior weather
+and records the selected source, including on queued jobs.
+Recorded R2 metadata and hand-computed fixtures cover exact byte ranges,
+parameter ordering, antimeridian/time boundaries, parallel reads, source
+isolation, cache reuse across routes/restarts and invalidation. The same
+fixture stencil now needs two requests instead of four. Local mock timings:
+209 ms serial and 84 ms with four requests allowed in flight.
+Validation: 854 Rust tests, 519 UI tests, typecheck, clippy, formatting,
+five UI performance checks and the offline boundary pass. Live R2 retrieved
+all seven values at 48N, 5W, 2000-01-03 12:30Z with 11 requests and 1,363,360
+bytes including metadata; memory reuse made no requests, and a restarted
+reader used the disk chunk without downloading it again. Observed cold R2
+times were 20.7–38.3 s on this connection. Tigris authentication, metadata and
+missing-shard handling pass, but its bucket currently contains no data chunks
+under `hindsight/data/c/`, so live weather/cache validation there awaits upload.
+Desktop source-selection and cache-control tests pass, including persisted
+R2/Tigris choices, cache limits and clearing only owned files. A live R2
+desktop import fetched all 12 route positions, showed Weather: ready, and
+cached 860,648 bytes. Source-selection, cache and completed-route screenshots
+were inspected.
+
+**2026-10-07: YellowBrick position failure recovery — complete.**
+The importer discarded an already loaded boat list when positions failed,
+then reported the whole tracker unavailable. It now retains the list,
+search and selections, stops progress, explains that positions failed, and
+keeps Import disabled. Retry targets the listed event and preserves those
+choices; Open starts a new address normally. YellowBrick also tries its KML
+when RaceSetup succeeds but the binary remains unavailable after retries.
+A failed RaceSetup or cancellation never starts a KML fallback.
+Both regressions were reproduced before the fixes. Live Comanche loaded two
+boats and 1,576 positions; its public KML also responded successfully.
+Validation: all 849 Rust and 519 UI tests, typecheck, clippy, formatting,
+five UI performance checks and the offline-boundary check pass. Both desktop
+tracker tests pass. The failure fixture keeps the selected boat and search
+after both position feeds fail, then Retry recovers through KML despite
+continued binary 503s and imports its 1,670 positions. Screenshots of the
+failure, recovery and imported track were inspected.
+
+**2026-10-07: Wave slider hover appearance — corrected.**
+The generic enabled-button hover selector outranked the transparent rail's
+hover rule, painting its 28 px drag hit area blue. The rail's override now
+wins while keeping keyboard focus and drag behavior. Four existing slider
+tests and the offline check pass. An isolated WebKit desktop check reproduced
+the old background using equivalent hover/active classes, then confirmed all
+three rails stay transparent in both states. Normal/hover screenshots were
+inspected and match.
+
+**2026-10-07: Hourly-only weather and fast track search — complete.**
+Removed the three-hourly option, estimates and automatic recommendation.
+UI, MCP and GRIB weather reads accept hourly sampling only. Older projects
+keep their saved weather; the next fetch replaces a legacy coarse interval
+completely, and its estimate includes all affected samples. The dialog and
+all eight Help/translation catalogues now describe hourly downloads only.
+
+Track search now prepares substring matchers once per query, checks each
+vessel once, reuses matching row IDs for pagination, and checks the visible
+page's files in parallel with one directory resolution. A disposable local
+search index survives restarts, validates the metadata path/size/mtime, and
+rebuilds on changes or corruption. Startup and metadata-folder changes warm
+it on a background thread; search work runs off the async dispatcher.
+The typing delay is 50 ms and stale answers cannot replace a newer query.
+
+Measured read-only against the user's 261,631,595-byte library (80,585 tracks):
+before, 5,212 ms first search and 66–212 ms subsequent searches; after,
+0.46–9.90 ms with the index prepared, with identical query result counts and
+file-availability counts. First-time index construction took 7,135 ms;
+reloading its 91,861,194-byte cache after restart took 998 ms, both now warmed
+in the background. These are local backend timings; typing adds 50 ms.
+Validation: 848 Rust tests, 518 UI tests (the corrected new search test was
+rerun separately), typecheck, clippy, five UI performance checks, formatting,
+offline boundaries, and desktop track-library and weather-source tests passed.
+Desktop screenshots were inspected, including the hourly-only fetch dialog.
+
+**2026-10-07: Persistent Whirlwind chunk cache — complete.**
+Requested cache directory, maximum size in GB and Clear cache supersede the
+memory-only D27 rule for Whirlwind. Open Data remains in memory. Validated
+compressed inner chunks use a versioned, checksummed, bounded LRU disk cache;
+shard ETags prevent reuse across archive rewrites. Cache I/O runs on blocking
+workers, and clearing invalidates writes already in flight without touching
+project weather or unrelated files.
+Settings defaults to the platform cache directory and 10 GB, saves directory
+and limit changes, and exposes usage and Clear cache. All eight translations
+and Help cover it. Saving cache preferences preserves other Settings drafts.
+Validation: 845 Rust tests, 516 UI tests, typecheck, clippy, formatting, five
+UI performance checks, the offline boundary check and both desktop weather
+tests passed. The live desktop test cached 5,640,265 bytes for 1,501 Fastnet
+2019 samples. After a full app restart, another project using that route
+estimated zero chunk downloads and processed its samples in 233 ms; clearing
+then returned cache usage to zero, made a refetch require 5,639,785 bytes,
+and preserved all 1,501 saved sample results. Timings are local measurements.
+
+**2026-10-07: Whirlwind estimate hangs — corrected.**
+The route estimate's synchronous body ran inside Tauri's async dispatcher,
+then called the Whirlwind runtime's `block_on`, which panicked before replying
+to IPC and poisoned the metadata lock. The command now awaits a blocking
+worker for the whole estimate, including provider construction/replacement,
+and converts worker failure into an IPC error. Regression coverage exercises
+the real Tauri dispatcher, repeated pre-request failures and switching back
+to Open Data, plus the desktop fetch dialog and busy indicator.
+The regression reproduced the original runtime panic before the fix. After
+the fix, the full Rust and UI suites, clippy, formatting, typecheck, UI
+performance and offline checks passed. The desktop regression confirms failed
+estimates and retries stop the spinner. A separate live desktop run on a copy
+of Assent's Fastnet 2019 route estimated 6 MB and processed all 1,501 samples
+in 2.61 s after starting the fetch (1,487 with wind, archive gaps retained).
+
+**2026-10-07: Historical weather source selection — complete.**
+Added persistent Open Data / Whirlwind selection. The Whirlwind reader uses
+verified live Hindsight v3 metadata, sparse inner-chunk Range reads, async S3
+concurrency, parallel pure-Rust Zstandard decoding, bounded session memory,
+cancellation and dataset provenance. Credentials live in a private application
+config file, never the repository or frontend. Validation covers source
+switching, sparse request planning, interpolation, cache reuse, error handling,
+concurrency, the live bucket and the actual Settings dialog. The workspace
+suite passed (832 tests), followed by the updated weather/settings regression
+suites; all 516 UI tests, typecheck, translations/help checks, five UI performance
+tests, formatting, clippy and the offline boundary check passed. The desktop
+UX test verifies both choices and persistence. A live sample at 48N, 5W,
+2000-01-03 12:30Z read wind, waves and current in 2.51 s, 16 requests and
+1,344,444 bytes including metadata; its repeat made zero requests. The local
+latency fixture took 405 ms with one request at a time and 116 ms with four
+in flight. These are developer-machine measurements, not a throughput promise.
+
 **2026-09-27: First draft.** Spec, plan and CLAUDE.md drafted from the
 product description, a survey of VectorEffects, verified vendor formats
 (YellowBrick, Geovoile, Blue Water Tracks), the `tracker-index` reference
@@ -1563,7 +1820,7 @@ guide test holds every tool it names to the tools that exist.
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| Reanalysis download volume (global chunk per hour per variable) | Slow first import; large disk use | Shared chunk cache, size estimate before start, 3-hourly option, M3 measurements |
+| Reanalysis download volume (global chunk per hour per variable) | Slow first import; large disk use | Shared chunk cache, size estimate before start, sparse block/chunk reads, M3 measurements |
 | Vendors change formats (Geovoile especially) | Imports break | Plausibility checks, clear "unsupported" errors, weekly live tests |
 | Scraping terms of use | Legal or blocking | Only user-initiated single-event fetches, polite concurrency, no credentials (D5); ask before adding trackers |
 | WeatherBench2 frozen at 2023-01-10 | No wind for recent races from WB2 | ARCO-ERA5 fallback (D12, Q2) |
@@ -1594,15 +1851,15 @@ guide test holds every tool it names to the tools that exist.
 | D16 | three.js, bundled locally, for 3D | VectorEffects has no 3D; three.js is mature and works in every Tauri webview |
 | D17 | Edits stored as overlays (cell overrides, exclusions) | Invariant 1; reversible, auditable |
 | D18 | Track segment cell statistic defaults to the 90th percentile, minimum 5 samples | Polars describe good sailing; the mean undershoots |
-| D19 | Reanalysis sampling hourly by default, 3-hourly option; the pre-flight dialog preselects 3-hourly when the hourly download would exceed half the chunk-cache limit | Confirmed by M3: a 5-day race hourly is ≈ 1.2 GB and ≈ 40 s cold at 8 requests in flight, and a warm chunk is 3 ms. Hourly resolves wind shifts and tidal streams that 3-hourly smooths. A long race is different: the Vendée Globe hourly would be ≈ 19 GB, about the whole default cache, which is when 3-hourly is the better default |
+| D19 | Reanalysis is hourly only, with no coarser option or size-based fallback (updated 2026-10-07) | Requested by the user: remove the 3-hourly fetch option and always fetch hourly. Supersedes the original D19/D27 interval recommendation. Existing saved weather retains its provenance. |
 | D20 | Current tiers: regional tidal reanalysis → global merged (uo + utide, 2020-11+) → GlobCurrent (geostrophic + Ekman + FES2022 tide, 1993+; its 202411 metadata, checked 2026-09-28, Q7) | Only anonymous sources; GlobCurrent (FES2022) gives tides globally from 1993, not only NW Europe/IBI |
 | D21 | 2D polar plot (M6): "All" draws one curve per visible source per wind speed that source's grid has; curves are read at each source's own TWA points; the full-size view is a Map-stage overlay toggled by the shell, closed by its own button, Escape or a stage switch | Spec §9.2 named the slider's "all" state and the full-size overlay without saying what either draws or how the overlay opens and closes |
 | D23 | Blend and export (M14): an output cell read from an excluded node of a polar source is empty for that source (not read across it); the fill steps interpolate only between known values and the 0° row takes no part in them (set to 0 kn last, "filled" unless a source had it); sources are summed in id order and cells rounded to 1e-6 kn; the Blend settings dialog applies as one undo entry, the Blend entry's switch and colour as their own; the grid editor takes two decimals at most (≥ 0.01 apart); a custom export grid is the project-grid blend resampled; export refuses axis collisions, > 60 kn and an empty blend, naming the values | Spec §12.3 named the rule and the fill order without saying how exclusions reach a resampled cell, whether the 0° row anchors the fill, the summation order or how settings are undone; §12.2 and the M4 carry left the grid editor's precision open |
 | D23a | M14 review round 1 (controller rulings): a track cell with an override counts with confidence 1 whatever its sample count, 0 included; the 0° row is no evidence — it counts in no coverage, and a blend with no value off it is empty and refused by export; a custom export grid does not anchor on the 0° row (output 0° row 0 kn); new projects' blend colour is `#e0457b` and a colour lost on the background is outlined; out-of-range sample counts are clamped on load; the blend cache keys sources by id | Review of M14 |
-| D24 | Tracker and file imports download tracks only, never weather. The boat list shows as soon as the tracker names the boats (YellowBrick's RaceSetup, Geovoile's config), while the positions download; independent requests run at once and are asked for gzipped. Weather is a separate step the user starts per track (Fetch weather…) or for ticked tracks (Fetch weather for selected tracks…); its estimate dialog opens at once and calculates in the background | Settled with the user 2026-09-28: "the yellowbrick downloader is too slow. it should first download just the tracks with no weather info. then prompt the user to pick a track and then download the weather separately"; "do the same for the other tracker scrapers they need to download the tracks super fast". Supersedes "import starts the fetch" in spec §7.5 (M9) and the post-import pre-flight of M10 |
+| D24 | Tracker and file imports download tracks only, never weather. The boat list shows as soon as the tracker names the boats (YellowBrick's RaceSetup, Geovoile's config), while the positions download; independent requests run at once and are asked for gzipped. Weather is a separate step the user starts per track (Fetch weather…) or for ticked tracks (Fetch weather for selected tracks…); weather starts immediately without an estimate dialog (updated at the user’s request on 2026-10-07) | Settled with the user 2026-09-28: "the yellowbrick downloader is too slow. it should first download just the tracks with no weather info. then prompt the user to pick a track and then download the weather separately"; "do the same for the other tracker scrapers they need to download the tracks super fast". Supersedes "import starts the fetch" in spec §7.5 (M9) and the post-import pre-flight of M10 |
 | D25 | Agent-driven UI testing: `pe-app`'s optional `webdriver` feature compiles in `tauri-plugin-webdriver-automation`, an endpoint on `127.0.0.1` at a random port that drives the whole interface. Off by default, never in `npm run build`; `tests/webdriver_optional.rs` holds the manifest to that (check:offline cannot see a listener). Under the feature only: `PE_AUTOMATION_ROOT` redirects the settings, recent list, autosave and cache to a driver's temporary directory, and `PE_DRIVER_YELLOWBRICK` (a `http://127.0.0.1:<port>` origin only) serves the YellowBrick dialog from a local fixture server. In development builds only (`import.meta.env.DEV`): queued answers for native file dialogs, `__peOpen`, and a synchronous redraw on the WebGL canvases for screenshots. The suite runs the dev build (StrictMode) | Settled with the user 2026-09-28: "ensure that the project is set up with webkit testing so that all agents can interact with ui elements, take screen shots, and run ux tests agentically". Copied from VectorEffects (M71); the inbound exception to invariant 4 is worded as VectorEffects words its invariant 5 |
 | D26 | ORC search by field: under the all-fields box, a "Search by field" disclosure (folded by default, remembered per user in `localStorage`) with boat name, sail number, country, model / type, builder, designer, year built from–to (the former year and country filters, moved in) and certificate year. Every filled field and the main box must match; a field's words must start words of that field only (same folding and compact forms); the certificate year matches from its start. A field equal to its whole field ranks above every other tier. The field boxes are not saved; Clear empties them and keeps the main box | Settled with the user 2026-09-28: "in the orc section, add some ux to search each field independently." |
-| D27 | Weather downloads read only the blosc blocks of each archive chunk that hold a track's rows (HTTP Range: a 64-byte head, then the blocks), for ERA5 and the current geoChunks alike; nothing downloaded is kept on disk, only an in-memory LRU of blocks for the session (256 MB default, 16–4096 MB), and an earlier version's chunk cache is removed once with a status-line notice. A project stores per sample only its non-derived values by column, the environment rounded to 0.01 kn, 0.1° and 0.01 m (schema 2; derived angles recomputed on load). D19 re-evaluated: hourly stays the default (a 5-day race ≈ 150 MB); 3-hourly is preselected above 1 GB hourly instead of half the old cache limit | Settled with the user 2026-09-28: "The weather download should not be so many gigabytes. do not store the entire time step of data, simply store the wind speed and direction (and current, and wave height and direction) interpolated to each position in the track. It should be kilobytes per track." No anonymous point-chunked ERA5 exists; the blocks are the finest unit the archives allow (≈ 1/8 of an ERA5 field, 1/5–1/7 of a geoChunk) |
+| D27 | Weather downloads read only the blosc blocks of each archive chunk that hold a track's rows (HTTP Range: a 64-byte head, then the blocks), for ERA5 and the current geoChunks alike; Open Data keeps downloads only in an in-memory LRU of blocks for the session (Whirlwind uses the bounded disk cache requested 2026-10-07) (256 MB default, 16–4096 MB), and an earlier version's chunk cache is removed once with a status-line notice. A project stores per sample only its non-derived values by column, the environment rounded to 0.01 kn, 0.1° and 0.01 m (schema 2; derived angles recomputed on load). The original D19 size-based interval recommendation was superseded on 2026-10-07: sampling is always hourly | Settled with the user 2026-09-28: "The weather download should not be so many gigabytes. do not store the entire time step of data, simply store the wind speed and direction (and current, and wave height and direction) interpolated to each position in the track. It should be kilobytes per track." No anonymous point-chunked ERA5 exists; the blocks are the finest unit the archives allow (≈ 1/8 of an ERA5 field, 1/5–1/7 of a geoChunk) |
 | D28 | Compare (M15, controller rulings): computed in Rust from the derived cache, operands read on the output grid as the other views read them (a polar source as the blend reads it, excluded nodes empty; a segment with its overrides; the cached blend; hidden sources allowed), one binary packet; Δ rounded to 1e-6 kn, Δ % of B absent where B is 0 kn; the 0° row takes no part; a region is a per-TWS run of TWA cells beyond ±threshold (0.05 kn default, a Compare setting); the difference surface lies midway between A and B, one-only cells at that operand's speed, grey and hatched; the diverging scale is blue–orange in OKLab, symmetric about zero, with dark- and light-scheme stops and not the flash orange; A, B, % and threshold are view state keyed by project id, not undoable or saved; a source row's Compare opens A = source, B = blend. Review round 1: in % mode a cell where B is under 0.1 kn is not comparable in % (plain grey, out of the % statistics, counted; packet v2 carries the count); the heat map is a canvas; the 3D hatch covers only all-one-only quads and every one-only node gets a cross | Spec §11 named the operands, the surfaces, the overlap rule and the summary without saying how operands are read, where the difference surface lies, what a region is, or how choices persist |
 | D29 | MCP service (M21): an MCP server inside the application, following VectorEffects' (its `docs/superpowers/specs/2026-09-16-mcp-service-design.md`): `rmcp` over Streamable HTTP on `127.0.0.1` only (default port 47392, one above VectorEffects'), a bearer token issued when the Settings switch is turned on and cleared when it is turned off, `Host` and `Origin` held to loopback names, always compiled in but creating no socket, thread or task while off; curated tools plus an `invoke` escape hatch, every one calling the interface's own command, so an agent's edit is undoable and the views follow it; buttons for Claude Code, Codex and Claude Desktop. **No ChatGPT button**: ChatGPT reaches MCP servers only over public HTTPS or OpenAI's Secure MCP Tunnel, never loopback, and the application neither exposes itself nor runs a tunnel. Recorded as the one inbound exception to invariant 4, not a repeal: a second inbound socket would need the same four properties (off until switched on, bound to a token that switch issues, loopback names only, the domain through the interface's commands) and its own entry. The WebDriver rule (D25) is unchanged. Design in `docs/superpowers/specs/2026-10-01-mcp-service-design.md` | Requested by the user 2026-10-01 ("add mcp server support with on/off in settings … follow the design and decisions in vector effects"); the ChatGPT ruling settled with the user the same day |
 | D30 | M20 (settled with the user 2026-10-01): the application is **PolarExplorer**, renamed in everything a person reads only — the bundle identifier `com.polareffects.desktop`, the settings folder, the PostgreSQL id namespace `polareffects/syrf/…`, the repository, the `pe-` prefix and `.wpsproj` are unchanged, so nothing on disk moves. Source **weights run 0–1** (they ran to 2); a stored weight above 1 is **clamped to 1** on load (schema 7), not rescaled, so a blend that leaned on one changes. Dots can be coloured by the **time of day**, four bands of local mean solar time (UTC shifted by longitude, 15° an hour): night 21–05, morning 05–12, afternoon 12–17, evening 17–21 — clock bands, not the sun's elevation; decided in Rust and carried in bits 8–9 of each sample's flags (3D scene layout 4, 2D dots layout 2). The blend names what is behind a cell (`blend_cell`, from the same code that sums the weighted mean). Compare reads a polar source by the project's interpolation rule, as the blend does. The 2D plot has a Measure tool that reads the drawn curves and changes nothing. The GRIB provenance text follows the name, so `reanalysis.grib2` and its pinned hash changed | The user's request of 2026-10-01 and their answers to four questions (rename depth, band definition, ChatGPT, old weights) |

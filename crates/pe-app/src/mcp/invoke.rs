@@ -113,6 +113,10 @@ pub const EXCLUDED: &[&str] = &[
     "set_autosave_mode",
     "set_weather_memory",
     "set_network",
+    "set_data_source",
+    "set_weather_cache",
+    "weather_cache_status",
+    "clear_weather_cache",
     "set_projection",
     "set_plot_band",
     "set_catalogue_schedule",
@@ -133,6 +137,7 @@ pub const EXCLUDED: &[&str] = &[
     "metadata_download_status",
     "cancel_metadata_download",
     "search_database_boats",
+    "library_metadata_available",
     "import_database_track",
     // Quitting is the person's, and goes through their unsaved-changes guard.
     "quit_app",
@@ -226,7 +231,7 @@ pub const TABLE: &[(&str, Handler)] = &[
     command!(cancel_tracker_event, crate::trackers::cancel_tracker_event, { boat_context: Option<u64> }),
     command!(async import_tracker_boats, crate::trackers::import_tracker_boats, { boat_context: Option<u64>, tracker: String, key: String, boats: Vec<String> }),
     // Weather.
-    command!(env_estimate, crate::env::env_estimate, { boat_context: Option<u64>, source_ids: Vec<u64>, restart: bool }),
+    command!(async env_estimate, crate::env::env_estimate, { boat_context: Option<u64>, source_ids: Vec<u64>, restart: bool }),
     command!(env_jobs, crate::env::env_jobs, { boat_context: Option<u64> }),
     command!(set_use_corrected, crate::env::set_use_corrected, { boat_context: Option<u64>, on: bool }),
     // The polar views' edits.

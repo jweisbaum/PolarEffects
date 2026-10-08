@@ -36,17 +36,42 @@ fn every_setting_is_saved_and_read_back_after_a_restart() {
         },
     )
     .unwrap();
+    settings::data_source_set(&app, settings::DataSource::Whirlwind).unwrap();
     let last = settings::projection_set(&app, MapProjection::Orthographic).unwrap();
 
     let restarted = root.state();
     let read = settings::current(&restarted).unwrap();
     assert_eq!(read, last);
     assert_eq!(read.language, "fr");
+    assert_eq!(read.data_source, settings::DataSource::Whirlwind);
     assert_eq!(read.theme, "paper");
     assert_eq!(read.units, units);
     assert_eq!(read.weather_memory_mb, 1024);
     assert_eq!(read.network.concurrency, 4);
     assert_eq!(read.projection, MapProjection::Orthographic);
+}
+
+#[test]
+fn every_weather_source_survives_a_restart_without_credentials_in_settings() {
+    use settings::DataSource;
+    let root = TempRoot::new("weather-sources");
+    for source in [
+        DataSource::WhirlwindR2,
+        DataSource::WhirlwindTigris,
+        DataSource::Whirlwind,
+        DataSource::OpenData,
+    ] {
+        let app = root.state();
+        settings::data_source_set(&app, source).unwrap();
+        let read = settings::current(&root.state()).unwrap();
+        assert_eq!(read.data_source, source);
+        let json = serde_json::to_string(&read).unwrap();
+        assert!(
+            !json.contains("access_key")
+                && !json.contains("secret_access")
+                && !json.contains("session_token")
+        );
+    }
 }
 
 #[test]
@@ -152,4 +177,42 @@ fn an_earlier_versions_chunk_cache_is_announced_then_removed_once() {
     assert!(settings::legacy_cache_found(&app).is_none());
     assert!(settings::remove_legacy_cache(&app).is_none());
     assert_eq!(Settings::default().weather_memory_mb, 256);
+}
+
+#[test]
+fn whirlwind_disk_cache_settings_persist_and_clear_preserves_other_files() {
+    let root = TempRoot::new("weather-disk-cache");
+    let app = root.state();
+    let directory = root.file("chosen-cache");
+    let saved = pe_app::weather_cache::configure(&app, directory.clone(), 2).unwrap();
+    assert_eq!(
+        root.state()
+            .with_session(|s| Ok(s.settings.weather_cache.clone()))
+            .unwrap(),
+        saved.weather_cache
+    );
+    let cache = pe_app::weather_cache::open(&app, &saved.weather_cache).unwrap();
+    let key = pe_env::whirlwind::DiskCache::key(
+        pe_env::whirlwind::URL,
+        "data/c/0/0/0/0",
+        "version",
+        0,
+        100,
+    );
+    cache.put(&key, &vec![1; 100].into(), 0).unwrap();
+    std::fs::write(std::path::Path::new(&directory).join("keep"), b"project").unwrap();
+    assert!(pe_app::weather_cache::status(&app, false).unwrap().bytes > 0);
+    assert_eq!(pe_app::weather_cache::status(&app, true).unwrap().bytes, 0);
+    assert_eq!(
+        std::fs::read(std::path::Path::new(&directory).join("keep")).unwrap(),
+        b"project"
+    );
+    for (path, size) in [
+        ("relative".to_owned(), 2),
+        (directory.clone(), 0),
+        (directory, 4097),
+    ] {
+        assert!(pe_app::weather_cache::configure(&app, path, size).is_err());
+    }
+    assert_eq!(settings::current(&app).unwrap(), saved);
 }

@@ -17,22 +17,22 @@ import { dateRange, formatBytes } from "./trackImport";
 import { addressHint, boatStatusText, filterBoats, legAddress, NO_RETRY, TRACKER_NAMES, type TrackerId } from "./trackerImport";
 import { coastPath, frameOf, linePath, lodFor, VIEW_H, VIEW_W } from "./trackerPreview";
 
+type DownloadFailure = { text: string; detail: string; retry: boolean };
+
 type Phase =
   | { kind: "address" }
   | { kind: "downloading"; progress: TrackerProgress | null }
-  | { kind: "failed"; text: string; detail: string; retry: boolean }
-  // `event.positions` false: the boat list, sent ahead while the positions
-  // still download (D24); the boats can be ticked, not yet imported.
-  | { kind: "event"; event: TrackerEventView; progress: TrackerProgress | null };
+  | ({ kind: "failed" } & DownloadFailure)
+  // A listing has no positions; only Import tracks starts their download.
+  | { kind: "event"; event: TrackerEventView; progress: TrackerProgress | null; pending?: boolean; failure?: DownloadFailure };
 
 /**
  * The shared tracker dialog (spec.md 7.2): paste the event's address and
- * the app downloads **every** boat's full track (a job with progress and
- * Cancel, spec.md 7.7). The boat list shows as soon as the tracker gives it
- * (YellowBrick's RaceSetup, Geovoile's config), while the positions still
- * download, so boats can be searched and ticked at once; the positions,
- * dates and map preview fill in when they arrive. Import tracks adds the
- * ticked boats, one track each, one undo, and fetches no weather (D24).
+ * app loads only the boat list (YellowBrick's RaceSetup, Geovoile's config).
+ * Import tracks downloads positions with progress and Cancel, then adds
+ * the ticked boats, one track each, one undo, with no weather (D24).
+ * A provider with a combined response waits for Import tracks before
+ * downloading anything, then offers its boat picker.
  * The event stays in memory for the session, so opening it again
  * downloads nothing.
  *
@@ -53,7 +53,7 @@ export default function TrackerImportDialog({ tracker, onDone, onCancel }: {
   const [query, setQuery] = useState("");
   const [chosen, setChosen] = useState<ReadonlySet<string>>(new Set());
   const [busy, setBusy] = useState(false);
-  const loading = phase.kind === "downloading" || (phase.kind === "event" && !phase.event.positions);
+  const loading = phase.kind === "downloading" || (phase.kind === "event" && phase.pending === true);
   const live = useRef(true);
   // Set on every mount, not only by useRef's initial value: StrictMode
   // (development) runs this cleanup and mounts again, and a flag left false
@@ -62,7 +62,7 @@ export default function TrackerImportDialog({ tracker, onDone, onCancel }: {
     live.current = true;
     return () => { live.current = false; };
   }, []);
-  // Which download is current: a later one (another leg, Download again)
+  // Which download is current: a later one (another leg, Refresh boat list)
   // makes an earlier one's answer, or its cancellation, stale.
   const generation = useRef(0);
   // The key of the current download, named by this dialog: a boat list sent
@@ -71,7 +71,9 @@ export default function TrackerImportDialog({ tracker, onDone, onCancel }: {
   const downloadKey = useRef("");
 
   const close = () => {
-    if (loading) void api.cancelTrackerEvent().catch(() => undefined);
+    live.current = false;
+    ++generation.current;
+    if (loading || busy) void api.cancelTrackerEvent().catch(() => undefined);
     onCancel();
   };
   const closeRef = useRef(close);
@@ -90,11 +92,12 @@ export default function TrackerImportDialog({ tracker, onDone, onCancel }: {
     if (!loading) return;
     const progress = listen<TrackerProgress>(TRACKER_PROGRESS, (e) => {
       if (!live.current) return;
-      setPhase((p) => (p.kind === "downloading" || (p.kind === "event" && !p.event.positions) ? { ...p, progress: e.payload } : p));
+      setPhase((p) => (p.kind === "downloading" || (p.kind === "event" && p.pending) ? { ...p, progress: e.payload } : p));
     }).catch(() => null);
     const listed = listen<TrackerListed>(TRACKER_LISTED, (e) => {
       if (!live.current || e.payload.download !== downloadKey.current) return;
-      setPhase((p) => (p.kind === "downloading" ? { kind: "event", event: e.payload.event, progress: p.progress } : p));
+      setPhase((p) => (p.kind === "event" && p.pending
+        ? { ...p, event: e.payload.event } : p));
     }).catch(() => null);
     return () => {
       void progress.then((off) => off?.());
@@ -111,36 +114,51 @@ export default function TrackerImportDialog({ tracker, onDone, onCancel }: {
     setChosen(new Set());
     setQuery("");
     try {
-      const event = await api.trackerEvent(tracker, address.trim(), refresh, key);
+      const event = await api.trackerEvent(tracker, address.trim(), refresh, key, true);
       if (!live.current || mine !== generation.current) return;
-      // Boats ticked from the list sent ahead stay ticked if the final
-      // event has them, with positions; an id it does not name (a listing
-      // that was not quite this event) is dropped, never imported.
-      const pickable = new Set(event.boats.filter((b) => b.fixes > 0).map((b) => b.id));
-      setChosen((old) => new Set([...old].filter((id) => pickable.has(id))));
       setPhase({ kind: "event", event, progress: null });
     } catch (error) {
       if (!live.current || mine !== generation.current) return;
       const kind = (error as { kind?: string }).kind ?? "";
       if (kind === "cancelled") { setPhase({ kind: "address" }); return; }
       const shown = describeError(error);
-      setPhase({ kind: "failed", text: shown.text, detail: shown.detail, retry: !NO_RETRY.has(kind) });
+      const failure = { text: shown.text, detail: shown.detail, retry: !NO_RETRY.has(kind) };
+      setPhase({ kind: "failed", ...failure });
     }
   };
 
   const run = async (event: TrackerEventView) => {
+    if (busy || loading) return;
+    const mine = ++generation.current;
+    const key = `${DIALOG_ID}.${++downloads}`;
+    downloadKey.current = key;
+    const ids = event.boats.filter((b) => chosen.has(b.id)).map((b) => b.id);
     setBusy(true);
+    let ready = event;
     try {
-      const ids = event.boats.filter((b) => chosen.has(b.id)).map((b) => b.id);
-      onDone(await api.importTrackerBoats(event.tracker, event.key, ids));
+      if (!event.positions) {
+        setPhase({ kind: "event", event, progress: null, pending: true });
+        ready = await api.trackerEvent(tracker, event.url, true, key);
+        if (!live.current || mine !== generation.current) return;
+        setPhase({ kind: "event", event: ready, progress: null });
+        // A combined response first supplies the boat picker after consent.
+        if (ids.length === 0) return;
+      }
+      const result = await api.importTrackerBoats(ready.tracker, ready.key, ids);
+      if (live.current && mine === generation.current) onDone(result);
     } catch (error) {
-      reportFailure(error);
+      if (!live.current || mine !== generation.current) return;
+      if (ready.positions) { reportFailure(error); return; }
+      const shown = describeError(error);
+      const kind = (error as { kind?: string }).kind ?? "";
+      setPhase({ kind: "event", event, progress: null,
+        failure: { text: shown.text, detail: shown.detail, retry: !NO_RETRY.has(kind) } });
     } finally {
-      setBusy(false);
+      if (live.current && mine === generation.current) setBusy(false);
     }
   };
 
-  /** Another leg of the event shown: its address, downloaded (or recalled) at once. */
+  /** Another leg: load its boat list, or recall already downloaded tracks. */
   const openLeg = (event: TrackerEventView, leg: number) => {
     const address = legAddress(event.url, leg);
     setUrl(address);
@@ -149,6 +167,11 @@ export default function TrackerImportDialog({ tracker, onDone, onCancel }: {
 
   const title = t("Import from {tracker}", { tracker: TRACKER_NAMES[tracker] });
   const event = phase.kind === "event" ? phase.event : null;
+  const failure = phase.kind === "failed" ? phase : phase.kind === "event" ? phase.failure : undefined;
+  const retry = () => {
+    if (event) { void run(event); return; }
+    void download(true);
+  };
   const progress = phase.kind === "downloading" || phase.kind === "event" ? phase.progress : null;
   // A stray click on the backdrop must not throw away a download or an
   // import under way; Cancel and Escape still end them (Cancel also stops
@@ -160,13 +183,13 @@ export default function TrackerImportDialog({ tracker, onDone, onCancel }: {
         <form className="tracker-address" onSubmit={(e) => { e.preventDefault(); void download(false); }}>
           <label>
             {t("Event address")}
-            <input data-feature="tracker-import:url" value={url} autoFocus disabled={loading}
+            <input data-feature="tracker-import:url" value={url} autoFocus disabled={loading || busy}
               placeholder={t("Paste the race's tracker link or key")}
               title={addressHint(tracker)}
               onChange={(e) => setUrl(e.target.value)} />
           </label>
-          <button type="submit" data-feature="tracker-import:open" disabled={loading || url.trim() === ""}
-            title={t("Download every boat's track (no weather); an event already downloaded this session opens at once")}>
+          <button type="submit" data-feature="tracker-import:open" disabled={loading || busy || url.trim() === ""}
+            title={t("Load the boat list; tracks download when you click Import tracks")}>
             {t("Open")}
           </button>
         </form>
@@ -176,8 +199,8 @@ export default function TrackerImportDialog({ tracker, onDone, onCancel }: {
               {progress?.fallback
                 ? t("The positions did not load; reading the KML instead…")
                 : event !== null
-                  ? t("Downloading the boats' positions; you can search and tick boats meanwhile…")
-                  : t("Downloading every boat's track…")}
+                  ? t("Downloading the boats' positions…")
+                  : t("Loading the boat list…")}
               {progress !== null && progress.bytes > 0 && ` ${formatBytes(progress.bytes)}`}
             </p>
             <div className={progress === null ? "progress-bar indeterminate" : "progress-bar"}>
@@ -185,20 +208,23 @@ export default function TrackerImportDialog({ tracker, onDone, onCancel }: {
             </div>
           </div>
         )}
-        {phase.kind === "failed" && (
-          <div className="import-failures" role="alert" title={phase.detail}>
-            <span>{phase.text}</span>
-            {phase.retry && (
-              <button className="small" data-feature="tracker-import:retry" onClick={() => void download(true)}
+        {failure && (
+          <div className="import-failures" role="alert" title={failure.detail}>
+            <span>{event && event.boats.length > 0 ? t("The boat list loaded, but the track positions could not be downloaded.") : failure.text}</span>
+            {failure.retry && (
+              <button className="small" data-feature="tracker-import:retry" onClick={retry}
                 title={t("Ask the tracker again")}>
                 {t("Retry")}
               </button>
             )}
           </div>
         )}
-        {event && (
-          <EventView event={event} query={query} onQuery={setQuery} chosen={chosen} setChosen={setChosen}
+        {event && event.boats.length > 0 && (
+          <EventView event={event} disabled={loading || busy} query={query} onQuery={setQuery} chosen={chosen} setChosen={setChosen}
             onRefresh={() => void download(true, event.url)} onLeg={(leg) => openLeg(event, leg)} />
+        )}
+        {event && !event.positions && event.boats.length === 0 && (
+          <p className="muted">{t("This tracker sends the boat list with the tracks. Click Import tracks to download them, then choose your boats.")}</p>
         )}
         <div className="modal-actions">
           <button onClick={close} title={t("Import nothing")}>{t("Cancel")}</button>
@@ -207,10 +233,8 @@ export default function TrackerImportDialog({ tracker, onDone, onCancel }: {
             <span className="muted">{t("{count} boats ticked", { count: chosen.size })}</span>
           )}
           {event && (
-            <button className="primary" disabled={busy || loading || chosen.size === 0}
-              title={loading
-                ? t("The positions are still downloading")
-                : t("Add one track per ticked boat (one undo takes them all back out); fetch their weather later, per track")}
+            <button className="primary" disabled={busy || loading || ((event.positions || event.boats.length > 0) && chosen.size === 0)}
+              title={t("Download and add the ticked boats' tracks; fetch their weather later")}
               onClick={() => void run(event)}>
               {t("Import tracks")}
             </button>
@@ -231,10 +255,11 @@ let downloads = 0;
  * It takes the language as a prop rather than subscribing to it: 444
  * subscriptions doubled the table's first draw.
  */
-const BoatRow = memo(function BoatRow({ boat, checked, loading, onToggle }: {
+const BoatRow = memo(function BoatRow({ boat, checked, loading, disabled, onToggle }: {
   boat: TrackerBoatRow;
   checked: boolean;
   loading: boolean;
+  disabled: boolean;
   onToggle: (id: string, on: boolean) => void;
   language: Language;
 }) {
@@ -242,7 +267,7 @@ const BoatRow = memo(function BoatRow({ boat, checked, loading, onToggle }: {
   return (
     <tr className={empty ? "muted" : undefined}>
       <td>
-        <input type="checkbox" checked={checked} disabled={empty}
+        <input type="checkbox" checked={checked} disabled={empty || disabled}
           aria-label={boat.name} onChange={(e) => onToggle(boat.id, e.target.checked)} />
       </td>
       <td>{boat.name}</td>
@@ -250,15 +275,16 @@ const BoatRow = memo(function BoatRow({ boat, checked, loading, onToggle }: {
       <td>{boat.model ?? ""}</td>
       <td>{boat.division ?? ""}</td>
       {loading
-        ? <td className="muted" title={t("The positions are still downloading")}>…</td>
+        ? <td className="muted" title={t("The positions have not loaded yet")}>—</td>
         : <td title={dateRange(boat.first, boat.last)}>{boat.fixes}</td>}
       <td>{boatStatusText(boat.status)}</td>
     </tr>
   );
 });
 
-function EventView({ event, query, onQuery, chosen, setChosen, onRefresh, onLeg }: {
+function EventView({ event, disabled, query, onQuery, chosen, setChosen, onRefresh, onLeg }: {
   event: TrackerEventView;
+  disabled: boolean;
   query: string;
   onQuery: (query: string) => void;
   chosen: ReadonlySet<string>;
@@ -298,8 +324,8 @@ function EventView({ event, query, onQuery, chosen, setChosen, onRefresh, onLeg 
         {event.leg !== null && event.legs !== null && (
           <label className="tracker-leg">
             {t("Leg")}
-            <select data-feature="tracker-import:leg" value={event.leg} disabled={loading}
-              title={t("This race is sailed in legs; each leg is its own event. Choose another to download it")}
+            <select data-feature="tracker-import:leg" value={event.leg} disabled={disabled}
+              title={t("This race is sailed in legs; choose a leg to load its boat list")}
               onChange={(e) => onLeg(Number(e.target.value))}>
               {Array.from({ length: event.legs }, (_, k) => k + 1).map((n) => (
                 <option key={n} value={n}>{t("Leg {leg} of {legs}", { leg: n, legs: event.legs ?? n })}</option>
@@ -308,9 +334,9 @@ function EventView({ event, query, onQuery, chosen, setChosen, onRefresh, onLeg 
           </label>
         )}
         {event.cached && (
-          <button className="small" data-feature="tracker-import:refresh" onClick={onRefresh}
-            title={t("Kept from earlier in this session; download it again for newer positions")}>
-            {t("Download again")}
+          <button className="small" data-feature="tracker-import:refresh" disabled={disabled} onClick={onRefresh}
+            title={t("Reload the boat list; newer tracks download when you click Import tracks")}>
+            {t("Refresh boat list")}
           </button>
         )}
       </div>
@@ -325,7 +351,7 @@ function EventView({ event, query, onQuery, chosen, setChosen, onRefresh, onLeg 
           <thead>
             <tr>
               <th>
-                <input type="checkbox" data-feature="tracker-import:select-shown" checked={allShown}
+                <input type="checkbox" data-feature="tracker-import:select-shown" checked={allShown} disabled={disabled}
                   title={t("Tick or untick every boat shown")} aria-label={t("Tick or untick every boat shown")}
                   onChange={(e) => toggleShown(e.target.checked)} />
               </th>
@@ -339,7 +365,7 @@ function EventView({ event, query, onQuery, chosen, setChosen, onRefresh, onLeg 
           </thead>
           <tbody>
             {shown.map((boat) => (
-              <BoatRow key={boat.id} boat={boat} checked={chosen.has(boat.id)} loading={loading} onToggle={toggle}
+              <BoatRow key={boat.id} boat={boat} checked={chosen.has(boat.id)} loading={loading} disabled={disabled} onToggle={toggle}
                 language={language} />
             ))}
           </tbody>

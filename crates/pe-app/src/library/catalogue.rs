@@ -9,7 +9,8 @@ use serde_json::Value;
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
+    time::SystemTime,
 };
 use ts_rs::TS;
 
@@ -94,48 +95,147 @@ pub(super) fn write_metadata(
     Ok(())
 }
 
-/// Derived only in memory, so existing version-1 downloads gain full vessel
-/// search without rewriting or downloading their metadata. Tracks of the same
-/// vessel share one folded string; typing never reprocesses the full JSON rows.
-#[derive(Debug)]
-pub struct Catalogue {
-    metadata: Metadata,
-    search_text: Vec<Arc<str>>,
+/// Search reads only vessel rows and track summaries. The other database
+/// tables can be hundreds of MB and are needed only when updating metadata.
+#[derive(Deserialize)]
+struct SearchMetadata {
+    version: u32,
+    #[serde(default)]
+    tables: VesselTable,
+    #[serde(default)]
+    tracks: Vec<BoatTrackHit>,
 }
+#[derive(Default, Deserialize)]
+struct VesselTable {
+    #[serde(default, rename = "Vessels")]
+    vessels: Vec<Value>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct SearchGroup {
+    text: String,
+    details: BTreeMap<String, String>,
+    tracks: Vec<usize>,
+}
+
+/// Disposable search index. Source identity includes its path, size and
+/// modification time so another library or an updated snapshot cannot reuse it.
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+struct SourceStamp {
+    path: PathBuf,
+    bytes: u64,
+    modified: SystemTime,
+}
+impl SourceStamp {
+    fn read(path: &Path) -> std::io::Result<Self> {
+        let info = std::fs::metadata(path)?;
+        Ok(Self {
+            path: path.to_owned(),
+            bytes: info.len(),
+            modified: info.modified()?,
+        })
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Catalogue {
+    version: u32,
+    source: SourceStamp,
+    tracks: Vec<BoatTrackHit>,
+    groups: Vec<SearchGroup>,
+    #[serde(skip)]
+    last_query: Mutex<Option<QueryMatches>>,
+}
+type QueryMatches = (Vec<String>, Arc<Vec<usize>>);
 impl Catalogue {
-    fn new(metadata: Metadata) -> Self {
-        let vessels = by_id(&metadata.tables, "Vessels");
-        let mut folded = BTreeMap::<&str, Arc<str>>::new();
-        let search_text = metadata
-            .tracks
-            .iter()
-            .map(|track| {
-                Arc::clone(folded.entry(&track.vessel_id).or_insert_with(|| {
-                    let mut value = String::new();
-                    if let Some(vessel) = vessels.get(&track.vessel_id) {
-                        searchable_values(vessel, &mut value);
-                    } else {
-                        // Keep older/minimal catalogues useful when only indexed
-                        // track summaries, rather than full vessel rows, are present.
-                        for field in [
-                            &track.boat_name,
-                            &track.model,
-                            &track.sail_number,
-                            &track.source,
-                            &track.vessel_id,
-                            &track.tracker_boat_id,
-                        ] {
-                            append_search_value(field, &mut value);
-                        }
-                    }
-                    Arc::from(value)
-                }))
-            })
+    fn new(metadata: SearchMetadata, source: SourceStamp) -> Self {
+        let mut vessels: BTreeMap<String, Value> = metadata
+            .tables
+            .vessels
+            .into_iter()
+            .map(|row| (text(&row, "id"), row))
             .collect();
-        Self {
-            metadata,
-            search_text,
+        let mut group_ids = BTreeMap::new();
+        let mut groups: Vec<SearchGroup> = Vec::new();
+        for (i, track) in metadata.tracks.iter().enumerate() {
+            let group = *group_ids.entry(&track.vessel_id).or_insert_with(|| {
+                let mut value = String::new();
+                let mut details = BTreeMap::new();
+                if let Some(vessel) = vessels.remove(&track.vessel_id) {
+                    searchable_values(&vessel, &mut value);
+                    details = pe_trackers::event::boat_details(&vessel);
+                } else {
+                    for field in [
+                        &track.boat_name,
+                        &track.model,
+                        &track.sail_number,
+                        &track.source,
+                        &track.vessel_id,
+                        &track.tracker_boat_id,
+                    ] {
+                        append_search_value(field, &mut value);
+                    }
+                }
+                let id = groups.len();
+                groups.push(SearchGroup {
+                    text: value,
+                    details,
+                    tracks: Vec::new(),
+                });
+                id
+            });
+            groups[group].tracks.push(i);
         }
+        Self {
+            version: 1,
+            source,
+            tracks: metadata.tracks,
+            groups,
+            last_query: Mutex::default(),
+        }
+    }
+
+    fn matches(&self, words: &[String]) -> Result<Arc<Vec<usize>>> {
+        let mut last = self
+            .last_query
+            .lock()
+            .map_err(|_| AppError::Internal("The track search lock was poisoned".into()))?;
+        if let Some((query, hits)) = &*last
+            && query == words
+        {
+            return Ok(Arc::clone(hits));
+        }
+        let mut hits = Vec::new();
+        let mut scattered = Vec::new();
+        if !words.is_empty() {
+            // A model such as "Cal 40" must precede a name containing "cal"
+            // whose timestamp or ID happens to contain "40". Keep the latter
+            // searchable, but favour the complete query within one value.
+            let phrase = words.concat();
+            let phrase = memchr::memmem::Finder::new(phrase.as_bytes());
+            let finders: Vec<_> = words
+                .iter()
+                .map(|w| memchr::memmem::Finder::new(w.as_bytes()))
+                .collect();
+            for group in &self.groups {
+                if phrase.find(group.text.as_bytes()).is_some() {
+                    hits.extend_from_slice(&group.tracks);
+                } else if words.len() > 1
+                    && finders
+                        .iter()
+                        .all(|f| f.find(group.text.as_bytes()).is_some())
+                {
+                    scattered.extend_from_slice(&group.tracks);
+                }
+            }
+        }
+        // Preserve catalogue order within each tier, including interleaved races.
+        hits.sort_unstable();
+        scattered.sort_unstable();
+        hits.extend(scattered);
+        let hits = Arc::new(hits);
+        *last = Some((words.to_vec(), Arc::clone(&hits)));
+        Ok(hits)
     }
 }
 fn append_search_value(value: &str, out: &mut String) {
@@ -263,33 +363,75 @@ pub(super) fn index(tables: &BTreeMap<String, Vec<Value>>) -> Vec<BoatTrackHit> 
 }
 fn load(state: &AppState, settings: &LibrarySettings) -> Result<Option<Arc<Catalogue>>> {
     let path = settings.metadata_path(state);
+    let source = match SourceStamp::read(&path) {
+        Ok(stamp) => stamp,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e).doing("read", path.display()),
+    };
     let mut store = state.library.lock()?;
-    if let Some((held, records)) = &*store
-        && *held == path
+    if let Some((_, records)) = &*store
+        && records.source == source
     {
         return Ok(Some(Arc::clone(records)));
     }
-    if !path.is_file() {
-        return Ok(None);
-    }
-    let metadata: Metadata =
-        serde_json::from_slice(&std::fs::read(&path).doing("read", path.display())?)
-            .doing("read", "boat metadata")?;
-    if metadata.version != 1 {
-        return Err(AppError::Internal(
-            "This boat metadata file is of a version PolarExplorer does not read".into(),
-        ));
-    }
-    let metadata = Arc::new(Catalogue::new(metadata));
-    *store = Some((path, Arc::clone(&metadata)));
-    Ok(Some(metadata))
+    let cache = state.paths.cache_dir.join("track-search-v1.json");
+    let cached = std::fs::read(&cache)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Catalogue>(&bytes).ok())
+        .filter(|c| {
+            c.version == 1
+                && c.source == source
+                && c.groups
+                    .iter()
+                    .flat_map(|g| &g.tracks)
+                    .all(|&i| i < c.tracks.len())
+        });
+    let records = if let Some(cached) = cached {
+        cached
+    } else {
+        let metadata: SearchMetadata =
+            serde_json::from_slice(&std::fs::read(&path).doing("read", path.display())?)
+                .doing("read", "boat metadata")?;
+        if metadata.version != 1 {
+            return Err(AppError::Internal(
+                "This boat metadata file is of a version PolarExplorer does not read".into(),
+            ));
+        }
+        let records = Catalogue::new(metadata, source);
+        // Cache failures never prevent searching the source. Never rewrite it.
+        if SourceStamp::read(&path).ok().as_ref() == Some(&records.source)
+            && let Ok(bytes) = serde_json::to_vec(&records)
+        {
+            let _ = pe_core::io::write_atomic(&cache, &bytes);
+        }
+        records
+    };
+    let records = Arc::new(records);
+    *store = Some((path, Arc::clone(&records)));
+    Ok(Some(records))
 }
+/// Prepare local search off the UI thread before the first keystroke. This
+/// reads local files only; failures are reported if a later search needs it.
+pub(crate) fn warm(state: AppState) {
+    let _ = std::thread::Builder::new()
+        .name("track-search-index".into())
+        .spawn(move || {
+            if let Ok(settings) = super::settings(&state) {
+                let _ = load(&state, &settings);
+            }
+        });
+}
+
 /// Never let a storage key escape the selected directory, including through symlinks.
 fn file_path(directory: &str, hit: &BoatTrackHit) -> Option<PathBuf> {
     let root = Path::new(directory).canonicalize().ok()?;
     if directory.is_empty() {
         return None;
     }
+    file_path_in(&root, hit)
+}
+
+fn file_path_in(root: &Path, hit: &BoatTrackHit) -> Option<PathBuf> {
     let mut candidates = vec![format!("{}.geojson", hit.competition_id)];
     if !hit.storage_key.is_empty() {
         candidates.push(hit.storage_key.clone());
@@ -304,21 +446,34 @@ fn file_path(directory: &str, hit: &BoatTrackHit) -> Option<PathBuf> {
         let Ok(path) = root.join(key).canonicalize() else {
             continue;
         };
-        if path.starts_with(&root) && path.is_file() {
+        if path.starts_with(root) && path.is_file() {
             return Some(path);
         }
     }
     None
 }
-#[tauri::command(async)]
-pub fn search_database_boats(
+/// Check presence without parsing or indexing the potentially large metadata file.
+#[tauri::command]
+pub async fn library_metadata_available(state: tauri::State<'_, AppState>) -> Result<bool> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok(super::settings(&state)?.metadata_path(&state).is_file())
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("Track library status worker failed: {e}")))?
+}
+
+#[tauri::command]
+pub async fn search_database_boats(
     state: tauri::State<'_, AppState>,
     boat_context: Option<u64>,
     query: String,
     offset: u32,
 ) -> Result<BoatTrackSearch> {
     let state = state.scoped(boat_context);
-    search(&state, &query, offset)
+    tauri::async_runtime::spawn_blocking(move || search(&state, &query, offset))
+        .await
+        .map_err(|e| AppError::Internal(format!("Track search worker failed: {e}")))?
 }
 pub fn search(state: &AppState, query: &str, offset: u32) -> Result<BoatTrackSearch> {
     let settings = super::settings(state)?;
@@ -330,26 +485,40 @@ pub fn search(state: &AppState, query: &str, offset: u32) -> Result<BoatTrackSea
         });
     };
     let words = pe_orc::fold::words(query);
-    let found: Vec<_> = records
-        .metadata
-        .tracks
+    let found = records.matches(&words)?;
+    let mut hits: Vec<_> = found
         .iter()
-        .zip(&records.search_text)
-        .filter(|(_, text)| !words.is_empty() && words.iter().all(|w| text.contains(w)))
-        .map(|(track, _)| track)
+        .skip(offset as usize)
+        .take(100)
+        .filter_map(|&i| records.tracks.get(i))
+        .cloned()
         .collect();
+    // Resolve the external-volume root once, then overlap independent file
+    // checks. Import still resolves and checks the path again before reading.
+    let root = if settings.geojson_directory.is_empty() {
+        None
+    } else {
+        Path::new(&settings.geojson_directory).canonicalize().ok()
+    };
+    if let Some(root) = root {
+        std::thread::scope(|scope| {
+            for page in hits.chunks_mut(13) {
+                let root = &root;
+                scope.spawn(move || {
+                    for hit in page {
+                        hit.file_available = file_path_in(root, hit).is_some();
+                    }
+                });
+            }
+        });
+    } else {
+        for hit in &mut hits {
+            hit.file_available = false;
+        }
+    }
     Ok(BoatTrackSearch {
         total: found.len() as u32,
-        hits: found
-            .into_iter()
-            .skip(offset as usize)
-            .take(100)
-            .cloned()
-            .map(|mut h| {
-                h.file_available = file_path(&settings.geojson_directory, &h).is_some();
-                h
-            })
-            .collect(),
+        hits,
         downloaded: true,
     })
 }
@@ -366,14 +535,9 @@ pub fn import(state: &AppState, id: &str) -> Result<TrackImportResult> {
     let settings = super::settings(state)?;
     let records = load(state, &settings)?
         .ok_or_else(|| AppError::Internal("Download boat metadata in Settings first".into()))?;
-    let hit = records
-        .metadata
-        .tracks
-        .iter()
-        .find(|r| r.id == id)
-        .ok_or_else(|| {
-            AppError::Internal("Boat track is no longer in the local catalogue".into())
-        })?;
+    let hit = records.tracks.iter().find(|r| r.id == id).ok_or_else(|| {
+        AppError::Internal("Boat track is no longer in the local catalogue".into())
+    })?;
     let project_id = state.with_session(|s| Ok(s.require_open()?.project.id))?;
     let pending = read_hit(&settings, hit)?;
     crate::tracks::add_tracks_to_project(state, vec![pending], vec![], Some(project_id))
@@ -452,31 +616,31 @@ pub(crate) fn matching_vessels(state: &AppState) -> Result<Vec<MatchingVessel>> 
     let Some(catalogue) = load(state, &settings)? else {
         return Ok(Vec::new());
     };
-    let vessels = by_id(&catalogue.metadata.tables, "Vessels");
-    let mut result = BTreeMap::<String, MatchingVessel>::new();
-    for hit in &catalogue.metadata.tracks {
-        result
-            .entry(hit.vessel_id.clone())
-            .or_insert_with(|| {
-                let mut details = vessels
-                    .get(&hit.vessel_id)
-                    .map(|v| pe_trackers::event::boat_details(v))
-                    .unwrap_or_default();
-                if !hit.model.is_empty() {
-                    details
-                        .entry("model".into())
-                        .or_insert_with(|| hit.model.clone());
-                }
-                details
-                    .entry("sailNumber".into())
-                    .or_insert_with(|| hit.sail_number.clone());
-                MatchingVessel {
-                    profile: crate::boats::matching::Profile::from_details(&details),
-                    tracks: Vec::new(),
-                }
-            })
-            .tracks
-            .push(hit.clone());
+    let mut result = Vec::new();
+    for group in &catalogue.groups {
+        let Some(hit) = group.tracks.first().and_then(|&i| catalogue.tracks.get(i)) else {
+            continue;
+        };
+        let mut details = group.details.clone();
+        if !hit.model.is_empty() {
+            details
+                .entry("model".into())
+                .or_insert_with(|| hit.model.clone());
+        }
+        details
+            .entry("sailNumber".into())
+            .or_insert_with(|| hit.sail_number.clone());
+        result.push(MatchingVessel {
+            profile: crate::boats::matching::Profile::from_details(&details),
+            tracks: group
+                .tracks
+                .iter()
+                .filter_map(|&i| catalogue.tracks.get(i))
+                .cloned()
+                .collect(),
+        });
     }
-    Ok(result.into_values().collect())
+    // The historical matching order is by vessel id.
+    result.sort_by(|a, b| a.tracks[0].vessel_id.cmp(&b.tracks[0].vessel_id));
+    Ok(result)
 }

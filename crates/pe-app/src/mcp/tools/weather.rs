@@ -37,8 +37,7 @@ pub struct WeatherFetchParams {
     pub boat: Option<u64>,
     /// The track sources to fetch for, by id from sources_list.
     pub sources: Vec<u64>,
-    /// "hourly" or "three_hourly". Without it, what weather_estimate
-    /// recommends: hourly unless that download would exceed 1 GB.
+    /// Only "hourly" is supported. Omit to use hourly sampling.
     #[serde(default)]
     pub interval: Option<String>,
     /// Fetch everything again, not only what is missing.
@@ -97,7 +96,7 @@ fn pending(status: &EnvJobsStatus, boat: u64, sources: &[u64]) -> bool {
 #[tool_router(router = tool_router_weather, vis = "pub(crate)")]
 impl<R: tauri::Runtime> PolarExplorer<R> {
     #[tool(
-        description = "How much fetching weather for these tracks would download, worked out from their positions without fetching anything: the samples to fetch, the bytes hourly and three-hourly, what this session already holds, and the `recommended` interval. Call it before weather_fetch and tell the user when the download is large."
+        description = "How much fetching weather for these tracks would download, worked out from their positions without fetching anything: the samples to fetch, the hourly download size and what the cache already holds. Call it before weather_fetch and tell the user when the download is large."
     )]
     async fn weather_estimate(
         &self,
@@ -105,7 +104,12 @@ impl<R: tauri::Runtime> PolarExplorer<R> {
     ) -> ToolResult {
         let estimate = self
             .run("weather_estimate", move |app| {
-                crate::env::env_estimate(app.state(), p.boat, p.sources, p.restart)
+                tauri::async_runtime::block_on(crate::env::env_estimate(
+                    app.state(),
+                    p.boat,
+                    p.sources,
+                    p.restart,
+                ))
             })
             .await?;
         json(&estimate)
@@ -125,13 +129,7 @@ impl<R: tauri::Runtime> PolarExplorer<R> {
             let sources = sources.clone();
             self.run("weather_fetch", move |app| {
                 let owner = boat_id(&app.state::<AppState>(), boat)?;
-                let interval = match interval {
-                    Some(interval) => interval,
-                    None => {
-                        crate::env::env_estimate(app.state(), boat, sources.clone(), restart)?
-                            .recommended
-                    }
-                };
+                let interval = interval.unwrap_or_else(|| "hourly".into());
                 let queued = crate::env::start_env_fetch(
                     app.clone(),
                     app.state(),

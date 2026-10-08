@@ -72,6 +72,12 @@ pub const GLOBCURRENT_NRT_URL: &str = "https://s3.waw3-1.cloudferro.com/mdl-arco
 /// A dataset: one Zarr store.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Dataset {
+    /// Whirlwind Hindsight v3 wind, waves and tidal surface current.
+    WhirlwindHindsight,
+    /// The same combined-parameter archive on Cloudflare R2.
+    WhirlwindR2,
+    /// The same combined-parameter archive on Tigris.
+    WhirlwindTigris,
     /// WeatherBench2 ERA5, hourly, 0.25°, 1959 to 2023-01-10.
     Wb2Era5Hourly,
     /// ARCO-ERA5, hourly, 0.25°, 1940 to a few days ago.
@@ -90,7 +96,10 @@ pub enum Dataset {
 
 impl Dataset {
     /// Every dataset.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 10] = [
+        Self::WhirlwindHindsight,
+        Self::WhirlwindR2,
+        Self::WhirlwindTigris,
         Self::Wb2Era5Hourly,
         Self::ArcoEra5,
         Self::CmemsNwsMy,
@@ -104,6 +113,9 @@ impl Dataset {
     /// chunk cache namespace.
     pub fn id(self) -> &'static str {
         match self {
+            Self::WhirlwindHindsight => "whirlwind-hindsight",
+            Self::WhirlwindR2 => "whirlwind-hindsight-r2",
+            Self::WhirlwindTigris => "whirlwind-hindsight-tigris",
             Self::Wb2Era5Hourly => "wb2-era5-1h",
             Self::ArcoEra5 => "arco-era5",
             Self::CmemsNwsMy => "cmems-nws-my-uv-geo",
@@ -117,6 +129,9 @@ impl Dataset {
     /// Where it is published.
     pub fn url(self) -> &'static str {
         match self {
+            Self::WhirlwindHindsight => crate::whirlwind::URL,
+            Self::WhirlwindR2 => crate::whirlwind::Source::R2.url(),
+            Self::WhirlwindTigris => crate::whirlwind::Source::Tigris.url(),
             Self::Wb2Era5Hourly => WB2_HOURLY_URL,
             Self::ArcoEra5 => ARCO_ERA5_URL,
             Self::CmemsNwsMy => CMEMS_NWS_MY_URL,
@@ -130,6 +145,7 @@ impl Dataset {
     /// The version recorded on each sample: the store's own dated name.
     pub fn version(self) -> &'static str {
         match self {
+            Self::WhirlwindHindsight | Self::WhirlwindR2 | Self::WhirlwindTigris => "hindsight-v3",
             Self::Wb2Era5Hourly => "1959-2023_01_10-full_37-1h-0p25deg-chunk-1",
             Self::ArcoEra5 => "full_37-1h-0p25deg-chunk-1.zarr-v3",
             Self::CmemsNwsMy => "cmems_mod_nws_phy-uv_my_7km-2D_PT1H-i_202112",
@@ -151,7 +167,10 @@ impl Dataset {
     pub fn has_tide(self) -> Option<bool> {
         match self {
             Self::Wb2Era5Hourly | Self::ArcoEra5 => None,
-            Self::CmemsNwsMy
+            Self::WhirlwindHindsight
+            | Self::WhirlwindR2
+            | Self::WhirlwindTigris
+            | Self::CmemsNwsMy
             | Self::CmemsIbiMy
             | Self::CmemsGlobalMerged
             | Self::GlobCurrentMy

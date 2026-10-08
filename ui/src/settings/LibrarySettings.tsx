@@ -33,7 +33,10 @@ export default function LibrarySettings({ settings, onSettings, flush }: {
   const download = useMetadataDownload();
   const [connection, setConnection] = useState<"untested" | "testing" | "ok" | "failed">("untested");
   const running = status?.running === true || download?.running === true;
-  useEffect(() => setDraft(settings.library), [settings.library]);
+  // Saving another section returns a fresh settings object. Preserve typed
+  // library edits unless the saved library values themselves changed.
+  const savedLibrary = JSON.stringify(settings.library);
+  useEffect(() => setDraft(settings.library), [savedLibrary]);
   const change = (patch: Partial<Preferences>) => { setDraft(old => ({ ...old, ...patch })); setSaved(false); };
   const changeDatabase = (patch: Partial<DatabaseConnection>) => { change({ database: { ...draft.database, ...patch } }); setConnection("untested"); };
   const test = () => action(async () => {

@@ -1221,7 +1221,7 @@ async fn weather_estimate_answers_without_fetching() {
     let (client, id) = with_track(&root, port, &token).await;
     let estimate = call(&client, "weather_estimate", json!({ "sources": [id] })).await;
     assert_eq!(estimate["samples"], 12);
-    assert_eq!(estimate["recommended"], "hourly");
+    assert!(estimate.get("three_hourly_bytes").is_none());
     assert!(estimate["hourly_bytes"].as_u64().unwrap() > 0);
     assert_eq!(
         call(&client, "weather_jobs", json!({})).await["tracks"],

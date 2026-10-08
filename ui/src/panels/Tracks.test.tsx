@@ -29,6 +29,7 @@ vi.mock("../ipc", () => ({
   api: new Proxy({}, { get: (_t, name: string) => record(name) }),
   TRACKER_PROGRESS: "tracker://progress",
   TRACKER_LISTED: "tracker://listed",
+  LIBRARY_METADATA: "library://metadata", LIBRARY_SCRAPE: "library://scrape",
 }));
 /** The Tauri event handlers the components listen with, by event name. */
 const handlers = new Map<string, (e: { payload: unknown }) => void>();
@@ -87,6 +88,7 @@ const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 0)
 const q = (selector: string) => host.querySelector(selector);
 
 beforeEach(() => {
+  for (const key of Object.keys(responses)) delete responses[key];
   calls.length = 0;
   host = document.createElement("div");
   document.body.append(host);
@@ -181,17 +183,13 @@ it("applies numeric filters while typing and preserves edits made during a slow 
   delete responses.setTrackFilters;
 });
 
-it("imports files without fetching weather; Fetch weather… shows the estimate and starts it", async () => {
+it("imports files without fetching weather; Fetch weather starts immediately without estimating", async () => {
   responses.inspectTrackFiles = [GEOJSON];
   const line = {
     source_id: 5, file: "fleet.geojson", label: "Alpha", fixes: 3, out_of_order: 0, duplicates: 0,
     heading_given: 0, heading_derived: 3, speed_given: 0, speed_derived: 3,
   };
   responses.importTrackFiles = { project: project([SOURCE]), imported: [line], failures: [] };
-  responses.envEstimate = {
-    samples: 120, hourly_bytes: 25_000_000, three_hourly_bytes: 9_000_000, cached_bytes: 0,
-    stored_bytes: 960, three_hourly_above_bytes: 1e9, recommended: "hourly",
-  };
   responses.startEnvFetch = { tracks: [], failure: null, warning: null };
   await act(async () => root.render(<Tracks project={project([])} onProject={() => undefined} />));
   await click(q('[data-feature="tracks:import-file"]'));
@@ -201,49 +199,35 @@ it("imports files without fetching weather; Fetch weather… shows the estimate 
   // The import dialog closed and nothing about weather was asked (D24).
   expect(q("[role=dialog]")).toBeNull();
   expect(calls.filter(([n]) => n === "envEstimate" || n === "startEnvFetch")).toEqual([]);
-  // The track's Fetch weather… opens the pre-flight when the user wants it.
   await act(async () => root.render(<Tracks project={project([SOURCE])} onProject={() => undefined} />));
   await click(q('[data-feature="tracks:fetch-weather"]'));
-  await settle();
-  expect(calls.find(([n]) => n === "envEstimate")?.[1]).toEqual([[5], false]);
-  const text = q("[role=dialog]")!.textContent!;
-  expect(text).toContain("120 samples");
-  expect(text).toContain("Hourly: about 25 MB to download");
-  expect(text).toContain("Every 3 hours: about 9 MB to download");
-  // What the project keeps: kilobytes, not the download (D27).
-  expect(text).toContain("Stored in the project: about 1 kB");
-  expect((q('[data-feature="env-fetch:hourly"]') as HTMLInputElement).checked).toBe(true);
-  // Fetch, the default answer, has the focus once the estimate is in.
-  expect(document.activeElement).toBe(q(".modal-actions button.primary"));
-  await click(q('[data-feature="env-fetch:three-hourly"]'));
-  await click(q(".modal-actions button.primary"));
-  await settle();
-  expect(calls.find(([n]) => n === "startEnvFetch")?.[1]).toEqual([[5], "three_hourly", false]);
+  expect(calls.filter(([n]) => n === "envEstimate")).toEqual([]);
+  expect(calls.find(([n]) => n === "startEnvFetch")?.[1]).toEqual([[5], false]);
   expect(q("[role=dialog]")).toBeNull();
 });
 
-it("preselects 3-hourly for a download over 1 GB (D19, D27)", async () => {
-  responses.envEstimate = {
-    samples: 9000, hourly_bytes: 2.4e9, three_hourly_bytes: 0.8e9, cached_bytes: 1e9,
-    stored_bytes: 72_000, three_hourly_above_bytes: 1e9, recommended: "three_hourly",
-  };
-  await act(async () => root.render(<Tracks project={project([SOURCE])} onProject={() => undefined} />));
-  await click(q('[data-feature="tracks:fetch-weather"]'));
-  await settle();
-  expect(calls.find(([n]) => n === "envEstimate")?.[1]).toEqual([[5], false]);
-  expect((q('[data-feature="env-fetch:three-hourly"]') as HTMLInputElement).checked).toBe(true);
-  const text = q("[role=dialog]")!.textContent!;
-  expect(text).toContain("1.0 GB of it was already downloaded this session.");
-  expect(text).toContain("Hourly would download more than 1.0 GB, so every 3 hours is chosen.");
-  expect(text).toContain("Stored in the project: about 72 kB");
-  // Once the user picks an interval, the note on why 3-hourly was chosen goes (M17a).
-  await click(q('[data-feature="env-fetch:hourly"]'));
-  expect(q("[role=dialog]")!.textContent).not.toContain("so every 3 hours is chosen");
-  await click(q('[data-feature="env-fetch:three-hourly"]'));
-  expect(q("[role=dialog]")!.textContent).not.toContain("so every 3 hours is chosen");
-  // Not now fetches nothing.
-  await click([...host.querySelectorAll(".modal-actions button")].find((b) => b.textContent === "Not now")!);
-  expect(calls.filter(([n]) => n === "startEnvFetch")).toEqual([]);
+it("refetches ready tracks immediately and prevents duplicate starts while queuing", async () => {
+  let release!: (value: unknown) => void;
+  responses.startEnvFetch = new Promise(resolve => { release = resolve; });
+  const ready = { ...SOURCE, track: { ...TRACK, env_status: "ready" as const } };
+  await act(async () => root.render(<Tracks project={project([ready])} onProject={() => undefined} />));
+  expect(q(".track-list")!.textContent).toContain("Weather: no points to plot");
+  const button = q('[data-feature="tracks:fetch-weather"]') as HTMLButtonElement;
+  await click(button);
+  expect(button.disabled).toBe(true);
+  await click(button);
+  expect(calls.filter(([n]) => n === "startEnvFetch")).toEqual([["startEnvFetch", [[5], true]]]);
+  expect(calls.filter(([n]) => n === "envEstimate")).toEqual([]);
+  expect(q("[role=dialog]")).toBeNull();
+  await act(async () => { release({ tracks: [], failure: null, warning: null }); });
+  expect(button.disabled).toBe(false);
+  delete responses.startEnvFetch;
+});
+
+it("shows ready when fetched weather can place samples on the polar", async () => {
+  const ready = { ...SOURCE, track: { ...TRACK, env_status: "ready" as const, env_fetched: 120, with_wind: 110 } };
+  await act(async () => root.render(<Tracks project={project([ready])} onProject={() => undefined} />));
+  expect(q(".track-list")!.textContent).toContain("Weather: ready");
 });
 
 it("shows a running fetch in the track list and cancels it", async () => {
@@ -346,7 +330,7 @@ it("downloads a YellowBrick event, searches and picks boats, and imports them wi
   });
   await click(q('[data-feature="tracker-import:open"]'));
   await settle();
-  expect(calls.find(([n]) => n === "trackerEvent")?.[1]).toEqual(["yellowbrick", "yb.tl/rmsr2024", false, expect.any(String)]);
+  expect(calls.find(([n]) => n === "trackerEvent")?.[1]).toEqual(["yellowbrick", "yb.tl/rmsr2024", false, expect.any(String), true]);
   const dialog = q("[role=dialog]")!;
   expect(dialog.textContent).toContain("Rolex Middle Sea Race 2024");
   expect(dialog.textContent).toContain("3 boats");
@@ -389,7 +373,7 @@ it("says a tracker is not answering and retries", async () => {
   responses.trackerEvent = EVENT;
   await click(q('[data-feature="tracker-import:retry"]'));
   await settle();
-  expect(calls.filter(([n]) => n === "trackerEvent").at(-1)?.[1]).toEqual(["yellowbrick", "nosuchrace", true, expect.any(String)]);
+  expect(calls.filter(([n]) => n === "trackerEvent").at(-1)?.[1]).toEqual(["yellowbrick", "nosuchrace", true, expect.any(String), true]);
   expect(q("[role=dialog]")!.textContent).toContain("Rolex Middle Sea Race 2024");
 });
 
@@ -423,7 +407,7 @@ it("offers the other legs of a Geovoile race in legs and downloads the one chose
   });
   await settle();
   expect(calls.filter(([n]) => n === "trackerEvent").at(-1)?.[1])
-    .toEqual(["geovoile", "lasolitaire.geovoile.com/2024/tracker/?leg=2", false, expect.any(String)]);
+    .toEqual(["geovoile", "lasolitaire.geovoile.com/2024/tracker/?leg=2", false, expect.any(String), true]);
   expect(q("[role=dialog]")!.textContent).toContain("Solitaire du Figaro (2/3)");
   // A race in one leg has no leg choice.
   responses.trackerEvent = EVENT;
@@ -475,66 +459,102 @@ it("refuses an older Geovoile tracker clearly, without a Retry", async () => {
   expect(q("[role=dialog]")).toBeNull();
 });
 
-it("lists the boats while the positions download, keeps the ticks, and imports once they are in", async () => {
-  let answer: (event: typeof EVENT) => void = () => undefined;
-  responses.trackerEvent = new Promise((resolve) => { answer = resolve; });
-  const line = {
-    source_id: 7, file: "Rolex Middle Sea Race 2024", label: "12 NACIRA 69", fixes: 1689, out_of_order: 0, duplicates: 0,
-    heading_given: 0, heading_derived: 1689, speed_given: 0, speed_derived: 1689,
-  };
-  responses.importTrackerBoats = { project: project([SOURCE]), imported: [line], failures: [] };
-  await act(async () => root.render(<Tracks project={project([])} onProject={() => undefined} />));
-  await click(q('[data-feature="tracks:yellowbrick"]'));
-  await typeAddress("yb.tl/rmsr2024");
+const LISTING = { ...EVENT, positions: false, boats: EVENT.boats.map(b => ({ ...b, fixes: 0, first: null, last: null, preview: [] })) };
+const imported = () => ({ project: project([SOURCE]), imported: [], failures: [] });
+async function openListing(listing = LISTING, tracker = "yellowbrick") {
+  responses.trackerEvent = listing;
+  responses.importTrackerBoats = imported();
+  await act(async () => root.render(<StrictMode><Tracks project={project([])} onProject={() => undefined} /></StrictMode>));
+  await click(q(`[data-feature="tracks:${tracker}"]`));
+  await typeAddress(listing.url);
   await click(q('[data-feature="tracker-import:open"]'));
-  await settle();
-  // The boat list arrives ahead of the positions, under this download's
-  // key; one sent for another download is not this dialog's (M17a).
-  const download = calls.find(([n]) => n === "trackerEvent")![1] as unknown[];
-  const key = download[3] as string;
-  expect(key).not.toBe("");
-  const unlisted = (b: (typeof EVENT.boats)[number]) => ({ ...b, fixes: 0, first: null, last: null, preview: [] });
-  const stray = { ...EVENT, title: "Another race", positions: false, boats: [unlisted(boat("9", "Stray", "GBR 1", "IRC 1", 0))] };
-  await act(async () => { handlers.get("tracker://listed")!({ payload: { download: `${key}-other`, event: stray } }); });
-  expect(q("[role=dialog]")!.textContent).not.toContain("Another race");
-  expect(q("[role=dialog] tbody")).toBeNull();
-  // The listing names a boat the final event will not have (id 9).
-  const listing = { ...EVENT, positions: false, boats: [...EVENT.boats, boat("9", "Ghost", "GBR 9", "IRC 1", 0)].map(unlisted) };
-  await act(async () => { handlers.get("tracker://listed")!({ payload: { download: key, event: listing } }); });
-  const dialog = q("[role=dialog]")!;
-  expect(dialog.textContent).toContain("4 boats");
-  expect(dialog.textContent).toContain("you can search and tick boats meanwhile");
-  const rows = () => [...dialog.querySelectorAll("tbody tr")];
-  expect(rows()).toHaveLength(4);
-  // Every boat can be ticked meanwhile, none imported yet.
-  await click(rows()[0]!.querySelector("input"));
-  await click(rows()[2]!.querySelector("input"));
-  await click(rows().find((r) => r.textContent!.includes("Ghost"))!.querySelector("input"));
-  expect(q(".modal-actions")!.textContent).toContain("3 boats ticked");
-  const importButton = () => q(".modal-actions button.primary") as HTMLButtonElement;
-  expect(importButton().disabled).toBe(true);
+}
+
+it("loads only boats until Import tracks, then downloads and imports the selection without weather", async () => {
+  await openListing();
+  expect(q(".tracker-progress")).toBeNull();
   expect(q(".tracker-preview")).toBeNull();
-  // The positions arrive: the ticks stay, except on a boat with none.
-  await act(async () => { answer(EVENT); });
-  await settle();
-  expect((rows()[0]!.querySelector("input") as HTMLInputElement).checked).toBe(true);
-  expect((rows()[2]!.querySelector("input") as HTMLInputElement).checked).toBe(false);
-  // The ghost is gone from the list and from the ticks.
-  expect(rows()).toHaveLength(3);
-  expect(q(".modal-actions")!.textContent).toContain("1 boats ticked");
-  expect(dialog.querySelector(".tracker-preview-line.chosen")!.getAttribute("data-lines")).toBe("1");
-  expect(importButton().disabled).toBe(false);
-  await click(importButton());
-  await settle();
-  expect(calls.find(([n]) => n === "importTrackerBoats")?.[1]).toEqual(["yellowbrick", "rmsr2024", ["1"]]);
+  expect(q("tbody")!.textContent).toContain("—");
+  await click(q('tbody input'));
+  expect(calls.filter(([n]) => n === "trackerEvent")).toHaveLength(1);
+  expect(calls.filter(([n]) => n === "importTrackerBoats")).toHaveLength(0);
+  const button = () => q(".modal-actions button.primary") as HTMLButtonElement;
+  expect(button().disabled).toBe(false);
+  let answer!: (event: typeof EVENT) => void;
+  responses.trackerEvent = new Promise(resolve => { answer = resolve; });
+  await click(button());
+  expect(calls.filter(([n]) => n === "trackerEvent").at(-1)?.[1])
+    .toEqual(["yellowbrick", EVENT.url, true, expect.any(String)]);
+  expect(button().disabled).toBe(true);
+  expect((q('tbody input') as HTMLInputElement).disabled).toBe(true);
+  expect(q(".tracker-progress")!.textContent).toContain("Downloading the boats' positions");
+  const key = (calls.filter(([n]) => n === "trackerEvent").at(-1)![1] as unknown[])[3];
+  await act(async () => { handlers.get("tracker://listed")!({ payload: { download: `${key}-other`, event: { ...LISTING, title: "Stray" } } }); });
+  expect(q("[role=dialog]")!.textContent).not.toContain("Stray");
+  await act(async () => answer(EVENT));
+  expect(calls.filter(([n]) => n === "importTrackerBoats")).toEqual([["importTrackerBoats", ["yellowbrick", EVENT.key, ["1"]]]]);
+  expect(q('[data-feature="tracker-import:url"]')).toBeNull();
   expect(calls.filter(([n]) => n === "envEstimate" || n === "startEnvFetch")).toEqual([]);
+});
+
+it("keeps the boat list, search and ticks after download failure and retries the selected event", async () => {
+  await openListing();
+  const search = () => q('[data-feature="tracker-import:search"]') as HTMLInputElement;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search(), "Afazik");
+    search().dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  const tick = () => q('tbody input') as HTMLInputElement;
+  await click(tick());
+  responses.trackerEvent = new Rejection({ kind: "tracker-unavailable", message: "positions and KML answered 503" });
+  await click(q(".modal-actions button.primary"));
+  expect(q("[role=alert]")!.textContent).toContain("The boat list loaded, but the track positions could not be downloaded.");
+  expect(q("[role=alert]")!.getAttribute("title")).toContain("positions and KML answered 503");
+  expect(q(".tracker-progress")).toBeNull();
+  expect(search().value).toBe("Afazik");
+  expect(tick().checked).toBe(true);
+  expect(calls.filter(([n]) => n === "importTrackerBoats")).toHaveLength(0);
+  await typeAddress("yb.tl/another-race");
+  responses.trackerEvent = EVENT;
+  await click(q('[data-feature="tracker-import:retry"]'));
+  expect(calls.filter(([n]) => n === "trackerEvent").at(-1)?.[1])
+    .toEqual(["yellowbrick", EVENT.url, true, expect.any(String)]);
+  expect(calls.find(([n]) => n === "importTrackerBoats")?.[1]).toEqual(["yellowbrick", EVENT.key, ["2"]]);
+  expect(q('[data-feature="tracker-import:url"]')).toBeNull();
+});
+
+it("cancels the download and never imports a late response after closing", async () => {
+  await openListing();
+  await click(q('tbody input'));
+  let answer!: (event: typeof EVENT) => void;
+  responses.trackerEvent = new Promise(resolve => { answer = resolve; });
+  await click(q(".modal-actions button.primary"));
+  await click(q(".modal-actions button"));
+  expect(calls.filter(([n]) => n === "cancelTrackerEvent")).toHaveLength(1);
+  await act(async () => answer(EVENT));
+  expect(calls.filter(([n]) => n === "importTrackerBoats")).toHaveLength(0);
+  expect(q('[data-feature="tracker-import:url"]')).toBeNull();
+});
+
+it("waits for Import tracks before downloading a combined Blue Water Tracks response", async () => {
+  const event = { ...EVENT, tracker: "bluewater", key: "race", url: "race.bluewatertracks.com/race" };
+  await openListing({ ...event, positions: false, boats: [] }, "bluewater");
+  expect(q('[data-feature="tracker-import:boats"]')).toBeNull();
+  expect(q("[role=dialog]")!.textContent).toContain("Click Import tracks to download them");
+  expect(calls.filter(([n]) => n === "trackerEvent")).toHaveLength(1);
+  responses.trackerEvent = event;
+  await click(q(".modal-actions button.primary"));
+  expect(q('[data-feature="tracker-import:boats"]')).not.toBeNull();
+  expect(calls.filter(([n]) => n === "importTrackerBoats")).toHaveLength(0);
+  await click(q('tbody input'));
+  await click(q(".modal-actions button.primary"));
+  expect(calls.filter(([n]) => n === "trackerEvent")).toHaveLength(2);
+  expect(calls.find(([n]) => n === "importTrackerBoats")?.[1]).toEqual(["bluewater", "race", ["1"]]);
 });
 
 it("fetches the weather of the ticked tracks together", async () => {
   const other: SourceSummary = { ...SOURCE, id: 6, label: "Bravo", colour: "#4e79a7" };
   const third: SourceSummary = { ...SOURCE, id: 8, label: "Charlie", colour: "#59a14f" };
-  let estimate: (e: unknown) => void = () => undefined;
-  responses.envEstimate = new Promise((resolve) => { estimate = resolve; });
   responses.startEnvFetch = { tracks: [], failure: null, warning: null };
   await act(async () => root.render(<Tracks project={project([SOURCE, other, third])} onProject={() => undefined} />));
   const selected = q('[data-feature="tracks:fetch-weather-selected"]') as HTMLButtonElement;
@@ -545,29 +565,15 @@ it("fetches the weather of the ticked tracks together", async () => {
   expect(selected.disabled).toBe(false);
   expect(selected.textContent).toBe("Fetch weather for 2 selected tracks…");
   await click(selected);
-  // The dialog shows at once, calculating, before the estimate is in.
-  expect(q("[role=dialog]")!.textContent).toContain("Hourly: calculating the download…");
-  expect(calls.find(([n]) => n === "envEstimate")?.[1]).toEqual([[5, 8], false]);
-  // A choice made meanwhile is kept when the estimate arrives.
-  await click(q('[data-feature="env-fetch:three-hourly"]'));
-  await act(async () => {
-    estimate({ samples: 240, hourly_bytes: 5e8, three_hourly_bytes: 2e8, cached_bytes: 0, stored_bytes: 1920, three_hourly_above_bytes: 1e9, recommended: "hourly" });
-  });
-  expect(q("[role=dialog]")!.textContent).toContain("240 samples");
-  expect((q('[data-feature="env-fetch:three-hourly"]') as HTMLInputElement).checked).toBe(true);
-  await click(q(".modal-actions button.primary"));
-  await settle();
-  expect(calls.find(([n]) => n === "startEnvFetch")?.[1]).toEqual([[5, 8], "three_hourly", false]);
+  expect(q("[role=dialog]")).toBeNull();
+  expect(calls.filter(([n]) => n === "envEstimate")).toEqual([]);
+  expect(calls.find(([n]) => n === "startEnvFetch")?.[1]).toEqual([[5, 8], false]);
 });
 
 it("selects all imported tracks, fetches those not already fetching, then clears the ticks", async () => {
   const { setEnvJobs, resetEnvJobs } = await import("../jobs");
   const bravo: SourceSummary = { ...SOURCE, id: 6, label: "Bravo" };
   const charlie: SourceSummary = { ...SOURCE, id: 7, label: "Charlie" };
-  responses.envEstimate = {
-    samples: 240, hourly_bytes: 25_000_000, three_hourly_bytes: 9_000_000, cached_bytes: 0,
-    stored_bytes: 960, three_hourly_above_bytes: 1e9, recommended: "hourly",
-  };
   responses.startEnvFetch = { tracks: [], failure: null, warning: null };
   setEnvJobs({ tracks: [{ source_id: 6, label: "Bravo", state: "fetching", fraction: 0.5 }], failure: null, warning: null });
   await act(async () => root.render(<Tracks project={project([SOURCE, bravo, charlie])} onProject={() => undefined} />));
@@ -581,10 +587,8 @@ it("selects all imported tracks, fetches those not already fetching, then clears
   expect(button.textContent).toBe("Fetch weather for 2 selected tracks…");
   await click(button);
   await settle();
-  expect(calls.find(([n]) => n === "envEstimate")?.[1]).toEqual([[5, 7], false]);
-  await click(q(".modal-actions button.primary"));
-  await settle();
-  expect(calls.find(([n]) => n === "startEnvFetch")?.[1]).toEqual([[5, 7], "hourly", false]);
+  expect(calls.filter(([n]) => n === "envEstimate")).toEqual([]);
+  expect(calls.find(([n]) => n === "startEnvFetch")?.[1]).toEqual([[5, 7], false]);
   expect(q("[role=dialog]")).toBeNull();
   expect(boxes().map((box) => box.checked)).toEqual([false, false, false]);
   expect(selectAll.disabled).toBe(false);
@@ -592,18 +596,20 @@ it("selects all imported tracks, fetches those not already fetching, then clears
   await act(async () => resetEnvJobs());
 });
 
-it("keeps the ticks when the fetch is not started", async () => {
+it("keeps the ticks on a failed start and allows retry without a modal", async () => {
   const bravo: SourceSummary = { ...SOURCE, id: 6, label: "Bravo" };
-  responses.envEstimate = {
-    samples: 240, hourly_bytes: 25_000_000, three_hourly_bytes: 9_000_000, cached_bytes: 0,
-    stored_bytes: 960, three_hourly_above_bytes: 1e9, recommended: "hourly",
-  };
+  responses.startEnvFetch = new Rejection(new Error("could not queue weather"));
   await act(async () => root.render(<Tracks project={project([SOURCE, bravo])} onProject={() => undefined} />));
   for (const box of host.querySelectorAll<HTMLInputElement>('[data-feature="tracks:select"]')) await click(box);
-  await click(q('[data-feature="tracks:fetch-weather-selected"]'));
-  await settle();
-  await click([...host.querySelectorAll(".modal-actions button")].find((b) => b.textContent === "Not now")!);
+  const button = q('[data-feature="tracks:fetch-weather-selected"]') as HTMLButtonElement;
+  await click(button);
+  expect(q("[role=dialog]")).toBeNull();
+  expect(button.disabled).toBe(false);
   expect([...host.querySelectorAll<HTMLInputElement>('[data-feature="tracks:select"]')].map((b) => b.checked)).toEqual([true, true]);
+  responses.startEnvFetch = { tracks: [], failure: null, warning: null };
+  await click(button);
+  expect(calls.filter(([n]) => n === "startEnvFetch")).toHaveLength(2);
+  expect([...host.querySelectorAll<HTMLInputElement>('[data-feature="tracks:select"]')].map((b) => b.checked)).toEqual([false, false]);
 });
 
 it("shows and takes the speed and wave filters in the display units, storing knots and metres (M17b)", async () => {

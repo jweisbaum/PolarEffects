@@ -39,9 +39,11 @@ stop and raise it rather than working around it.
 3. **Fetched environment data is project data, rendered views are not.**
    Wind, wave and current values interpolated at each track position are
    saved in the project with the dataset name and version they came from —
-   only those values, kilobytes per track. Nothing downloaded (fields,
-   chunks, blocks) is ever kept on disk; it lives in memory for the session
-   and quitting is always lossless (D27).
+   only those values, kilobytes per track. Open Data downloads live in
+   memory for the session (D27). At the user's request on 2026-10-07,
+   Whirlwind also keeps validated compressed Zarr inner chunks in a bounded
+   disk cache, in the selected cache directory. It is disposable: clearing
+   it never removes project weather, and only owned cache files may be deleted.
 4. **Nothing is fetched that the user did not ask for, and nothing reaches
    in.** No CDN fonts, no map tiles, no telemetry, no remote schema fetches.
    The webview's CSP stays `'self'`-only. Only two crates may use the network:
@@ -243,7 +245,8 @@ with an undo inverse test. Run `npm run bindings`.
 
 **Adding a tracker.** A new module in `pe-trackers` implementing
 `TrackerClient` (`resolve` a pasted URL to an `EventRef` without network;
-`fetch_listed` the whole `TrackerEvent` — title, dates, every boat and its
+`list` reads boat metadata without positions or returns `None` when only a
+combined response exists; `fetch_listed` reads the whole `TrackerEvent` — title, dates, every boat and its
 fixes — through the shared `Fetcher`, handing the boat list to `listed`
 first when the tracker names the boats in a response of its own, and
 starting independent requests at once with `Fetcher::spawn`; never any

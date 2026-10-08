@@ -4,8 +4,8 @@
  *
  * - an earlier version's on-disk chunk cache (seeded in the run's data
  *   root) is announced on the status line and removed, and nothing else;
- * - a five-day track's Fetch weather… shows the block-level download and
- *   "stored in the project: about N kB", and Not now fetches nothing;
+ * - a five-day track starts weather immediately with no estimate dialog;
+ *   a deliberately invalid cache path fails before HTTP and leave retry available;
  * - Settings has "Keep downloaded weather in memory for this session (MB)"
  *   in place of the chunk cache's folder and size, saved to settings.json
  *   without the old `chunk_cache` group.
@@ -14,7 +14,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { assert, newProject } from "./harness.mjs";
+import { assert, newProject, blockWeatherDownloads } from "./harness.mjs";
 
 /** 2025-07-26T12:00Z, the Fastnet start. */
 const START = 1_753_531_200;
@@ -49,7 +49,7 @@ export default {
     await writeFile(join(root, OLD_CHUNK), Buffer.alloc(3_300_000));
     await mkdir(join(root, "config"), { recursive: true });
     await writeFile(join(root, "config", "settings.json"),
-      JSON.stringify({ chunk_cache: { location: "", size_limit_gb: 20 } }));
+      JSON.stringify({ data_source: "whirlwind", chunk_cache: { location: "", size_limit_gb: 20 } }));
     await writeFile(join(root, "race.geojson"), race());
     return {
       env: { PE_AUTOMATION_ROOT: root },
@@ -58,6 +58,7 @@ export default {
   },
   async run(t) {
     const d = t.driver;
+    await blockWeatherDownloads(d);
     await newProject(d, "Weather");
     // The old cache is announced once and removed; the data root stays.
     await d.waitFor(".statusbar", { text: "no longer kept on disk" });
@@ -72,29 +73,22 @@ export default {
     assert.ok(gone, "no file is left under the old chunk cache");
     assert.ok((await stat(join(root, "cache"))).isDirectory(), "only chunks/ went");
 
-    // A five-day track, then its weather's pre-flight.
+    // A five-day track starts directly; cache validation fails before HTTP.
     await d.queueDialog([join(root, "race.geojson")]);
     await d.click('[data-feature="tracks:import-file"]');
     await d.waitFor(".modal-actions button.primary");
     await d.click(".modal-actions button.primary");
     await d.waitFor('[data-feature="tracks:fetch-weather"]', { timeoutMs: 30_000 });
     await d.click('[data-feature="tracks:fetch-weather"]');
-    await d.waitFor("[role=dialog]", { text: "Hourly: about" });
-    const text = await d.text("[role=dialog]");
-    assert.ok(text.includes("721 samples"), text);
-    // About 120 hours × 1.2 MB of blocks plus currents: megabytes, not the
-    // 1.2 GB of whole fields; kilobytes kept.
-    const hourly = Number(/Hourly: about (\d+) MB/.exec(text)?.[1]);
-    assert.ok(hourly > 50 && hourly < 400, text);
-    assert.ok(/Stored in the project: about \d+ kB/.test(text), text);
-    // The interval legend is one line, not a word a line (M17a).
-    const legend = await d.run(
-      `var l = document.querySelector(".env-fetch-interval legend");
-       done({ height: l.getBoundingClientRect().height, line: parseFloat(getComputedStyle(l).lineHeight) || 20 });`);
-    assert.ok(legend.height < legend.line * 1.5, `the legend is ${legend.height} px tall`);
-    await t.shot("fetch-estimate");
-    await d.click(".modal-actions button", { text: "Not now" });
-    await d.waitGone("[role=dialog]");
+    assert.equal(await d.exists('[role="dialog"]'), false);
+    await d.waitFor('.statusbar', { text: "Whirlwind cache path is not a regular directory" });
+    assert.ok((await d.text('.track-list')).includes("Weather: not fetched"));
+    await d.waitGone('.busy-spinner.on');
+    await d.waitFor('[data-feature="tracks:fetch-weather"]:not(:disabled)');
+    const jobs = await d.invoke('env_jobs', {});
+    assert.equal(jobs.tracks.length, 0);
+    assert.ok(jobs.failure?.[1]?.includes("Whirlwind cache path is not a regular directory"), JSON.stringify(jobs));
+    await t.shot("weather-starts-without-estimate");
 
     // Settings: the memory for this session, where the chunk cache was.
     await d.click('[data-feature="shell:settings"]');

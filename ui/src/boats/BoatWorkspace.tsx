@@ -91,6 +91,7 @@ export default function BoatWorkspace({ project, settings, onSettings: setSettin
           {slot("compare", shown => <CompareView key={shown.id} project={shown} settings={settings} />)}
         </main>
         {panels.left && <aside className="sidebar left"><LeftNav project={project} onProject={updateProject} panels={panels} onToggle={toggle}
+          metadataDirectory={settings?.library.metadata_directory ?? ""}
           {...(settings ? { units: settings.units } : {})} /></aside>}
         {panels.right && (
           <aside className="sidebar right">
@@ -136,4 +137,3 @@ function DockToggle({ side, open, labels, onToggle }: {
     </button>
   );
 }
-

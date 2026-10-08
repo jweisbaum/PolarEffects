@@ -130,8 +130,8 @@ offline instrument CSV, switches supplied/downloaded wind, checks every change
 filter without blurring inputs, and hovers a rendered dot to inspect its details. `10-track-library` sets the read-only library's two folders, then imports two local search results
 consecutively and checks that the query remains visible while each successfully
 imported result is removed and the remaining count decreases.
-It also selects both imported tracks with Select all and opens their shared
-weather estimate, cancelling before any download starts.
+It also selects both imported tracks with Select all and starts weather directly,
+using an invalid test cache path to stop before any remote weather request.
 `13-boat-tabs` opens a four-boat fixture, checks linked camera gestures and
 hover, renaming, adding a boat, export-all, and returning to an independent
 single view. `14-tracker-project` serves a recorded YellowBrick event and

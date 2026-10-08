@@ -1,7 +1,7 @@
 import { mkdir, writeFile, readFile, readdir } from "node:fs/promises";
 import { createServer } from "node:http";
 import { join } from "node:path";
-import { assert, newProject } from "./harness.mjs";
+import { assert, newProject, blockWeatherDownloads } from "./harness.mjs";
 const base = new URL("../../../crates/pe-trackers/tests/fixtures/yellowbrick/", import.meta.url);
 
 const requests = [];
@@ -20,6 +20,7 @@ export default {
   },
   async run(t) {
     const d = t.driver;
+    await blockWeatherDownloads(d);
     const geo = join(d.automationRoot, "geojson");
     const metadata = join(d.automationRoot, "metadata");
     await mkdir(geo, { recursive: true }); await mkdir(metadata, { recursive: true });
@@ -30,7 +31,11 @@ export default {
     await writeFile(join(geo, "race.geojson"), JSON.stringify({ type: "Feature", properties: { vesselParticipantId: "participant", competitionUnitId: "race", detail: { lon: 0, lat: 1, elevation: 2, time: 3, sog: 4, cog: 5 } }, geometry: { type: "LineString", coordinates: [[-122, 35, 0, 1753531200000, 7, 270], [-122.05, 35, 0, 1753531800000, 8, 270], [-122.1, 35, 0, 1753532400000, 9, 270]] } }));
     await writeFile(join(geo, "race2.geojson"), (await readFile(join(geo, "race.geojson"), "utf8")).replaceAll('"participant"', '"participant2"').replaceAll('"race"', '"race2"'));
     await newProject(d, "Library tracks");
+    assert.equal(await d.exists('.boat-track-search'), false, "search is hidden without a metadata file");
+    assert.equal(await d.exists('[data-feature="tracks:boat-search"]'), false);
+    await t.shot("no-metadata-search-hidden");
     await d.click('[data-feature="shell:settings"]');
+    await d.type('[data-feature="settings:data-source"]', "whirlwind");
     // Scraping is back, into files only (asked 2026-10-04): nothing about a database.
     await d.waitFor('[data-feature="settings:library-geojson"]');
     for (const gone of ["settings:db-host", "settings:db-test", "settings:db-scrape", "settings:db-export", "settings:db-download"]) {
@@ -75,6 +80,7 @@ export default {
     assert.equal(saved.library.database.host, "127.0.0.1");
     assert.equal(saved.library.database.port, 1);
     await d.click('[data-feature="settings:close"]');
+    await d.waitFor('[data-feature="tracks:boat-search"]');
     await d.type('[data-feature="tracks:boat-search"]', "lurl");
     await d.waitFor(".boat-track-results li", { text: "Lurline" });
     await t.shot("boat-search");
@@ -108,11 +114,11 @@ export default {
     await d.run(`document.querySelector('[data-feature="tracks:select-all"]').scrollIntoView({block: "center"}); done(true);`);
     await t.shot("all-imported-tracks-selected");
     await d.click('[data-feature="tracks:fetch-weather-selected"]');
-    await d.waitFor('[role="dialog"]', { text: "6 samples" });
+    assert.equal(await d.exists('[role="dialog"]'), false);
+    await d.waitFor('.statusbar', { text: "Whirlwind cache path is not a regular directory" });
+    await d.waitGone('.busy-spinner.on');
+    assert.equal(await d.count('[data-feature="tracks:select"]:checked'), 0, "queuing weather clears the selection");
     await t.shot("weather-for-all-imported-tracks");
-    await d.key("Escape");
-    await d.waitGone('[role="dialog"]');
-    assert.equal(await d.count('[data-feature="tracks:select"]:checked'), 2, "cancelling the download keeps the selection");
     await d.click('[data-feature="shell:settings"]');
     await d.waitFor('[data-feature="settings:library-urls"]');
     await d.run(`document.querySelector('[data-feature="settings:library-urls"]').scrollIntoView({block: "center"}); done(true);`);

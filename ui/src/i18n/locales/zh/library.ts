@@ -14,7 +14,6 @@ const catalogue: Record<string, string> = {
   "Search all vessel fields, including name, model, class, make and builder": "搜索船只的所有字段，包括名称、型号、级别、品牌和船厂",
   "Name, model, class, make, builder…": "名称、型号、级别、品牌、船厂…",
   "Searching boat tracks…": "正在搜索船只航迹…",
-  "Scrape races, or choose the track library's folders, in Settings to search local tracks.": "在设置中抓取比赛或选择航迹库的文件夹，即可搜索本地航迹。",
   "{count} matching tracks": "{count} 条匹配的航迹",
   "GeoJSON file missing from the configured directory": "配置的目录中缺少 GeoJSON 文件",
   "Import this boat track; weather can be fetched afterwards": "导入此船只航迹；之后可获取气象数据",

@@ -1,8 +1,8 @@
 /**
  * The YellowBrick dialog under the real dev build (StrictMode): an address
  * served by a local fixture server (recorded Middle Sea Race 2024
- * responses, no live network) → the boat list → the positions finish → one
- * Cancel only → a boat imports as a track. a8cf1dd was this dialog hanging
+ * responses, no live network) → boat list only → Import tracks downloads
+ * positions → a boat imports as a track, with one Cancel available. a8cf1dd was this dialog hanging
  * on "Downloading" in development only.
  */
 import { readFile } from "node:fs/promises";
@@ -22,8 +22,7 @@ async function serveFixtures() {
     const path = (req.url ?? "").split("?")[0];
     requests.push(path);
     const body = routes.get(path);
-    // The positions a moment after the list, so the dialog's "listed, still
-    // downloading" state is really passed through.
+    // Hold the positions briefly to exercise progress after Import tracks.
     const delay = path.startsWith("/BIN/") ? 1500 : 0;
     setTimeout(() => {
       res.writeHead(body ? 200 : 404, { "content-length": body ? body.length : 0 });
@@ -55,7 +54,7 @@ export default {
     await d.click('[data-feature="tracker-import:open"]');
     await d.waitFor('[data-feature="tracker-import:boats"] tbody tr', { timeoutMs: 20_000 });
     await t.shot("boats-listed");
-    // The positions arrive and the dialog leaves "Downloading" (the a8cf1dd hang).
+    // Listing completes with no position requests.
     await d.waitGone(".tracker-import .tracker-progress", { timeoutMs: 20_000 });
     const rows = await d.count('[data-feature="tracker-import:boats"] tbody tr');
     assert.ok(rows >= 3, `the boat list shows the event's boats (${rows})`);
@@ -71,17 +70,38 @@ export default {
        done({ count: untagged.length, isFirst: untagged.length === 1 && untagged[0] === first });`);
     assert.deepEqual(dismiss, { count: 1, isFirst: true }, "exactly one Cancel, the action row's first button");
     assert.ok(fixture.requests.includes("/JSON/rmsr2024/RaceSetup"), `the fixture server was asked: ${fixture.requests}`);
-    await t.shot("positions-loaded");
+    assert.deepEqual(fixture.requests, ["/JSON/rmsr2024/RaceSetup"], "Open downloads metadata only");
+    assert.equal(await d.exists('.tracker-preview'), false);
+    assert.match(await d.text('[data-feature="tracker-import:boats"] tbody'), /—/);
+    await t.shot("waiting-for-import");
 
     const first = await d.run(
       `var box = Array.prototype.find.call(document.querySelectorAll('[data-feature="tracker-import:boats"] tbody input[type=checkbox]'),
          function (b) { return !b.disabled; });
        if (!box) { done(null); return; } box.click(); done(box.getAttribute("aria-label"));`);
-    assert.ok(first, "a boat with positions can be ticked");
+    assert.ok(first, "a listed boat can be ticked before downloading positions");
     await d.click(".modal.tracker-import button.primary", { text: "Import tracks" });
+    await d.waitFor('.tracker-progress');
+    await t.shot("positions-downloading-after-import");
     await d.waitGone(".modal.tracker-import", { timeoutMs: 20_000 });
+    assert.equal(fixture.requests.filter(p => p === "/BIN/rmsr2024/AllPositions3").length, 1);
     await d.waitFor(".left-nav", { text: first });
     await t.shot("track-imported");
+
+    // Reopening uses complete cached tracks; refreshing still loads only metadata.
+    const downloaded = fixture.requests.length;
+    await d.click('[data-feature="tracks:yellowbrick"]');
+    await d.type('[data-feature="tracker-import:url"]', "https://yb.tl/rmsr2024");
+    await d.click('[data-feature="tracker-import:open"]');
+    await d.waitFor('.tracker-preview');
+    assert.equal(fixture.requests.length, downloaded);
+    await t.shot("cached-preview");
+    await d.click('[data-feature="tracker-import:refresh"]');
+    await d.waitGone('.tracker-progress');
+    assert.equal(await d.exists('.tracker-preview'), false);
+    assert.equal(fixture.requests.length, downloaded + 1);
+    assert.equal(fixture.requests.at(-1), "/JSON/rmsr2024/RaceSetup");
+    await d.click('.tracker-import .modal-actions > button:first-child');
 
     // The track on the map, framed: its colour is on the map canvas.
     await d.click('[data-feature="stage:map"]');

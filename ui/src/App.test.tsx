@@ -99,6 +99,10 @@ function backend() {
     calls.push([command, args]);
     switch (command) {
       case "app_settings": return settings;
+      case "library_metadata_available": return true;
+      case "weather_cache_status": return { directory: "/cache/whirlwind-hindsight-v1", bytes: 0, max_bytes: 1e10 };
+      case "clear_weather_cache": return { directory: "/cache/whirlwind-hindsight-v1", bytes: 0, max_bytes: 1e10 };
+      case "set_weather_cache": settings = { ...settings, weather_cache: { directory: args?.directory as string, max_size_gb: args?.maxSizeGb as number } }; return settings;
       case "database_job_status": return { running: false, operation: "", failures: [], done: 0, total: 0, tracks: 0, skipped: 0, failed: 0, current: "", cancelled: false, error: null };
       case "app_info": return { name: "PolarExplorer", version: "0.1.0" };
       // The MCP service, off: its section shows the switch and the port.
@@ -259,7 +263,7 @@ beforeEach(() => {
       database: { host: "localhost", port: 5432, name: "syrfbackendprod", user: "postgres", password: "", tls: false } },
     recent_projects: [], autosave: "recovery", language: "en", theme: "harbour",
     units: { speed: "kn", wave_height: "m", distance: "nm" },
-    weather_memory_mb: 256, network: { concurrency: 8, timeout_s: 60 },
+    weather_cache: { directory: "", max_size_gb: 10 }, data_source: "open_data", weather_memory_mb: 256, network: { concurrency: 8, timeout_s: 60 },
     projection: "equirectangular", plot_tws_band_kn: 1,
     mcp: { enabled: false, port: 47392, token: "" },
     catalogues: { orc_schedule: "on_demand", orr_schedule: "on_demand" },
@@ -619,7 +623,7 @@ describe("switching language (plan.md M2 acceptance)", () => {
   // Data, not interface: the project's name and path, the version, the
   // languages' own names, and symbols.
   const data = new Set(["Fastnet", "/boats/Fastnet.wpsproj", "v0.1.0", "PolarExplorer", "English", "Français",
-    "Deutsch", "Español", "Italiano", "Nederlands", "中文", "日本語", "العربية", "/cache/chunks", "…", "Old", "/gone/Old.wpsproj", "Lost", "?",
+    "Deutsch", "Español", "Italiano", "Nederlands", "中文", "日本語", "العربية", "/cache/chunks", "/cache/whirlwind-hindsight-v1", "…", "Old", "/gone/Old.wpsproj", "Lost", "?",
     // Country codes and the catalogue's commit, from the ORC polars section.
     "ORC", "ORR", "GBR", "NED", "c2ca870c6b22cc02c25afd5bac0f2d8297bf95de"]);
   const untranslated = (target: "fr" | "de", before: string[], after: string[]) =>
@@ -684,7 +688,7 @@ describe("switching language (plan.md M2 acceptance)", () => {
       // Data, not interface: the project's name and path, the version, the
       // languages' own names, and symbols.
       const data = new Set(["Fastnet", "/boats/Fastnet.wpsproj", "v0.1.0", "PolarExplorer", "English", "Français",
-        "Deutsch", "Español", "Italiano", "Nederlands", "中文", "日本語", "العربية", "/cache/chunks", "…",
+        "Deutsch", "Español", "Italiano", "Nederlands", "中文", "日本語", "العربية", "/cache/chunks", "/cache/whirlwind-hindsight-v1", "…",
         // Country codes and the catalogue's commit, from the ORC polars section.
         "ORC", "ORR", "GBR", "NED", "c2ca870c6b22cc02c25afd5bac0f2d8297bf95de"]);
       const untranslated = before.filter((text, index) =>

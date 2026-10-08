@@ -16,11 +16,19 @@
  */
 
 import assert from "node:assert/strict";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { ROOT, safeName } from "../client.mjs";
 
 export { assert };
+
+/** Fail before HTTP without relying on credentials for the public S3 archive. */
+export async function blockWeatherDownloads(driver) {
+  const cache = join(driver.automationRoot, "cache");
+  await mkdir(cache, { recursive: true });
+  await writeFile(join(cache, "whirlwind-hindsight-v1"), "offline weather fixture");
+}
 
 /** Where a test's pictures go. Under `target/`, which git ignores. */
 export function shotsDir(test) {

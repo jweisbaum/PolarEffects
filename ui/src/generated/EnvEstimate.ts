@@ -13,10 +13,6 @@ samples: number,
  */
 hourly_bytes: number,
 /**
- * Bytes to download sampling 3-hourly.
- */
-three_hourly_bytes: number,
-/**
  * Bytes of the hourly fetch already downloaded this session.
  */
 cached_bytes: number,
@@ -24,13 +20,4 @@ cached_bytes: number,
  * About how much the project file grows by: the values stored per
  * sample, compressed.
  */
-stored_bytes: number,
-/**
- * The hourly download above which 3-hourly is preselected.
- */
-three_hourly_above_bytes: number,
-/**
- * `"hourly"`, or `"three_hourly"` when the hourly download would
- * exceed [`THREE_HOURLY_ABOVE_BYTES`] (D19, D27).
- */
-recommended: string, };
+stored_bytes: number, };

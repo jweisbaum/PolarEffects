@@ -123,6 +123,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     RecoveredProject::export_all(&cfg)?;
     AutosaveMode::export_all(&cfg)?;
     Settings::export_all(&cfg)?;
+    pe_app::weather_cache::WeatherCacheStatus::export_all(&cfg)?;
     pe_app::boats::BoatTab::export_all(&cfg)?;
     pe_app::boats::BoatTabs::export_all(&cfg)?;
     pe_app::boats::BoatExportResult::export_all(&cfg)?;

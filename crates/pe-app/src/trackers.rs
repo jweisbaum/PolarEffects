@@ -1,17 +1,12 @@
 //! Tracker imports (spec.md 7.2): download a whole event, keep it for the
 //! session, and import the boats the user picks.
 //!
-//! Two calls, as the dialog needs. [`tracker_event`] resolves the pasted
-//! address and downloads **every** boat's full track as a job with
-//! progress (`tracker://progress`) and Cancel ([`cancel_tracker_event`]),
-//! sending the boat list ahead of the positions (`tracker://listed`) when
-//! the tracker gives it first, so the dialog's table shows at once (D24);
-//! the event is kept in memory (up to [`KEPT_FIXES`] positions in all), so
-//! asking again, or importing a second boat later in the session, downloads
-//! nothing. [`import_tracker_boats`] then
-//! builds one track source per chosen boat as one undoable change, exactly
-//! as a file import does, with the boat's start and finish as the default
-//! time window (spec.md 7.6).
+//! [`tracker_event`] can load only the boat list, without positions, for
+//! the Add tracks dialog's Open action. Import tracks explicitly downloads
+//! the event, with progress and cancellation, then [`import_tracker_boats`]
+//! adds the selected boats in one undoable change. Providers with a combined
+//! response defer the whole download until Import tracks. Complete events
+//! remain in the session cache up to [`KEPT_FIXES`] positions.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -382,6 +377,29 @@ pub fn download_listed(
     client: Arc<dyn TrackerClient>,
     input: &str,
     refresh: bool,
+    on_progress: impl FnMut(TrackerProgress),
+    on_listed: impl FnMut(&TrackerEventView),
+) -> Result<TrackerEventView> {
+    read_event(state, client, input, refresh, false, on_progress, on_listed)
+}
+
+/// Open the picker without downloading any boat positions.
+pub fn list_with(
+    state: &AppState,
+    client: Arc<dyn TrackerClient>,
+    input: &str,
+    refresh: bool,
+    on_progress: impl FnMut(TrackerProgress),
+) -> Result<TrackerEventView> {
+    read_event(state, client, input, refresh, true, on_progress, |_| {})
+}
+
+fn read_event(
+    state: &AppState,
+    client: Arc<dyn TrackerClient>,
+    input: &str,
+    refresh: bool,
+    list_only: bool,
     mut on_progress: impl FnMut(TrackerProgress),
     mut on_listed: impl FnMut(&TrackerEventView),
 ) -> Result<TrackerEventView> {
@@ -410,16 +428,34 @@ pub fn download_listed(
             .name("tracker-download".to_owned())
             .spawn(move || {
                 let listed_tx = tx.clone();
-                let result = client.fetch_listed(
-                    &event,
-                    &fetcher,
-                    &mut |p| {
-                        let _ = tx.send(Message::Progress(p));
-                    },
-                    &mut |boats| {
-                        let _ = listed_tx.send(Message::Listed(Box::new(boats)));
-                    },
-                );
+                let result = if list_only {
+                    client
+                        .list(&event, &fetcher, &mut |p| {
+                            let _ = tx.send(Message::Progress(p));
+                        })
+                        .map(|listing| {
+                            listing.unwrap_or_else(|| TrackerEvent {
+                                title: event.key.clone(),
+                                event: event.clone(),
+                                start: None,
+                                stop: None,
+                                boats: Vec::new(),
+                                positions_from: PositionsFrom::Primary,
+                                leg: None,
+                            })
+                        })
+                } else {
+                    client.fetch_listed(
+                        &event,
+                        &fetcher,
+                        &mut |p| {
+                            let _ = tx.send(Message::Progress(p));
+                        },
+                        &mut |boats| {
+                            let _ = listed_tx.send(Message::Listed(Box::new(boats)));
+                        },
+                    )
+                };
                 let _ = tx.send(Message::Done(Box::new(result)));
             })
             .map_err(|e| AppError::Internal(format!("no download thread: {e}")))?
@@ -462,6 +498,9 @@ pub fn download_listed(
         let _ = worker.join();
     }
     let downloaded = Arc::new(outcome?);
+    if list_only {
+        return Ok(TrackerEventView::listing(&downloaded));
+    }
     state.trackers.keep(Arc::clone(&downloaded), &event.key);
     Ok(TrackerEventView::of(&downloaded, false))
 }
@@ -473,8 +512,9 @@ enum Message {
     Done(Box<pe_trackers::Result<TrackerEvent>>),
 }
 
-/// Resolves a pasted event address and downloads every boat's track, or
-/// recalls the event from this session (spec.md 7.2). The boat list goes
+/// Resolves an event address, reading only metadata when `list_only`, or
+/// downloading tracks otherwise. Complete cached events need no requests.
+/// During a full download the boat list goes
 /// ahead as [`LISTED_EVENT`] when the tracker gives it first.
 ///
 /// Generic over the Tauri runtime so the MCP service's tools, and their
@@ -486,17 +526,19 @@ pub async fn tracker_event<R: tauri::Runtime>(
     url: String,
     refresh: bool,
     download: String,
+    list_only: Option<bool>,
 ) -> Result<TrackerEventView> {
     use tauri::{Emitter, Manager};
     let tracker = tracker_of(&tracker)?;
     let client: Arc<dyn TrackerClient> = Arc::from(client_of(tracker)?);
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        download_listed(
+        read_event(
             &state,
             client,
             &url,
             refresh,
+            list_only.unwrap_or(false),
             |p| {
                 let _ = app.emit(PROGRESS_EVENT, &p);
             },

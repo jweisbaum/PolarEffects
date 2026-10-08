@@ -587,6 +587,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "crc32c"
+version = "0.6.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a47af21622d091a8f0fb295b88bc886ac74efcc613efc19f5d0b21de5c89e47"
+dependencies = [
+ "rustc_version",
+]
+
+[[package]]
 name = "crc32fast"
 version = "1.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -831,6 +840,7 @@ checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
  "block-buffer 0.10.4",
  "crypto-common 0.1.7",
+ "subtle",
 ]
 
 [[package]]
@@ -1612,6 +1622,15 @@ name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+
+[[package]]
+name = "hmac"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
+dependencies = [
+ "digest 0.10.7",
+]
 
 [[package]]
 name = "hmac"
@@ -2761,7 +2780,7 @@ checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
 name = "orc-catalogue-builder"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "pe-core",
  "pe-orc",
@@ -2852,7 +2871,7 @@ checksum = "df94ce210e5bc13cb6651479fa48d14f601d9858cfe0467f43ae157023b938d3"
 
 [[package]]
 name = "pe-app"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2864,6 +2883,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "memchr",
  "pe-core",
  "pe-env",
  "pe-grib",
@@ -2897,7 +2917,7 @@ dependencies = [
 
 [[package]]
 name = "pe-core"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "proptest",
  "serde",
@@ -2908,22 +2928,30 @@ dependencies = [
 
 [[package]]
 name = "pe-env"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
+ "crc32c",
+ "futures-util",
+ "half",
+ "hmac 0.12.1",
  "lz4_flex",
  "pe-core",
  "reqwest",
  "rustls",
  "rustls-platform-verifier",
+ "ruzstd",
+ "serde",
  "serde_json",
+ "sha2 0.10.9",
  "thiserror 2.0.21",
+ "tokio",
  "zarrs",
  "zarrs_storage",
 ]
 
 [[package]]
 name = "pe-grib"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "pe-core",
  "pe-grib",
@@ -2932,7 +2960,7 @@ dependencies = [
 
 [[package]]
 name = "pe-orc"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "lz4_flex",
  "pe-core",
@@ -2943,7 +2971,7 @@ dependencies = [
 
 [[package]]
 name = "pe-polar"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "pe-core",
  "proptest",
@@ -2952,7 +2980,7 @@ dependencies = [
 
 [[package]]
 name = "pe-trackers"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "base64 0.22.1",
  "dom_query",
@@ -2971,7 +2999,7 @@ dependencies = [
 
 [[package]]
 name = "pe-tracks"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "pe-core",
  "proptest",
@@ -3151,7 +3179,7 @@ dependencies = [
  "byteorder",
  "bytes",
  "fallible-iterator",
- "hmac",
+ "hmac 0.13.0",
  "md-5",
  "memchr",
  "rand 0.10.3",
@@ -3733,6 +3761,15 @@ dependencies = [
  "quick-error",
  "tempfile",
  "wait-timeout",
+]
+
+[[package]]
+name = "ruzstd"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7c1c839d570d835527c9a5e4db7cb2198683a988cb9d7293fc8674e6bd58fc8"
+dependencies = [
+ "twox-hash",
 ]
 
 [[package]]
@@ -5194,6 +5231,12 @@ dependencies = [
  "syn 2.0.119",
  "termcolor",
 ]
+
+[[package]]
+name = "twox-hash"
+version = "2.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "86a801b3cea342a06d468c8710662aa29e5e05e4f5c0d62f00bbb7f2ad7941c2"
 
 [[package]]
 name = "typed-path"

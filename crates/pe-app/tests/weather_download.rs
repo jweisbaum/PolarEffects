@@ -129,7 +129,7 @@ fn a_fastnet_boat_costs_megabytes_to_fetch_and_kilobytes_to_keep() {
         let (no_env, _) = entry_size(&pe_core::io::to_bytes(&bare).unwrap(), &entry);
         println!(
             "M14e | boat {} {:?}: {} fixes over {span_h:.0} h, {} with wind | estimate {:.1} MB hourly \
-             ({:.1} MB already in memory), {:.1} MB 3-hourly, stored ~{} B | downloaded {:.1} MB in {} \
+             ({:.1} MB already in memory), stored ~{} B | downloaded {:.1} MB in {} \
              requests, {seconds:.1} s | as whole chunks {:.1} MB | tracks/{}.json {} B deflated \
              ({} B plain), of which the environment {} B ({:.1} B per sample) | memory {:.0} MB",
             n + 1,
@@ -138,7 +138,6 @@ fn a_fastnet_boat_costs_megabytes_to_fetch_and_kilobytes_to_keep() {
             track.with_wind,
             estimate.hourly_bytes as f64 / 1e6,
             estimate.cached_bytes as f64 / 1e6,
-            estimate.three_hourly_bytes as f64 / 1e6,
             estimate.stored_bytes,
             (b1 - b0) as f64 / 1e6,
             r1 - r0,

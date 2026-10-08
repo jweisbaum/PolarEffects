@@ -1,0 +1,827 @@
+use super::*;
+use crate::Dataset;
+use crate::grid::{Axis, Grid};
+use std::io::{Read, Write};
+use std::net::TcpListener;
+use std::sync::atomic::AtomicUsize;
+
+// An independent Zstandard raw-block fixture: standard magic, single segment,
+// four-byte content size, and one final uncompressed block.
+fn zstd_raw(raw: &[u8]) -> Vec<u8> {
+    let mut b = vec![0x28, 0xb5, 0x2f, 0xfd, 0xa0];
+    b.extend_from_slice(&(raw.len() as u32).to_le_bytes());
+    let block = ((raw.len() as u32) << 3) | 1;
+    b.extend_from_slice(&block.to_le_bytes()[..3]);
+    b.extend_from_slice(raw);
+    b
+}
+
+fn archive() -> Archive {
+    let array = |np| Array {
+        shape: [4, np, 4, 8],
+        inner: [2, np, 2, 2],
+        bands: [vec![2, 2], vec![4, 4]],
+        parameters: (0..np).collect(),
+    };
+    Archive {
+        data: array(7),
+        grid: Grid {
+            lat: Axis::from_values("lat", &[60., 30., 0., -30.]).unwrap(),
+            lon: Axis::from_values("lon", &[-180., -135., -90., -45., 0., 45., 90., 135.]).unwrap(),
+        },
+        time: TimeAxis {
+            first: 946684800,
+            step: 3600,
+            len: 4,
+        },
+    }
+}
+
+fn fixture() -> BTreeMap<String, Vec<u8>> {
+    let mut objects = BTreeMap::new();
+    for t in 0..2 {
+        for y in 0..2 {
+            for x in 0..2 {
+                let mut shard = Vec::new();
+                let mut index = Vec::new();
+                for inner in 0..2 {
+                    let mut raw = Vec::new();
+                    for step in 0..2 {
+                        for param in 0..7 {
+                            for row in 0..2 {
+                                for _col in 0..2 {
+                                    let hour = (t * 2 + step) as f32;
+                                    let value = match param {
+                                        0 => 2. * hour + (y * 2 + row) as f32,
+                                        1 => 4.,
+                                        2 => 0.5,
+                                        3 => -0.25,
+                                        4 => {
+                                            if step == 0 {
+                                                350.
+                                            } else {
+                                                10.
+                                            }
+                                        }
+                                        5 => 2. + hour,
+                                        _ => 8.,
+                                    };
+                                    raw.extend_from_slice(
+                                        &half::f16::from_f32(value).to_bits().to_le_bytes(),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    let encoded = zstd_raw(&raw);
+                    index.extend_from_slice(&(shard.len() as u64).to_le_bytes());
+                    index.extend_from_slice(&(encoded.len() as u64).to_le_bytes());
+                    shard.extend(encoded);
+                    assert_eq!(inner, index.len() / 16 - 1);
+                }
+                index.extend_from_slice(&crc32c::crc32c(&index).to_le_bytes());
+                shard.extend(index);
+                objects.insert(
+                    Chunk {
+                        time: t,
+                        lat: y,
+                        lon: x,
+                        inner: 0,
+                    }
+                    .key(),
+                    shard,
+                );
+            }
+        }
+    }
+    objects
+}
+
+#[derive(Debug)]
+struct Server {
+    endpoint: String,
+    requests: Arc<Mutex<Vec<(String, String)>>>,
+    peak: Arc<AtomicUsize>,
+    stop: Arc<AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+    pipelined: Arc<AtomicBool>,
+}
+impl Drop for Server {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        if let Some(t) = self.thread.take() {
+            t.join().unwrap();
+        }
+    }
+}
+fn serve(objects: BTreeMap<String, Vec<u8>>, status: u16) -> Server {
+    serve_revision(objects, status, "fixture-v1")
+}
+fn serve_revision(objects: BTreeMap<String, Vec<u8>>, status: u16, revision: &str) -> Server {
+    serve_delayed(objects, status, revision, None)
+}
+fn serve_delayed(
+    objects: BTreeMap<String, Vec<u8>>,
+    status: u16,
+    revision: &str,
+    slow_index: Option<String>,
+) -> Server {
+    let revision = revision.to_owned();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let endpoint = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let live = Arc::new(AtomicUsize::new(0));
+    let peak = Arc::new(AtomicUsize::new(0));
+    let stop = Arc::new(AtomicBool::new(false));
+    let index_finished = Arc::new(AtomicBool::new(false));
+    let pipelined = Arc::new(AtomicBool::new(false));
+    let pipelined_result = Arc::clone(&pipelined);
+    let (r, p, s) = (Arc::clone(&requests), Arc::clone(&peak), Arc::clone(&stop));
+    let objects = Arc::new(objects);
+    let thread = std::thread::spawn(move || {
+        let mut workers = Vec::new();
+        while !s.load(Ordering::SeqCst) {
+            let Ok((mut socket, _)) = listener.accept() else {
+                std::thread::sleep(Duration::from_millis(2));
+                continue;
+            };
+            let (r, p, live, objects) = (
+                Arc::clone(&r),
+                Arc::clone(&p),
+                Arc::clone(&live),
+                Arc::clone(&objects),
+            );
+            let revision = revision.clone();
+            let (slow_index, index_finished, pipelined) = (
+                slow_index.clone(),
+                Arc::clone(&index_finished),
+                Arc::clone(&pipelined),
+            );
+            workers.push(std::thread::spawn(move || {
+                socket.set_nonblocking(false).unwrap();
+                socket.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                let mut request = Vec::new();
+                let mut buf = [0u8;2048];
+                while !request.windows(4).any(|b| b == b"\r\n\r\n") {
+                    let n = socket.read(&mut buf).unwrap(); if n == 0 { return; } request.extend_from_slice(&buf[..n]);
+                }
+                let text = String::from_utf8(request).unwrap();
+                let key = text.split_whitespace().nth(1).unwrap().trim_start_matches('/').to_owned();
+                let range = text.lines().find_map(|line| line.strip_prefix("range: ")).unwrap_or("").to_owned();
+                assert!(!text.to_ascii_lowercase().contains("authorization:"));
+                assert!(!text.to_ascii_lowercase().contains("x-amz-"));
+                r.lock().unwrap().push((key.clone(),range.clone()));
+                if slow_index.as_ref() == Some(&key) && range.starts_with("bytes=-") {
+                    std::thread::sleep(Duration::from_millis(250));
+                    index_finished.store(true, Ordering::SeqCst);
+                } else if slow_index.is_some() && !range.starts_with("bytes=-") && !index_finished.load(Ordering::SeqCst) {
+                    pipelined.store(true, Ordering::SeqCst);
+                }
+                let now = live.fetch_add(1,Ordering::SeqCst)+1; p.fetch_max(now,Ordering::SeqCst);
+                std::thread::sleep(Duration::from_millis(35));
+                let reply = if status != 206 { format!("HTTP/1.1 {status} Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").into_bytes() }
+                else if let Some(body) = objects.get(&key).filter(|_| range.is_empty()) {
+                    let mut response = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",body.len()).into_bytes();
+                    response.extend_from_slice(body); response
+                }
+                else if let Some(body) = objects.get(&key) {
+                    let bytes = range.strip_prefix("bytes=").expect("only byte ranges for field data");
+                    let (a,b) = bytes.split_once('-').unwrap();
+                    let (start,end) = if a.is_empty() { (body.len()-b.parse::<usize>().unwrap(),body.len()) }
+                        else { (a.parse::<usize>().unwrap(),b.parse::<usize>().unwrap()+1) };
+                    let mut response = format!("HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes {}-{}/{}\r\nETag: \"{revision}\"\r\nConnection: close\r\n\r\n",end-start,start,end-1,body.len()).into_bytes();
+                    response.extend_from_slice(&body[start..end]); response
+                } else { b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec() };
+                let _ = socket.write_all(&reply);
+                live.fetch_sub(1,Ordering::SeqCst);
+            }));
+        }
+        for worker in workers {
+            worker.join().unwrap();
+        }
+    });
+    Server {
+        endpoint,
+        requests,
+        peak,
+        stop,
+        thread: Some(thread),
+        pipelined: pipelined_result,
+    }
+}
+fn reader(server: &Server, concurrency: usize) -> Whirlwind {
+    let mut w = Whirlwind::new(
+        Source::S3,
+        Source::S3.credentials(),
+        Duration::from_secs(5),
+        BlockCache::new(16 << 20),
+        concurrency,
+    )
+    .unwrap();
+    w.s3.endpoint = Some(server.endpoint.clone());
+    *w.archive.lock().unwrap() = Some(Arc::new(archive()));
+    w
+}
+
+#[test]
+fn public_s3_reads_metadata_and_chunk_ranges_without_signing() {
+    assert!(Source::S3.credentials().is_none());
+    assert!(Source::R2.credentials().is_some());
+    assert!(Source::Tigris.credentials().is_some());
+    let mut objects = fixture();
+    objects.insert("zarr.json".into(), b"{\"zarr_format\":3}".to_vec());
+    let server = serve(objects, 206);
+    let w = reader(&server, 4);
+    let cancel = Arc::new(AtomicBool::new(false));
+    let metadata = w
+        .runtime
+        .block_on(w.s3.get("zarr.json", None, &cancel))
+        .unwrap()
+        .unwrap();
+    assert_eq!(&metadata[..], b"{\"zarr_format\":3}");
+    let out = w.sample(&[point()], &options(), &cancel).unwrap();
+    assert!(out[0].wind.is_some() && out[0].waves.is_some() && out[0].current.is_some());
+    let requests = server.requests.lock().unwrap();
+    assert!(requests.iter().any(|(_, range)| range.is_empty()));
+    assert!(
+        requests
+            .iter()
+            .any(|(_, range)| range.starts_with("bytes=-"))
+    );
+    assert!(
+        requests
+            .iter()
+            .any(|(_, range)| range.starts_with("bytes=") && !range.starts_with("bytes=-"))
+    );
+}
+fn options() -> Options {
+    Options {
+        interval: crate::Interval::Hourly,
+        stokes_drift: false,
+        parts: crate::Parts::ALL,
+    }
+}
+fn point() -> Point {
+    Point {
+        t: 946684800 + 1800,
+        lat: 45.,
+        lon: -80.,
+    }
+}
+
+#[test]
+fn sparse_ranges_interpolate_and_reuse_cache() {
+    let server = serve(fixture(), 206);
+    let w = reader(&server, 4);
+    let cancel = Arc::new(AtomicBool::new(false));
+    let out = w.sample(&[point(), point()], &options(), &cancel).unwrap();
+    assert_eq!(out[0], out[1]);
+    let wind = out[0].wind.unwrap();
+    assert_eq!((wind.u, wind.v), (1.5, 4.)); // half an hour + half a latitude cell
+    assert_eq!(wind.dataset, Dataset::WhirlwindHindsight);
+    let waves = out[0].waves.unwrap();
+    assert!((waves.from.unwrap() % 360.).abs() < 1e-5);
+    assert_eq!((waves.hs, waves.period_s), (Some(2.5), Some(8.)));
+    assert_eq!(
+        (out[0].current.unwrap().u, out[0].current.unwrap().v),
+        (0.5, -0.25)
+    );
+    let before = server.requests.lock().unwrap().clone();
+    assert_eq!(
+        before.len(),
+        2,
+        "one index and one shared inner chunk for all seven parameters"
+    );
+    assert!(before.iter().all(|(k, _)| k == "data/c/0/0/0/0"));
+    assert!(before.iter().all(|(_, r)| !r.is_empty()));
+    assert_eq!(
+        w.sample(&[point()], &options(), &cancel).unwrap()[0],
+        out[0]
+    );
+    assert_eq!(server.requests.lock().unwrap().len(), before.len());
+    assert_eq!(w.estimate(&[point()]).unwrap().hourly_bytes, 0);
+}
+
+#[test]
+fn missing_shards_are_missing_but_forbidden_is_an_error() {
+    for status in [404, 403] {
+        let server = serve(BTreeMap::new(), status);
+        let w = reader(&server, 2);
+        let result = w.sample(&[point()], &options(), &Arc::new(AtomicBool::new(false)));
+        if status == 404 {
+            assert_eq!(result.unwrap(), vec![EnvPoint::default()]);
+        } else {
+            assert!(result.unwrap_err().to_string().contains("403"));
+        }
+    }
+}
+
+#[test]
+fn cancelled_reads_make_no_requests() {
+    let server = serve(fixture(), 206);
+    let w = reader(&server, 4);
+    assert!(matches!(
+        w.sample(&[point()], &options(), &Arc::new(AtomicBool::new(true))),
+        Err(EnvError::Cancelled)
+    ));
+    assert!(server.requests.lock().unwrap().is_empty());
+}
+
+#[test]
+fn plans_cross_time_shards_spatial_shards_and_antimeridian() {
+    let a = archive();
+    let points = [
+        Point {
+            t: a.time.first + 5400,
+            lat: 15.,
+            lon: 179.,
+        },
+        Point {
+            t: a.time.first - 1,
+            ..point()
+        },
+    ];
+    let (stamps, chunks) = plan(&a, &points, &options());
+    assert!(stamps.iter().all(|s| s[1].is_none()));
+    // Both adjacent times and both latitude/longitude bands; one array for all parameters.
+    assert_eq!(chunks.len(), 8);
+    assert!(chunks.keys().any(|c| c.time == 0) && chunks.keys().any(|c| c.time == 1));
+    let (_, alias) = plan(
+        &a,
+        &[Point {
+            lon: -181.,
+            ..points[0]
+        }],
+        &options(),
+    );
+    assert_eq!(chunks, alias);
+}
+
+#[test]
+fn corrupt_indexes_and_decoded_sizes_are_refused() {
+    let chunk = Chunk {
+        time: 0,
+        lat: 0,
+        lon: 0,
+        inner: 0,
+    };
+    let mut index = vec![0; 16];
+    index.extend_from_slice(&crc32c::crc32c(&index).to_le_bytes());
+    index[0] = 1;
+    assert!(
+        layout::index_entry(&index, chunk)
+            .unwrap_err()
+            .to_string()
+            .contains("checksum")
+    );
+    assert!(layout::decode(&zstd_raw(b"1234"), 3).is_err());
+    assert!(layout::decode(&zstd_raw(b"1234"), 5).is_err());
+}
+
+#[test]
+fn parallel_requests_reduce_latency_and_obey_the_limit() {
+    let points = [
+        point(),
+        Point {
+            t: 946684800 + 9000,
+            lat: -15.,
+            lon: 50.,
+        },
+    ];
+    let mut elapsed = Vec::new();
+    for concurrency in [1, 4] {
+        let server = serve(fixture(), 206);
+        let w = reader(&server, concurrency);
+        let start = std::time::Instant::now();
+        w.sample(&points, &options(), &Arc::new(AtomicBool::new(false)))
+            .unwrap();
+        elapsed.push(start.elapsed());
+        assert!(server.peak.load(Ordering::SeqCst) <= concurrency);
+        if concurrency == 4 {
+            assert!(server.peak.load(Ordering::SeqCst) >= 2);
+        }
+    }
+    eprintln!(
+        "Whirlwind mock cold fetch: serial {:?}, parallel {:?}",
+        elapsed[0], elapsed[1]
+    );
+}
+
+#[test]
+#[ignore = "live anonymous S3; run explicitly with PE_TEST_LIVE=1"]
+fn live_whirlwind_anonymous_sample() {
+    if std::env::var("PE_TEST_LIVE").as_deref() != Ok("1") {
+        return;
+    }
+    let w = Whirlwind::new(
+        Source::S3,
+        Source::S3.credentials(),
+        Duration::from_secs(30),
+        BlockCache::new(32 << 20),
+        CONCURRENCY,
+    )
+    .unwrap();
+    let p = Point {
+        t: crate::time::parse_utc("2000-01-03T12:30:00").unwrap(),
+        lat: 48.,
+        lon: -5.,
+    };
+    let start = std::time::Instant::now();
+    let out = w
+        .sample(&[p], &options(), &Arc::new(AtomicBool::new(false)))
+        .unwrap();
+    eprintln!(
+        "Whirlwind live: {:?}, {:?}, {:?}",
+        start.elapsed(),
+        w.net_totals(),
+        out
+    );
+    assert!(out[0].wind.is_some());
+    assert!(out[0].waves.is_some());
+    assert!(out[0].current.is_some());
+    let counts = w.net_totals();
+    assert_eq!(
+        w.sample(&[p], &options(), &Arc::new(AtomicBool::new(false)))
+            .unwrap(),
+        out
+    );
+    assert_eq!(w.net_totals(), counts);
+}
+
+#[test]
+fn array_metadata_validates_shapes_and_codec_before_planning() {
+    let metadata = serde_json::json!({
+        "zarr_format":3,"node_type":"array","shape":[4,7,4,8],
+        "data_type":"float16","fill_value":"NaN","dimension_names":["time","param","latitude","longitude"],
+        "chunk_key_encoding":{"name":"default","configuration":{"separator":"/"}},
+        "chunk_grid":{"name":"rectilinear","configuration":{"kind":"inline","chunk_shapes":[2,7,[2,2],[4,4]]}},
+        "codecs":[{"name":"sharding_indexed","configuration":{
+            "chunk_shape":[2,7,2,2],"index_location":"end",
+            "codecs":[{"name":"bytes","configuration":{"endian":"little"}},{"name":"zstd","configuration":{"level":5}}],
+            "index_codecs":[{"name":"bytes","configuration":{"endian":"little"}},{"name":"crc32c"}]
+        }}]
+    });
+    let a = Array::parse(&metadata, (0..7).collect()).unwrap();
+    let (c, offset) = a.locate((3, 3, 7));
+    assert_eq!(
+        c,
+        Chunk {
+            time: 1,
+            lat: 1,
+            lon: 1,
+            inner: 1
+        }
+    );
+    assert_eq!(offset, 31); // time 1, parameter 0, row 1, column 1
+    assert_eq!(a.index_len(c), 36);
+    for pointer in [
+        "/data_type",
+        "/codecs/0/configuration/index_location",
+        "/chunk_grid/configuration/chunk_shapes/2",
+        "/shape/3",
+    ] {
+        let mut broken = metadata.clone();
+        *broken.pointer_mut(pointer).unwrap() = serde_json::json!("unsupported");
+        assert!(
+            Array::parse(&broken, (0..7).collect()).is_err(),
+            "{pointer}"
+        );
+    }
+    assert!(Array::parse(&serde_json::json!({}), vec![]).is_err());
+}
+
+#[test]
+fn disk_cache_reuses_overlapping_routes_after_restart_and_clear_refetches() {
+    let path = std::env::temp_dir().join(format!("pe-whirlwind-reuse-{}", std::process::id()));
+    let server = serve(fixture(), 206);
+    let disk = DiskCache::open(&path, 16 << 20).unwrap();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let w = reader(&server, 4).with_disk_cache(Arc::clone(&disk));
+    let first = w.sample(&[point()], &options(), &cancel).unwrap();
+    let cold = server.requests.lock().unwrap().len();
+    assert!(disk.size().unwrap() > 0);
+    drop(w);
+    drop(disk);
+    let disk = DiskCache::open(&path, 16 << 20).unwrap();
+    let restarted = reader(&server, 4).with_disk_cache(Arc::clone(&disk));
+    let estimate = restarted.estimate(&[point()]).unwrap();
+    assert_eq!(estimate.hourly_bytes, 0);
+    assert!(estimate.hourly_cached_bytes > 0);
+    // A different route sharing the same interpolation stencil.
+    let second = restarted
+        .sample(
+            &[
+                point(),
+                Point {
+                    t: point().t + 60,
+                    ..point()
+                },
+            ],
+            &options(),
+            &cancel,
+        )
+        .unwrap();
+    assert_eq!(first[0], second[0]);
+    assert!(
+        server.requests.lock().unwrap()[cold..]
+            .iter()
+            .all(|(_, range)| range.starts_with("bytes=-")),
+        "only fresh shard indexes are requested after restart"
+    );
+    let cached = server.requests.lock().unwrap().len();
+    disk.clear().unwrap();
+    assert!(restarted.estimate(&[point()]).unwrap().hourly_bytes > 0);
+    assert_eq!(
+        restarted.sample(&[point()], &options(), &cancel).unwrap(),
+        first
+    );
+    assert!(server.requests.lock().unwrap().len() > cached);
+    drop(restarted);
+    drop(disk);
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn a_new_shard_version_cannot_reuse_old_disk_chunks() {
+    let path = std::env::temp_dir().join(format!("pe-whirlwind-version-{}", std::process::id()));
+    let disk = DiskCache::open(&path, 16 << 20).unwrap();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let first = serve_revision(fixture(), 206, "v1");
+    let second = serve_revision(fixture(), 206, "v2");
+    let w = reader(&first, 4).with_disk_cache(Arc::clone(&disk));
+    w.sample(&[point()], &options(), &cancel).unwrap();
+    drop(w);
+    let updated = reader(&second, 4).with_disk_cache(Arc::clone(&disk));
+    assert!(updated.estimate(&[point()]).unwrap().hourly_bytes > 0);
+    updated.sample(&[point()], &options(), &cancel).unwrap();
+    assert!(
+        second
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(_, range)| !range.starts_with("bytes=-"))
+    );
+    drop(updated);
+    drop(disk);
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn storage_sources_do_not_share_cached_chunks_or_provenance() {
+    let path = std::env::temp_dir().join(format!("pe-whirlwind-sources-{}", std::process::id()));
+    let disk = DiskCache::open(&path, 16 << 20).unwrap();
+    let server = serve(fixture(), 206);
+    let cancel = Arc::new(AtomicBool::new(false));
+    for source in [Source::S3, Source::R2, Source::Tigris] {
+        let mut w = reader(&server, 4).with_disk_cache(Arc::clone(&disk));
+        w.s3.source = source;
+        assert!(w.estimate(&[point()]).unwrap().hourly_bytes > 0);
+        let out = w.sample(&[point()], &options(), &cancel).unwrap();
+        assert_eq!(out[0].wind.unwrap().dataset, source.dataset());
+        assert_eq!(out[0].current.unwrap().dataset, source.dataset());
+        assert_eq!(out[0].waves.unwrap().dataset, source.dataset());
+        assert_eq!(w.estimate(&[point()]).unwrap().hourly_bytes, 0);
+    }
+    // All three have the same shard key, ETag, extent and data, but each
+    // source must read its own chunk before that source can reuse it.
+    assert_eq!(server.requests.lock().unwrap().len(), 6);
+    drop(disk);
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn fetching_wind_then_waves_reuses_the_same_combined_chunk() {
+    let server = serve(fixture(), 206);
+    let w = reader(&server, 4);
+    let cancel = Arc::new(AtomicBool::new(false));
+    let mut wind = options();
+    wind.parts.waves = false;
+    wind.parts.current = false;
+    let first = w.sample(&[point()], &wind, &cancel).unwrap();
+    assert!(first[0].wind.is_some());
+    assert!(first[0].waves.is_none());
+    let count = server.requests.lock().unwrap().len();
+    let all = w.sample(&[point()], &options(), &cancel).unwrap();
+    assert!(all[0].waves.is_some());
+    assert_eq!(count, 2);
+    assert_eq!(server.requests.lock().unwrap().len(), count);
+}
+
+#[test]
+fn reads_the_recorded_r2_combined_layout() {
+    let metadata: serde_json::Value = serde_json::from_slice(include_bytes!(
+        "../../tests/fixtures/whirlwind/combined-data.zarr.json"
+    ))
+    .unwrap();
+    let data = Array::parse(&metadata, (0..7).collect()).unwrap();
+    assert_eq!(data.shape, [447072, 7, 720, 1440]);
+    assert_eq!(data.inner, [72, 7, 40, 40]);
+    let (chunk, offset) = data.locate((73, 200, 1100));
+    assert_eq!(chunk.key(), "data/c/1/0/1/3");
+    assert_eq!(chunk.inner, 37); // row 3 of 10 inner columns, column 7
+    assert_eq!(offset, 11220); // time 1, parameter 0, row 0, column 20
+    assert_eq!(data.index_len(chunk), 1124); // 7 × 10 index entries + checksum
+    assert_eq!(data.decoded_len(), 1_612_800);
+}
+
+#[test]
+#[ignore = "live R2; run explicitly with PE_TEST_LIVE=1"]
+fn live_r2_combined_chunks_and_restart_cache() {
+    if std::env::var("PE_TEST_LIVE").as_deref() != Ok("1") {
+        return;
+    }
+    let source = Source::R2;
+    let path =
+        std::env::temp_dir().join(format!("pe-live-cache-{source:?}-{}", std::process::id()));
+    let disk = DiskCache::open(&path, 16 << 20).unwrap();
+    let open = || {
+        Whirlwind::new(
+            source,
+            source.credentials(),
+            Duration::from_secs(45),
+            BlockCache::new(32 << 20),
+            CONCURRENCY,
+        )
+        .unwrap()
+        .with_disk_cache(Arc::clone(&disk))
+    };
+    let w = open();
+    let p = Point {
+        t: crate::time::parse_utc("2000-01-03T12:30:00").unwrap(),
+        lat: 48.,
+        lon: -5.,
+    };
+    let cancel = Arc::new(AtomicBool::new(false));
+    let start = std::time::Instant::now();
+    let out = w.sample(&[p], &options(), &cancel).unwrap();
+    eprintln!(
+        "{source:?} live combined chunk: {:?}, requests/bytes {:?}, {:?}",
+        start.elapsed(),
+        w.net_totals(),
+        out
+    );
+    assert!(out[0].wind.is_some() && out[0].waves.is_some() && out[0].current.is_some());
+    let before = w.net_totals();
+    assert_eq!(w.sample(&[p], &options(), &cancel).unwrap(), out);
+    assert_eq!(w.net_totals(), before);
+    drop(w);
+    let restarted = open();
+    assert_eq!(restarted.estimate(&[p]).unwrap().hourly_bytes, 0);
+    let before = restarted.net_totals();
+    assert_eq!(restarted.sample(&[p], &options(), &cancel).unwrap(), out);
+    assert_eq!(restarted.net_totals(), before);
+    drop(restarted);
+    drop(disk);
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+#[ignore = "live Tigris; run explicitly with PE_TEST_LIVE=1"]
+fn live_tigris_metadata_and_sparse_sampling() {
+    if std::env::var("PE_TEST_LIVE").as_deref() != Ok("1") {
+        return;
+    }
+    let source = Source::Tigris;
+    let w = Whirlwind::new(
+        source,
+        source.credentials(),
+        Duration::from_secs(45),
+        BlockCache::new(32 << 20),
+        CONCURRENCY,
+    )
+    .unwrap();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let archive = w.archive(&cancel).unwrap();
+    assert_eq!(archive.data.inner, [72, 7, 40, 40]);
+    assert_eq!(archive.data.parameters.len(), 7);
+    let p = Point {
+        t: crate::time::parse_utc("2000-01-03T12:30:00").unwrap(),
+        lat: 48.,
+        lon: -5.,
+    };
+    // The bucket currently has metadata only. A missing shard is missing
+    // weather, not an authentication/layout error; later uploads also work.
+    let out = w.sample(&[p], &options(), &cancel).unwrap();
+    assert_eq!(out.len(), 1);
+    eprintln!(
+        "Tigris live metadata/sampling: requests/bytes {:?}, {:?}",
+        w.net_totals(),
+        out
+    );
+}
+
+#[test]
+fn parameter_names_map_reordered_combined_bands() {
+    let expected = [
+        "u10",
+        "v10",
+        "ucur",
+        "vcur",
+        "wave_direction",
+        "wave_height",
+        "wave_period",
+    ];
+    let metadata = serde_json::json!({
+        "zarr_format":3,"node_type":"array","shape":[7],
+        "data_type":{"name":"fixed_length_utf32","configuration":{"length_bytes":56}},
+        "chunk_key_encoding":{"name":"default","configuration":{"separator":"/"}},
+        "chunk_grid":{"name":"regular","configuration":{"chunk_shape":[7]}},
+        "codecs":[{"name":"bytes","configuration":{"endian":"little"}},{"name":"zstd"}]
+    });
+    let mut raw = vec![0u8; 7 * 56];
+    for (slot, name) in expected.iter().rev().enumerate() {
+        for (i, ch) in name.chars().enumerate() {
+            raw[slot * 56 + i * 4..slot * 56 + i * 4 + 4]
+                .copy_from_slice(&(ch as u32).to_le_bytes());
+        }
+    }
+    assert_eq!(
+        layout::parameters(&metadata, &zstd_raw(&raw), &expected).unwrap(),
+        vec![6, 5, 4, 3, 2, 1, 0]
+    );
+    let mut missing = metadata;
+    missing["shape"] = serde_json::json!([4]);
+    assert!(layout::parameters(&missing, &zstd_raw(&raw), &expected).is_err());
+}
+
+#[test]
+fn fleet_reads_each_inner_chunk_once_and_reuses_decoded_values_across_batches() {
+    let server = serve(fixture(), 206);
+    let w = reader(&server, 8);
+    let cancel = Arc::new(AtomicBool::new(false));
+    let routes: Vec<Vec<_>> = (0..50)
+        .map(|boat| {
+            (0..20)
+                .map(|k| Point {
+                    t: point().t + if k < 10 { 0 } else { 3600 },
+                    lat: if boat % 2 == 0 { 45. } else { 15. },
+                    lon: -160. + (boat % 4) as f64 * 45. + k as f64 * 0.01,
+                })
+                .collect()
+        })
+        .collect();
+    let all: Vec<_> = routes.iter().flatten().copied().collect();
+    let (_, plan) = plan(&archive(), &all, &options());
+    let shards: BTreeSet<_> = plan.keys().map(|c| c.key()).collect();
+    let begin = std::time::Instant::now();
+    let expected = w.sample(&all, &options(), &cancel).unwrap();
+    let cold = begin.elapsed();
+    let requests = server.requests.lock().unwrap().clone();
+    assert_eq!(requests.len(), shards.len() + plan.len());
+    assert_eq!(w.decoded_chunks.load(Ordering::Relaxed), plan.len());
+    assert_eq!(
+        requests.iter().collect::<BTreeSet<_>>().len(),
+        requests.len(),
+        "no duplicate ranges"
+    );
+    assert!(
+        requests
+            .iter()
+            .all(|(_, range)| range.starts_with("bytes="))
+    );
+    for (p, value) in all.iter().zip(&expected) {
+        let hours = (p.t - archive().time.first) as f64 / 3600.;
+        assert!((value.wind.unwrap().u - (2. * hours + (60. - p.lat) / 30.)).abs() < 1e-6);
+    }
+    let begin = std::time::Instant::now();
+    for (route, expected) in routes.iter().zip(expected.chunks(20)) {
+        assert_eq!(w.sample(route, &options(), &cancel).unwrap(), expected);
+    }
+    let warm = begin.elapsed();
+    assert_eq!(
+        w.decoded_chunks.load(Ordering::Relaxed),
+        plan.len(),
+        "warm routes must not decompress again"
+    );
+    assert_eq!(server.requests.lock().unwrap().len(), requests.len());
+    assert!(w.memory.size() <= w.memory.limit());
+    eprintln!(
+        "50 fixture routes: cold fleet {cold:?}, warm individual routes {warm:?}, {} shard indexes + {} inner chunks",
+        shards.len(),
+        plan.len()
+    );
+}
+
+#[test]
+fn chunk_downloads_start_before_unrelated_shard_indexes_finish() {
+    let server = serve_delayed(fixture(), 206, "v1", Some("data/c/0/0/0/0".into()));
+    let w = reader(&server, 8);
+    w.sample(
+        &[
+            point(),
+            Point {
+                lon: 50.,
+                ..point()
+            },
+        ],
+        &options(),
+        &Arc::new(AtomicBool::new(false)),
+    )
+    .unwrap();
+    assert!(
+        server.pipelined.load(Ordering::SeqCst),
+        "a slow index must not hold up chunks from other shards"
+    );
+}

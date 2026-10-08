@@ -4,8 +4,9 @@
 //! a pure-Rust Blosc/LZ4 decoder, and space-time sampling (spec.md 7.5).
 //! Only the blocks of a chunk that hold a track's rows are downloaded
 //! (`dataset.rs`), and they are kept in memory for the session
-//! (`memory.rs`), never on disk: a project saves the values interpolated at
-//! its samples, with their dataset name and version (invariant 3).
+//! (`memory.rs`). Whirlwind can also keep validated compressed inner chunks
+//! in its bounded disk cache. Projects save only interpolated sample values,
+//! with their dataset name and version (invariant 3).
 //!
 //! One of the two crates allowed to use the network (invariant 4), and only
 //! for the archive hosts that `tools/check-offline.sh` allows. Nothing here
@@ -26,6 +27,7 @@ pub mod parallel;
 pub mod sampler;
 pub mod store;
 pub mod time;
+pub mod whirlwind;
 
 pub use dataset::{Dataset, OpenVariable, Variable, vars};
 pub use error::{EnvError, Result};

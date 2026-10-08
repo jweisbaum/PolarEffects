@@ -37,6 +37,7 @@ pub mod settings;
 pub mod trackers;
 pub mod tracks;
 pub mod wave_split;
+pub mod weather_cache;
 
 use tauri::Manager;
 
@@ -71,6 +72,7 @@ pub fn run() -> anyhow::Result<()> {
             env::start(app.handle().clone());
             // The track library's startup scrape, only if the person chose it.
             library::on_startup(app.handle().clone());
+            library::catalogue::warm(app.state::<commands::AppState>().inner().clone());
             // The catalogues' startup schedule, only if the person chose it
             // (spec.md 5.4).
             catalogues::on_startup(app.handle().clone());
@@ -126,6 +128,7 @@ pub fn run() -> anyhow::Result<()> {
             library::database::metadata_download_status,
             library::database::cancel_metadata_download,
             library::catalogue::search_database_boats,
+            library::catalogue::library_metadata_available,
             library::catalogue::import_database_track,
             basemap::basemap,
             projects::new_project,
@@ -205,6 +208,10 @@ pub fn run() -> anyhow::Result<()> {
             settings::set_autosave_mode,
             settings::set_weather_memory,
             settings::set_network,
+            settings::set_data_source,
+            weather_cache::set_weather_cache,
+            weather_cache::weather_cache_status,
+            weather_cache::clear_weather_cache,
             settings::set_projection,
             settings::set_plot_band,
             settings::mcp_status,

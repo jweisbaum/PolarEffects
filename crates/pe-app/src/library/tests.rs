@@ -7,6 +7,49 @@ fn state(name: &str) -> AppState {
     let root = std::env::temp_dir().join(format!("pe-library-{name}-{}", uuid::Uuid::new_v4()));
     AppState::new(crate::paths::AppPaths::in_directory(&root).unwrap())
 }
+
+/// Read-only timings against a real local library; never run by the default suite.
+#[test]
+#[ignore = "set PE_LIBRARY_BENCH_METADATA and PE_LIBRARY_BENCH_GEOJSON to local directories"]
+fn local_library_search_timings() {
+    let root = tempfile::tempdir().unwrap();
+    let state = AppState::new(crate::paths::AppPaths::in_directory(root.path()).unwrap());
+    state
+        .with_session(|s| {
+            s.settings.library.metadata_directory =
+                std::env::var("PE_LIBRARY_BENCH_METADATA").unwrap();
+            s.settings.library.geojson_directory =
+                std::env::var("PE_LIBRARY_BENCH_GEOJSON").unwrap();
+            Ok(())
+        })
+        .unwrap();
+    for query in ["assent", "assent", "beneteau", "j", "sunfast", "beneteau"] {
+        let start = std::time::Instant::now();
+        let found = catalogue::search(&state, query, 0).unwrap();
+        eprintln!(
+            "Library search {query:?}: {:.2} ms, {} matches, {} available on page",
+            start.elapsed().as_secs_f64() * 1000.,
+            found.total,
+            found.hits.iter().filter(|h| h.file_available).count()
+        );
+        assert!(found.downloaded);
+    }
+    // A new process retains the disposable on-disk index, not the in-memory catalogue.
+    *state.library.lock().unwrap() = None;
+    let start = std::time::Instant::now();
+    let found = catalogue::search(&state, "assent", 0).unwrap();
+    eprintln!(
+        "Library search after restart: {:.2} ms, {} matches",
+        start.elapsed().as_secs_f64() * 1000.,
+        found.total
+    );
+    eprintln!(
+        "Search index bytes: {}",
+        std::fs::metadata(state.paths.cache_dir.join("track-search-v1.json"))
+            .unwrap()
+            .len()
+    );
+}
 #[test]
 fn local_search_and_import_need_no_database() {
     let state = state("search");
@@ -150,6 +193,162 @@ fn every_vessel_value_is_searchable_from_an_existing_offline_snapshot() {
         bytes,
         "Searching must not rewrite a v1 snapshot"
     );
+}
+
+#[test]
+fn search_index_restarts_invalidates_and_preserves_page_order() {
+    let state = state("search-index");
+    let settings = LibrarySettings {
+        geojson_directory: String::new(),
+        ..Default::default()
+    };
+    state
+        .with_session(|s| {
+            s.settings.library = settings.clone();
+            Ok(())
+        })
+        .unwrap();
+    let mut metadata = catalogue::Metadata {
+        version: 1,
+        tables: BTreeMap::new(),
+        tracks: (0..205)
+            .map(|i| hit(&format!("race-{i}"), "p", &format!("v{}", i % 3), "Étoile"))
+            .collect(),
+    };
+    catalogue::write_metadata(&state, &settings, &metadata).unwrap();
+    for (offset, count) in [(0, 100), (100, 100), (200, 5), (300, 0)] {
+        let found = catalogue::search(&state, "etoile", offset).unwrap();
+        assert_eq!(found.total, 205);
+        assert_eq!(found.hits.len(), count);
+        for (i, found) in found.hits.iter().enumerate() {
+            assert_eq!(found.id, metadata.tracks[offset as usize + i].id);
+        }
+    }
+    let cache = state.paths.cache_dir.join("track-search-v1.json");
+    let cached = std::fs::read(&cache).unwrap();
+    *state.library.lock().unwrap() = None;
+    assert_eq!(
+        catalogue::search(&state, "ETOILE", 200).unwrap().hits.len(),
+        5
+    );
+    assert_eq!(
+        std::fs::read(&cache).unwrap(),
+        cached,
+        "restart reuses the index"
+    );
+    *state.library.lock().unwrap() = None;
+    std::fs::write(&cache, b"incomplete index").unwrap();
+    assert_eq!(catalogue::search(&state, "etoile", 0).unwrap().total, 205);
+    // External edits must invalidate both the in-memory and the disk index.
+    metadata
+        .tracks
+        .push(hit("new-race", "p", "new-vessel", "Different boat"));
+    std::fs::write(
+        settings.metadata_path(&state),
+        serde_json::to_vec(&metadata).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(catalogue::search(&state, "different", 0).unwrap().total, 1);
+    // Switching to another metadata file cannot reuse a previous path's index.
+    let other = LibrarySettings {
+        metadata_directory: state
+            .paths
+            .config_dir
+            .join("other")
+            .to_string_lossy()
+            .into_owned(),
+        ..settings
+    };
+    metadata.tracks.clear();
+    catalogue::write_metadata(&state, &other, &metadata).unwrap();
+    state
+        .with_session(|s| {
+            s.settings.library = other;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(catalogue::search(&state, "etoile", 0).unwrap().total, 0);
+}
+
+#[test]
+fn model_phrase_precedes_incidental_timestamp_matches_across_pages() {
+    let state = state("model-phrase");
+    let settings = LibrarySettings::default();
+    let mut vessels = Vec::new();
+    let mut tracks = Vec::new();
+    for i in 0..103 {
+        let id = format!("v-{i}");
+        vessels
+            .push(json!({"id": id, "publicName": "Pascal", "createdAt": "2022-01-24T11:40:00Z"}));
+        tracks.push(hit(&format!("race-{i}"), "p", &id, "Pascal"));
+    }
+    for (id, model) in [("azure", "Cal 40"), ("astarte", "Cal-Jenson Cal 40")] {
+        vessels.push(json!({"id": id, "publicName": id, "model": model}));
+        tracks.push(hit(id, "p", id, id));
+    }
+    catalogue::write_metadata(
+        &state,
+        &settings,
+        &catalogue::Metadata {
+            version: 1,
+            tables: BTreeMap::from([("Vessels".into(), vessels)]),
+            tracks,
+        },
+    )
+    .unwrap();
+    for restarted in [false, true] {
+        if restarted {
+            *state.library.lock().unwrap() = None;
+        }
+        let first = catalogue::search(&state, "cál 40", 0).unwrap();
+        assert_eq!(first.total, 105);
+        assert_eq!(first.hits[0].vessel_id, "azure");
+        assert_eq!(first.hits[1].vessel_id, "astarte");
+        assert_eq!(first.hits[2].vessel_id, "v-0");
+        let next = catalogue::search(&state, "cál 40", 100).unwrap();
+        assert_eq!(next.hits.len(), 5);
+        assert_eq!(next.hits[0].vessel_id, "v-98");
+        assert_eq!(next.hits[4].vessel_id, "v-102");
+        // All-fields matching stays available, including timestamps and IDs.
+        assert_eq!(
+            catalogue::search(&state, "pascal 40", 0).unwrap().total,
+            103
+        );
+        assert_eq!(catalogue::search(&state, "cal40", 0).unwrap().total, 2);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn parallel_search_file_checks_still_refuse_symlink_escapes() {
+    let state = state("search-files");
+    let geo = state.paths.config_dir.join("tracks");
+    std::fs::create_dir_all(&geo).unwrap();
+    let outside = state.paths.config_dir.join("outside.geojson");
+    std::fs::write(&outside, b"{}").unwrap();
+    std::os::unix::fs::symlink(&outside, geo.join("race.geojson")).unwrap();
+    let settings = LibrarySettings {
+        geojson_directory: geo.to_string_lossy().into_owned(),
+        ..Default::default()
+    };
+    state
+        .with_session(|s| {
+            s.settings.library = settings.clone();
+            Ok(())
+        })
+        .unwrap();
+    let metadata = catalogue::Metadata {
+        version: 1,
+        tables: BTreeMap::new(),
+        tracks: vec![hit("race", "p", "v", "Boat")],
+    };
+    catalogue::write_metadata(&state, &settings, &metadata).unwrap();
+    assert!(!catalogue::search(&state, "boat", 0).unwrap().hits[0].file_available);
+    std::fs::remove_file(geo.join("race.geojson")).unwrap();
+    std::fs::write(geo.join("race.geojson"), b"{}").unwrap();
+    assert!(catalogue::search(&state, "boat", 0).unwrap().hits[0].file_available);
+    std::fs::remove_file(geo.join("race.geojson")).unwrap();
+    assert!(!catalogue::search(&state, "boat", 0).unwrap().hits[0].file_available);
 }
 
 /// An older settings file's `database` section gives the library its

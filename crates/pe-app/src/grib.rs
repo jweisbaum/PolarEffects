@@ -259,7 +259,6 @@ fn count(n: usize) -> u32 {
 fn interval(name: &str) -> Result<Interval> {
     match name {
         "hourly" => Ok(Interval::Hourly),
-        "three_hourly" => Ok(Interval::ThreeHourly),
         other => Err(AppError::BadOption {
             field: "GRIB interval",
             value: other.to_owned(),

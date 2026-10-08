@@ -1176,6 +1176,16 @@ impl TrackerClient for Geovoile {
         Tracker::Geovoile
     }
 
+    fn list(
+        &self,
+        event: &EventRef,
+        fetcher: &Fetcher,
+        progress: &mut dyn FnMut(Progress),
+    ) -> Result<Option<TrackerEvent>> {
+        self.fetch_inner(event, fetcher, progress, &mut |_| {}, ReadMode::List)
+            .map(Some)
+    }
+
     fn fetch_for_scrape(
         &self,
         event: &EventRef,
@@ -1183,7 +1193,13 @@ impl TrackerClient for Geovoile {
         progress: &mut dyn FnMut(Progress),
         now: i64,
     ) -> Result<crate::library::completion::ScrapeFetch> {
-        let metadata = self.fetch_inner(event, fetcher, &mut |_| {}, &mut |_| {}, true)?;
+        let metadata = self.fetch_inner(
+            event,
+            fetcher,
+            &mut |_| {},
+            &mut |_| {},
+            ReadMode::ScrapeMetadata,
+        )?;
         crate::library::completion::after_check(metadata, now, || {
             self.fetch(event, fetcher, progress)
         })
@@ -1212,8 +1228,15 @@ impl TrackerClient for Geovoile {
         progress: &mut dyn FnMut(Progress),
         listed: &mut dyn FnMut(TrackerEvent),
     ) -> Result<TrackerEvent> {
-        self.fetch_inner(event, fetcher, progress, listed, false)
+        self.fetch_inner(event, fetcher, progress, listed, ReadMode::Full)
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReadMode {
+    Full,
+    ScrapeMetadata,
+    List,
 }
 
 impl Geovoile {
@@ -1223,7 +1246,7 @@ impl Geovoile {
         fetcher: &Fetcher,
         progress: &mut dyn FnMut(Progress),
         listed: &mut dyn FnMut(TrackerEvent),
-        metadata_only: bool,
+        mode: ReadMode,
     ) -> Result<TrackerEvent> {
         // The key goes into requests, so it is parsed again, never trusted.
         let mut site = site(&format!("{HTTPS}{}", event.key))?;
@@ -1291,18 +1314,22 @@ impl Geovoile {
         // The tracks and reports start at once and decode on their own
         // threads while the config is read here.
         let seeds = viewer.seeds;
-        let tracks = if metadata_only {
+        let tracks = if mode != ReadMode::Full {
             None
         } else {
             Some(fetcher.spawn(address("tracks")?, None, move |bytes| {
                 parse_tracks(&decode_text(&bytes, seeds, false)?)
             })?)
         };
-        let reports = fetcher.spawn(address("reports")?, None, move |bytes| {
-            Ok(decode_text(&bytes, seeds, false)
-                .and_then(|text| parse_reports(&text))
-                .ok())
-        })?;
+        let reports = if mode == ReadMode::List {
+            None
+        } else {
+            Some(fetcher.spawn(address("reports")?, None, move |bytes| {
+                Ok(decode_text(&bytes, seeds, false)
+                    .and_then(|text| parse_reports(&text))
+                    .ok())
+            })?)
+        };
         let at = step(2);
         let config = fetcher.get(&address("config")?, &mut |b, t| progress(at(b, t)))?;
         let config = parse_config(&decode_text(&config, viewer.seeds, true)?)?;
@@ -1326,10 +1353,12 @@ impl Geovoile {
             None => Vec::new(),
         };
         let at = step(4);
-        let reports = match reports.wait(&mut |b, t| progress(at(b, t))) {
-            Ok(reports) => reports,
-            Err(e @ (TrackerError::Cancelled | TrackerError::Unavailable { .. })) => return Err(e),
-            Err(_) => None,
+        let reports = match reports.map(|reports| reports.wait(&mut |b, t| progress(at(b, t)))) {
+            Some(Ok(reports)) => reports,
+            Some(Err(e @ (TrackerError::Cancelled | TrackerError::Unavailable { .. }))) => {
+                return Err(e);
+            }
+            Some(Err(_)) | None => None,
         };
         fetcher.check()?;
         // Done, whether or not the reports came.

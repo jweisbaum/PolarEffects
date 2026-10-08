@@ -1,3 +1,4 @@
+import type { WeatherCacheStatus } from "./generated/WeatherCacheStatus";
 /**
  * The typed command surface.
  *
@@ -29,7 +30,6 @@ import type { CompareOperand } from "./generated/CompareOperand";
 import type { CsvMappingInput } from "./generated/CsvMappingInput";
 import type { EditOp } from "./generated/EditOp";
 import type { EditSurface } from "./generated/EditSurface";
-import type { EnvEstimate } from "./generated/EnvEstimate";
 import type { EnvJobsStatus } from "./generated/EnvJobsStatus";
 import type { ExportAxes } from "./generated/ExportAxes";
 import type { ExportPreview } from "./generated/ExportPreview";
@@ -93,7 +93,6 @@ const LONG_RUNNING: Readonly<Record<string, string>> = {
   import_track_files: msg("Importing tracks"),
   import_tracker_boats: msg("Importing tracks"),
   export_polar: msg("Exporting the polar"),
-  env_estimate: msg("Estimating the download"),
   orc_catalogue_info: msg("Loading the ORC catalogue"),
 };
 
@@ -300,8 +299,8 @@ export function boatApi(boatContext?: number) {
    * "tracker-decode", "tracker-unsupported", "tracker-legacy",
    * "tracker-network" or "cancelled".
    */
-  trackerEvent: (tracker: "yellowbrick" | "geovoile" | "bluewater", url: string, refresh = false, download = "") =>
-    call<TrackerEventView>("tracker_event", { tracker, url, refresh, download }),
+  trackerEvent: (tracker: "yellowbrick" | "geovoile" | "bluewater", url: string, refresh = false, download = "", listOnly = false) =>
+    call<TrackerEventView>("tracker_event", { tracker, url, refresh, download, listOnly }),
   /** Stops the running event download. */
   cancelTrackerEvent: () => call<void>("cancel_tracker_event"),
   /** Imports the chosen boats of a downloaded event, one source per boat, as one undoable change. */
@@ -323,16 +322,9 @@ export function boatApi(boatContext?: number) {
   // arrives as `ENV_PROGRESS` events; `ENV_CHANGED` says the project changed
   // under a running fetch.
 
-  /**
-   * What fetching the named tracks would download, hourly and 3-hourly,
-   * less what the chunk cache already holds, and which interval to offer
-   * first. `restart` counts every sample, not only the missing ones.
-   */
-  envEstimate: (sourceIds: number[], restart: boolean) =>
-    call<EnvEstimate>("env_estimate", { sourceIds, restart }),
   /** Queues the named tracks' fetch: what is missing, or everything with `restart`. */
-  startEnvFetch: (sourceIds: number[], interval: "hourly" | "three_hourly", restart: boolean) =>
-    call<EnvJobsStatus>("start_env_fetch", { sourceIds, interval, restart }),
+  startEnvFetch: (sourceIds: number[], restart: boolean) =>
+    call<EnvJobsStatus>("start_env_fetch", { sourceIds, interval: "hourly", restart }),
   /** Cancels the named tracks' fetches, or every fetch for null; finished samples are kept. */
   cancelEnvFetch: (sourceIds: number[] | null = null) =>
     call<EnvJobsStatus>("cancel_env_fetch", { sourceIds }),
@@ -431,6 +423,7 @@ export function boatApi(boatContext?: number) {
   startMetadataDownload: () => call<MetadataProgress>("start_metadata_download"),
   metadataDownloadStatus: () => call<MetadataProgress>("metadata_download_status"),
   cancelMetadataDownload: () => call<void>("cancel_metadata_download"),
+  trackMetadataAvailable: () => call<boolean>("library_metadata_available"),
   searchDatabaseBoats: (query: string, offset = 0) => call<BoatTrackSearch>("search_database_boats", { query, offset }),
   importDatabaseTrack: (id: string) => call<TrackImportResult>("import_database_track", { id }),
   appSettings: () => call<AppSettings>("app_settings"),
@@ -445,6 +438,10 @@ export function boatApi(boatContext?: number) {
   /** Sets how much downloaded weather is kept in memory for the session, megabytes. */
   setWeatherMemory: (megabytes: number) => call<AppSettings>("set_weather_memory", { megabytes }),
   /** Sets the reanalysis fetcher's concurrency and timeout. */
+  setWeatherCache: (directory: string, maxSizeGb: number) => call<AppSettings>("set_weather_cache", { directory, maxSizeGb }),
+  weatherCacheStatus: () => call<WeatherCacheStatus>("weather_cache_status"),
+  clearWeatherCache: () => call<WeatherCacheStatus>("clear_weather_cache"),
+  setDataSource: (source: AppSettings["data_source"]) => call<AppSettings>("set_data_source", { source }),
   setNetwork: (network: NetworkSettings) => call<AppSettings>("set_network", { network }),
   /** Sets the map projection. */
   setProjection: (projection: MapProjection) => call<AppSettings>("set_projection", { projection }),

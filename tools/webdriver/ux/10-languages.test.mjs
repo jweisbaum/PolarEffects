@@ -3,7 +3,7 @@
  * French from its own picker, then, in each language, every main area
  * photographed — the project window with each left section open and a
  * track's filters unfolded, 3D, Compare, Blend settings, Export, the weather
- * pre-flight, Settings and Help — and twenty words a sailor would type in
+ * track weather controls, Settings and Help — and twenty words a sailor would type in
  * the feature search, each flashing the control it is meant to find
  * (`ui/src/help/sailor-queries.json`, also checked in `features.test.ts`).
  *
@@ -108,11 +108,8 @@ async function areas(t, language) {
   await t.shot(`${language}-export`);
   await closeAll(d);
 
-  await d.click('[data-feature="tracks:fetch-weather"]');
-  await d.waitFor('[data-feature="env-fetch:hourly"]', { timeoutMs: 30_000 });
-  await new Promise((r) => setTimeout(r, 1500));
-  await t.shot(`${language}-weather-preflight`);
-  await closeAll(d);
+  await d.run(`document.querySelector('.track-list').scrollIntoView({block: "center"}); done(true);`);
+  await t.shot(`${language}-weather-controls`);
 
   await d.click('[data-feature="shell:settings"]');
   await d.waitFor(".modal.settings h2", { text: words.settings });

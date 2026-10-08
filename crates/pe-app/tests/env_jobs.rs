@@ -30,6 +30,101 @@ const NOON: i64 = 1_753_531_200;
 /// A fixed clock, so the recorded fetch times of two runs compare equal.
 const NOW: i64 = 1_760_000_000;
 
+/// Exercise Tauri's async dispatch, not a direct synchronous command call.
+/// A newline in the fake key fails header validation before any HTTP request.
+#[test]
+fn whirlwind_estimate_ipc_returns_errors_and_can_retry_without_hanging() {
+    use pe_app::settings::DataSource;
+    use std::time::Duration;
+    use tauri::test::{mock_builder, mock_context, noop_assets};
+
+    let root = TempRoot::new("whirlwind-estimate-ipc");
+    let (state, id) = imported(&root);
+    state
+        .with_session(|s| {
+            s.settings.data_source = DataSource::Whirlwind;
+            Ok(())
+        })
+        .unwrap();
+    let fake =
+        serde_json::json!({"access_key_id":"TEST\nINVALID", "secret_access_key":"test-secret"});
+    std::fs::write(
+        state.paths.config_dir.join("whirlwind-credentials.json"),
+        fake.to_string(),
+    )
+    .unwrap();
+    // The public S3 provider must initialise even with an invalid legacy file.
+    // Inject invalid signing credentials explicitly to fail before HTTP.
+    env::provider(&state).unwrap();
+    state.env_provider.lock().unwrap().as_mut().unwrap().1 = Arc::new(
+        pe_env::Reanalysis::whirlwind(
+            pe_env::whirlwind::Source::S3,
+            Some(serde_json::from_value(fake).unwrap()),
+            Duration::from_secs(1),
+            pe_env::BlockCache::new(16 << 20),
+        )
+        .unwrap(),
+    );
+    let app = mock_builder()
+        .manage(state.clone())
+        .invoke_handler(tauri::generate_handler![env::env_estimate])
+        .build(mock_context(noop_assets()))
+        .unwrap();
+    let window = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+        .build()
+        .unwrap();
+    let invoke = || {
+        let window = window.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let response = tauri::test::get_ipc_response(
+                &window,
+                tauri::webview::InvokeRequest {
+                    cmd: "env_estimate".into(),
+                    callback: tauri::ipc::CallbackFn(0),
+                    error: tauri::ipc::CallbackFn(1),
+                    url: if cfg!(windows) {
+                        "http://tauri.localhost"
+                    } else {
+                        "tauri://localhost"
+                    }
+                    .parse()
+                    .unwrap(),
+                    body: tauri::ipc::InvokeBody::Json(
+                        serde_json::json!({"boatContext":null,"sourceIds":[id],"restart":false}),
+                    ),
+                    headers: Default::default(),
+                    invoke_key: tauri::test::INVOKE_KEY.to_owned(),
+                },
+            );
+            let _ = tx.send(response);
+        });
+        rx.recv_timeout(Duration::from_secs(5))
+            .expect("weather estimate must settle its IPC promise")
+    };
+    for _ in 0..2 {
+        let error = invoke().unwrap_err();
+        assert_eq!(error["kind"], "internal");
+        assert!(
+            error["message"]
+                .as_str()
+                .unwrap()
+                .contains("invalid Whirlwind credentials"),
+            "{error}"
+        );
+    }
+    assert!(state.env_jobs.status().tracks.is_empty());
+    state
+        .with_session(|s| {
+            s.settings.data_source = DataSource::OpenData;
+            Ok(())
+        })
+        .unwrap();
+    let estimate: serde_json::Value = invoke().unwrap().deserialize().unwrap();
+    assert_eq!(estimate["samples"], 61);
+    assert!(estimate["hourly_bytes"].as_u64().unwrap() > 0);
+}
+
 /// One boat sailing north up 5°W from 49.5°N, 0.01° every 10 minutes, for
 /// ten hours: 61 positions.
 fn track_file(root: &TempRoot) -> String {
@@ -447,7 +542,7 @@ fn a_track_removed_under_its_fetch_is_left_alone() {
     assert_eq!(track(&app, id).env_meta.status, EnvStatus::NotFetched);
 }
 
-/// Refetch of a ready track at another interval starts over; a derivation
+/// Refetch of a ready track starts over; a derivation
 /// change afterwards relates the new headings to the stored wind without
 /// asking the archive again (M8 carry).
 #[test]
@@ -457,14 +552,14 @@ fn refetch_starts_over_and_rederiving_needs_no_fetch() {
     env::queue_fetch(&app, &[id], "hourly", false).unwrap();
     drain(&app, &Fake::new(), &Sink::default());
     let coarse = Fake::new();
-    env::queue_fetch(&app, &[id], "three_hourly", false).unwrap();
+    env::queue_fetch(&app, &[id], "hourly", true).unwrap();
     assert_eq!(drain(&app, &coarse, &Sink::default()), vec![Outcome::Done]);
     assert_eq!(
         coarse.points.load(Ordering::SeqCst),
         61,
         "every sample again"
     );
-    assert_eq!(track(&app, id).env_meta.interval_s, Some(10_800));
+    assert_eq!(track(&app, id).env_meta.interval_s, Some(3600));
 
     let before = track(&app, id);
     let calls = coarse.calls.load(Ordering::SeqCst);
@@ -507,7 +602,7 @@ fn replacing_the_project_cancels_its_jobs() {
 }
 
 #[test]
-fn the_estimate_prefers_three_hourly_only_for_a_long_race() {
+fn estimates_hourly_download_and_rejects_other_intervals() {
     let root = TempRoot::new("env-estimate");
     let (app, id) = imported(&root);
     let e = env::estimate_for(&app, &[id], false, None).unwrap();
@@ -525,12 +620,44 @@ fn the_estimate_prefers_three_hourly_only_for_a_long_race() {
         "{}",
         e.hourly_bytes
     );
-    assert!(e.three_hourly_bytes < e.hourly_bytes);
-    assert_eq!(e.recommended, "hourly");
-    assert_eq!(e.three_hourly_above_bytes, env::THREE_HOURLY_ABOVE_BYTES);
+    assert!(env::queue_fetch(&app, &[id], "three_hourly", false).is_err());
+    assert!(app.env_jobs.status().tracks.is_empty());
     // What the project grows by: bytes per sample, not megabytes.
     assert_eq!(e.stored_bytes, 61 * env::STORED_BYTES_PER_SAMPLE);
     assert!(env::queue_fetch(&app, &[id], "weekly", false).is_err());
+}
+
+/// Old projects keep their weather until asked to fetch; resuming a coarse
+/// partial fetch then replaces it completely at hourly resolution.
+#[test]
+fn a_legacy_three_hourly_track_is_estimated_and_refetched_hourly() {
+    let root = TempRoot::new("env-legacy-interval");
+    let (app, id) = fetched(&root, false);
+    app.with_session(|s| {
+        let track = s
+            .open
+            .as_mut()
+            .unwrap()
+            .project
+            .source_mut(pe_core::SourceId(id))
+            .unwrap()
+            .track_mut()
+            .unwrap();
+        track.env_meta.interval_s = Some(10_800);
+        track.env_meta.status = EnvStatus::Partial;
+        track.samples[0].clear_env();
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(
+        env::estimate_for(&app, &[id], false, None).unwrap().samples,
+        61
+    );
+    env::queue_fetch(&app, &[id], "hourly", false).unwrap();
+    let fake = Fake::new();
+    assert_eq!(drain(&app, &fake, &Sink::default()), vec![Outcome::Done]);
+    assert_eq!(fake.points.load(Ordering::SeqCst), 61);
+    assert_eq!(track(&app, id).env_meta.interval_s, Some(3600));
 }
 
 /// Correcting for current and Stokes drift are project settings, each one
@@ -596,7 +723,7 @@ fn a_cancelled_restart_never_mixes_two_fetches() {
     let root = TempRoot::new("env-restart-cancel");
     let (app, id) = fetched(&root, false);
     const LATER: i64 = NOW + 86_400;
-    env::queue_fetch(&app, &[id], "three_hourly", false).unwrap();
+    env::queue_fetch(&app, &[id], "hourly", true).unwrap();
     let cancelling = Fake {
         app: Some(&app),
         cancel_on: Some(2),
@@ -608,7 +735,7 @@ fn a_cancelled_restart_never_mixes_two_fetches() {
     );
     let t = track(&app, id);
     assert_eq!(t.env_meta.status, EnvStatus::Partial);
-    assert_eq!(t.env_meta.interval_s, Some(10_800));
+    assert_eq!(t.env_meta.interval_s, Some(3600));
     let (fetched, rest): (Vec<_>, Vec<_>) = t.samples.iter().partition(|s| s.env_fetched);
     assert!(!fetched.is_empty() && !rest.is_empty());
     for s in &rest {
@@ -685,4 +812,467 @@ fn boat_jobs_with_equal_source_ids_are_independent() {
     assert!(outcomes.contains(&Outcome::Done));
     assert!(!track(&app, id).samples.iter().any(|s| s.env_fetched));
     assert!(track(&child, id).samples.iter().all(|s| s.env_fetched));
+}
+
+#[test]
+fn changing_data_source_replaces_existing_values_and_keeps_queued_choice() {
+    use pe_app::settings::{self, DataSource};
+    struct Whirlwind(Dataset);
+    impl Provider for Whirlwind {
+        fn sample(
+            &self,
+            points: &[Point],
+            _: &Options,
+            _: &Arc<AtomicBool>,
+        ) -> pe_env::Result<Vec<EnvPoint>> {
+            Ok(points
+                .iter()
+                .map(|_| EnvPoint {
+                    wind: Some(Vector {
+                        u: 12.,
+                        v: 3.,
+                        dataset: self.0,
+                    }),
+                    ..EnvPoint::default()
+                })
+                .collect())
+        }
+    }
+    let root = TempRoot::new("source-switch");
+    let (app, id) = imported(&root);
+    let sink = Sink::default();
+    env::queue_fetch(&app, &[id], "hourly", false).unwrap();
+    assert_eq!(
+        drain(&app, &Whirlwind(Dataset::WhirlwindHindsight), &sink),
+        vec![Outcome::Done]
+    );
+    // Existing values are Whirlwind, so switching to Open Data must replace
+    // even a ready track without requiring an explicit restart.
+    env::queue_fetch(&app, &[id], "hourly", false).unwrap();
+    // A preference change after queueing must not change that queued request.
+    settings::data_source_set(&app, DataSource::Whirlwind).unwrap();
+    let provider = Fake::new();
+    assert_eq!(drain(&app, &provider, &sink), vec![Outcome::Done]);
+    let fetched = track(&app, id);
+    assert!(
+        fetched
+            .env_meta
+            .datasets
+            .iter()
+            .all(|d| d.name != Dataset::WhirlwindHindsight.id())
+    );
+    assert!(fetched.samples.iter().all(|s| s.env_fetched));
+    env::queue_fetch(&app, &[id], "hourly", false).unwrap();
+    assert_eq!(
+        drain(&app, &Whirlwind(Dataset::WhirlwindHindsight), &sink),
+        vec![Outcome::Done]
+    );
+    assert!(
+        track(&app, id)
+            .env_meta
+            .datasets
+            .iter()
+            .all(|d| d.name == Dataset::WhirlwindHindsight.id())
+    );
+    for (source, dataset) in [
+        (DataSource::WhirlwindR2, Dataset::WhirlwindR2),
+        (DataSource::WhirlwindTigris, Dataset::WhirlwindTigris),
+        (DataSource::Whirlwind, Dataset::WhirlwindHindsight),
+    ] {
+        settings::data_source_set(&app, source).unwrap();
+        // A ready route must be fetched again when its storage source changes.
+        assert!(
+            !env::queue_fetch(&app, &[id], "hourly", false)
+                .unwrap()
+                .tracks
+                .is_empty()
+        );
+        assert_eq!(drain(&app, &Whirlwind(dataset), &sink), vec![Outcome::Done]);
+        assert!(
+            track(&app, id)
+                .env_meta
+                .datasets
+                .iter()
+                .all(|d| d.name == dataset.id())
+        );
+    }
+}
+
+#[test]
+fn a_prepare_failure_is_reported_as_failure_not_cancellation() {
+    struct Broken;
+    impl Provider for Broken {
+        fn sample(
+            &self,
+            _: &[Point],
+            _: &Options,
+            _: &Arc<AtomicBool>,
+        ) -> pe_env::Result<Vec<EnvPoint>> {
+            panic!("a failed prepare must not sample");
+        }
+        fn prepare(&self, _: &[Point], _: &Options, _: &Arc<AtomicBool>) -> pe_env::Result<()> {
+            Err(EnvError::Open("S3 answered 403".into()))
+        }
+    }
+    let root = TempRoot::new("prepare-failure");
+    let (app, id) = imported(&root);
+    env::queue_fetch(&app, &[id], "hourly", false).unwrap();
+    assert!(
+        matches!(drain(&app,&Broken,&Sink::default()).as_slice(),[Outcome::Failed(message)] if message.contains("403"))
+    );
+    assert_eq!(track(&app, id).env_meta.status, EnvStatus::Failed);
+}
+
+fn imported_fleet(root: &TempRoot, boats: usize, samples: usize) -> (AppState, Vec<u64>) {
+    imported_fleet_dates(root, boats, samples, 0)
+}
+fn imported_fleet_dates(
+    root: &TempRoot,
+    boats: usize,
+    samples: usize,
+    date_spacing: i64,
+) -> (AppState, Vec<u64>) {
+    let app = root.state();
+    projects::create(&app, "Fleet weather".into(), None, false).unwrap();
+    app.with_session(|s| {
+        s.settings.data_source = pe_app::settings::DataSource::WhirlwindR2;
+        Ok(())
+    })
+    .unwrap();
+    let features: Vec<_> = (0..boats).flat_map(|boat| (0..samples).map(move |k| {
+        serde_json::json!({"type":"Feature", "geometry":{"type":"Point","coordinates":[-5.0, 50.0 + boat as f64 * 0.001]},
+            "properties":{"time":NOON + k as i64 * 600 + date_spacing * boat as i64, "boat":format!("Fleet {boat}")}})
+    })).collect();
+    let path = root.file("fleet.geojson");
+    std::fs::write(
+        &path,
+        serde_json::json!({"type":"FeatureCollection","features":features}).to_string(),
+    )
+    .unwrap();
+    let result = tracks::import(
+        &app,
+        &[TrackFileRequest {
+            path,
+            mapping: None,
+            boats: None,
+        }],
+    )
+    .unwrap();
+    let ids = result.imported.iter().map(|s| s.source_id).collect();
+    (app, ids)
+}
+
+struct FleetProvider<'a> {
+    app: &'a AppState,
+    calls: Mutex<Vec<Vec<Point>>>,
+    cancel_source: Option<u64>,
+    cancel_on: Option<usize>,
+    fail_north: bool,
+}
+impl<'a> FleetProvider<'a> {
+    fn new(app: &'a AppState) -> Self {
+        Self {
+            app,
+            calls: Mutex::new(Vec::new()),
+            cancel_source: None,
+            cancel_on: None,
+            fail_north: false,
+        }
+    }
+}
+impl Provider for FleetProvider<'_> {
+    fn sample(
+        &self,
+        points: &[Point],
+        options: &Options,
+        cancel: &Arc<AtomicBool>,
+    ) -> pe_env::Result<Vec<EnvPoint>> {
+        let call = {
+            let mut calls = self.calls.lock().unwrap();
+            calls.push(points.to_vec());
+            calls.len()
+        };
+        assert_eq!(options.interval, pe_env::Interval::Hourly);
+        assert!(points.len() <= 10_000);
+        assert!(points.windows(2).all(|p| p[0].t <= p[1].t));
+        for lat in points
+            .iter()
+            .map(|p| p.lat.to_bits())
+            .collect::<std::collections::BTreeSet<_>>()
+        {
+            let same_route: Vec<_> = points.iter().filter(|p| p.lat.to_bits() == lat).collect();
+            assert!(same_route.last().unwrap().t - same_route[0].t < 72 * 3600);
+        }
+        if call == 1
+            && let Some(id) = self.cancel_source
+        {
+            self.app.env_jobs.cancel(Some(&[id]));
+        }
+        if self.cancel_on == Some(call) {
+            self.app.env_jobs.cancel(None);
+        }
+        if cancel.load(Ordering::SeqCst) {
+            return Err(EnvError::Cancelled);
+        }
+        if self.fail_north && points.iter().any(|p| p.lat > 50.0015) {
+            return Err(EnvError::OutOfRange("broken northern chunk".into()));
+        }
+        Ok(points
+            .iter()
+            .map(|p| {
+                let mut env = truth(p);
+                env.wind.as_mut().unwrap().dataset = Dataset::WhirlwindR2;
+                env.waves.as_mut().unwrap().dataset = Dataset::WhirlwindR2;
+                env.current.as_mut().unwrap().dataset = Dataset::WhirlwindR2;
+                env
+            })
+            .collect())
+    }
+}
+
+#[test]
+fn whirlwind_fleet_combines_tracks_and_scatter_preserves_each_samples_weather() {
+    let root = TempRoot::new("env-fleet");
+    let (app, ids) = imported_fleet(&root, 20, 61);
+    env::queue_fetch(&app, &ids, "hourly", false).unwrap();
+    let provider = FleetProvider::new(&app);
+    let sink = Sink::default();
+    assert_eq!(drain(&app, &provider, &sink), [Outcome::Done]);
+    assert_eq!(provider.calls.lock().unwrap().len(), 1);
+    assert_eq!(provider.calls.lock().unwrap()[0].len(), 20 * 61);
+    assert!(
+        sink.progress.lock().unwrap().iter().any(|s| s
+            .tracks
+            .iter()
+            .filter(|t| t.state == "fetching")
+            .count()
+            == 20)
+    );
+    assert!(
+        sink.changed.load(Ordering::SeqCst) <= 2,
+        "updates are per batch, not per boat"
+    );
+    for id in ids {
+        let track = track(&app, id);
+        assert_eq!(track.env_meta.status, EnvStatus::Ready);
+        assert_eq!(track.env_meta.datasets.len(), 1);
+        for sample in track.samples {
+            let expected = truth(&Point {
+                t: sample.t,
+                lat: sample.lat,
+                lon: sample.lon,
+            })
+            .wind
+            .unwrap();
+            assert_eq!(
+                sample.tws,
+                Some(env_knots(expected.u.hypot(expected.v) * env::KN_PER_MS))
+            );
+            assert!(sample.env_fetched);
+        }
+    }
+    assert!(!app.env_jobs.busy());
+}
+
+#[test]
+fn cancelling_one_fleet_track_does_not_cancel_shared_downloads_for_the_others() {
+    let root = TempRoot::new("env-fleet-cancel-one");
+    let (app, ids) = imported_fleet(&root, 3, 61);
+    env::queue_fetch(&app, &ids, "hourly", false).unwrap();
+    let provider = FleetProvider {
+        cancel_source: Some(ids[0]),
+        ..FleetProvider::new(&app)
+    };
+    assert_eq!(
+        drain(&app, &provider, &Sink::default()),
+        [Outcome::Cancelled]
+    );
+    assert_eq!(track(&app, ids[0]).env_meta.status, EnvStatus::NotFetched);
+    assert!(track(&app, ids[0]).samples.iter().all(|s| !s.env_fetched));
+    for id in &ids[1..] {
+        assert_eq!(track(&app, *id).env_meta.status, EnvStatus::Ready);
+    }
+    assert!(!app.env_jobs.busy());
+}
+
+#[test]
+fn cancelled_fleet_keeps_completed_batches_and_resumes_only_missing_samples() {
+    let root = TempRoot::new("env-fleet-resume");
+    let (app, ids) = imported_fleet(&root, 3, 500);
+    env::queue_fetch(&app, &ids, "hourly", false).unwrap();
+    let provider = FleetProvider {
+        cancel_on: Some(2),
+        ..FleetProvider::new(&app)
+    };
+    assert_eq!(
+        drain(&app, &provider, &Sink::default()),
+        [Outcome::Cancelled]
+    );
+    for id in &ids {
+        let t = track(&app, *id);
+        assert_eq!(t.env_meta.status, EnvStatus::Partial);
+        assert_eq!(t.samples.iter().filter(|s| s.env_fetched).count(), 432);
+    }
+    env::queue_fetch(&app, &ids, "hourly", false).unwrap();
+    let provider = FleetProvider::new(&app);
+    assert_eq!(drain(&app, &provider, &Sink::default()), [Outcome::Done]);
+    assert_eq!(
+        provider
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .map(Vec::len)
+            .sum::<usize>(),
+        3 * 68
+    );
+    for id in ids {
+        assert_eq!(track(&app, id).env_meta.status, EnvStatus::Ready);
+    }
+}
+
+#[test]
+fn a_bad_chunk_fails_only_its_fleet_track_and_other_tracks_finish() {
+    let root = TempRoot::new("env-fleet-isolate-failure");
+    let (app, ids) = imported_fleet(&root, 3, 61);
+    env::queue_fetch(&app, &ids, "hourly", false).unwrap();
+    let provider = FleetProvider {
+        fail_north: true,
+        ..FleetProvider::new(&app)
+    };
+    assert!(
+        matches!(&drain(&app, &provider, &Sink::default())[..], [Outcome::Failed(message)] if message.contains("broken northern chunk"))
+    );
+    assert_eq!(provider.calls.lock().unwrap().len(), 4);
+    for id in &ids[..2] {
+        assert_eq!(track(&app, *id).env_meta.status, EnvStatus::Ready);
+    }
+    assert_eq!(track(&app, ids[2]).env_meta.status, EnvStatus::Failed);
+    assert_eq!(app.env_jobs.status().failure.unwrap()[0], "Fleet 2");
+    assert!(!app.env_jobs.busy());
+}
+
+#[test]
+fn fleet_batch_sample_cap_is_shared_across_all_tracks() {
+    let root = TempRoot::new("env-fleet-bounded");
+    let (app, ids) = imported_fleet(&root, 30, 400);
+    env::queue_fetch(&app, &ids, "hourly", false).unwrap();
+    let provider = FleetProvider::new(&app);
+    assert_eq!(drain(&app, &provider, &Sink::default()), [Outcome::Done]);
+    assert_eq!(
+        provider
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .map(Vec::len)
+            .collect::<Vec<_>>(),
+        [10_000, 2_000]
+    );
+    for id in ids {
+        assert_eq!(track(&app, id).env_meta.status, EnvStatus::Ready);
+    }
+}
+
+#[test]
+fn fleet_keeps_equal_source_ids_in_different_boat_tabs_separate() {
+    let root = TempRoot::new("env-fleet-tabs");
+    let (app, id) = imported(&root);
+    app.with_session(|s| {
+        s.settings.data_source = pe_app::settings::DataSource::WhirlwindR2;
+        Ok(())
+    })
+    .unwrap();
+    let first = projects::summary(&app).unwrap().unwrap().id;
+    let second = pe_app::boats::add(&app, "Sister ship".into()).unwrap().id;
+    let child = app.scoped(Some(second));
+    let added = tracks::import(
+        &child,
+        &[TrackFileRequest {
+            path: track_file(&root),
+            mapping: None,
+            boats: None,
+        }],
+    )
+    .unwrap();
+    assert_eq!(id, added.imported[0].source_id);
+    env::queue_fetch(&app, &[id], "hourly", false).unwrap();
+    env::queue_fetch(&child, &[id], "hourly", false).unwrap();
+    struct CancelBoat<'a> {
+        first: u64,
+        source: u64,
+        inner: FleetProvider<'a>,
+    }
+    impl Provider for CancelBoat<'_> {
+        fn sample(
+            &self,
+            points: &[Point],
+            options: &Options,
+            cancel: &Arc<AtomicBool>,
+        ) -> pe_env::Result<Vec<EnvPoint>> {
+            self.inner
+                .app
+                .env_jobs
+                .cancel_boat(Some(self.first), Some(&[self.source]));
+            self.inner.sample(points, options, cancel)
+        }
+    }
+    let provider = CancelBoat {
+        first,
+        source: id,
+        inner: FleetProvider::new(&app),
+    };
+    assert_eq!(
+        drain(&app, &provider, &Sink::default()),
+        [Outcome::Cancelled]
+    );
+    assert_eq!(provider.inner.calls.lock().unwrap()[0].len(), 122);
+    assert!(track(&app, id).samples.iter().all(|s| !s.env_fetched));
+    assert_eq!(track(&child, id).env_meta.status, EnvStatus::Ready);
+    assert!(app.env_jobs.status().failure.is_none());
+}
+
+#[test]
+fn fleet_tracks_from_different_race_dates_share_one_download_pipeline() {
+    let root = TempRoot::new("env-fleet-dates");
+    let (app, ids) = imported_fleet_dates(&root, 3, 61, 365 * 86400);
+    env::queue_fetch(&app, &ids, "hourly", false).unwrap();
+    let provider = FleetProvider::new(&app);
+    assert_eq!(drain(&app, &provider, &Sink::default()), [Outcome::Done]);
+    let calls = provider.calls.lock().unwrap();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].len(), 183);
+    assert!(calls[0].last().unwrap().t - calls[0][0].t > 2 * 365 * 86400);
+    for id in ids {
+        assert_eq!(track(&app, id).env_meta.status, EnvStatus::Ready);
+    }
+}
+
+#[test]
+fn a_shared_archive_error_fails_the_fleet_without_repeating_it_for_each_boat() {
+    let root = TempRoot::new("env-fleet-archive-error");
+    let (app, ids) = imported_fleet(&root, 20, 61);
+    env::queue_fetch(&app, &ids, "hourly", false).unwrap();
+    struct Forbidden(AtomicUsize);
+    impl Provider for Forbidden {
+        fn sample(
+            &self,
+            _: &[Point],
+            _: &Options,
+            _: &Arc<AtomicBool>,
+        ) -> pe_env::Result<Vec<EnvPoint>> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Err(EnvError::Open("Whirlwind S3 answered 403".into()))
+        }
+    }
+    let provider = Forbidden(AtomicUsize::new(0));
+    assert!(matches!(
+        &drain(&app, &provider, &Sink::default())[..],
+        [Outcome::Failed(_)]
+    ));
+    assert_eq!(provider.0.load(Ordering::SeqCst), 1);
+    for id in ids {
+        assert_eq!(track(&app, id).env_meta.status, EnvStatus::Failed);
+    }
+    assert!(!app.env_jobs.busy());
 }

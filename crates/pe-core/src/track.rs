@@ -964,7 +964,7 @@ pub struct EnvMeta {
     /// How far the environment fetch got.
     pub status: EnvStatus,
     /// The wind and wave sampling interval of the last fetch, seconds (3600
-    /// hourly, 10800 3-hourly, D19); `None` before any fetch. A Refetch
+    /// hourly; 10800 in older projects); `None` before any fetch. A Refetch
     /// at another interval starts over rather than mixing the two.
     #[serde(default)]
     pub interval_s: Option<i64>,

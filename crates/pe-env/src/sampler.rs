@@ -51,9 +51,6 @@ pub enum Interval {
     /// Every hour of ERA5 (the default).
     #[default]
     Hourly,
-    /// Every third hour (00, 03, … UTC), interpolated between: a third of
-    /// the download, for long races.
-    ThreeHourly,
 }
 
 impl Interval {
@@ -61,15 +58,12 @@ impl Interval {
     pub fn seconds(self) -> i64 {
         match self {
             Self::Hourly => 3600,
-            Self::ThreeHourly => 3 * 3600,
         }
     }
 
     /// The interval of this spacing, if it is one.
     pub fn from_seconds(seconds: i64) -> Option<Self> {
-        [Self::Hourly, Self::ThreeHourly]
-            .into_iter()
-            .find(|i| i.seconds() == seconds)
+        [Self::Hourly].into_iter().find(|i| i.seconds() == seconds)
     }
 }
 
@@ -218,6 +212,7 @@ pub enum Access {
 /// open costs about a second of metadata requests (M3), which a job over
 /// several tracks would otherwise pay per track.
 pub struct Reanalysis {
+    whirlwind: Option<crate::whirlwind::Whirlwind>,
     access: Access,
     /// What this session has downloaded: every track of every event reads
     /// through it, so the second boat of a race costs little. In memory
@@ -278,18 +273,18 @@ type Tier = (
 
 /// A position placed on a variable's grid and time axis.
 #[derive(Debug, Clone, Copy)]
-struct Stamp {
-    stencil: Stencil,
-    a: u64,
-    b: u64,
-    w: f64,
+pub(crate) struct Stamp {
+    pub(crate) stencil: Stencil,
+    pub(crate) a: u64,
+    pub(crate) b: u64,
+    pub(crate) w: f64,
 }
 
 /// The steps either side of `t` on `axis`, taking only every `every`
 /// seconds (aligned on UTC midnight), and the weight of the later one.
 /// Falls back to every step where the coarse steps are not on the axis
 /// (its end, or an axis whose spacing does not divide `every`).
-fn bracket_every(axis: &TimeAxis, t: i64, every: i64) -> Option<(u64, u64, f64)> {
+pub(crate) fn bracket_every(axis: &TimeAxis, t: i64, every: i64) -> Option<(u64, u64, f64)> {
     if every <= axis.step || every % axis.step != 0 {
         return axis.bracket(t);
     }
@@ -343,7 +338,7 @@ fn place(
 }
 
 /// A scalar at each placed position.
-fn scalar_of((stamps, values): &Placed) -> Vec<Option<f64>> {
+pub(crate) fn scalar_of((stamps, values): &Placed) -> Vec<Option<f64>> {
     stamps
         .iter()
         .map(|stamp| {
@@ -360,7 +355,7 @@ fn scalar_of((stamps, values): &Placed) -> Vec<Option<f64>> {
 
 /// A direction in degrees at each placed position, interpolated as a unit
 /// vector so 350° and 10° average to 0°, not 180°.
-fn direction_of((stamps, values): &Placed) -> Vec<Option<f64>> {
+pub(crate) fn direction_of((stamps, values): &Placed) -> Vec<Option<f64>> {
     let unit = |s: &Stamp, step: u64| -> Option<(f64, f64)> {
         let corners = corners_of(values, step, &s.stencil);
         let sin = corners.map(|d| (f64::from(d).to_radians().sin()) as f32);
@@ -417,6 +412,39 @@ fn sum_vectors(read: &[Placed], n: usize) -> Vectors {
 }
 
 impl Reanalysis {
+    /// The Whirlwind archive, using its own bounded async pool.
+    pub fn whirlwind(
+        source: crate::whirlwind::Source,
+        credentials: Option<crate::whirlwind::Credentials>,
+        timeout: Duration,
+        memory: Arc<BlockCache>,
+    ) -> Result<Self> {
+        let whirlwind = crate::whirlwind::Whirlwind::new(
+            source,
+            credentials,
+            timeout,
+            Arc::clone(&memory),
+            crate::whirlwind::CONCURRENCY,
+        )?;
+        let mut reader = Self::http(timeout, memory, crate::whirlwind::CONCURRENCY);
+        reader.whirlwind = Some(whirlwind);
+        Ok(reader)
+    }
+
+    /// Persist validated Whirlwind chunks across routes and sessions.
+    pub fn with_whirlwind_cache(mut self, cache: Arc<crate::whirlwind::DiskCache>) -> Self {
+        self.whirlwind = self.whirlwind.map(|reader| reader.with_disk_cache(cache));
+        self
+    }
+
+    /// Download accounting for the active source.
+    pub fn estimate(&self, points: &[Point]) -> Result<Estimate> {
+        match &self.whirlwind {
+            Some(w) => w.estimate(points),
+            None => Ok(estimate(points, Some(&self.memory))),
+        }
+    }
+
     /// A provider reading the archives over HTTPS, keeping what it
     /// downloads in `memory`, with at most `concurrency` chunk reads at once
     /// (spec.md 3.4).
@@ -428,6 +456,7 @@ impl Reanalysis {
     pub fn new(access: Access, concurrency: usize) -> Self {
         Self {
             access,
+            whirlwind: None,
             memory: BlockCache::new(crate::memory::DEFAULT_LIMIT),
             concurrency: concurrency.max(1),
             stores: Mutex::new(BTreeMap::new()),
@@ -446,6 +475,9 @@ impl Reanalysis {
 
     /// `(requests, bytes)` sent to and received from the archives so far.
     pub fn net_totals(&self) -> (u64, u64) {
+        if let Some(w) = &self.whirlwind {
+            return w.net_totals();
+        }
         self.stores.lock().map_or((0, 0), |stores| {
             stores
                 .values()
@@ -828,6 +860,9 @@ impl Provider for Reanalysis {
         options: &Options,
         cancel: &Arc<AtomicBool>,
     ) -> Result<Vec<EnvPoint>> {
+        if let Some(w) = &self.whirlwind {
+            return w.sample(points, options, cancel);
+        }
         let mut out = vec![EnvPoint::default(); points.len()];
         if points.is_empty() {
             return Ok(out);
@@ -869,6 +904,9 @@ impl Provider for Reanalysis {
     /// per chunk (its blocks) instead of two. A failed head read is left to
     /// the batch that needs it to report.
     fn prepare(&self, points: &[Point], options: &Options, cancel: &Arc<AtomicBool>) -> Result<()> {
+        if let Some(w) = &self.whirlwind {
+            return w.prepare(points, options, cancel);
+        }
         if points.is_empty() {
             return Ok(());
         }
@@ -995,8 +1033,6 @@ const GLOBCURRENT_TIER: CurrentTier = CurrentTier {
 pub struct Estimate {
     /// Bytes to download sampling hourly, blocks already in memory left out.
     pub hourly_bytes: u64,
-    /// Bytes to download sampling 3-hourly.
-    pub three_hourly_bytes: u64,
     /// Bytes of the hourly fetch already downloaded this session.
     pub hourly_cached_bytes: u64,
 }
@@ -1042,86 +1078,78 @@ pub fn estimate(points: &[Point], memory: Option<&BlockCache>) -> Estimate {
     use crate::dataset::HEAD_REQUEST;
     use crate::memory::Part;
     let mut out = Estimate::default();
-    for (every, total) in [
-        (3600, &mut out.hourly_bytes),
-        (3 * 3600, &mut out.three_hourly_bytes),
-    ] {
-        // (hour, block) pairs, then each variable's chunk for that hour.
-        let mut wanted: Vec<(i64, usize)> = points
-            .iter()
-            .flat_map(|p| {
-                let blocks = era5_blocks(p.lat, p.lon);
-                era5_hours(p.t, every)
-                    .into_iter()
-                    .flat_map(move |h| blocks.clone().into_iter().map(move |b| (h, b)))
-            })
-            .collect();
-        wanted.sort_unstable();
-        wanted.dedup();
-        let mut hours: Vec<i64> = wanted.iter().map(|(h, _)| *h).collect();
-        hours.dedup();
-        let mut cached = 0;
-        let chunks = |hour: i64| {
-            let (wind_ds, wind_index) = if (WB2_FIRST..=WB2_LAST).contains(&hour) {
-                (Dataset::Wb2Era5Hourly, (hour - WB2_FIRST) / 3600)
+    // (hour, block) pairs, then each variable's chunk for that hour.
+    let mut wanted: Vec<(i64, usize)> = points
+        .iter()
+        .flat_map(|p| {
+            let blocks = era5_blocks(p.lat, p.lon);
+            era5_hours(p.t, 3600)
+                .into_iter()
+                .flat_map(move |h| blocks.clone().into_iter().map(move |b| (h, b)))
+        })
+        .collect();
+    wanted.sort_unstable();
+    wanted.dedup();
+    let mut hours: Vec<i64> = wanted.iter().map(|(h, _)| *h).collect();
+    hours.dedup();
+    let mut cached = 0;
+    let chunks = |hour: i64| {
+        let (wind_ds, wind_index) = if (WB2_FIRST..=WB2_LAST).contains(&hour) {
+            (Dataset::Wb2Era5Hourly, (hour - WB2_FIRST) / 3600)
+        } else {
+            (Dataset::ArcoEra5, (hour - ARCO_FIRST) / 3600)
+        };
+        let arco_index = (hour - ARCO_FIRST) / 3600;
+        [
+            (wind_ds, vars::WB2_U10.array, wind_index, &WIND_BLOCKS),
+            (wind_ds, vars::WB2_V10.array, wind_index, &WIND_BLOCKS),
+            (
+                Dataset::ArcoEra5,
+                vars::ARCO_SWH.array,
+                arco_index,
+                &SWH_BLOCKS,
+            ),
+            (
+                Dataset::ArcoEra5,
+                vars::ARCO_MWD.array,
+                arco_index,
+                &MWD_BLOCKS,
+            ),
+            (
+                Dataset::ArcoEra5,
+                vars::ARCO_MWP.array,
+                arco_index,
+                &MWP_BLOCKS,
+            ),
+        ]
+    };
+    let held = |dataset: Dataset, key: &str, part: Part| {
+        memory.is_some_and(|m| m.contains(dataset.id(), key, part))
+    };
+    for &hour in &hours {
+        for (dataset, array, index, _) in chunks(hour) {
+            let key = format!("{array}/{index}.0.0");
+            if held(dataset, &key, Part::Head) {
+                cached += HEAD_REQUEST;
             } else {
-                (Dataset::ArcoEra5, (hour - ARCO_FIRST) / 3600)
-            };
-            let arco_index = (hour - ARCO_FIRST) / 3600;
-            [
-                (wind_ds, vars::WB2_U10.array, wind_index, &WIND_BLOCKS),
-                (wind_ds, vars::WB2_V10.array, wind_index, &WIND_BLOCKS),
-                (
-                    Dataset::ArcoEra5,
-                    vars::ARCO_SWH.array,
-                    arco_index,
-                    &SWH_BLOCKS,
-                ),
-                (
-                    Dataset::ArcoEra5,
-                    vars::ARCO_MWD.array,
-                    arco_index,
-                    &MWD_BLOCKS,
-                ),
-                (
-                    Dataset::ArcoEra5,
-                    vars::ARCO_MWP.array,
-                    arco_index,
-                    &MWP_BLOCKS,
-                ),
-            ]
-        };
-        let held = |dataset: Dataset, key: &str, part: Part| {
-            memory.is_some_and(|m| m.contains(dataset.id(), key, part))
-        };
-        for &hour in &hours {
-            for (dataset, array, index, _) in chunks(hour) {
-                let key = format!("{array}/{index}.0.0");
-                if held(dataset, &key, Part::Head) {
-                    cached += HEAD_REQUEST;
-                } else {
-                    *total += HEAD_REQUEST;
-                }
+                out.hourly_bytes += HEAD_REQUEST;
             }
-        }
-        for &(hour, block) in &wanted {
-            for (dataset, array, index, sizes) in chunks(hour) {
-                let key = format!("{array}/{index}.0.0");
-                let bytes = sizes.get(block).copied().unwrap_or_default();
-                if held(dataset, &key, Part::Block(block as u32)) {
-                    cached += bytes;
-                } else {
-                    *total += bytes;
-                }
-            }
-        }
-        if every == 3600 {
-            out.hourly_cached_bytes = cached;
         }
     }
+    for &(hour, block) in &wanted {
+        for (dataset, array, index, sizes) in chunks(hour) {
+            let key = format!("{array}/{index}.0.0");
+            let bytes = sizes.get(block).copied().unwrap_or_default();
+            if held(dataset, &key, Part::Block(block as u32)) {
+                cached += bytes;
+            } else {
+                out.hourly_bytes += bytes;
+            }
+        }
+    }
+    out.hourly_cached_bytes = cached;
     let current = current_bytes(points);
     out.hourly_bytes += current;
-    out.three_hourly_bytes += current;
     out
 }
 
@@ -1430,28 +1458,25 @@ mod tests {
     }
 
     #[test]
-    fn a_three_hourly_bracket_uses_steps_three_hours_apart() {
-        let t = 4 * 3600 + 1800; // 04:30
-        assert_eq!(bracket_every(&axis(), t, 3600), Some((4, 5, 0.5)));
-        // 03:00 and 06:00, 1.5 h of 3 h on.
-        assert_eq!(bracket_every(&axis(), t, 3 * 3600), Some((3, 6, 0.5)));
-        // On a coarse step exactly: that step alone.
+    fn hourly_brackets_use_adjacent_hours() {
         assert_eq!(
-            bracket_every(&axis(), 6 * 3600, 3 * 3600),
-            Some((6, 6, 0.0))
+            bracket_every(&axis(), 4 * 3600 + 1800, 3600),
+            Some((4, 5, 0.5))
         );
-        // Past the last coarse step (45:00) the hourly steps are used.
-        let late = 46 * 3600 + 1800;
-        assert_eq!(bracket_every(&axis(), late, 3 * 3600), Some((46, 47, 0.5)));
-        assert_eq!(bracket_every(&axis(), -1, 3 * 3600), None);
+        assert_eq!(bracket_every(&axis(), 6 * 3600, 3600), Some((6, 6, 0.0)));
+        assert_eq!(
+            bracket_every(&axis(), 46 * 3600 + 1800, 3600),
+            Some((46, 47, 0.5))
+        );
+        assert_eq!(bracket_every(&axis(), -1, 3600), None);
     }
 
     #[test]
     fn intervals_round_trip_through_seconds() {
-        for i in [Interval::Hourly, Interval::ThreeHourly] {
-            assert_eq!(Interval::from_seconds(i.seconds()), Some(i));
-        }
+        let i = Interval::Hourly;
+        assert_eq!(Interval::from_seconds(i.seconds()), Some(i));
         assert_eq!(Interval::from_seconds(7200), None);
+        assert_eq!(Interval::from_seconds(10_800), None);
     }
 
     #[test]
@@ -1468,7 +1493,7 @@ mod tests {
     }
 
     /// Hand-counted: a 24-hour track at 50.1N 4.9W sampled every 10
-    /// minutes needs 25 hours hourly (00Z to 24Z) and 9 three-hourly. Its
+    /// minutes needs 25 hours hourly (00Z to 24Z) at hourly sampling. Its
     /// stencil is rows 159–160, columns 1420–1421: values 230,380 to
     /// 231,821, all in block 1 (131,072 to 262,143). Each hour is five
     /// 64-byte heads and block 1 of u, v (432,731 each), wave height
@@ -1490,7 +1515,6 @@ mod tests {
         assert_eq!(hour, 1_373_381);
         let current = 2 * (150_000 + 64);
         assert_eq!(e.hourly_bytes, 25 * hour + current);
-        assert_eq!(e.three_hourly_bytes, 9 * hour + current);
         assert_eq!(e.hourly_cached_bytes, 0);
     }
 

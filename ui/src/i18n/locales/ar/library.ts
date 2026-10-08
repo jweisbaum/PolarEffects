@@ -13,7 +13,6 @@ export default {
   "Search all vessel fields, including name, model, class, make and builder": "البحث في كل حقول القارب، ومنها الاسم والطراز والفئة والصانع وحوض البناء",
   "Name, model, class, make, builder…": "الاسم، الطراز، الفئة، الصانع، حوض البناء…",
   "Searching boat tracks…": "جارٍ البحث عن مسارات القوارب…",
-  "Scrape races, or choose the track library's folders, in Settings to search local tracks.": "اجلب سباقات، أو اختر مجلدات مكتبة المسارات، من الإعدادات للبحث في المسارات المحلية.",
   "{count} matching tracks": "{count} مسار مطابق",
   "GeoJSON file missing from the configured directory": "ملف GeoJSON مفقود من المجلد المحدَّد",
   "Import this boat track; weather can be fetched afterwards": "استيراد مسار هذا القارب؛ يمكن جلب الطقس بعد ذلك",

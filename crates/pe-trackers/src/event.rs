@@ -187,6 +187,18 @@ pub trait TrackerClient: Send + Sync {
     /// not serve.
     fn resolve(&self, input: &str) -> Result<EventRef>;
 
+    /// Read the boat list without requesting positions. `None` means the
+    /// provider combines metadata and positions; callers must wait for an
+    /// explicit download action before calling `fetch`.
+    fn list(
+        &self,
+        _event: &EventRef,
+        _fetcher: &Fetcher,
+        _progress: &mut dyn FnMut(Progress),
+    ) -> Result<Option<TrackerEvent>> {
+        Ok(None)
+    }
+
     /// Finished races only, for manual and scheduled library scraping. Clients
     /// must check provider completion evidence before requesting separate track
     /// resources. Unsupported clients fail closed instead of using `fetch`.

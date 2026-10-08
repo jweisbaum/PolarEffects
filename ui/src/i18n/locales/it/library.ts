@@ -13,7 +13,6 @@ export default {
   "Search all vessel fields, including name, model, class, make and builder": "Cerca in tutti i campi dell’imbarcazione, tra cui nome, modello, classe, marca e cantiere",
   "Name, model, class, make, builder…": "Nome, modello, classe, marca, cantiere…",
   "Searching boat tracks…": "Ricerca delle tracce delle barche…",
-  "Scrape races, or choose the track library's folders, in Settings to search local tracks.": "Scarica regate, o scegli le cartelle dell’archivio delle tracce, nelle Impostazioni per cercare tracce locali.",
   "{count} matching tracks": "{count} tracce corrispondenti",
   "GeoJSON file missing from the configured directory": "File GeoJSON assente dalla cartella configurata",
   "Import this boat track; weather can be fetched afterwards": "Importa questa traccia della barca; il meteo si può scaricare dopo",

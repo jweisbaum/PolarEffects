@@ -106,11 +106,13 @@ const ENV_STATUS: Record<string, string> = {
 export function envStatusText(track: TrackSummary, job?: EnvJobTrack): string {
   if (job?.state === "fetching") return t("fetching {percent} %", { percent: Math.floor(job.fraction * 100) });
   if (job?.state === "queued") return t("queued");
+  if (track.env_status === "ready" && track.with_wind === 0) return t("no points to plot");
   return t(ENV_STATUS[track.env_status] ?? ENV_STATUS.not_fetched!);
 }
 
 /** A download or file size, for the fetch's pre-flight. */
 export function formatBytes(bytes: number): string {
+  if (bytes === 0) return "0 kB";
   if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
   if (bytes >= 1e6) return `${Math.round(bytes / 1e6)} MB`;
   return `${Math.max(1, Math.round(bytes / 1e3))} kB`;

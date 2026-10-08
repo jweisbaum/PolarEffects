@@ -2,8 +2,8 @@
 /**
  * How fast the tracker dialog shows a big event (plan.md M14b): the Fastnet
  * 2025's 444 boats with a full map preview each, as the IPC hands them over.
- * Prints the time from the boat list sent ahead to a pickable table, from
- * the full answer to the table and map, to tick one boat and to search.
+ * Prints the time from a metadata answer to a pickable table, from the
+ * requested download to the table and map, to tick one boat and to search.
  */
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -13,11 +13,9 @@ import type { TrackerBoatRow } from "../generated/TrackerBoatRow";
 import type { TrackerEventView } from "../generated/TrackerEventView";
 
 let answer: (view: TrackerEventView) => void = () => undefined;
-let downloadKey = "";
 vi.mock("../ipc", () => ({
   api: {
-    trackerEvent: (...args: unknown[]) => {
-      downloadKey = args[3] as string;
+    trackerEvent: () => {
       return new Promise<TrackerEventView>((resolve) => { answer = resolve; });
     },
     cancelTrackerEvent: () => Promise.resolve(),
@@ -88,12 +86,16 @@ it("shows, ticks and searches a 444-boat event interactively", async () => {
   const listing: TrackerEventView = {
     ...view, positions: false, boats: view.boats.map((b) => ({ ...b, fixes: 0, first: null, last: null, preview: [] })),
   };
-  const listed = await timed(() => act(async () => { handlers.get("tracker://listed")!({ payload: { download: downloadKey, event: listing } }); }));
+  const listed = await timed(() => act(async () => { answer(listing); }));
   expect(host.querySelectorAll("tbody tr")).toHaveLength(BOATS);
   expect((host.querySelector(".modal-actions button.primary") as HTMLButtonElement).disabled).toBe(true);
+  await act(async () => { (host.querySelector("tbody input") as HTMLElement).click(); });
+  await act(async () => { (host.querySelector(".modal-actions button.primary") as HTMLElement).click(); });
   const show = await timed(() => act(async () => { answer(view); await Promise.resolve(); }));
   expect(host.querySelectorAll("tbody tr")).toHaveLength(BOATS);
-  expect(host.querySelector(".tracker-preview-line")!.getAttribute("data-lines")).toBe(String(BOATS));
+  expect(host.querySelector(".tracker-preview-line:not(.chosen)")!.getAttribute("data-lines")).toBe(String(BOATS - 1));
+  expect(host.querySelector(".tracker-preview-line.chosen")!.getAttribute("data-lines")).toBe("1");
+  await act(async () => { (host.querySelector("tbody input") as HTMLElement).click(); });
   const tick = await timed(() => act(async () => { (host.querySelector("tbody input") as HTMLElement).click(); }));
   expect(host.querySelector(".tracker-preview-line.chosen")!.getAttribute("data-lines")).toBe("1");
   const search = host.querySelector('[data-feature="tracker-import:search"]') as HTMLInputElement;

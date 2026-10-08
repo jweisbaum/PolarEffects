@@ -658,7 +658,8 @@ fn the_job_exports_a_project_track_once_at_a_time() {
     assert_eq!(status.bytes, std::fs::metadata(&out).unwrap().len());
     assert_eq!(app.grib_jobs.status(), status);
     // Done, so another may start.
-    assert!(grib::begin(&app, id, &out, "three_hourly", false, false).is_ok());
+    assert!(grib::begin(&app, id, &out, "three_hourly", false, false).is_err());
+    assert!(grib::begin(&app, id, &out, "hourly", false, false).is_ok());
 }
 
 /// What a real track's GRIB export costs (plan.md M16): live, never in the

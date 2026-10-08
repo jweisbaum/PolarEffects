@@ -8,6 +8,17 @@ import type { Feature } from "../features";
 const open = (section: string) => ["settings:", `settings:${section}`];
 
 const features: Feature[] = [
+  { id: "settings:cache-directory", label: msg("Cache directory"), description: msg("Leave empty to use the application cache directory"),
+    keywords: ["Whirlwind", msg("cache")], topic: "settings", reveal: open("cache") },
+  { id: "settings:cache-browse", label: msg("Choose cache directory"), description: msg("Choose cache directory"),
+    keywords: ["Whirlwind", msg("cache")], topic: "settings", reveal: open("cache") },
+  { id: "settings:cache-size", label: msg("Maximum cache size (GB)"), description: msg("Maximum cache size (GB)"),
+    keywords: ["Whirlwind", msg("cache")], topic: "settings", reveal: open("cache") },
+  { id: "settings:cache-clear", label: msg("Clear cache"), description: msg("Remove cached Whirlwind downloads. Weather saved in projects is kept."),
+    keywords: ["Whirlwind", msg("cache")], topic: "settings", reveal: open("cache") },
+  { id: "settings:data-source", label: msg("Data sources"),
+    description: msg("Choose the archive for historical wind, waves and currents."),
+    keywords: ["Whirlwind", "Open Data", "R2", "Tigris", "S3", msg("weather"), msg("download")], topic: "settings", reveal: open("weather") },
   { id: "settings:theme", label: msg("Theme"), description: msg("Choose the colours of the whole application."),
     keywords: [msg("colours"), msg("appearance"), msg("dark mode")], topic: "settings", reveal: open("appearance") },
   { id: "settings:language", label: msg("Language"), description: msg("Choose the language of the interface and help."),

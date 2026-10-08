@@ -117,3 +117,9 @@ export async function pickExportDirectory(): Promise<string | null> {
   const chosen = await whileChoosing(msg("Choosing where to export"), () => open({ directory: true, multiple: false, title: t("Export all polars") }));
   return typeof chosen === "string" ? chosen : null;
 }
+
+/** Whirlwind's reusable compressed chunks. */
+export async function pickWeatherCacheDirectory(): Promise<string | null> {
+  const chosen = await whileChoosing(msg("Choose cache directory"), () => open({ directory: true, multiple: false, title: t("Choose cache directory") }));
+  return typeof chosen === "string" ? chosen : null;
+}

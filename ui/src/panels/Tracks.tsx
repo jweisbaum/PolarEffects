@@ -20,7 +20,6 @@ import { envJobOf, useEnvJobs } from "../jobs";
 import { pickTrackFiles } from "../project/dialogs";
 import { useBoatSelection } from "../selection";
 import BoatTrackSearch from "./BoatTrackSearch";
-import EnvFetchDialog from "./EnvFetchDialog";
 import TrackImportDialog from "./TrackImportDialog";
 import TrackerImportDialog from "./TrackerImportDialog";
 import type { TrackerId } from "./trackerImport";
@@ -37,14 +36,15 @@ import { dateRange, describeImportLine, describeTrackFailure, envStatusText, fro
  * every change one undo.
  *
  * Importing never fetches weather (D24): a track's Fetch weather…, or
- * Fetch weather for selected tracks… over the ticked tracks, opens the
- * fetch's pre-flight when the user wants it.
+ * Fetch weather for selected tracks… over the ticked tracks, starts the
+ * background fetch immediately.
  */
-export default function Tracks({ project, onProject, units = DEFAULT_UNITS }: {
+export default function Tracks({ project, onProject, units = DEFAULT_UNITS, metadataDirectory = "" }: {
   project: ProjectSummary;
   onProject: (project: ProjectSummary) => void;
   /** The display units (Settings): the filters are shown and typed in them. */
   units?: Units;
+  metadataDirectory?: string;
 }) {
   const api = useBoatApi();
   const onReveal = useBoatReveal();
@@ -56,15 +56,28 @@ export default function Tracks({ project, onProject, units = DEFAULT_UNITS }: {
   const [open, setOpen] = useState<number | null>(null);
   // The tracks ticked for Fetch weather for selected tracks…
   const [selected, setSelected] = useState<ReadonlySet<number>>(new Set());
-  // The fetch pre-flight: which tracks, and whether to fetch every sample again.
-  const [fetching, setFetching] = useState<{ ids: number[]; restart: boolean; fromSelection?: boolean } | null>(null);
-  const closeFetch = useCallback(() => setFetching(null), []);
+  const starting = useRef(false);
+  const [isStarting, setIsStarting] = useState(false);
   const tracks = project.sources.filter((s) => s.track !== null);
   // A ticked track already queued or fetching is left out: asking again
   // would only queue it twice (M17a).
   const jobs = useEnvJobs();
   const selectedIds = tracks.filter((s) => selected.has(s.id) && envJobOf(jobs, s.id) === undefined).map((s) => s.id);
   const clearSelection = useCallback(() => setSelected(new Set()), []);
+  const fetchWeather = async (ids: number[], restart: boolean, fromSelection = false) => {
+    if (starting.current || ids.length === 0) return;
+    starting.current = true;
+    setIsStarting(true);
+    try {
+      await api.startEnvFetch(ids, restart);
+      if (fromSelection) clearSelection();
+    } catch (error) {
+      reportFailure(error);
+    } finally {
+      starting.current = false;
+      setIsStarting(false);
+    }
+  };
   const select = (id: number, on: boolean) => setSelected((old) => {
     const next = new Set(old);
     if (on) next.add(id); else next.delete(id);
@@ -123,7 +136,7 @@ export default function Tracks({ project, onProject, units = DEFAULT_UNITS }: {
           {t("File…")}
         </button>
       </div>
-      <BoatTrackSearch key={project.id} onImport={afterImport} />
+      <BoatTrackSearch key={project.id} onImport={afterImport} metadataDirectory={metadataDirectory} />
       {tracks.length > 0 && (
         <div className="section-actions">
           <button data-feature="tracks:select-all" disabled={tracks.every(source => selected.has(source.id))}
@@ -131,11 +144,11 @@ export default function Tracks({ project, onProject, units = DEFAULT_UNITS }: {
             onClick={() => setSelected(new Set(tracks.map(source => source.id)))}>
             {t("Select all")}
           </button>
-          <button data-feature="tracks:fetch-weather-selected" disabled={selectedIds.length === 0}
+          <button data-feature="tracks:fetch-weather-selected" disabled={isStarting || selectedIds.length === 0}
             title={selectedIds.length === 0
               ? t("Tick tracks in the list first, then fetch their wind, waves and current together")
               : t("Fetch the wind, waves and current the ticked tracks' samples do not have yet")}
-            onClick={() => setFetching({ ids: selectedIds, restart: false, fromSelection: true })}>
+            onClick={() => void fetchWeather(selectedIds, false, true)}>
             {selectedIds.length === 0
               ? t("Fetch weather for selected tracks…")
               : t("Fetch weather for {count} selected tracks…", { count: selectedIds.length })}
@@ -161,7 +174,8 @@ export default function Tracks({ project, onProject, units = DEFAULT_UNITS }: {
               selected={selected.has(source.id)} onSelect={(on) => select(source.id, on)}
               onToggle={() => setOpen(open === source.id ? null : source.id)}
               onRemove={() => remove(source.id)} onProject={onProject} units={units}
-              onRefetch={() => setFetching({ ids: [source.id], restart: source.track!.env_status === "ready" })}
+              starting={isStarting}
+              onRefetch={() => void fetchWeather([source.id], source.track!.env_status === "ready")}
               />
           ))}
         </ul>}
@@ -178,10 +192,6 @@ export default function Tracks({ project, onProject, units = DEFAULT_UNITS }: {
             setTracker(null);
             afterImport(result);
           }} />
-      )}
-      {fetching !== null && (
-        <EnvFetchDialog sourceIds={fetching.ids} restart={fetching.restart} onClose={closeFetch}
-          onStarted={fetching.fromSelection ? clearSelection : undefined} />
       )}
     </>
   );
@@ -205,12 +215,13 @@ function EnvOptions({ project, onProject }: { project: ProjectSummary; onProject
   );
 }
 
-function TrackItem({ source, track, open, selected, onSelect, onToggle, onRemove, onProject, onRefetch, units }: {
+function TrackItem({ source, track, open, selected, starting, onSelect, onToggle, onRemove, onProject, onRefetch, units }: {
   source: SourceSummary;
   units: Units;
   track: TrackSummary;
   open: boolean;
   selected: boolean;
+  starting: boolean;
   onSelect: (on: boolean) => void;
   onToggle: () => void;
   onRemove: () => void;
@@ -235,14 +246,15 @@ function TrackItem({ source, track, open, selected, onSelect, onToggle, onRemove
           </span>
           <span className="muted polar-file-meta">
             {t("{used} of {count} samples used", { used: source.used ?? 0, count: track.samples })}
-            {" · "}
+          </span>
+          <span className="muted polar-file-meta track-weather-status">
             {t("Weather: {status}", { status: envStatusText(track, job) })}
           </span>
         </span>
         {job
           ? <button className="small" data-feature="tracks:cancel-fetch" title={t("Stop this track's fetch; samples already fetched are kept")}
             onClick={() => { api.cancelEnvFetch([source.id]).catch(reportFailure); }}>{t("Cancel fetch")}</button>
-          : <button className="small" data-feature="tracks:fetch-weather" onClick={onRefetch}
+          : <button className="small" data-feature="tracks:fetch-weather" onClick={onRefetch} disabled={starting}
             title={track.env_status === "ready"
               ? t("Fetch this track's wind, waves and current again, every sample")
               : t("Fetch the wind, waves and current this track's samples do not have yet")}>
@@ -582,4 +594,3 @@ export function SampleFiltersEditor({ filters, onChange, units, track, prefix = 
     </fieldset>
   );
 }
-

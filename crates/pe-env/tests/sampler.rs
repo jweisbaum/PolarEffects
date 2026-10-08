@@ -371,25 +371,12 @@ fn wind_switches_from_weatherbench2_to_arco_where_it_ends() {
     let _ = std::fs::remove_dir_all(root);
 }
 
-/// D19: 3-hourly reads 06Z and 09Z around 07:00 and interpolates between
-/// them: u = 100 + 36 + (81 − 36) / 3 = 151, where hourly gives 100 + 49.
+/// Hourly sampling preserves the hourly variation (u = 100 + hour²).
 #[test]
-fn three_hourly_interpolates_between_three_hour_steps() {
-    let (p, root) = era5_pair("coarse");
-    let point = [at(7.0, 50.0, -4.0)];
-    let hourly = sample(&p, &point, HOURLY)[0].wind.unwrap();
-    let coarse = sample(
-        &p,
-        &point,
-        Options {
-            interval: Interval::ThreeHourly,
-            ..HOURLY
-        },
-    )[0]
-    .wind
-    .unwrap();
-    assert!(close(hourly.u, 149.0, 1e-9));
-    assert!(close(coarse.u, 151.0, 1e-9), "{}", coarse.u);
+fn hourly_sampling_preserves_hourly_variation() {
+    let (p, root) = era5_pair("hourly");
+    let wind = sample(&p, &[at(7.0, 50.0, -4.0)], HOURLY)[0].wind.unwrap();
+    assert!(close(wind.u, 149.0, 1e-9));
     let _ = std::fs::remove_dir_all(root);
 }
 

@@ -160,10 +160,15 @@ pub fn set(state: &AppState, settings: LibrarySettings) -> Result<Settings> {
             "Wait for the metadata download to finish before changing the library settings".into(),
         ));
     }
-    crate::settings::update(state, |s| {
+    let changed = self::settings(state)?.metadata_directory != settings.metadata_directory;
+    let saved = crate::settings::update(state, |s| {
         s.library = settings;
         Ok(())
-    })
+    })?;
+    if changed {
+        catalogue::warm(state.clone());
+    }
+    Ok(saved)
 }
 
 pub(crate) fn settings(state: &AppState) -> Result<LibrarySettings> {

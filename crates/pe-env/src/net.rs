@@ -94,6 +94,18 @@ pub fn client(timeout: Duration) -> Result<reqwest::blocking::Client> {
         .map_err(|e| EnvError::Open(format!("no HTTP client: {e}")))
 }
 
+/// Authenticated S3 requests never follow redirects: signatures and tokens
+/// belong to the exact bucket endpoint they were made for.
+pub(crate) fn s3_client(timeout: Duration) -> Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .tls_backend_preconfigured(tls_config()?)
+        .timeout(timeout)
+        .user_agent(USER_AGENT)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| EnvError::Open(format!("no S3 client: {e}")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -28,6 +28,8 @@ pe-grib = { workspace = true }
 anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+# Reuse one prepared substring matcher per query across the local vessel index.
+memchr = "2"
 # Platform config, data and cache directories (spec.md 3.4).
 directories = "6.0.0"
 thiserror = { workspace = true }

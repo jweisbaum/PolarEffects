@@ -117,6 +117,34 @@ pub struct Units {
     pub distance: DistanceUnit,
 }
 
+/// Archive used for newly requested historical weather.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export_to = "DataSource.ts")]
+#[serde(rename_all = "snake_case")]
+pub enum DataSource {
+    /// Existing public archives and current-source fallbacks.
+    #[default]
+    OpenData,
+    /// Whirlwind Hindsight on S3.
+    Whirlwind,
+    /// Whirlwind Hindsight on Cloudflare R2 (Source 2).
+    WhirlwindR2,
+    /// Whirlwind Hindsight on Tigris (Source 3).
+    WhirlwindTigris,
+}
+
+impl DataSource {
+    pub fn whirlwind_source(self) -> Option<pe_env::whirlwind::Source> {
+        use pe_env::whirlwind::Source;
+        match self {
+            Self::OpenData => None,
+            Self::Whirlwind => Some(Source::S3),
+            Self::WhirlwindR2 => Some(Source::R2),
+            Self::WhirlwindTigris => Some(Source::Tigris),
+        }
+    }
+}
+
 /// How the reanalysis fetcher uses the network (spec.md 3.4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export_to = "NetworkSettings.ts")]
@@ -201,10 +229,14 @@ pub struct Settings {
     /// Display units.
     pub units: Units,
     /// Downloaded weather kept in memory for the session, megabytes
-    /// (spec.md 3.4). Nothing downloaded is kept on disk.
+    /// (spec.md 3.4). Whirlwind can also keep compressed chunks on disk.
     pub weather_memory_mb: u32,
+    /// Persistent Whirlwind compressed chunk cache.
+    pub weather_cache: crate::weather_cache::WeatherCacheSettings,
     /// Network use by the reanalysis fetcher.
     pub network: NetworkSettings,
+    /// Historical wind, waves and current archive.
+    pub data_source: DataSource,
     /// The map projection.
     pub projection: MapProjection,
     /// How far from the 2D plot's wind speed a sample may be and still be
@@ -228,7 +260,9 @@ impl Default for Settings {
             theme: DEFAULT_THEME.to_owned(),
             units: Units::default(),
             weather_memory_mb: DEFAULT_WEATHER_MEMORY_MB,
+            weather_cache: crate::weather_cache::WeatherCacheSettings::default(),
             network: NetworkSettings::default(),
+            data_source: DataSource::default(),
             projection: MapProjection::default(),
             plot_tws_band_kn: crate::polar_plot::DEFAULT_TWS_BAND_KN,
             mcp: McpSettings::default(),
@@ -330,8 +364,8 @@ impl Settings {
                 read_field(units, "distance", &mut settings.units.distance);
             }
             // An earlier build's `chunk_cache` (a folder and a size limit on
-            // disk) is not read: nothing is cached on disk any more, and its
-            // folder is removed once (`remove_legacy_cache`).
+            // disk) is not read. The new Whirlwind cache has its own format
+            // and directory, separate from `remove_legacy_cache`.
             read_field(
                 &object,
                 "weather_memory_mb",
@@ -340,6 +374,15 @@ impl Settings {
             if let Some(serde_json::Value::Object(network)) = object.get("network") {
                 read_field(network, "concurrency", &mut settings.network.concurrency);
                 read_field(network, "timeout_s", &mut settings.network.timeout_s);
+            }
+            read_field(&object, "data_source", &mut settings.data_source);
+            if let Some(serde_json::Value::Object(cache)) = object.get("weather_cache") {
+                read_field(cache, "directory", &mut settings.weather_cache.directory);
+                read_field(
+                    cache,
+                    "max_size_gb",
+                    &mut settings.weather_cache.max_size_gb,
+                );
             }
             read_field(&object, "projection", &mut settings.projection);
             read_field(&object, "plot_tws_band_kn", &mut settings.plot_tws_band_kn);
@@ -374,6 +417,7 @@ impl Settings {
     /// is for.
     pub fn normalised(mut self) -> Self {
         let defaults = Self::default();
+        self.weather_cache.normalise();
         self.recent_projects.truncate(MAX_RECENT);
         if !LANGUAGES.contains(&self.language.as_str()) {
             self.language = defaults.language;
@@ -595,6 +639,20 @@ pub fn network_set(state: &AppState, network: NetworkSettings) -> Result<Setting
             });
         }
         settings.network = network;
+        Ok(())
+    })
+}
+
+/// Changes the archive for subsequent weather requests.
+#[tauri::command]
+pub fn set_data_source(state: tauri::State<'_, AppState>, source: DataSource) -> Result<Settings> {
+    data_source_set(&state, source)
+}
+
+/// Saves the preference without altering already fetched project values.
+pub fn data_source_set(state: &AppState, source: DataSource) -> Result<Settings> {
+    update(state, |settings| {
+        settings.data_source = source;
         Ok(())
     })
 }
@@ -937,6 +995,7 @@ mod tests {
     fn the_defaults_are_the_ones_the_spec_names() {
         let s = Settings::default();
         assert_eq!(s.language, "en");
+        assert_eq!(s.data_source, DataSource::OpenData);
         assert_eq!(s.theme, "harbour");
         assert_eq!(s.units.speed, SpeedUnit::Kn);
         assert_eq!(s.units.wave_height, WaveHeightUnit::M);
@@ -985,7 +1044,7 @@ mod tests {
             r#"{ "recent_projects": ["/keep.wpsproj"], "units": { "speed": "furlongs" },
                  "language": "tlh", "theme": "neon", "autosave": "save",
                  "network": { "concurrency": 500, "timeout_s": 1 },
-                 "weather_memory_mb": 1 }"#,
+                 "weather_memory_mb": 1, "data_source": "unknown" }"#,
         )
         .unwrap();
         let s = Settings::load(&file);

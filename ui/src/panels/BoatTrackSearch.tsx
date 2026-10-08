@@ -1,20 +1,46 @@
 import { useBoatApi } from "../boats/context";
+import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef, useState } from "react";
 import type { BoatTrackSearch as SearchResult } from "../generated/BoatTrackSearch";
 import type { TrackImportResult } from "../generated/TrackImportResult";
 
 import { useT } from "../i18n";
 import { describeError } from "../errors";
+import { LIBRARY_METADATA, LIBRARY_SCRAPE } from "../ipc";
 
 
 /**
  * Searches the track library (spec.md 3.8) as you type, the next hundred
  * tracks loading as the list is scrolled to its end (asked 2026-10-02).
  */
-export default function BoatTrackSearch({ onImport }: { onImport: (result: TrackImportResult) => void }) {
+export default function BoatTrackSearch({ onImport, metadataDirectory = "" }: {
+  onImport: (result: TrackImportResult) => void;
+  metadataDirectory?: string;
+}) {
   const api = useBoatApi();
   const t = useT();
   const [query, setQuery] = useState("");
+  const [available, setAvailable] = useState(false);
+  useEffect(() => {
+    let live = true;
+    let generation = 0;
+    setAvailable(false);
+    const check = () => {
+      const ticket = ++generation;
+      void api.trackMetadataAvailable().then(value => {
+        if (live && ticket === generation) setAvailable(value);
+      }).catch(() => { if (live && ticket === generation) setAvailable(false); });
+    };
+    check();
+    window.addEventListener("focus", check);
+    const stops = [LIBRARY_METADATA, LIBRARY_SCRAPE].map(name =>
+      listen<{ running: boolean }>(name, event => { if (!event.payload.running) check(); }).catch(() => null));
+    return () => {
+      live = false;
+      window.removeEventListener("focus", check);
+      for (const stop of stops) void stop.then(off => off?.());
+    };
+  }, [api, metadataDirectory]);
   const [result, setResult] = useState<SearchResult | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(false);
@@ -27,20 +53,22 @@ export default function BoatTrackSearch({ onImport }: { onImport: (result: Track
   useEffect(() => {
     const ticket = ++latest.current;
     setResult(null); setError(null);
-    if (!query.trim()) { setLoading(false); return; }
+    if (!available || !query.trim()) { setLoading(false); return; }
     setLoading(true);
     const timer = setTimeout(() => {
-      void api.searchDatabaseBoats(query, 0).then(r => { if (ticket === latest.current) setResult(r); }).catch(e => { if (ticket === latest.current) setError(e); }).finally(() => { if (ticket === latest.current) setLoading(false); });
-    }, 200);
-    return () => { clearTimeout(timer); };
-  }, [query]);
+      void api.searchDatabaseBoats(query, 0).then(r => {
+        if (ticket === latest.current) { setResult(r); if (!r.downloaded) setAvailable(false); }
+      }).catch(e => { if (ticket === latest.current) setError(e); }).finally(() => { if (ticket === latest.current) setLoading(false); });
+    }, 50);
+    return () => { clearTimeout(timer); ++latest.current; };
+  }, [api, available, metadataDirectory, query]);
   const more = result !== null && result.downloaded && result.hits.length < result.total;
   const loadMore = () => {
     if (!result || !more || loading) return;
     const ticket = latest.current;
     setLoading(true);
     void api.searchDatabaseBoats(query, result.hits.length)
-      .then(r => { if (ticket === latest.current) setResult({ ...r, hits: [...result.hits, ...r.hits] }); })
+      .then(r => { if (ticket === latest.current) { setResult({ ...r, hits: [...result.hits, ...r.hits] }); if (!r.downloaded) setAvailable(false); } })
       .catch(e => { if (ticket === latest.current) setError(e); })
       .finally(() => { if (ticket === latest.current) setLoading(false); });
   };
@@ -66,10 +94,10 @@ export default function BoatTrackSearch({ onImport }: { onImport: (result: Track
       }
     } catch (e) { setError(e); } finally { setImporting(null); }
   };
+  if (!available) return null;
   return <div className="boat-track-search">
     <label>{t("Search tracks by vessel details")}<input type="search" data-feature="tracks:boat-search" title={t("Search all vessel fields, including name, model, class, make and builder")} placeholder={t("Name, model, class, make, builder…")} value={query} onChange={e => setQuery(e.target.value)} /></label>
     {loading && <p role="status">{t("Searching boat tracks…")}</p>}
-    {result && !result.downloaded && <p>{t("Scrape races, or choose the track library's folders, in Settings to search local tracks.")}</p>}
     {result?.downloaded && <>
       <p role="status">{remaining === 1 ? t("1 matching track") : t("{count} matching tracks", { count: remaining })}</p>
       <ul className="boat-track-results">{result.hits.filter(hit => !removed?.has(hit.id)).map(hit => <li key={hit.id}>

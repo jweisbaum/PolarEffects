@@ -18,6 +18,7 @@ import { api } from "../ipc";
 import ThemePicker from "./ThemePicker";
 import LibrarySettings from "./LibrarySettings";
 import IntegerField from "./IntegerField";
+import WeatherCache from "./WeatherCache";
 import McpSection from "./McpSection";
 import OrcScraper from "./OrcScraper";
 import OrrScraper from "./OrrScraper";
@@ -46,9 +47,10 @@ export default function SettingsDialog({ settings, onSettings, onClose }: {
    * draft first; a draft Rust refuses keeps the dialog open with the reason.
    */
   const flushLibrary = useRef<(() => Promise<void>) | null>(null);
+  const flushCache = useRef<(() => Promise<void>) | null>(null);
   const close = useCallback(() => {
     setError(null);
-    (flushLibrary.current?.() ?? Promise.resolve()).then(onClose, report);
+    (flushCache.current?.() ?? Promise.resolve()).then(() => flushLibrary.current?.()).then(onClose, report);
   }, [onClose]);
 
   useEffect(() => {
@@ -76,6 +78,7 @@ export default function SettingsDialog({ settings, onSettings, onClose }: {
       onReveal("settings:units", show),
       onReveal("settings:autosave", show),
       onReveal("settings:weather", show),
+      onReveal("settings:cache", show),
       onReveal("settings:network", show),
       onReveal("settings:mcp", show),
       onReveal("settings:orc", show),
@@ -161,8 +164,19 @@ export default function SettingsDialog({ settings, onSettings, onClose }: {
 
         <section data-section="settings:weather">
           <h3>{t("Downloaded weather")}</h3>
+          <label className="settings-field">
+            {t("Data sources")}
+            <select data-feature="settings:data-source" value={settings.data_source}
+              title={t("Choose the archive for historical wind, waves and currents.")}
+              onChange={(e) => save(api.setDataSource(e.target.value as AppSettings["data_source"]))}>
+              <option value="open_data">{t("Open Data (Slow)")}</option>
+              <option value="whirlwind">{t("Whirlwind (Fast) S3")}</option>
+              <option value="whirlwind_r2">{t("Whirlwind (Fast) R2")}</option>
+              <option value="whirlwind_tigris">{t("Whirlwind (Fast) Tigris")}</option>
+            </select>
+          </label>
           <p className="muted">
-            {t("A fetch downloads only the parts of the archives that hold a track's positions, and the project keeps only the wind, waves and current at each position: kilobytes per track. Nothing downloaded is kept on disk.")}
+            {t("A fetch downloads only the parts of the archives that hold a track's positions, and the project keeps only the wind, waves and current at each position: kilobytes per track. Open Data downloads are kept in memory for this session.")}
           </p>
           <label className="settings-field">
             {t("Keep downloaded weather in memory for this session (MB)")}
@@ -173,15 +187,24 @@ export default function SettingsDialog({ settings, onSettings, onClose }: {
           </label>
         </section>
 
+        <section data-section="settings:cache">
+          <h3>{t("Whirlwind cache")}</h3>
+          <WeatherCache settings={settings} onSettings={onSettings} flush={flushCache} />
+        </section>
+
         <section data-section="settings:network">
           <h3>{t("Network")}</h3>
-          <label className="settings-field">
-            {t("Concurrent requests")}
-            <IntegerField data-feature="settings:concurrency" aria-label={t("Concurrent requests")}
-              title={t("How many downloads run at once (1–32)")}
-              value={settings.network.concurrency} min={1} max={32}
-              onCommit={(value) => save(api.setNetwork({ ...settings.network, concurrency: value }))} />
-          </label>
+          {settings.data_source !== "open_data" ? (
+            <p className="muted">{t("Whirlwind downloads up to 64 chunks at once.")}</p>
+          ) : (
+            <label className="settings-field">
+              {t("Concurrent requests")}
+              <IntegerField data-feature="settings:concurrency" aria-label={t("Concurrent requests")}
+                title={t("How many downloads run at once (1–32)")}
+                value={settings.network.concurrency} min={1} max={32}
+                onCommit={(value) => save(api.setNetwork({ ...settings.network, concurrency: value }))} />
+            </label>
+          )}
           <label className="settings-field">
             {t("Request timeout (s)")}
             <IntegerField data-feature="settings:timeout" aria-label={t("Request timeout (s)")}

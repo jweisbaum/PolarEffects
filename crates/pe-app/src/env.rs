@@ -1,14 +1,10 @@
 //! The environment of every track sample, fetched as a job (spec.md 7.5,
 //! 7.7, 13).
 //!
-//! **Jobs.** Fetch weather… queues one task per track. One runner thread
-//! takes them in order and asks a [`Provider`] for a batch of samples at a
-//! time; each batch's block reads run on the provider's worker pool
-//! (network concurrency, spec.md 3.4). Tracks run one after another rather
-//! than side by side, so the second boat of a race reads the blocks the
-//! first one just kept in memory instead of downloading them again at the
-//! same moment. Nothing downloaded reaches the disk; the project keeps the
-//! values interpolated at each sample (invariant 3).
+//! **Jobs.** Whirlwind tracks share time-ordered batches and one bounded
+//! chunk-download/decode pipeline. Open Data retains its single-track runner.
+//! Only requested positions are sampled; compressed Whirlwind chunks can be
+//! reused from the disk cache, and decoded chunks share the memory budget.
 //!
 //! **Partial results are kept.** Every finished batch is written into the
 //! project at once, under the session lock, and marks its samples
@@ -27,6 +23,8 @@
 //! and rounded to the precision the project stores (D27), so what is in
 //! memory is what a save and a load give back.
 
+mod fleet;
+
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -41,6 +39,7 @@ use ts_rs::TS;
 use crate::commands::AppState;
 use crate::error::{AppError, Result};
 use crate::projects::ProjectSummary;
+use crate::settings::DataSource;
 
 /// Knots per metre per second (1 kn = 1852 m/h).
 pub const KN_PER_MS: f64 = 3600.0 / 1852.0;
@@ -55,8 +54,8 @@ pub const CHANGED_EVENT: &str = "env://changed";
 /// The most samples one batch asks for.
 const BATCH_SAMPLES: usize = 400;
 
-/// The longest stretch of track time one batch covers: three wind hours
-/// hourly, or three 3-hourly steps. Short enough that a cold batch (about
+/// The longest stretch of track time one batch covers: three hours.
+/// Short enough that a cold batch (about
 /// sixteen chunks, a block or two of each) finishes in seconds, so
 /// progress moves and a cancel loses little.
 fn batch_span_s(interval: Interval) -> i64 {
@@ -107,6 +106,7 @@ pub trait JobSink: Send + Sync {
 /// One track to fetch.
 #[derive(Debug, Clone)]
 struct Task {
+    data_source: DataSource,
     project: u64,
     source: u64,
     label: String,
@@ -114,10 +114,23 @@ struct Task {
     restart: bool,
 }
 
+#[derive(Debug)]
+struct Running {
+    task: Task,
+    fraction: f64,
+    cancelled: bool,
+}
+
+impl Task {
+    fn same_track(&self, other: &Self) -> bool {
+        self.project == other.project && self.source == other.source
+    }
+}
+
 #[derive(Debug, Default)]
 struct Queue {
     waiting: VecDeque<Task>,
-    running: Option<(Task, f64)>,
+    running: Vec<Running>,
     cancel: Arc<AtomicBool>,
     failure: Option<Vec<String>>,
     warning: Option<Vec<String>>,
@@ -142,13 +155,14 @@ impl EnvJobs {
     pub fn status(&self) -> EnvJobsStatus {
         let queue = self.lock();
         let mut tracks = Vec::new();
-        if let Some((task, fraction)) = &queue.running {
+        for running in &queue.running {
+            let task = &running.task;
             tracks.push(EnvJobTrack {
                 boat_id: Some(task.project),
                 source_id: task.source,
                 label: task.label.clone(),
                 state: "fetching".to_owned(),
-                fraction: *fraction,
+                fraction: running.fraction,
             });
         }
         tracks.extend(queue.waiting.iter().map(|task| EnvJobTrack {
@@ -168,7 +182,7 @@ impl EnvJobs {
     /// Whether anything is running or waiting.
     pub fn busy(&self) -> bool {
         let queue = self.lock();
-        queue.running.is_some() || !queue.waiting.is_empty()
+        !queue.running.is_empty() || !queue.waiting.is_empty()
     }
 
     fn enqueue(&self, tasks: Vec<Task>) {
@@ -201,35 +215,73 @@ impl EnvJobs {
                 && sources.is_none_or(|s| s.contains(&task.source))
         };
         queue.waiting.retain(|t| !named(t));
-        if let Some((task, _)) = &queue.running
-            && named(task)
-        {
+        for running in &mut queue.running {
+            if named(&running.task) {
+                running.cancelled = true;
+            }
+        }
+        if queue.running.iter().all(|r| r.cancelled) {
             queue.cancel.store(true, Ordering::SeqCst);
         }
     }
 
-    /// Takes the next task, waiting for one when `block`.
-    fn take(&self, block: bool) -> Option<(Task, Arc<AtomicBool>)> {
+    /// Whirlwind jobs for the same archive share one bounded fleet batch.
+    fn take(&self, block: bool) -> Option<(Vec<Task>, Arc<AtomicBool>)> {
         let mut queue = self.lock();
         loop {
-            if let Some(task) = queue.waiting.pop_front() {
+            if queue.running.is_empty()
+                && let Some(task) = queue.waiting.pop_front()
+            {
+                let mut tasks = vec![task.clone()];
+                if task.data_source.whirlwind_source().is_some() {
+                    let mut kept = VecDeque::new();
+                    while let Some(next) = queue.waiting.pop_front() {
+                        if tasks.len() < 128
+                            && next.data_source == task.data_source
+                            && next.interval == task.interval
+                        {
+                            tasks.push(next);
+                        } else {
+                            kept.push_back(next);
+                        }
+                    }
+                    queue.waiting = kept;
+                }
                 queue.cancel = Arc::new(AtomicBool::new(false));
-                queue.running = Some((task.clone(), 0.0));
-                return Some((task, Arc::clone(&queue.cancel)));
+                queue.running = tasks
+                    .iter()
+                    .cloned()
+                    .map(|task| Running {
+                        task,
+                        fraction: 0.0,
+                        cancelled: false,
+                    })
+                    .collect();
+                return Some((tasks, Arc::clone(&queue.cancel)));
             }
             if !block {
                 return None;
             }
-            queue = self
-                .wake
-                .wait(queue)
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            queue = self.wake.wait(queue).unwrap_or_else(|e| e.into_inner());
         }
     }
 
-    fn advance(&self, fraction: f64) {
-        if let Some((_, f)) = &mut self.lock().running {
-            *f = fraction;
+    fn cancelled(&self, task: &Task) -> bool {
+        self.lock()
+            .running
+            .iter()
+            .find(|r| r.task.same_track(task))
+            .is_none_or(|r| r.cancelled)
+    }
+
+    fn advance(&self, task: &Task, fraction: f64) {
+        if let Some(r) = self
+            .lock()
+            .running
+            .iter_mut()
+            .find(|r| r.task.same_track(task))
+        {
+            r.fraction = fraction;
         }
     }
 
@@ -240,12 +292,19 @@ impl EnvJobs {
         }
     }
 
-    fn finish(&self, failure: Option<Vec<String>>) {
+    fn finish(&self, task: &Task, failure: Option<Vec<String>>) {
         let mut queue = self.lock();
-        queue.running = None;
+        if !queue.running.iter().any(|r| r.task.same_track(task)) {
+            return;
+        }
+        queue.running.retain(|r| !r.task.same_track(task));
         if failure.is_some() {
             queue.failure = failure;
         }
+        if queue.running.iter().all(|r| r.cancelled) {
+            queue.cancel.store(true, Ordering::SeqCst);
+        }
+        self.wake.notify_all();
     }
 }
 
@@ -394,21 +453,14 @@ pub enum Outcome {
     Gone,
 }
 
-/// Runs one task to its end.
-fn run(
-    state: &AppState,
-    task: &Task,
-    provider: &dyn Provider,
-    sink: &dyn JobSink,
-    jobs: &EnvJobs,
-    cancel: &Arc<AtomicBool>,
-    now: i64,
-) -> Result<Outcome> {
+type Prepared = (Target, Vec<(usize, Point)>, bool);
+
+fn gather(state: &AppState, task: &Task, now: i64) -> Result<Option<Prepared>> {
     let scoped = state.scoped(Some(task.project));
     let state = &scoped;
     // Gather what is still to fetch, starting over when asked or when the
     // interval or the Stokes choice changed: a track is never a mix.
-    let gathered = state
+    state
         .with_session(|session| {
             let Some(open) = session.open.as_mut() else {
                 return Ok(None);
@@ -426,7 +478,9 @@ fn run(
             };
             let seconds = task.interval.seconds();
             let meta = &track.env_meta;
+            let source_changed = different_source(meta, task.data_source);
             let restart = task.restart
+                || source_changed
                 || meta.interval_s.is_some_and(|s| s != seconds)
                 || meta.stokes_drift.is_some_and(|s| s != stokes);
             let changed =
@@ -443,6 +497,10 @@ fn run(
             }
             track.env_meta.interval_s = Some(seconds);
             track.env_meta.stokes_drift = Some(stokes);
+            // Keep source identity even when every requested cell is missing.
+            if let Some(source) = task.data_source.whirlwind_source() {
+                record(&mut track.env_meta, source.dataset(), now);
+            }
             let todo: Vec<(usize, Point)> = track
                 .samples
                 .iter()
@@ -473,7 +531,20 @@ fn run(
         .or_else(|error| match error {
             AppError::NoProjectOpen => Ok(None),
             other => Err(other),
-        })?;
+        })
+}
+
+/// Runs one Open Data task, or one independently requested Whirlwind track.
+fn run(
+    state: &AppState,
+    task: &Task,
+    provider: &dyn Provider,
+    sink: &dyn JobSink,
+    jobs: &EnvJobs,
+    cancel: &Arc<AtomicBool>,
+    now: i64,
+) -> Result<Outcome> {
+    let gathered = gather(state, task, now)?;
     let Some((target, todo, stokes)) = gathered else {
         return Ok(Outcome::Gone);
     };
@@ -489,11 +560,28 @@ fn run(
     // The heads of every chunk the track needs, side by side, before the
     // batches read their blocks (M14e).
     let all: Vec<Point> = todo.iter().map(|(_, p)| *p).collect();
-    if provider.prepare(&all, &options, cancel).is_err() || cancel.load(Ordering::SeqCst) {
-        outcome = Outcome::Cancelled;
+    if let Err(error) = provider.prepare(&all, &options, cancel) {
+        outcome = if cancel.load(Ordering::SeqCst) || matches!(error, EnvError::Cancelled) {
+            Outcome::Cancelled
+        } else {
+            Outcome::Failed(error.to_string())
+        };
     }
-    for batch in batches(&todo, batch_span_s(task.interval)) {
-        if outcome == Outcome::Cancelled {
+    let span = if task.data_source.whirlwind_source().is_some() {
+        72 * 3600
+    } else {
+        batch_span_s(task.interval)
+    };
+    for batch in batches_with_limit(
+        &todo,
+        span,
+        if task.data_source.whirlwind_source().is_some() {
+            10_000
+        } else {
+            BATCH_SAMPLES
+        },
+    ) {
+        if outcome != Outcome::Done {
             break;
         }
         if cancel.load(Ordering::SeqCst) {
@@ -530,7 +618,7 @@ fn run(
             break;
         }
         done += batch.len();
-        jobs.advance(done as f64 / total as f64);
+        jobs.advance(task, done as f64 / total as f64);
         sink.changed();
         sink.progress(&jobs.status());
     }
@@ -547,13 +635,21 @@ fn run(
 
 /// Consecutive runs of `todo` (in time order, as samples are) covering at
 /// most `span_s` of track time and [`BATCH_SAMPLES`] samples each.
+#[cfg(test)]
 fn batches(todo: &[(usize, Point)], span_s: i64) -> Vec<&[(usize, Point)]> {
+    batches_with_limit(todo, span_s, BATCH_SAMPLES)
+}
+
+fn batches_with_limit(
+    todo: &[(usize, Point)],
+    span_s: i64,
+    limit: usize,
+) -> Vec<&[(usize, Point)]> {
     let mut out = Vec::new();
     let mut start = 0;
     for k in 1..=todo.len() {
-        let split = k == todo.len()
-            || k - start >= BATCH_SAMPLES
-            || todo[k].1.t - todo[start].1.t >= span_s;
+        let split =
+            k == todo.len() || k - start >= limit || todo[k].1.t - todo[start].1.t >= span_s;
         if split {
             out.push(&todo[start..k]);
             start = k;
@@ -572,17 +668,35 @@ pub fn run_next(
     block: bool,
 ) -> Option<Outcome> {
     let jobs = &state.env_jobs;
-    let (task, cancel) = jobs.take(block)?;
+    let (tasks, cancel) = jobs.take(block)?;
+    Some(run_tasks(state, &tasks, provider, sink, &cancel, now))
+}
+
+fn run_tasks(
+    state: &AppState,
+    tasks: &[Task],
+    provider: &dyn Provider,
+    sink: &dyn JobSink,
+    cancel: &Arc<AtomicBool>,
+    now: i64,
+) -> Outcome {
+    let jobs = &state.env_jobs;
     sink.progress(&jobs.status());
-    let outcome = run(state, &task, provider, sink, jobs, &cancel, now)
-        .unwrap_or_else(|err| Outcome::Failed(err.to_string()));
-    let failure = match &outcome {
-        Outcome::Failed(message) => Some(vec![task.label.clone(), message.clone()]),
-        _ => None,
-    };
-    jobs.finish(failure);
+    let outcome = if tasks.len() > 1 {
+        fleet::run(state, tasks, provider, sink, cancel, now)
+    } else {
+        run(state, &tasks[0], provider, sink, jobs, cancel, now)
+    }
+    .unwrap_or_else(|err| Outcome::Failed(err.to_string()));
+    for task in tasks {
+        let failure = match &outcome {
+            Outcome::Failed(message) => Some(vec![task.label.clone(), message.clone()]),
+            _ => None,
+        };
+        jobs.finish(task, failure);
+    }
     sink.progress(&jobs.status());
-    Some(outcome)
+    outcome
 }
 
 // ----------------------------------------------------------- provider
@@ -590,6 +704,8 @@ pub fn run_next(
 /// What the provider was built from; a settings change builds a new one.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProviderKey {
+    data_source: DataSource,
+    weather_cache: crate::weather_cache::WeatherCacheSettings,
     memory_bytes: u64,
     timeout_s: u64,
     concurrency: u32,
@@ -598,9 +714,16 @@ pub struct ProviderKey {
 /// The reanalysis provider for the current settings, kept while they do not
 /// change so the opened archives are reused across tracks and jobs.
 pub fn provider(state: &AppState) -> Result<Arc<Reanalysis>> {
+    let source = state.with_session(|s| Ok(s.settings.data_source))?;
+    provider_for_source(state, source)
+}
+
+fn provider_for_source(state: &AppState, data_source: DataSource) -> Result<Arc<Reanalysis>> {
     let key = state.with_session(|session| {
         let s = &session.settings;
         Ok(ProviderKey {
+            data_source,
+            weather_cache: s.weather_cache.clone(),
             memory_bytes: s.weather_memory_bytes(),
             timeout_s: u64::from(s.network.timeout_s),
             concurrency: s.network.concurrency,
@@ -615,11 +738,14 @@ pub fn provider(state: &AppState) -> Result<Arc<Reanalysis>> {
     {
         return Ok(Arc::clone(p));
     }
-    let reanalysis = Arc::new(Reanalysis::http(
-        std::time::Duration::from_secs(key.timeout_s),
-        pe_env::BlockCache::new(key.memory_bytes),
-        key.concurrency as usize,
-    ));
+    let timeout = std::time::Duration::from_secs(key.timeout_s);
+    let memory = pe_env::BlockCache::new(key.memory_bytes);
+    let reanalysis = Arc::new(match key.data_source.whirlwind_source() {
+        None => Reanalysis::http(timeout, memory, key.concurrency as usize),
+        Some(source) => Reanalysis::whirlwind(source, source.credentials(), timeout, memory)
+            .map_err(|e| AppError::Internal(e.to_string()))?
+            .with_whirlwind_cache(crate::weather_cache::open(state, &key.weather_cache)?),
+    });
     *slot = Some((key, Arc::clone(&reanalysis)));
     Ok(reanalysis)
 }
@@ -655,30 +781,23 @@ pub fn start(app: tauri::AppHandle) {
                 let state = app.state::<AppState>();
                 // Wait for work before building the provider: nothing is
                 // opened before someone asks for weather.
-                let (task, cancel) = match state.env_jobs.take(true) {
+                let (tasks, cancel) = match state.env_jobs.take(true) {
                     Some(next) => next,
                     None => continue,
                 };
-                sink.progress(&state.env_jobs.status());
-                let outcome = match provider(&state) {
-                    Ok(p) => run(
-                        &state,
-                        &task,
-                        p.as_ref(),
-                        &sink,
-                        &state.env_jobs,
-                        &cancel,
-                        now(),
-                    )
-                    .unwrap_or_else(|err| Outcome::Failed(err.to_string())),
-                    Err(err) => Outcome::Failed(err.to_string()),
-                };
-                let failure = match &outcome {
-                    Outcome::Failed(message) => Some(vec![task.label.clone(), message.clone()]),
-                    _ => None,
-                };
-                state.env_jobs.finish(failure);
-                sink.progress(&state.env_jobs.status());
+                match provider_for_source(&state, tasks[0].data_source) {
+                    Ok(provider) => {
+                        run_tasks(&state, &tasks, provider.as_ref(), &sink, &cancel, now());
+                    }
+                    Err(err) => {
+                        for task in &tasks {
+                            state
+                                .env_jobs
+                                .finish(task, Some(vec![task.label.clone(), err.to_string()]));
+                        }
+                        sink.progress(&state.env_jobs.status());
+                    }
+                }
             }
         });
 }
@@ -689,7 +808,6 @@ pub fn start(app: tauri::AppHandle) {
 fn interval(name: &str) -> Result<Interval> {
     match name {
         "hourly" => Ok(Interval::Hourly),
-        "three_hourly" => Ok(Interval::ThreeHourly),
         other => Err(AppError::BadOption {
             field: "Sampling interval",
             value: other.to_owned(),
@@ -704,10 +822,28 @@ struct Gathered {
     points: Vec<Point>,
 }
 
+fn different_source(meta: &EnvMeta, source: DataSource) -> bool {
+    let whirlwind = source.whirlwind_source().map(|s| s.dataset());
+    if meta.datasets.is_empty() {
+        return whirlwind.is_some();
+    }
+    meta.datasets.iter().any(|d| match whirlwind {
+        Some(wanted) => d.name != wanted.id(),
+        None => [
+            Dataset::WhirlwindHindsight,
+            Dataset::WhirlwindR2,
+            Dataset::WhirlwindTigris,
+        ]
+        .iter()
+        .any(|w| d.name == w.id()),
+    })
+}
+
 /// The positions of the named tracks still to fetch (all of them when
 /// `restart`), each track's label, and the open project's id.
 fn positions(state: &AppState, sources: &[u64], restart: bool) -> Result<Gathered> {
     state.with_session(|session| {
+        let data_source = session.settings.data_source;
         let open = session.require_open()?;
         let mut labels = Vec::new();
         let mut points = Vec::new();
@@ -720,12 +856,17 @@ fn positions(state: &AppState, sources: &[u64], restart: bool) -> Result<Gathere
                 field: "Track",
                 value: source.label.clone(),
             })?;
+            let source_changed = different_source(&track.env_meta, data_source);
+            let interval_changed = track
+                .env_meta
+                .interval_s
+                .is_some_and(|s| s != Interval::Hourly.seconds());
             labels.push((id, source.label.clone()));
             points.extend(
                 track
                     .samples
                     .iter()
-                    .filter(|s| restart || !s.env_fetched)
+                    .filter(|s| restart || !s.env_fetched || source_changed || interval_changed)
                     .map(|s| Point {
                         t: s.t,
                         lat: s.lat,
@@ -749,24 +890,12 @@ pub struct EnvEstimate {
     pub samples: u32,
     /// Bytes to download sampling hourly.
     pub hourly_bytes: u64,
-    /// Bytes to download sampling 3-hourly.
-    pub three_hourly_bytes: u64,
     /// Bytes of the hourly fetch already downloaded this session.
     pub cached_bytes: u64,
     /// About how much the project file grows by: the values stored per
     /// sample, compressed.
     pub stored_bytes: u64,
-    /// The hourly download above which 3-hourly is preselected.
-    pub three_hourly_above_bytes: u64,
-    /// `"hourly"`, or `"three_hourly"` when the hourly download would
-    /// exceed [`THREE_HOURLY_ABOVE_BYTES`] (D19, D27).
-    pub recommended: String,
 }
-
-/// The hourly download above which the pre-flight preselects 3-hourly
-/// (D27): a long ocean race. A 5-day race is about 150 MB hourly; the
-/// Vendée Globe about 2.4 GB hourly and 0.8 GB 3-hourly.
-pub const THREE_HOURLY_ABOVE_BYTES: u64 = 1_000_000_000;
 
 /// About what one fetched sample adds to the project file, bytes: its wind,
 /// waves and current at their stored precision, by column and deflated
@@ -782,34 +911,42 @@ pub fn estimate_for(
     memory: Option<&pe_env::BlockCache>,
 ) -> Result<EnvEstimate> {
     let points = positions(state, sources, restart)?.points;
-    let e = pe_env::estimate(&points, memory);
+    let source = state.with_session(|s| Ok(s.settings.data_source))?;
+    let e = if source.whirlwind_source().is_some() {
+        provider(state)?
+            .estimate(&points)
+            .map_err(|e| AppError::Internal(e.to_string()))?
+    } else {
+        pe_env::estimate(&points, memory)
+    };
     Ok(EnvEstimate {
         samples: u32::try_from(points.len()).unwrap_or(u32::MAX),
         hourly_bytes: e.hourly_bytes,
-        three_hourly_bytes: e.three_hourly_bytes,
         cached_bytes: e.hourly_cached_bytes,
         stored_bytes: points.len() as u64 * STORED_BYTES_PER_SAMPLE,
-        three_hourly_above_bytes: THREE_HOURLY_ABOVE_BYTES,
-        recommended: if e.hourly_bytes > THREE_HOURLY_ABOVE_BYTES {
-            "three_hourly"
-        } else {
-            "hourly"
-        }
-        .to_owned(),
     })
 }
 
 /// The expected download for fetching the named tracks' environment.
-#[tauri::command(async)]
-pub fn env_estimate(
+#[tauri::command]
+pub async fn env_estimate(
     state: tauri::State<'_, AppState>,
     boat_context: Option<u64>,
     source_ids: Vec<u64>,
     restart: bool,
 ) -> Result<EnvEstimate> {
     let state = state.scoped(boat_context);
-    let provider = provider(&state)?;
-    estimate_for(&state, &source_ids, restart, Some(provider.memory()))
+    // Tauri's `command(async)` dispatches even a synchronous function on an
+    // async worker. Whirlwind drives its own runtime while opening metadata
+    // and reading indexes: doing that there panics, leaving the IPC promise
+    // unanswered and the busy indicator running. Provider replacement also
+    // drops that runtime, so keep the entire operation on a blocking worker.
+    tauri::async_runtime::spawn_blocking(move || {
+        let provider = provider(&state)?;
+        estimate_for(&state, &source_ids, restart, Some(provider.memory()))
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("Weather estimate worker failed: {e}")))?
 }
 
 /// [`start_env_fetch`] without a Tauri handle: queues one task per track.
@@ -820,6 +957,7 @@ pub fn queue_fetch(
     restart: bool,
 ) -> Result<EnvJobsStatus> {
     let interval = interval(interval_name)?;
+    let data_source = state.with_session(|s| Ok(s.settings.data_source))?;
     let Gathered {
         project, labels, ..
     } = positions(state, sources, restart)?;
@@ -827,6 +965,7 @@ pub fn queue_fetch(
         labels
             .into_iter()
             .map(|(source, label)| Task {
+                data_source,
                 project,
                 source,
                 label,
@@ -839,8 +978,7 @@ pub fn queue_fetch(
 }
 
 /// Fetches the environment of the named tracks: what is missing, or all
-/// of it again with `restart`. `interval` is `"hourly"` or
-/// `"three_hourly"`.
+/// of it again with `restart`. Only `"hourly"` sampling is accepted.
 ///
 /// Generic over the Tauri runtime so the MCP service's tools, and their
 /// tests on a mock application, call this very command.

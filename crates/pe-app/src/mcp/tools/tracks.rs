@@ -294,10 +294,16 @@ impl<R: tauri::Runtime> PolarExplorer<R> {
         self.note("tracker_event");
         // The command is itself asynchronous: it runs the download on a
         // blocking thread and emits the interface's own progress events.
-        let event =
-            crate::trackers::tracker_event(app, p.tracker, p.url, p.refresh, "mcp".to_owned())
-                .await
-                .map_err(ToolError::from)?;
+        let event = crate::trackers::tracker_event(
+            app,
+            p.tracker,
+            p.url,
+            p.refresh,
+            "mcp".to_owned(),
+            None,
+        )
+        .await
+        .map_err(ToolError::from)?;
         json(&event)
     }
 

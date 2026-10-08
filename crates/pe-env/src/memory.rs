@@ -12,6 +12,7 @@
 //! - each block downloaded, compressed exactly as served (a wind block is
 //!   about 0.4 MB, a wave block 0.2 MB), decoded again on each use;
 //! - for a chunk that is not blosc (a test store), its decoded values.
+//! - Whirlwind's decoded float16 inner chunks, sharing the same byte limit.
 
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -34,6 +35,8 @@ pub enum Part {
     Block(u32),
     /// The whole chunk, decoded.
     Whole,
+    /// One Whirlwind inner chunk, decoded float16 bytes.
+    Decoded(u32),
 }
 
 /// What an entry holds.
@@ -50,6 +53,8 @@ pub enum Held {
     },
     /// One block's compressed bytes.
     Compressed(Bytes),
+    /// Validated decoded bytes, retained without expanding float16 values.
+    Decoded(Bytes),
     /// A whole chunk's values, unpacked.
     Values(Arc<Vec<f32>>),
 }
@@ -62,7 +67,7 @@ impl Held {
         64 + match self {
             Self::Missing => 0,
             Self::Head { extents, .. } => 16 * extents.len() as u64,
-            Self::Compressed(bytes) => bytes.len() as u64,
+            Self::Compressed(bytes) | Self::Decoded(bytes) => bytes.len() as u64,
             Self::Values(values) => 4 * values.len() as u64,
         }
     }

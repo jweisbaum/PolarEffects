@@ -318,16 +318,47 @@ or a failed write leaves the previous setting in place.
 - **Units**: boat and wind speed (kn default, m/s, km/h), wave height (m,
   ft), distance (nm, km).
 - **Autosave**: recovery (default), save, off.
+- **Data sources**: **Open Data (Slow)** (default) keeps the existing public
+  archives and current-source fallback chain. **Whirlwind (Fast) S3** reads
+  `s3://whirlwind-hindsight/hindsight`, in `us-east-1`, for wind, waves and
+  current. **Whirlwind (Fast) R2** reads Cloudflare R2 at the configured
+  account endpoint; **Whirlwind (Fast) Tigris** reads Tigris at
+  `fly.storage.tigris.dev`. Both use `whirlwind-hindsight/hindsight` and
+  SigV4 region `auto`. The choice is global and captured when a fetch is queued. Existing
+  project values stay unchanged until a fetch is requested; resuming a track
+  from a different source replaces its weather, so a track never mixes sources.
+  S3 reads are anonymous, including metadata and byte ranges: no AWS
+  credential file or environment variables are read, and no authorization or
+  signing headers are sent. At the user's explicit request on
+  2026-10-07, the supplied R2 and Tigris S3 credentials are built into the Rust
+  backend, redacted from Debug and excluded from settings, IPC, projects and
+  URLs. The R2 management API token is not needed or bundled. Signed requests
+  never follow redirects. Each storage source has its own provenance and
+  endpoint-scoped memory/disk cache keys.
 - **Downloaded weather**: "Keep downloaded weather in memory for this
   session (MB)" (default 256, 16–4096). The blocks a fetch downloads (§7.5)
   are kept in memory, least recently used first to go, so other boats of the
-  same race reuse them; nothing downloaded is ever written to disk, and
-  quitting forgets it (D27). An earlier version's on-disk chunk cache (the
+  same race reuse them. Open Data downloads stay in memory and quitting
+  forgets them (D27). Whirlwind's compressed inner chunks also use the disk
+  cache below (asked 2026-10-07). An earlier version's on-disk chunk cache (the
   `chunks` folder in its settings' `chunk_cache.location`, or in the platform
   cache directory) is announced on the status line the first time a project
   window opens, then removed in the background — only that folder, and only
   when it holds nothing but the dataset folders the cache wrote; its
   settings are no longer read or written.
+- **Whirlwind cache**: cache directory (empty for the platform cache folder),
+  maximum size in decimal GB (default 10, range 1–4096), and **Clear cache**.
+  A dedicated `whirlwind-hindsight-v1` child holds only validated compressed
+  inner chunks; metadata and shard indexes are read anew each provider session.
+  Chunks are reused across routes and app restarts. Cache keys include the
+  archive identity, shard ETag and byte range; changed shard versions cannot
+  reuse older data. Files have integrity checks and atomic publication;
+  damaged or incomplete entries are downloaded again. Least recently used
+  entries are evicted before writes to stay under the limit, and lowering the
+  limit prunes immediately. Clearing removes owned cache entries only and
+  invalidates in-flight writes and memory chunk reuse. Weather saved in projects
+  is unchanged. Changing directory applies to later fetches; older cache files
+  remain in their original directory. Open Data does not use the disk cache.
 - **Network**: request concurrency (default 8, 1–32), timeout (default 60 s,
   5–600 s).
 - **Map projection** (§9.1), remembered here rather than in the project.
@@ -421,6 +452,12 @@ The earlier `syrftracksgeojson` directory contains race collections from a
 nonmatching database snapshot; it is also supported when GUIDs match. Storage
 keys cannot escape the selected directory through traversal or symlinks.
 
+When the configured metadata file is absent, the Tracks section hides the
+vessel-search heading, input and results entirely (asked 2026-10-08).
+A lightweight file-presence check runs on mount, metadata-directory changes,
+window focus, and metadata download or scrape completion. It does not parse
+or index the metadata merely to decide whether to show search.
+
 `boat-metadata.json` (version 1) holds SYRF table rows and one search record
 per track, limited to YellowBrick, Geovoile, Blue Water, old Geovoile, Regadata
 and America's Cup (including 2021). A file of another version is refused with a
@@ -431,8 +468,21 @@ including name, model, class, make, builder, sail number, IDs, measurements and
 custom fields. Text, numbers, booleans and nested JSON values are searchable;
 nulls and field names are not treated as values. Matching ignores case, accents
 and punctuation. Every query word must match the same vessel, but words may
-match different fields. Folded text is cached once per vessel, shared by its
-tracks, and built when the metadata file is first read.
+match different fields. Matches containing the complete query in one field
+(ignoring spaces and punctuation) precede matches scattered across fields:
+"Cal 40" boats come before a "Pascal" whose timestamp contains "40".
+Catalogue order is retained within each tier, including across pages.
+Folded text is indexed once per vessel, shared by its tracks. Search loads
+only vessel rows and track summaries, and retains a disposable search index
+under the application's cache directory across restarts. The source path,
+file size and modification time invalidate that index; missing or corrupt
+indexes are rebuilt from the original metadata, which search never rewrites.
+Local indexing warms on a background thread at startup and after changing
+the metadata folder. Each query prepares its substring matchers once and
+matches each vessel once; pagination reuses the matching row IDs in catalogue
+order. File availability is checked in parallel for the visible page, with
+the directory resolved once, and import revalidates every path. Typing waits
+50 ms to coalesce keystrokes; an older response never replaces newer results.
 Results come in pages of 100 tracks, the next loading on its own as the
 list is scrolled to its end (asked 2026-10-02). Each result shows
 boat, event, provider, model, sail number, date, original URL and file availability.
@@ -987,14 +1037,18 @@ adds the current certificates to it from ORC's own service (D31).
 
 The Tracks section lists every track source: colour, boat name, event title,
 date range, sample count, and a weather status (not fetched, queued,
-fetching n %, ready, partial, failed). Each has a tick box, **Fetch
+fetching n %, ready, no points to plot, partial, failed). A completed fetch
+with no samples that have enough wind, heading and speed data to place on the
+polar says **no points to plot**, rather than ready; it can still be refetched.
+Weather status has its own wrapping line so a narrow sidebar cannot hide it.
+Each has a tick box, **Fetch
 weather…** (Cancel fetch while it runs), Show on map and Remove.
 
 Buttons above the list: **YellowBrick…**, **Geovoile…**, **Blue Water…**,
 **File…**; and, once there are tracks, **Select all** and **Fetch weather for
 selected tracks…**, over the ticked tracks. Select all ticks every imported
 track and is disabled when all are already ticked. It does not start a download;
-the weather button opens the usual estimate, leaving queued/running tracks out.
+the weather button starts fetching immediately, leaving queued/running tracks out.
 Several events and several files can be
 imported into one project, and several boats from one event. Importing never
 fetches weather (D24): an imported track shows "Weather: not fetched" until
@@ -1002,71 +1056,61 @@ the user asks for it.
 
 ### 7.2 Tracker import
 
-All three trackers share one dialog flow (D4):
+All three trackers share one dialog flow (D4, updated 2026-10-08):
 
-1. The user pastes the event URL. The app resolves the event and shows its
-   title and dates.
-2. **The full tracks of all boats are downloaded — tracks only, never
-   weather** — and shown as a table: boat name, sail number, model/class,
-   division, fix count, status. The table appears as soon as the tracker
-   names the boats, while the positions still download (D24); the fix
-   counts, dates and a map preview of the tracks fill in when they arrive.
-3. The user selects one or more boats (search box over name, sail number,
-   model), during the download or after it. **Import tracks** (enabled once
-   the positions are in) creates one track source per selected boat.
-4. The downloaded event is kept in memory for the session, so a second import
-   from the same event does not download again.
+1. **Open loads only the boat list**, with title, dates and boat details,
+   without downloading track positions. YellowBrick reads RaceSetup;
+   Geovoile reads the viewer page, versions and config, never tracks or reports.
+2. Search by name, sail number, model or division and tick boats. Unknown
+   position counts show a dash. **Import tracks starts the position download**,
+   then adds the chosen boats as track sources in one undoable change.
+3. Blue Water Tracks combines boat details and positions in one response.
+   Open resolves its address without a request. The first **Import tracks**
+   downloads the event and shows the boat picker; after selecting boats,
+   **Import tracks** adds them without another download.
+4. Complete events stay in memory for the session, so reopening one downloads
+   nothing and shows position counts and a map preview. **Refresh boat list**
+   reloads metadata only; the next Import tracks downloads fresh positions.
 5. No weather is fetched. The user starts it per track, or for the ticked
    tracks, from the track list (§7.1, §7.5).
 
 In detail (M10):
 
-- Each tracker is a `TrackerClient` in `pe-trackers`: resolving the pasted
-  address needs no network; one fetch then returns the whole event (title,
-  dates, every boat with its sail number, model, division, status, own
-  start and finish, and full track). A tracker that names its boats in a
-  response of its own hands that list over first (`fetch_listed`,
-  `tracker://listed`, a view with `positions: false` under the key the
-  dialog gave that download: a listing for any other download is ignored,
-  and the boats ticked from it stay ticked only if the final event has
-  them with positions): YellowBrick after
-  RaceSetup, Geovoile after its config; Blue Water Tracks answers everything
-  in one response. The responses an event needs are requested at once
-  where they do not depend on each other (YellowBrick's RaceSetup and
-  AllPositions3; Geovoile's config, tracks and reports, after the viewer
-  page and versions), each decoded on its own thread, and asked for
-  gzipped (inflated by the client under the same 256 MB cap). The dialog shows the event's title,
-  dates and boat count, a map preview of every boat's track (64 points
-  each, over the basemap coastline, the ticked boats highlighted), a search
-  over name, sail number, model and division (every word must match; case,
-  accents and the spaces or slashes inside sail numbers do not matter), and
-  a tick-all box for the boats shown. A boat without positions cannot be
-  ticked; while the positions download every boat can be, and a ticked boat
-  that turns out to have none is unticked when they arrive. Preview
-  coordinates are rounded to 1e-4° to keep the IPC payload small.
-- The download is a job (§7.7) run from the dialog: its progress (bytes and
-  fraction) shows in the dialog with Cancel download, which returns at once
-  even while the tracker has not answered; nothing is kept from a cancelled
-  or failed download. Requests follow §7.7's rules: a 5xx or 429 answer, a
-  timeout or a dropped connection is retried three times (0.5, 1, 2 s),
-  anything else fails at once, and a body over 256 MB is refused. A
-  redirect is followed only to the same host or, over HTTPS, to another
-  allow-listed tracker host (invariant 4); any other is a failure. The
-  fraction only grows: a tracker with a fallback counts the fallback's
-  step from the start and marks it done when it is not needed. A failure
-  is shown in the dialog in the interface language with Retry (which
-  downloads again); an address the tracker does not serve has no Retry.
-- The session keeps the events downloaded, the most recent first, up to
-  two million positions in all (about 110 MB; the Fastnet 2025 is 714,380
-  positions, about 40 MB); the latest is always kept. Reopening one says
-  it was kept and offers Download again for newer positions.
-- Import tracks adds one track source per ticked boat, labelled with the
-  boat's name, as one undo entry, and fetches no weather (D24); the hint
-  after it says weather can be fetched per track (§7.5). The track's origin records the tracker, the
-  canonical event address (`https://yb.tl/<key>`), the title, and the
-  boat's tracker id, name, sail number, model, division, start and finish.
-  Its time-window filter starts at the boat's start and ends at its finish
-  when the tracker gives them, else at the event's start and end (§7.6).
+- Each tracker is a `TrackerClient` in `pe-trackers`. Resolving an address
+  needs no network. `list` reads only metadata, or returns `None` for a
+  provider with a combined response. The app returns a `positions: false`
+  view and does not cache incomplete events. `fetch_listed` still fetches
+  the whole event for an explicit download, the library and project imports.
+  Independent full-download requests run concurrently (YellowBrick's
+  RaceSetup and AllPositions3; Geovoile's config, tracks and reports after
+  page and versions), each decoded on its own thread, with gzip support
+  under the same 256 MB cap. Early `tracker://listed` updates carry the
+  dialog's download key, and updates for other downloads are ignored.
+- The picker searches name, sail number, model and division. Every word
+  must match; case, accents, spaces and slashes in sail numbers do not
+  matter. A heading checkbox ticks all boats shown. Before downloading,
+  every listed boat can be selected; on a complete event, boats with no
+  positions are disabled. Missing boats or positions discovered during
+  import are reported by the normal per-boat import failures.
+  A complete event has a map preview with at most 64 points per boat,
+  rounded to 1e-4°, over the basemap, with selected boats highlighted.
+- The download runs as a job (§7.7), with progress and Cancel in the dialog.
+  Cancel stops the download and closes the dialog, and a late answer cannot
+  start an import. While importing, selection, event, leg and refresh controls
+  are disabled. A position failure retains the boat list, search and choices;
+  Retry downloads that event and imports those choices, even if the address
+  field was edited. Open starts a new list with fresh choices.
+  Only complete events enter the session cache. A 5xx/429 response, timeout
+  or dropped connection is retried three times (0.5, 1, 2 s); other failures
+  stop at once. Redirects stay on the same host or an allow-listed HTTPS
+  tracker host. Failure text is translated, and an unsupported address has
+  no Retry.
+- The session keeps up to two million positions (about 110 MB), removing
+  the oldest events first and always retaining the latest.
+- Import adds one track per chosen boat, labelled by boat name, as one undo
+  entry. The origin records tracker, canonical event address, title, boat id,
+  name, sail number, model, division, start and finish. Its time window uses
+  the boat's start/finish when available, otherwise the event's (§7.6).
 
 **YellowBrick** (host `yb.tl`, CDN `cf.yb.tl`):
 
@@ -1087,16 +1131,18 @@ In detail (M10):
   otherwise it is a delta from the previous (newer) moment
   (`u16 dt & 0x7FFF, i16 dlat, i16 dlon`, then optional deltas).
 - YellowBrick gives no speed or course; both are derived (§7.4).
-- Fallback if the binary fails to decode (or is refused, or is a web page,
-  which is what an unknown key's `AllPositions3` answers with status 200):
+- Once RaceSetup loads, fallback if the binary fails to decode, is refused,
+  stays unavailable after retries, or is a web page (which is what an unknown
+  key's `AllPositions3` answers with status 200):
   `GET https://yb.tl/<key>.kml` (the CDN answers 504 for it). YellowBrick
   builds it on request, so it has its own 10-minute timeout (Middle Sea
   Race 2024: 23 MB in 17–73 s; Fastnet 2025: 99 MB, over two minutes).
   Each placemark (named after the team) holds a `gx:Track` of `when` and
   `gx:coord` (`lon,lat,alt`) pairs; coordinates are rounded back to
   YellowBrick's 1e-5° grid and placemarks are matched to teams by name. The
-  KML leaves out the binary's few reports at a repeated time. A cancel or a
-  tracker that keeps failing (5xx) does not fall back.
+  KML leaves out the binary's few reports at a repeated time. A cancellation
+  or a failed RaceSetup does not fall back; a working boat list with an
+  unavailable binary does, since the site's KML can still be available.
 - Some keys return 5xx (an unknown key's `RaceSetup` answers 500); the
   dialog says the tracker is not answering and offers Retry. A `RaceSetup`
   that is a web page is "no public event at this address".
@@ -1274,16 +1320,53 @@ each preference only where the track gives that quantity (§7.6).
 
 Every track sample can be matched against reanalysis, as a background job
 (§7.7), **when the user asks for it** (D24): a track's **Fetch weather…**, or
-**Fetch weather for selected tracks…** over the ticked tracks, opens the
-fetch's pre-flight (§13) for those tracks, with Fetch as its default answer.
+**Fetch weather for selected tracks…** over the ticked tracks, starts the
+hourly background fetch immediately, without a download-size calculation
+or confirmation dialog (requested 2026-10-07).
 A ticked track already queued or fetching is left out, and the ticks are
 cleared once the fetch starts.
 Importing a track (from a file or a tracker) never starts it and makes no
-reanalysis request; Not now leaves the tracks "not fetched". The pre-flight
-opens at once: the estimate is computed off
-the UI thread, the two interval choices read "calculating the download…"
-until it arrives, and a choice made meanwhile is kept over the
-recommendation.
+reanalysis request. Repeated clicks are disabled while the start request is
+pending; a failed start reports its error and keeps the selected tracks for
+retry. Progress and cancellation remain in the status bar and track list.
+
+With **Whirlwind (Fast) S3** selected, the route reader uses the archive's Zarr v3
+metadata, coordinate axes and parameter names. All three Whirlwind sources
+use the combined layout published on R2: `data` contains `u10`, `v10`,
+`ucur`, `vcur`, `wave_direction`, `wave_height` and `wave_period`, mapped by
+the `param` coordinate names. There are no separate wave-array requests. Values
+are float16, stored in Zstandard-compressed inner chunks inside rectilinear
+shards. The currently published inner chunks are 72 hours × all parameters ×
+40 × 40 cells (10° × 10°). Only inner chunks intersecting a requested sample's
+spatial and temporal interpolation stencil are downloaded. It reads each
+required shard's checksummed index using a suffix Range request, then each
+required inner chunk using its exact byte range. It never downloads a complete
+shard or scans the bucket. Duplicate chunk requests are coalesced across
+positions and selected tracks, and the bounded session memory cache reuses
+indexes, compressed chunks and decoded float16 chunks across routes, including
+when a later request needs different parameters
+from the same chunk. Whirlwind additionally keeps validated compressed chunks
+in the bounded disk cache in Settings (§3.4), including across restarts.
+S3 reads use an async runtime with up to 64 requests in flight across tracks
+and parameters. Each shard's chunks can download as soon as its index arrives,
+without waiting for unrelated indexes. Decoding uses at most eight CPU workers;
+disk-cache reads, checksums and writes run concurrently under the cache limit.
+Up to 128 queued tracks using the same source share time-ordered batches of up
+to 72 hours per track and 10,000 total samples, planning and decoding each required chunk
+once per batch. Different Stokes choices are sampled separately. Progress and
+cancellation remain per track, and project updates are coalesced per batch.
+Cancelling one track leaves shared work running for the other tracks; cancelling
+all tracks interrupts pending HTTP reads and retry waits. Completed batches
+stay saved and resume skips their samples. A failed shared read is retried in
+per-track subsets to isolate the failure. Missing objects and
+inner chunks are missing data, while authentication errors and corrupt data
+fail the fetch. The optional MCP estimate counts actual compressed byte lengths from the
+needed indexes, counting each combined chunk once. Whirlwind provenance is
+`whirlwind-hindsight`, `whirlwind-hindsight-r2` or `whirlwind-hindsight-tigris`,
+version `hindsight-v3`; its current is the HistorySyncer GlobCurrent tidal current.
+Public archive network concurrency remains the existing setting.
+
+With **Open Data (Slow)** selected:
 
 | Quantity | Dataset | Variable |
 |---|---|---|
@@ -1593,7 +1676,7 @@ The environment fetch in detail (M9):
 - One runner takes the queued tracks one after another, so a second boat
   reads the chunks the first one just cached instead of downloading them at
   the same moment. Within a track, samples go in batches of at most three
-  sampling intervals of track time (3 h hourly, 9 h 3-hourly) and 400
+  hours of track time and 400
   samples; each batch's chunk reads run on a pool of the network
   concurrency setting (§3.4), each chunk fetched and decoded once.
 - Each finished batch is written into the project at once. Cancel stops at
@@ -1862,7 +1945,9 @@ handles on a shared rail and a value at each end: significant wave height
 period (seconds). Both handles remain reachable when they coincide and support
 native keyboard adjustment. Clicking and dragging the selected rail between the
 handles moves both bounds together, preserving the range width and stopping at
-either end of the scale. The selected rail is keyboard-focusable: arrow keys
+either end of the scale. Hovering or dragging the rail keeps its normal thin
+appearance; the transparent drag hit area never gains a button background.
+The selected rail is keyboard-focusable: arrow keys
 move it one step, and Home/End move it to the start/end of the scale. Pressing
 the rail without moving does not change either bound. All three inclusive ranges apply together, in addition
 to track/global/priority filters. Moving a slider previews the dots immediately
@@ -2212,6 +2297,7 @@ a Snapdragon X Windows ARM64 laptop):
 |---|---|
 | Start screen visible after launch | < 1.5 s |
 | ORC search result update per keystroke | < 30 ms |
+| Local track search, prepared index | < 50 ms backend plus a 50 ms typing delay; one-time indexing runs in the background |
 | Blend recompute after an edit (20 sources, 200k samples) | < 50 ms |
 | Edit to every open view updated | < 100 ms |
 | 3D view with 200k dots, 20 surfaces | 60 fps |
@@ -2232,18 +2318,20 @@ wind, 0.17–0.31 MB of wave height or direction at mid-latitudes — instead
 of the 1.7–3.3 MB field. Measured (M14e, debug build, home broadband): a
 Fastnet 2025 boat of 120 h, 1,585 samples, downloaded 159.6 MB in 99 s
 where whole chunks would have been 1,279.5 MB, and adds 13 KB to the
-project; the second boat of the race downloaded 9.6 MB. The pre-flight
-shows the expected download at both intervals and "stored in the project:
-about N kB" (8 bytes a sample), and lets the user pick hourly or 3-hourly
-(D19). Hourly is the default; when the hourly download would exceed 1 GB (a
-long ocean race: the Vendée Globe is ≈ 2.4 GB hourly, ≈ 0.8 GB 3-hourly),
-3-hourly is preselected, with a note saying why that goes once the user
-chooses an interval. The estimate counts, per ERA5 hour the samples
-need, four heads and the blocks holding their stencil rows (one hour's
-measured block sizes), leaves out blocks already in memory, and adds one
-typical current block per variable per box and block of hours crossed in
-the first tier whose box holds the position. 3-hourly reads 00, 03, … 21
-UTC and interpolates linearly between them; currents are always hourly.
+project; the second boat of the race downloaded 9.6 MB. Fetch weather starts
+immediately without a size-estimate modal (requested 2026-10-07).
+Wind, waves and currents are always sampled hourly
+(requested 2026-10-07); there is no coarser interval or size-based fallback.
+The optional MCP estimate counts, per ERA5 hour the samples need, five heads and the blocks
+holding their stencil rows (one hour's measured block sizes), leaves out
+blocks already in memory, and adds one typical current block per variable
+per box and block of hours crossed in the first tier whose box holds the
+position. Whirlwind instead counts the exact compressed inner chunks absent
+from its memory and disk caches. Existing projects retain the recorded
+interval of older fetched weather; a new fetch uses hourly sampling and
+starts over if the old interval differs. GRIB weather reads also use hourly
+sampling.
+
 
 ---
 

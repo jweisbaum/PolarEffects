@@ -350,6 +350,7 @@ button.icon-button { padding: 0 5px; line-height: 16px; font-size: 11px; }
 .polar-file-meta { font-size: 11px; }
 .track-list { list-style: none; margin: 0; padding: 0; }
 .track-item { padding: 3px 0; border-bottom: 1px solid var(--border-subtle, transparent); }
+.track-weather-status { white-space: normal; overflow: visible; }
 .track-row { display: flex; align-items: center; gap: 6px; }
 /* The track's name keeps room to be read: with a long Fetch weather… label
    (French, German) the buttons wrap under it instead of squeezing it to
@@ -381,9 +382,6 @@ button.icon-button { padding: 0 5px; line-height: 16px; font-size: 11px; }
 .track-env-options { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; margin: 0 0 6px; }
 /* A block fieldset, not a grid one: WebKit sizes the legend of a grid
    fieldset to its min-content, one word per line (M17a). */
-.env-fetch-interval { border: none; margin: 8px 0; padding: 0; min-width: 0; }
-.env-fetch-interval legend { padding: 0; margin-bottom: 4px; }
-.env-fetch-interval > label { display: block; margin-top: 4px; }
 .env-jobs { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; white-space: nowrap; }
 .env-jobs-bar { display: inline-block; width: 60px; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; }
 .env-jobs-bar > span { display: block; height: 100%; background: var(--accent); }
@@ -1231,7 +1229,8 @@ button.source-label:hover { border-color: var(--border); background: var(--raise
 .wave-range-track { position: absolute; top: 12px; left: 7px; right: 7px; height: 4px; border-radius: 2px; background: var(--border); pointer-events: none; }
 .wave-range-track span { position: absolute; height: 100%; border-radius: inherit; background: var(--accent); }
 .wave-range-selection { position: absolute; z-index: 1; top: -12px; height: 28px; min-width: 0; padding: 0; border: 0; border-radius: 0; background: transparent; pointer-events: auto; touch-action: none; cursor: grab; }
-.wave-range-selection:hover, .wave-range-selection:active { background: transparent; }
+/* Outrank the shared button hover rule without painting the drag hit area. */
+.wave-range-selection:hover:not(:disabled), .wave-range-selection:active { background: transparent; }
 .wave-range-selection:active { cursor: grabbing; }
 .wave-range-selection:focus-visible { outline: 2px solid var(--accent); outline-offset: -5px; }
 .wave-range-slider input[type="range"] {

@@ -453,3 +453,40 @@ fn importing_issues_no_reanalysis_request() {
         }
     }
 }
+
+#[test]
+fn listing_waits_for_an_explicit_download_and_never_caches_empty_tracks() {
+    let root = TempRoot::new("trackers-list");
+    let app = project(&root);
+    let (host, requests) = serve();
+    let list = |refresh| {
+        trackers::list_with(
+            &app,
+            Arc::new(YellowBrick::at(&host, &host)),
+            "yb.tl/rmsr2024",
+            refresh,
+            |_| {},
+        )
+        .unwrap()
+    };
+    let listing = list(false);
+    assert!(!listing.positions);
+    assert_eq!(listing.boats.len(), 112);
+    assert!(
+        listing
+            .boats
+            .iter()
+            .all(|b| b.fixes == 0 && b.preview.is_empty())
+    );
+    assert_eq!(requests.load(Ordering::SeqCst), 1);
+    assert!(
+        trackers::import_boats(&app, Tracker::YellowBrick, &listing.key, &["1".into()]).is_err()
+    );
+    let ready = download(&app, &host);
+    assert!(ready.positions);
+    assert_eq!(requests.load(Ordering::SeqCst), 3);
+    assert!(list(false).cached);
+    assert_eq!(requests.load(Ordering::SeqCst), 3);
+    assert!(!list(true).positions);
+    assert_eq!(requests.load(Ordering::SeqCst), 4);
+}

@@ -365,12 +365,67 @@ fn a_binary_that_does_not_decode_falls_back_to_the_kml() {
     assert_eq!(counts, [1670, 1684, 2216, 0]);
 }
 
-/// A tracker that keeps answering 5xx is reported as not answering, for
-/// the dialog's Retry, and the KML is not tried.
+/// A working RaceSetup proves the event exists. The CDN's positions can
+/// be unavailable independently of the site's KML, which still imports.
 #[test]
-fn a_failing_tracker_is_unavailable_not_a_fallback() {
-    let err = fetch_rmsr(("503 Service Unavailable", Vec::new())).expect_err("fails");
-    assert!(matches!(err, TrackerError::Unavailable { .. }), "{err:?}");
+fn unavailable_positions_fall_back_to_the_kml() {
+    let event = fetch_rmsr(("503 Service Unavailable", Vec::new())).expect("KML fetches");
+    assert_eq!(event.positions_from, PositionsFrom::Fallback);
+    let counts: Vec<usize> = event.boats[..4].iter().map(|b| b.fixes.len()).collect();
+    assert_eq!(counts, [1670, 1684, 2216, 0]);
+}
+
+/// An unavailable setup must not trigger a large KML request for a key
+/// that may not exist. A cancellation after listing must not either.
+#[test]
+fn a_failed_setup_or_cancelled_download_never_requests_the_kml() {
+    for cancel_after_listing in [false, true] {
+        let (host, requests) = serve_recorded(vec![
+            (
+                "/JSON/rmsr2024/RaceSetup",
+                if cancel_after_listing {
+                    "200 OK"
+                } else {
+                    "503 Service Unavailable"
+                },
+                fixture("yellowbrick/rmsr2024-RaceSetup.json"),
+            ),
+            (
+                "/BIN/rmsr2024/AllPositions3",
+                "503 Service Unavailable",
+                Vec::new(),
+            ),
+        ]);
+        let client = YellowBrick::at(&host, &host);
+        let event = client.resolve("rmsr2024").expect("resolves");
+        let cancel = Arc::default();
+        let fetcher = Fetcher::new("YellowBrick", Duration::from_secs(10), Arc::clone(&cancel))
+            .expect("client")
+            .with_backoff(Duration::from_millis(1));
+        let mut listed = false;
+        let error = client
+            .fetch_listed(&event, &fetcher, &mut |_| {}, &mut |_| {
+                listed = true;
+                cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+            })
+            .expect_err("does not finish");
+        assert_eq!(listed, cancel_after_listing);
+        if cancel_after_listing {
+            assert!(matches!(error, TrackerError::Cancelled), "{error:?}");
+        } else {
+            assert!(
+                matches!(error, TrackerError::Unavailable { .. }),
+                "{error:?}"
+            );
+        }
+        assert!(
+            requests
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|p| !p.ends_with(".kml"))
+        );
+    }
 }
 
 // --- Geovoile ----------------------------------------------------------------
@@ -1426,4 +1481,73 @@ fn bluewater_scraping_discards_unfinished_combined_responses() {
             "{scenario}"
         );
     }
+}
+
+#[test]
+fn yellowbrick_list_requests_only_setup() {
+    let (host, requests) = serve_recorded(vec![(
+        "/JSON/rmsr2024/RaceSetup",
+        "200 OK",
+        fixture("yellowbrick/rmsr2024-RaceSetup.json"),
+    )]);
+    let client = YellowBrick::at(&host, &host);
+    let event = client.resolve("yb.tl/rmsr2024").unwrap();
+    let list = client
+        .list(&event, &scrape_fetcher(), &mut |_| {})
+        .unwrap()
+        .unwrap();
+    assert_eq!(list.boats.len(), 112);
+    assert!(list.boats.iter().all(|b| b.fixes.is_empty()));
+    assert_eq!(*requests.lock().unwrap(), ["/JSON/rmsr2024/RaceSetup"]);
+}
+
+#[test]
+fn geovoile_list_requests_neither_tracks_nor_reports() {
+    let page = fixture_text("geovoile/24hultim2025/viewer.html")
+        .replace("https://24hultim.geovoile.com/2025/", "/2025/");
+    let (host, requests) = serve_recorded(vec![
+        ("/2025/tracker/", "200 OK", page.into_bytes()),
+        (
+            "/2025/tracker/resources/versions/v*",
+            "200 OK",
+            fixture("geovoile/24hultim2025/versions.txt"),
+        ),
+        (
+            "/2025/tracker/resources/config/v20251006074618",
+            "200 OK",
+            fixture("geovoile/24hultim2025/config.hwx"),
+        ),
+    ]);
+    let client = geovoile::Geovoile::at(&host);
+    let event = client
+        .resolve("24hultim.geovoile.com/2025/tracker/")
+        .unwrap();
+    let list = client
+        .list(&event, &scrape_fetcher(), &mut |_| {})
+        .unwrap()
+        .unwrap();
+    assert_eq!(list.boats.len(), 14);
+    assert_eq!(list.title, "24H Ultim");
+    assert!(list.boats.iter().all(|b| b.fixes.is_empty()));
+    let paths = requests.lock().unwrap();
+    assert_eq!(paths.len(), 3, "{paths:?}");
+    assert!(
+        paths
+            .iter()
+            .all(|p| !p.contains("tracks/") && !p.contains("reports/"))
+    );
+}
+
+#[test]
+fn bluewater_list_makes_no_request_for_its_combined_response() {
+    let (host, requests) = serve_recorded(vec![]);
+    let client = BlueWaterTracks::at(&host);
+    let event = client.resolve("2025-melbourne-hobart-westcoaster").unwrap();
+    assert!(
+        client
+            .list(&event, &scrape_fetcher(), &mut |_| {})
+            .unwrap()
+            .is_none()
+    );
+    assert!(requests.lock().unwrap().is_empty());
 }

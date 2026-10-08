@@ -543,6 +543,45 @@ impl TrackerClient for YellowBrick {
         Tracker::YellowBrick
     }
 
+    fn list(
+        &self,
+        event: &EventRef,
+        fetcher: &Fetcher,
+        progress: &mut dyn FnMut(Progress),
+    ) -> Result<Option<TrackerEvent>> {
+        if !valid_key(&event.key) {
+            return Err(TrackerError::NotAnEvent {
+                tracker: TRACKER,
+                input: event.key.clone(),
+            });
+        }
+        let bytes = fetcher.get(
+            &format!("{}/JSON/{}/RaceSetup", self.cdn, url_key(&event.key)),
+            &mut |bytes, total| {
+                progress(Progress {
+                    step: 0,
+                    steps: 1,
+                    bytes,
+                    total,
+                    fallback: false,
+                })
+            },
+        )?;
+        if is_html(&bytes) {
+            return Err(TrackerError::NoSuchEvent {
+                tracker: TRACKER,
+                key: event.key.clone(),
+            });
+        }
+        let setup = parse_race_setup(&bytes)?;
+        Ok(Some(event_of(
+            event,
+            &setup,
+            |_| Vec::new(),
+            PositionsFrom::Primary,
+        )))
+    }
+
     fn fetch_for_scrape(
         &self,
         event: &EventRef,
@@ -580,9 +619,9 @@ impl TrackerClient for YellowBrick {
 
     /// `RaceSetup` and `AllPositions3` at the same time (the binary decoded
     /// on its own thread), the boat list handed to `listed` as soon as the
-    /// setup is read; if the binary does not decode (or is refused), the
-    /// KML instead. A cancel, or a tracker that keeps failing (5xx), ends
-    /// the download without the fallback.
+    /// setup is read; if the binary cannot be read, the KML instead. A
+    /// working setup proves the event exists even when the CDN's positions
+    /// stay unavailable. A failed setup or a cancel never starts the KML.
     fn fetch_listed(
         &self,
         event: &EventRef,
@@ -677,7 +716,7 @@ impl TrackerClient for YellowBrick {
                     PositionsFrom::Primary,
                 ));
             }
-            Err(e @ (TrackerError::Cancelled | TrackerError::Unavailable { .. })) => return Err(e),
+            Err(e @ TrackerError::Cancelled) => return Err(e),
             Err(e) => e,
         };
 
